@@ -1,0 +1,655 @@
+# BUILD AN ENTERPRISE-GRADE MULTI-TENANT CTEM PLATFORM
+
+You are a Principal Security Architect, Principal Backend Engineer, Principal DevOps Engineer, Principal SaaS Architect, Principal Database Architect, Principal Product Architect, and Principal Frontend Engineer.
+
+Your task is to design and implement a production-ready enterprise Continuous Threat Exposure Management (CTEM) platform.
+
+This platform is NOT a simple vulnerability scanner.
+
+The platform must combine:
+
+* External Attack Surface Management (EASM)
+* Cyber Asset Attack Surface Management (CAASM)
+* Vulnerability Management
+* Exposure Management
+* Internal Asset Discovery
+* Compliance Management
+* Risk Prioritization
+* AI Security Copilot
+
+The architecture must be scalable for:
+
+* 100+ enterprise customers
+* 100,000+ assets
+* millions of findings
+* thousands of scans per day
+
+The system must be multi-tenant SaaS from day one.
+
+---
+
+# TECH STACK
+
+Frontend:
+
+* Next.js 15
+* TypeScript
+* Tailwind CSS
+* ShadCN UI
+* TanStack Query
+* Zustand
+* React Hook Form
+* Zod
+
+Backend:
+
+* FastAPI
+* Python 3.12
+* SQLAlchemy 2.0
+* Alembic
+* Pydantic v2
+
+Database:
+
+* PostgreSQL 16
+
+Search:
+
+* OpenSearch
+
+Cache:
+
+* Redis
+
+Background Jobs:
+
+* Celery
+* Celery Beat
+* Redis Broker
+
+Storage:
+
+* MinIO
+
+Containerization:
+
+* Docker
+* Docker Compose
+
+Future Ready:
+
+* Kubernetes
+* Helm
+* Temporal Migration Path
+
+---
+
+# MULTI-TENANT REQUIREMENTS
+
+Use single PostgreSQL database.
+
+Every table must contain:
+
+tenant_id UUID
+
+Implement:
+
+* strict tenant isolation
+* row level security design
+* middleware-based tenant enforcement
+* audit trails
+
+No tenant must ever access another tenant's data.
+
+---
+
+# USER ROLES
+
+## Super Admin
+
+Platform-wide access.
+
+Can:
+
+* create admins
+* manage tenants
+* manage plans
+* manage billing
+* view platform analytics
+* manage global settings
+
+---
+
+## Admin
+
+Tenant administrator.
+
+Can:
+
+* manage users
+* manage assets
+* manage scans
+* manage reports
+* manage compliance
+
+Cannot:
+
+* create super admins
+
+---
+
+## Account Manager
+
+Can access only assigned organizations.
+
+Can:
+
+* manage assigned clients
+* manage assigned assets
+* review findings
+* generate reports
+
+---
+
+## Client
+
+Can access only their own assets and reports.
+
+---
+
+# AUTHENTICATION
+
+Implement:
+
+* JWT Authentication
+* Refresh Tokens
+* Password Reset
+* MFA Ready
+* Session Tracking
+* Audit Logs
+* RBAC
+
+---
+
+# ASSET OWNERSHIP VERIFICATION
+
+Before active scanning, ownership must be verified.
+
+Support:
+
+1. DNS TXT verification
+2. Email verification
+3. HTTP file verification
+4. Cloud account verification
+
+Unverified assets must not be actively scanned.
+
+---
+
+# MODULE 1: ASSET INVENTORY
+
+Support:
+
+* Domains
+* Subdomains
+* URLs
+* IPs
+* CIDRs
+* APIs
+* SSL Certificates
+* Cloud Assets
+* Hosts
+* Mobile Applications
+
+Asset tagging system:
+
+* Production
+* Staging
+* Development
+* Critical
+* Internal
+* External
+
+Support asset grouping.
+
+---
+
+# MODULE 2: PASSIVE DISCOVERY ENGINE
+
+Discover:
+
+* CT Logs
+* WHOIS
+* Reverse WHOIS
+* ASN
+* DNS Records
+* MX Records
+* SPF
+* DMARC
+* DKIM
+* NS Records
+* GitHub Exposure
+* Certificate Transparency
+
+Store historical discoveries.
+
+---
+
+# MODULE 3: ACTIVE DISCOVERY ENGINE
+
+Integrate:
+
+* Nmap
+* Naabu
+* Masscan
+* Httpx
+* DNSX
+
+Discover:
+
+* Open Ports
+* Services
+* Service Banners
+* Protocols
+* TLS Versions
+* SSL Information
+
+---
+
+# MODULE 4: TECHNOLOGY DETECTION
+
+Detect:
+
+* React
+* Angular
+* Vue
+* NextJS
+* WordPress
+* Drupal
+* Joomla
+* Laravel
+* Django
+* Flask
+* Spring
+* NodeJS
+* Apache
+* Nginx
+* IIS
+* PHP
+* Java
+* Python
+
+Store version information whenever possible.
+
+---
+
+# MODULE 5: SCREENSHOT ENGINE
+
+Integrate:
+
+* Gowitness
+
+Capture:
+
+* Homepages
+* Login Pages
+* Admin Panels
+
+Store screenshots in MinIO.
+
+Display screenshot history.
+
+---
+
+# MODULE 6: VULNERABILITY MANAGEMENT
+
+Integrate:
+
+* Nuclei
+
+Store:
+
+* CVE
+* CVSS
+* EPSS
+* CWE
+* KEV
+
+Finding Status:
+
+* Open
+* In Progress
+* Accepted Risk
+* False Positive
+* Mitigated
+
+Support comments and evidence.
+
+---
+
+# MODULE 7: EXPOSURE MANAGEMENT
+
+Detect:
+
+* Exposed RDP
+* Exposed SMB
+* Exposed Redis
+* Exposed MongoDB
+* Exposed Elasticsearch
+* Exposed Jenkins
+* Exposed Grafana
+* Exposed Kibana
+* Public Storage Buckets
+* Public APIs
+* Exposed Admin Panels
+
+---
+
+# MODULE 8: INTERNAL AGENT SYSTEM
+
+Design agent architecture.
+
+Agent written in Go.
+
+Supported:
+
+* Windows
+* Linux
+* macOS
+
+Agent collects:
+
+* Host Information
+* Installed Software
+* Services
+* Running Processes
+* Open Ports
+* Patch Information
+
+Agent communicates securely with API.
+
+Support agent registration and token-based authentication.
+
+---
+
+# MODULE 9: SCAN ORCHESTRATION ENGINE
+
+Architecture:
+
+Asset
+→ Scheduler
+→ Queue
+→ Worker
+→ Scanner Container
+→ Result Processor
+→ Database
+
+Support:
+
+* Hourly
+* Daily
+* Weekly
+* Monthly
+* Custom Cron
+
+Prevent duplicate scans.
+
+Implement retry logic.
+
+Implement scan history.
+
+---
+
+# MODULE 10: COMPLIANCE MANAGEMENT
+
+Support:
+
+* ISO 27001
+* SOC2
+* PCI DSS
+* HIPAA
+* CIS Controls
+
+Provide:
+
+* Compliance Dashboard
+* Gap Analysis
+* Evidence Collection
+* Compliance Reports
+
+---
+
+# MODULE 11: RISK ENGINE
+
+Risk score should NOT rely only on CVSS.
+
+Calculate using:
+
+* CVSS
+* EPSS
+* KEV
+* Asset Criticality
+* Exposure Level
+* Business Impact
+
+Risk Levels:
+
+* Critical
+* High
+* Medium
+* Low
+
+---
+
+# MODULE 12: ALERTING
+
+Channels:
+
+* Email
+* Slack
+* Discord
+* Telegram
+* Webhooks
+
+Trigger on:
+
+* New Asset
+* New Vulnerability
+* New Critical Exposure
+* SSL Expiry
+* Compliance Failure
+
+---
+
+# MODULE 13: REPORTING
+
+Generate:
+
+* Executive Report
+* Technical Report
+* Compliance Report
+* Asset Inventory Report
+
+Formats:
+
+* PDF
+* XLSX
+* CSV
+* JSON
+
+Reports must be downloadable.
+
+---
+
+# MODULE 14: ATTACK SURFACE GRAPH
+
+Implement graph relationships:
+
+Organization
+→ Domain
+→ Subdomain
+→ IP
+→ Port
+→ Service
+→ Technology
+→ Vulnerability
+
+Design architecture ready for Neo4j integration.
+
+---
+
+# MODULE 15: AI SECURITY COPILOT
+
+Provide:
+
+* Finding Explanation
+* CVE Explanation
+* Risk Explanation
+* Remediation Guidance
+* Executive Summary Generation
+* Compliance Guidance
+
+Use abstraction layer for future LLM integrations.
+
+---
+
+# AUDIT LOGGING
+
+Track:
+
+* Login
+* Logout
+* User Actions
+* Asset Changes
+* Scan Creation
+* Report Downloads
+* Compliance Actions
+
+Store immutable audit records.
+
+---
+
+# DATABASE DESIGN
+
+Generate a production-grade schema.
+
+Create tables for:
+
+* tenants
+* organizations
+* users
+* roles
+* permissions
+* assets
+* asset_groups
+* scans
+* scan_jobs
+* scan_results
+* findings
+* vulnerabilities
+* technologies
+* screenshots
+* alerts
+* compliance_controls
+* reports
+* audit_logs
+* agents
+* risk_scores
+
+Include:
+
+* indexes
+* foreign keys
+* partitioning strategy
+* optimization recommendations
+
+---
+
+# API DESIGN
+
+Build REST APIs.
+
+Versioning:
+
+/api/v1/
+
+Generate:
+
+* FastAPI routers
+* schemas
+* services
+* repositories
+
+Follow clean architecture.
+
+---
+
+# FRONTEND
+
+Build modern enterprise dashboards.
+
+Provide:
+
+* Executive Dashboard
+* Asset Dashboard
+* Vulnerability Dashboard
+* Compliance Dashboard
+* Scan Dashboard
+* Alert Dashboard
+
+Use responsive design.
+
+---
+
+# DEVOPS
+
+Generate:
+
+* Dockerfiles
+* Docker Compose
+* Environment Configuration
+* Local Development Setup
+
+Provide production-ready deployment strategy.
+
+---
+
+# SECURITY REQUIREMENTS
+
+Implement:
+
+* Rate Limiting
+* Secure Headers
+* Input Validation
+* CSRF Protection
+* XSS Protection
+* SQL Injection Protection
+* Secrets Management
+* Audit Logging
+* RBAC Enforcement
+
+---
+
+# DEVELOPMENT APPROACH
+
+Generate:
+
+1. Folder Structure
+2. Database Schema
+3. Backend Foundation
+4. Authentication
+5. Multi-Tenancy
+6. Asset Management
+7. Discovery Engine
+8. Scan Engine
+9. Vulnerability Engine
+10. Compliance Engine
+11. Reporting
+12. AI Copilot
+13. Deployment
+
+Build the project incrementally with production-quality code.
+
+Do not generate placeholder code.
+
+Generate scalable, maintainable, enterprise-grade code following best practices and clean architecture principles.

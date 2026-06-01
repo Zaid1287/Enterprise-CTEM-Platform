@@ -1,0 +1,2 @@
+- [Orval mutation wrapper pattern](orval-mutation-wrapper.md) — Orval-generated mutations require `{ data: ... }` wrapper, never raw objects
+- [CTEM auth flow](ctem-auth-flow.md) — JWT tokens via sessionStorage + setAuthTokenGetter; logout mutation takes void params

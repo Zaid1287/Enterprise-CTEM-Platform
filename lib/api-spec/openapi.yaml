@@ -3,20 +3,47 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: CTEM Platform API — Continuous Threat Exposure Management
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: tenants
+    description: Tenant management
+  - name: users
+    description: User management
+  - name: assets
+    description: Asset management
+  - name: asset-groups
+    description: Asset group management
+  - name: scans
+    description: Scan management
+  - name: findings
+    description: Vulnerability findings
+  - name: compliance
+    description: Compliance management
+  - name: reports
+    description: Report management
+  - name: alerts
+    description: Alert management
+  - name: risk
+    description: Risk scoring
+  - name: audit
+    description: Audit logs
+  - name: ai-copilot
+    description: AI Security Copilot
+  - name: dashboard
+    description: Dashboard and analytics
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +51,2137 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ──────────────────────────────────────────────────────────
+  # AUTH
+  # ──────────────────────────────────────────────────────────
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "409":
+          description: Email already in use
+
+  /auth/refresh:
+    post:
+      operationId: refreshToken
+      tags: [auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenInput"
+      responses:
+        "200":
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout current session
+      responses:
+        "204":
+          description: Logged out
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /auth/change-password:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      summary: Change password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordInput"
+      responses:
+        "204":
+          description: Password changed
+
+  # ──────────────────────────────────────────────────────────
+  # TENANTS
+  # ──────────────────────────────────────────────────────────
+  /tenants:
+    get:
+      operationId: listTenants
+      tags: [tenants]
+      summary: List all tenants (super admin only)
+      responses:
+        "200":
+          description: List of tenants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tenant"
+    post:
+      operationId: createTenant
+      tags: [tenants]
+      summary: Create a new tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantInput"
+      responses:
+        "201":
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+
+  /tenants/{tenantId}:
+    get:
+      operationId: getTenant
+      tags: [tenants]
+      summary: Get tenant by ID
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Tenant details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+    patch:
+      operationId: updateTenant
+      tags: [tenants]
+      summary: Update tenant
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantUpdate"
+      responses:
+        "200":
+          description: Updated tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+
+  # ──────────────────────────────────────────────────────────
+  # USERS
+  # ──────────────────────────────────────────────────────────
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List users in current tenant
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /users/{userId}:
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get user by ID
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: User deleted
+
+  # ──────────────────────────────────────────────────────────
+  # ASSETS
+  # ──────────────────────────────────────────────────────────
+  /assets:
+    get:
+      operationId: listAssets
+      tags: [assets]
+      summary: List all assets
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: tag
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: verificationStatus
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asset"
+    post:
+      operationId: createAsset
+      tags: [assets]
+      summary: Add a new asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetInput"
+      responses:
+        "201":
+          description: Asset created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+
+  /assets/{assetId}:
+    get:
+      operationId: getAsset
+      tags: [assets]
+      summary: Get asset by ID
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Asset details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+    patch:
+      operationId: updateAsset
+      tags: [assets]
+      summary: Update asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetUpdate"
+      responses:
+        "200":
+          description: Updated asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+    delete:
+      operationId: deleteAsset
+      tags: [assets]
+      summary: Delete asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Asset deleted
+
+  /assets/{assetId}/verify:
+    post:
+      operationId: verifyAsset
+      tags: [assets]
+      summary: Initiate asset ownership verification
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerificationInput"
+      responses:
+        "200":
+          description: Verification initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationChallenge"
+
+  /assets/{assetId}/verify/check:
+    post:
+      operationId: checkAssetVerification
+      tags: [assets]
+      summary: Check if asset ownership is verified
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationResult"
+
+  # ──────────────────────────────────────────────────────────
+  # ASSET GROUPS
+  # ──────────────────────────────────────────────────────────
+  /asset-groups:
+    get:
+      operationId: listAssetGroups
+      tags: [asset-groups]
+      summary: List asset groups
+      responses:
+        "200":
+          description: List of asset groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetGroup"
+    post:
+      operationId: createAssetGroup
+      tags: [asset-groups]
+      summary: Create asset group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetGroupInput"
+      responses:
+        "201":
+          description: Asset group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetGroup"
+
+  /asset-groups/{groupId}:
+    get:
+      operationId: getAssetGroup
+      tags: [asset-groups]
+      summary: Get asset group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Asset group details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetGroup"
+    patch:
+      operationId: updateAssetGroup
+      tags: [asset-groups]
+      summary: Update asset group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetGroupUpdate"
+      responses:
+        "200":
+          description: Updated asset group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetGroup"
+    delete:
+      operationId: deleteAssetGroup
+      tags: [asset-groups]
+      summary: Delete asset group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ──────────────────────────────────────────────────────────
+  # SCANS
+  # ──────────────────────────────────────────────────────────
+  /scans:
+    get:
+      operationId: listScans
+      tags: [scans]
+      summary: List all scans
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: assetId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scan"
+    post:
+      operationId: createScan
+      tags: [scans]
+      summary: Create and schedule a scan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanInput"
+      responses:
+        "201":
+          description: Scan created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /scans/{scanId}:
+    get:
+      operationId: getScan
+      tags: [scans]
+      summary: Get scan details
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+    delete:
+      operationId: deleteScan
+      tags: [scans]
+      summary: Cancel or delete a scan
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /scans/{scanId}/cancel:
+    post:
+      operationId: cancelScan
+      tags: [scans]
+      summary: Cancel a running scan
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /scans/{scanId}/jobs:
+    get:
+      operationId: listScanJobs
+      tags: [scans]
+      summary: List scan jobs for a scan
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScanJob"
+
+  # ──────────────────────────────────────────────────────────
+  # FINDINGS
+  # ──────────────────────────────────────────────────────────
+  /findings:
+    get:
+      operationId: listFindings
+      tags: [findings]
+      summary: List vulnerability findings
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+        - name: assetId
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of findings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Finding"
+
+  /findings/{findingId}:
+    get:
+      operationId: getFinding
+      tags: [findings]
+      summary: Get finding details
+      parameters:
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Finding details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+    patch:
+      operationId: updateFinding
+      tags: [findings]
+      summary: Update finding status or details
+      parameters:
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingUpdate"
+      responses:
+        "200":
+          description: Updated finding
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+
+  /findings/{findingId}/comments:
+    get:
+      operationId: listFindingComments
+      tags: [findings]
+      summary: Get comments for a finding
+      parameters:
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Comments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FindingComment"
+    post:
+      operationId: createFindingComment
+      tags: [findings]
+      summary: Add a comment to a finding
+      parameters:
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingCommentInput"
+      responses:
+        "201":
+          description: Comment added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingComment"
+
+  # ──────────────────────────────────────────────────────────
+  # COMPLIANCE
+  # ──────────────────────────────────────────────────────────
+  /compliance/frameworks:
+    get:
+      operationId: listComplianceFrameworks
+      tags: [compliance]
+      summary: List available compliance frameworks
+      responses:
+        "200":
+          description: Compliance frameworks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComplianceFramework"
+
+  /compliance/controls:
+    get:
+      operationId: listComplianceControls
+      tags: [compliance]
+      summary: List compliance controls
+      parameters:
+        - name: frameworkId
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Compliance controls
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComplianceControl"
+
+  /compliance/controls/{controlId}:
+    get:
+      operationId: getComplianceControl
+      tags: [compliance]
+      summary: Get control details
+      parameters:
+        - name: controlId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Control details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceControl"
+    patch:
+      operationId: updateComplianceControl
+      tags: [compliance]
+      summary: Update compliance control status
+      parameters:
+        - name: controlId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ComplianceControlUpdate"
+      responses:
+        "200":
+          description: Updated control
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceControl"
+
+  /compliance/summary:
+    get:
+      operationId: getComplianceSummary
+      tags: [compliance]
+      summary: Get compliance summary by framework
+      responses:
+        "200":
+          description: Compliance summary
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComplianceSummary"
+
+  # ──────────────────────────────────────────────────────────
+  # REPORTS
+  # ──────────────────────────────────────────────────────────
+  /reports:
+    get:
+      operationId: listReports
+      tags: [reports]
+      summary: List generated reports
+      responses:
+        "200":
+          description: Reports list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Report"
+    post:
+      operationId: createReport
+      tags: [reports]
+      summary: Generate a new report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportInput"
+      responses:
+        "201":
+          description: Report creation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+
+  /reports/{reportId}:
+    get:
+      operationId: getReport
+      tags: [reports]
+      summary: Get report details
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Report details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+    delete:
+      operationId: deleteReport
+      tags: [reports]
+      summary: Delete a report
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ──────────────────────────────────────────────────────────
+  # ALERTS
+  # ──────────────────────────────────────────────────────────
+  /alerts:
+    get:
+      operationId: listAlerts
+      tags: [alerts]
+      summary: List alerts
+      parameters:
+        - name: severity
+          in: query
+          schema:
+            type: string
+        - name: read
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List of alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+
+  /alerts/{alertId}:
+    get:
+      operationId: getAlert
+      tags: [alerts]
+      summary: Get alert details
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Alert details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+    patch:
+      operationId: updateAlert
+      tags: [alerts]
+      summary: Mark alert as read or update status
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertUpdate"
+      responses:
+        "200":
+          description: Updated alert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+
+  /alerts/rules:
+    get:
+      operationId: listAlertRules
+      tags: [alerts]
+      summary: List alert notification rules
+      responses:
+        "200":
+          description: Alert rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AlertRule"
+    post:
+      operationId: createAlertRule
+      tags: [alerts]
+      summary: Create an alert notification rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertRuleInput"
+      responses:
+        "201":
+          description: Alert rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+
+  # ──────────────────────────────────────────────────────────
+  # RISK
+  # ──────────────────────────────────────────────────────────
+  /risk/scores:
+    get:
+      operationId: listRiskScores
+      tags: [risk]
+      summary: List risk scores for assets
+      responses:
+        "200":
+          description: Risk scores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RiskScore"
+
+  /risk/scores/{assetId}:
+    get:
+      operationId: getAssetRiskScore
+      tags: [risk]
+      summary: Get risk score for a specific asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Risk score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskScore"
+
+  # ──────────────────────────────────────────────────────────
+  # AUDIT LOGS
+  # ──────────────────────────────────────────────────────────
+  /audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [audit]
+      summary: List audit logs
+      parameters:
+        - name: userId
+          in: query
+          schema:
+            type: integer
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Audit logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditLog"
+
+  # ──────────────────────────────────────────────────────────
+  # AI COPILOT
+  # ──────────────────────────────────────────────────────────
+  /ai/explain-finding:
+    post:
+      operationId: explainFinding
+      tags: [ai-copilot]
+      summary: AI explanation of a vulnerability finding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiExplainFindingInput"
+      responses:
+        "200":
+          description: AI explanation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiExplanation"
+
+  /ai/remediation:
+    post:
+      operationId: getRemediation
+      tags: [ai-copilot]
+      summary: Get AI remediation guidance for a finding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiRemediationInput"
+      responses:
+        "200":
+          description: Remediation guidance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiRemediation"
+
+  /ai/executive-summary:
+    post:
+      operationId: generateExecutiveSummary
+      tags: [ai-copilot]
+      summary: Generate AI executive summary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiSummaryInput"
+      responses:
+        "200":
+          description: Executive summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiExplanation"
+
+  /ai/compliance-guidance:
+    post:
+      operationId: getComplianceGuidance
+      tags: [ai-copilot]
+      summary: Get AI guidance for a compliance control
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiComplianceInput"
+      responses:
+        "200":
+          description: Compliance guidance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiExplanation"
+
+  # ──────────────────────────────────────────────────────────
+  # DASHBOARD (wow endpoints)
+  # ──────────────────────────────────────────────────────────
+  /dashboard/overview:
+    get:
+      operationId: getDashboardOverview
+      tags: [dashboard]
+      summary: Executive dashboard overview metrics
+      responses:
+        "200":
+          description: Dashboard overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOverview"
+
+  /dashboard/risk-trend:
+    get:
+      operationId: getRiskTrend
+      tags: [dashboard]
+      summary: Risk score trend over time
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Risk trend data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrendPoint"
+
+  /dashboard/findings-by-severity:
+    get:
+      operationId: getFindingsBySeverity
+      tags: [dashboard]
+      summary: Finding counts grouped by severity
+      responses:
+        "200":
+          description: Findings by severity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SeverityCount"
+
+  /dashboard/asset-breakdown:
+    get:
+      operationId: getAssetBreakdown
+      tags: [dashboard]
+      summary: Asset count breakdown by type
+      responses:
+        "200":
+          description: Asset breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetTypeCount"
+
+  /dashboard/top-risky-assets:
+    get:
+      operationId: getTopRiskyAssets
+      tags: [dashboard]
+      summary: Top assets by risk score
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Top risky assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetRiskSummary"
+
+  /dashboard/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [dashboard]
+      summary: Recent platform activity feed
+      responses:
+        "200":
+          description: Activity feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  /dashboard/exposure-breakdown:
+    get:
+      operationId: getExposureBreakdown
+      tags: [dashboard]
+      summary: Exposure types breakdown
+      responses:
+        "200":
+          description: Exposure breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExposureCount"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    # ── Auth ──────────────────────────────────────────────
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    RegisterInput:
+      type: object
+      required: [email, password, firstName, lastName, tenantName]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        tenantName:
+          type: string
+
+    RefreshTokenInput:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+
+    ChangePasswordInput:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+
+    AuthResponse:
+      type: object
+      required: [accessToken, refreshToken, user]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+
+    # ── User ─────────────────────────────────────────────
+    User:
+      type: object
+      required: [id, email, firstName, lastName, role, tenantId, createdAt]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+        tenantId:
+          type: integer
+        isActive:
+          type: boolean
+        lastLoginAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    UserInput:
+      type: object
+      required: [email, firstName, lastName, role, password]
+      properties:
+        email:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+        password:
+          type: string
+
+    UserUpdate:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+        isActive:
+          type: boolean
+
+    # ── Tenant ────────────────────────────────────────────
+    Tenant:
+      type: object
+      required: [id, name, slug, plan, isActive, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+        isActive:
+          type: boolean
+        maxAssets:
+          type: ["integer", "null"]
+        maxUsers:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+
+    TenantInput:
+      type: object
+      required: [name, slug, plan]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+        maxAssets:
+          type: integer
+        maxUsers:
+          type: integer
+
+    TenantUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        plan:
+          type: string
+        isActive:
+          type: boolean
+        maxAssets:
+          type: integer
+        maxUsers:
+          type: integer
+
+    # ── Asset ─────────────────────────────────────────────
+    Asset:
+      type: object
+      required: [id, tenantId, name, type, value, verificationStatus, riskLevel, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+        verificationStatus:
+          type: string
+        riskLevel:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        description:
+          type: ["string", "null"]
+        ipAddress:
+          type: ["string", "null"]
+        port:
+          type: ["integer", "null"]
+        isActive:
+          type: boolean
+        lastScannedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    AssetInput:
+      type: object
+      required: [name, type, value]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        ipAddress:
+          type: string
+        port:
+          type: integer
+
+    AssetUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        isActive:
+          type: boolean
+        riskLevel:
+          type: string
+
+    VerificationInput:
+      type: object
+      required: [method]
+      properties:
+        method:
+          type: string
+
+    VerificationChallenge:
+      type: object
+      required: [method, challenge, instructions]
+      properties:
+        method:
+          type: string
+        challenge:
+          type: string
+        instructions:
+          type: string
+
+    VerificationResult:
+      type: object
+      required: [verified, message]
+      properties:
+        verified:
+          type: boolean
+        message:
+          type: string
+
+    # ── Asset Group ───────────────────────────────────────
+    AssetGroup:
+      type: object
+      required: [id, tenantId, name, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        assetCount:
+          type: integer
+        createdAt:
+          type: string
+
+    AssetGroupInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        assetIds:
+          type: array
+          items:
+            type: integer
+
+    AssetGroupUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    # ── Scan ──────────────────────────────────────────────
+    Scan:
+      type: object
+      required: [id, tenantId, name, type, status, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+        schedule:
+          type: ["string", "null"]
+        assetIds:
+          type: array
+          items:
+            type: integer
+        findingsCount:
+          type: integer
+        startedAt:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    ScanInput:
+      type: object
+      required: [name, type, assetIds]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        assetIds:
+          type: array
+          items:
+            type: integer
+        schedule:
+          type: string
+        scanModules:
+          type: array
+          items:
+            type: string
+
+    ScanJob:
+      type: object
+      required: [id, scanId, assetId, status, createdAt]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+        assetId:
+          type: integer
+        status:
+          type: string
+        result:
+          type: ["string", "null"]
+        errorMessage:
+          type: ["string", "null"]
+        startedAt:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    # ── Finding ───────────────────────────────────────────
+    Finding:
+      type: object
+      required: [id, tenantId, assetId, title, severity, status, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        assetId:
+          type: integer
+        assetName:
+          type: ["string", "null"]
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        severity:
+          type: string
+        status:
+          type: string
+        cve:
+          type: ["string", "null"]
+        cvss:
+          type: ["number", "null"]
+        epss:
+          type: ["number", "null"]
+        cwe:
+          type: ["string", "null"]
+        isKev:
+          type: boolean
+        remediation:
+          type: ["string", "null"]
+        evidence:
+          type: ["string", "null"]
+        riskScore:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    FindingUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+        remediation:
+          type: string
+        evidence:
+          type: string
+
+    FindingComment:
+      type: object
+      required: [id, findingId, userId, content, createdAt]
+      properties:
+        id:
+          type: integer
+        findingId:
+          type: integer
+        userId:
+          type: integer
+        authorName:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+
+    FindingCommentInput:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    # ── Compliance ────────────────────────────────────────
+    ComplianceFramework:
+      type: object
+      required: [id, name, shortName, version, totalControls]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        shortName:
+          type: string
+        version:
+          type: string
+        totalControls:
+          type: integer
+        description:
+          type: ["string", "null"]
+
+    ComplianceControl:
+      type: object
+      required: [id, frameworkId, frameworkName, controlId, title, status, createdAt]
+      properties:
+        id:
+          type: integer
+        frameworkId:
+          type: integer
+        frameworkName:
+          type: string
+        controlId:
+          type: string
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        status:
+          type: string
+        evidence:
+          type: ["string", "null"]
+        assignedTo:
+          type: ["string", "null"]
+        dueDate:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    ComplianceControlUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+        evidence:
+          type: string
+        assignedTo:
+          type: string
+        dueDate:
+          type: string
+
+    ComplianceSummary:
+      type: object
+      required: [frameworkId, frameworkName, shortName, total, compliant, inProgress, nonCompliant, score]
+      properties:
+        frameworkId:
+          type: integer
+        frameworkName:
+          type: string
+        shortName:
+          type: string
+        total:
+          type: integer
+        compliant:
+          type: integer
+        inProgress:
+          type: integer
+        nonCompliant:
+          type: integer
+        score:
+          type: number
+
+    # ── Report ────────────────────────────────────────────
+    Report:
+      type: object
+      required: [id, tenantId, title, type, format, status, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        title:
+          type: string
+        type:
+          type: string
+        format:
+          type: string
+        status:
+          type: string
+        downloadUrl:
+          type: ["string", "null"]
+        generatedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    ReportInput:
+      type: object
+      required: [title, type, format]
+      properties:
+        title:
+          type: string
+        type:
+          type: string
+        format:
+          type: string
+        assetIds:
+          type: array
+          items:
+            type: integer
+        dateFrom:
+          type: string
+        dateTo:
+          type: string
+
+    # ── Alert ─────────────────────────────────────────────
+    Alert:
+      type: object
+      required: [id, tenantId, title, type, severity, isRead, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        title:
+          type: string
+        message:
+          type: ["string", "null"]
+        type:
+          type: string
+        severity:
+          type: string
+        isRead:
+          type: boolean
+        relatedAssetId:
+          type: ["integer", "null"]
+        relatedFindingId:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+
+    AlertUpdate:
+      type: object
+      properties:
+        isRead:
+          type: boolean
+
+    AlertRule:
+      type: object
+      required: [id, tenantId, name, triggerType, channel, isActive, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        triggerType:
+          type: string
+        channel:
+          type: string
+        destination:
+          type: ["string", "null"]
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+
+    AlertRuleInput:
+      type: object
+      required: [name, triggerType, channel]
+      properties:
+        name:
+          type: string
+        triggerType:
+          type: string
+        channel:
+          type: string
+        destination:
+          type: string
+
+    # ── Risk ──────────────────────────────────────────────
+    RiskScore:
+      type: object
+      required: [id, assetId, assetName, score, level, cvssComponent, epssComponent, kevBonus, criticalityBonus, exposureBonus, updatedAt]
+      properties:
+        id:
+          type: integer
+        assetId:
+          type: integer
+        assetName:
+          type: string
+        score:
+          type: number
+        level:
+          type: string
+        cvssComponent:
+          type: number
+        epssComponent:
+          type: number
+        kevBonus:
+          type: number
+        criticalityBonus:
+          type: number
+        exposureBonus:
+          type: number
+        updatedAt:
+          type: string
+
+    # ── Audit Log ─────────────────────────────────────────
+    AuditLog:
+      type: object
+      required: [id, tenantId, userId, action, resource, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        userId:
+          type: integer
+        userEmail:
+          type: ["string", "null"]
+        action:
+          type: string
+        resource:
+          type: string
+        resourceId:
+          type: ["integer", "null"]
+        details:
+          type: ["string", "null"]
+        ipAddress:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    # ── AI Copilot ────────────────────────────────────────
+    AiExplainFindingInput:
+      type: object
+      required: [findingId]
+      properties:
+        findingId:
+          type: integer
+
+    AiRemediationInput:
+      type: object
+      required: [findingId]
+      properties:
+        findingId:
+          type: integer
+        context:
+          type: string
+
+    AiSummaryInput:
+      type: object
+      required: [tenantId]
+      properties:
+        tenantId:
+          type: integer
+        dateFrom:
+          type: string
+        dateTo:
+          type: string
+
+    AiComplianceInput:
+      type: object
+      required: [controlId]
+      properties:
+        controlId:
+          type: integer
+
+    AiExplanation:
+      type: object
+      required: [content, model]
+      properties:
+        content:
+          type: string
+        model:
+          type: string
+        generatedAt:
+          type: string
+
+    AiRemediation:
+      type: object
+      required: [steps, priority, estimatedEffort, model]
+      properties:
+        steps:
+          type: array
+          items:
+            type: string
+        priority:
+          type: string
+        estimatedEffort:
+          type: string
+        references:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+
+    # ── Dashboard ─────────────────────────────────────────
+    DashboardOverview:
+      type: object
+      required: [totalAssets, totalFindings, criticalFindings, highFindings, openFindings, activeScans, complianceScore, riskScore, unreadAlerts]
+      properties:
+        totalAssets:
+          type: integer
+        totalFindings:
+          type: integer
+        criticalFindings:
+          type: integer
+        highFindings:
+          type: integer
+        openFindings:
+          type: integer
+        activeScans:
+          type: integer
+        complianceScore:
+          type: number
+        riskScore:
+          type: number
+        unreadAlerts:
+          type: integer
+        assetsTrend:
+          type: number
+        findingsTrend:
+          type: number
+
+    TrendPoint:
+      type: object
+      required: [date, value]
+      properties:
+        date:
+          type: string
+        value:
+          type: number
+
+    SeverityCount:
+      type: object
+      required: [severity, count]
+      properties:
+        severity:
+          type: string
+        count:
+          type: integer
+
+    AssetTypeCount:
+      type: object
+      required: [type, count]
+      properties:
+        type:
+          type: string
+        count:
+          type: integer
+
+    AssetRiskSummary:
+      type: object
+      required: [assetId, assetName, assetType, riskScore, riskLevel, findingsCount]
+      properties:
+        assetId:
+          type: integer
+        assetName:
+          type: string
+        assetType:
+          type: string
+        riskScore:
+          type: number
+        riskLevel:
+          type: string
+        findingsCount:
+          type: integer
+
+    ActivityItem:
+      type: object
+      required: [id, type, title, description, createdAt]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    ExposureCount:
+      type: object
+      required: [exposureType, count]
+      properties:
+        exposureType:
+          type: string
+        count:
+          type: integer
