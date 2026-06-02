@@ -14,4 +14,6 @@ export interface AssetInput {
   tags?: string[];
   ipAddress?: string;
   port?: number;
+  assignedClientId?: number;
+  assignedAccountManagerId?: number;
 }

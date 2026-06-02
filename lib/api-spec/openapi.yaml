@@ -1526,6 +1526,14 @@ components:
           type: ["integer", "null"]
         isActive:
           type: boolean
+        assignedClientId:
+          type: ["integer", "null"]
+        assignedClientName:
+          type: ["string", "null"]
+        assignedAccountManagerId:
+          type: ["integer", "null"]
+        assignedAccountManagerName:
+          type: ["string", "null"]
         lastScannedAt:
           type: ["string", "null"]
         createdAt:
@@ -1551,6 +1559,10 @@ components:
           type: string
         port:
           type: integer
+        assignedClientId:
+          type: integer
+        assignedAccountManagerId:
+          type: integer
 
     AssetUpdate:
       type: object
@@ -1567,6 +1579,12 @@ components:
           type: boolean
         riskLevel:
           type: string
+        verificationStatus:
+          type: string
+        assignedClientId:
+          type: ["integer", "null"]
+        assignedAccountManagerId:
+          type: ["integer", "null"]
 
     VerificationInput:
       type: object

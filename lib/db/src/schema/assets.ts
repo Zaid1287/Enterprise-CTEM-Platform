@@ -2,6 +2,7 @@ import { pgTable, serial, text, boolean, integer, timestamp } from "drizzle-orm/
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { tenantsTable } from "./tenants";
+import { usersTable } from "./users";
 
 export const assetsTable = pgTable("assets", {
   id: serial("id").primaryKey(),
@@ -17,6 +18,8 @@ export const assetsTable = pgTable("assets", {
   ipAddress: text("ip_address"),
   port: integer("port"),
   isActive: boolean("is_active").notNull().default(true),
+  assignedClientId: integer("assigned_client_id").references(() => usersTable.id),
+  assignedAccountManagerId: integer("assigned_account_manager_id").references(() => usersTable.id),
   lastScannedAt: timestamp("last_scanned_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

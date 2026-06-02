@@ -283,6 +283,10 @@ export const ListAssetsResponseItem = zod.object({
   "ipAddress": zod.string().nullish(),
   "port": zod.number().nullish(),
   "isActive": zod.boolean().optional(),
+  "assignedClientId": zod.number().nullish(),
+  "assignedClientName": zod.string().nullish(),
+  "assignedAccountManagerId": zod.number().nullish(),
+  "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
   "createdAt": zod.string()
 })
@@ -299,7 +303,9 @@ export const CreateAssetBody = zod.object({
   "description": zod.string().optional(),
   "tags": zod.array(zod.string()).optional(),
   "ipAddress": zod.string().optional(),
-  "port": zod.number().optional()
+  "port": zod.number().optional(),
+  "assignedClientId": zod.number().optional(),
+  "assignedAccountManagerId": zod.number().optional()
 })
 
 
@@ -323,6 +329,10 @@ export const GetAssetResponse = zod.object({
   "ipAddress": zod.string().nullish(),
   "port": zod.number().nullish(),
   "isActive": zod.boolean().optional(),
+  "assignedClientId": zod.number().nullish(),
+  "assignedClientName": zod.string().nullish(),
+  "assignedAccountManagerId": zod.number().nullish(),
+  "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
   "createdAt": zod.string()
 })
@@ -340,7 +350,10 @@ export const UpdateAssetBody = zod.object({
   "description": zod.string().optional(),
   "tags": zod.array(zod.string()).optional(),
   "isActive": zod.boolean().optional(),
-  "riskLevel": zod.string().optional()
+  "riskLevel": zod.string().optional(),
+  "verificationStatus": zod.string().optional(),
+  "assignedClientId": zod.number().nullish(),
+  "assignedAccountManagerId": zod.number().nullish()
 })
 
 export const UpdateAssetResponse = zod.object({
@@ -356,6 +369,10 @@ export const UpdateAssetResponse = zod.object({
   "ipAddress": zod.string().nullish(),
   "port": zod.number().nullish(),
   "isActive": zod.boolean().optional(),
+  "assignedClientId": zod.number().nullish(),
+  "assignedClientName": zod.string().nullish(),
+  "assignedAccountManagerId": zod.number().nullish(),
+  "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
   "createdAt": zod.string()
 })

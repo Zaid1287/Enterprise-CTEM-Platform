@@ -1,18 +1,22 @@
+import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import {
-  useGetAsset, useListFindings, useGetAssetRiskScore,
+  useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
 } from "@workspace/api-client-react";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, ExternalLink, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
-import { cn, severityBgColor, statusBadgeClass, riskLevelBg, capitalize, formatDateTime, formatDate } from "@/lib/utils";
+import { cn, severityBgColor, statusBadgeClass, riskLevelBg, capitalize, formatDate } from "@/lib/utils";
 
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const id = parseInt(params.id ?? "0", 10);
+  const queryClient = useQueryClient();
+  const [verifying, setVerifying] = useState(false);
 
   const { data: asset, isLoading } = useGetAsset(id, {
     query: { enabled: !!id, queryKey: getGetAssetQueryKey(id) },
@@ -23,6 +27,17 @@ export default function AssetDetailPage() {
   const { data: riskScore } = useGetAssetRiskScore(id, {
     query: { enabled: !!id, queryKey: getGetAssetRiskScoreQueryKey(id) },
   });
+  const verifyAsset = useCheckAssetVerification();
+
+  const handleVerify = async () => {
+    setVerifying(true);
+    try {
+      await verifyAsset.mutateAsync({ assetId: id });
+      queryClient.invalidateQueries({ queryKey: getGetAssetQueryKey(id) });
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const a = asset as any;
   const rs = riskScore as any;
@@ -41,10 +56,22 @@ export default function AssetDetailPage() {
       {/* Header */}
       <div className="bg-card border border-border rounded-xl p-5">
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-xs bg-accent/50 px-2 py-0.5 rounded">{a.type}</span>
               <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", statusBadgeClass(a.verificationStatus))}>{a.verificationStatus}</span>
+              {a.verificationStatus !== "verified" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2 text-xs border-green-500/40 text-green-500 hover:bg-green-500/10 hover:text-green-400"
+                  disabled={verifying}
+                  onClick={handleVerify}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+                  {verifying ? "Verifying…" : "Mark Verified"}
+                </Button>
+              )}
             </div>
             <h1 className="text-base font-semibold">{a.name}</h1>
             <p className="text-sm font-mono text-muted-foreground mt-0.5">{a.value}</p>
@@ -73,6 +100,24 @@ export default function AssetDetailPage() {
             </div>
           ))}
         </div>
+
+        {/* Assignment info */}
+        {(a.assignedClientName || a.assignedAccountManagerName) && (
+          <div className="grid grid-cols-2 gap-3 mt-3">
+            {a.assignedClientName && (
+              <div className="bg-accent/40 rounded-lg p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Client</p>
+                <p className="text-xs font-medium mt-0.5">{a.assignedClientName}</p>
+              </div>
+            )}
+            {a.assignedAccountManagerName && (
+              <div className="bg-accent/40 rounded-lg p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Account Manager</p>
+                <p className="text-xs font-medium mt-0.5">{a.assignedAccountManagerName}</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {a.tags?.length > 0 && (
           <div className="flex gap-1.5 flex-wrap mt-3">

@@ -23,6 +23,14 @@ export interface Asset {
   port?: number | null;
   isActive?: boolean;
   /** @nullable */
+  assignedClientId?: number | null;
+  /** @nullable */
+  assignedClientName?: string | null;
+  /** @nullable */
+  assignedAccountManagerId?: number | null;
+  /** @nullable */
+  assignedAccountManagerName?: string | null;
+  /** @nullable */
   lastScannedAt?: string | null;
   createdAt: string;
 }

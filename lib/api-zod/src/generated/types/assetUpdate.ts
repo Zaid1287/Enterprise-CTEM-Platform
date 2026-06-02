@@ -12,4 +12,9 @@ export interface AssetUpdate {
   tags?: string[];
   isActive?: boolean;
   riskLevel?: string;
+  verificationStatus?: string;
+  /** @nullable */
+  assignedClientId?: number | null;
+  /** @nullable */
+  assignedAccountManagerId?: number | null;
 }

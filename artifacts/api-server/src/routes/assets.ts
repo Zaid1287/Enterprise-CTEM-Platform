@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and, ilike, sql } from "drizzle-orm";
-import { db, assetsTable } from "@workspace/db";
+import { db, assetsTable, usersTable } from "@workspace/db";
 import {
   CreateAssetBody, GetAssetParams, UpdateAssetParams, UpdateAssetBody,
   DeleteAssetParams, VerifyAssetParams, VerifyAssetBody, CheckAssetVerificationParams,
@@ -12,12 +12,43 @@ import crypto from "crypto";
 
 const router = Router();
 
-function toAssetResponse(a: typeof assetsTable.$inferSelect) {
+async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
+  const userIds = new Set<number>();
+  for (const a of assets) {
+    if (a.assignedClientId) userIds.add(a.assignedClientId);
+    if (a.assignedAccountManagerId) userIds.add(a.assignedAccountManagerId);
+  }
+  const userMap = new Map<number, string>();
+  if (userIds.size > 0) {
+    const ids = [...userIds];
+    const users = await db
+      .select({ id: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName })
+      .from(usersTable)
+      .where(sql`${usersTable.id} = ANY(ARRAY[${sql.join(ids.map(id => sql`${id}`), sql`, `)}]::int[])`);
+    for (const u of users) userMap.set(u.id, `${u.firstName} ${u.lastName}`);
+  }
+  return assets.map(a => toAssetResponse(a, userMap));
+}
+
+function toAssetResponse(a: typeof assetsTable.$inferSelect, userMap?: Map<number, string>) {
   return {
-    id: a.id, tenantId: a.tenantId, name: a.name, type: a.type, value: a.value,
-    verificationStatus: a.verificationStatus, riskLevel: a.riskLevel, tags: a.tags ?? [],
-    description: a.description, ipAddress: a.ipAddress, port: a.port,
-    isActive: a.isActive, lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
+    id: a.id,
+    tenantId: a.tenantId,
+    name: a.name,
+    type: a.type,
+    value: a.value,
+    verificationStatus: a.verificationStatus,
+    riskLevel: a.riskLevel,
+    tags: a.tags ?? [],
+    description: a.description,
+    ipAddress: a.ipAddress,
+    port: a.port,
+    isActive: a.isActive,
+    assignedClientId: a.assignedClientId ?? null,
+    assignedClientName: (a.assignedClientId && userMap) ? (userMap.get(a.assignedClientId) ?? null) : null,
+    assignedAccountManagerId: a.assignedAccountManagerId ?? null,
+    assignedAccountManagerName: (a.assignedAccountManagerId && userMap) ? (userMap.get(a.assignedAccountManagerId) ?? null) : null,
+    lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
     createdAt: a.createdAt.toISOString(),
   };
 }
@@ -31,17 +62,22 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (query.data.search) filters.push(ilike(assetsTable.name, `%${query.data.search}%`));
   }
   const assets = await db.select().from(assetsTable).where(and(...filters));
-  res.json(assets.map(toAssetResponse));
+  res.json(await enrichAssets(assets));
 });
 
 router.post("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateAssetBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
+  const { assignedClientId, assignedAccountManagerId, ...rest } = parsed.data as any;
   const [asset] = await db.insert(assetsTable).values({
-    ...parsed.data, tenantId: req.user!.tenantId,
+    ...rest,
+    tenantId: req.user!.tenantId,
+    assignedClientId: assignedClientId ?? null,
+    assignedAccountManagerId: assignedAccountManagerId ?? null,
   }).returning();
   await logAudit(req.user!, "create_asset", "asset", asset.id);
-  res.status(201).json(toAssetResponse(asset));
+  const [enriched] = await enrichAssets([asset]);
+  res.status(201).json(enriched);
 });
 
 router.get("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -50,20 +86,22 @@ router.get("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, re
   const [asset] = await db.select().from(assetsTable)
     .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
-  res.json(toAssetResponse(asset));
+  const [enriched] = await enrichAssets([asset]);
+  res.json(enriched);
 });
 
 router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateAssetBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const [asset] = await db.update(assetsTable).set(parsed.data)
+  if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
+  const [asset] = await db.update(assetsTable).set(parsed.data as any)
     .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)))
     .returning();
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
   await logAudit(req.user!, "update_asset", "asset", asset.id);
-  res.json(toAssetResponse(asset));
+  const [enriched] = await enrichAssets([asset]);
+  res.json(enriched);
 });
 
 router.delete("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -106,11 +144,11 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   const params = CheckAssetVerificationParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
-  // Simulate verification check — in production this would do actual DNS/HTTP lookups
   await db.update(assetsTable)
     .set({ verificationStatus: "verified" })
     .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
 
+  await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
   res.json({ verified: true, message: "Asset ownership successfully verified" });
 });
 

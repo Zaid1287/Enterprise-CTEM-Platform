@@ -111,6 +111,14 @@ export interface Asset {
   port?: number | null;
   isActive?: boolean;
   /** @nullable */
+  assignedClientId?: number | null;
+  /** @nullable */
+  assignedClientName?: string | null;
+  /** @nullable */
+  assignedAccountManagerId?: number | null;
+  /** @nullable */
+  assignedAccountManagerName?: string | null;
+  /** @nullable */
   lastScannedAt?: string | null;
   createdAt: string;
 }
@@ -123,6 +131,8 @@ export interface AssetInput {
   tags?: string[];
   ipAddress?: string;
   port?: number;
+  assignedClientId?: number;
+  assignedAccountManagerId?: number;
 }
 
 export interface AssetUpdate {
@@ -131,6 +141,11 @@ export interface AssetUpdate {
   tags?: string[];
   isActive?: boolean;
   riskLevel?: string;
+  verificationStatus?: string;
+  /** @nullable */
+  assignedClientId?: number | null;
+  /** @nullable */
+  assignedAccountManagerId?: number | null;
 }
 
 export interface VerificationInput {
