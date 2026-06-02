@@ -45,17 +45,17 @@ export default function FindingsPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search findings..." className="pl-8 h-8 text-sm" />
         </div>
-        <Select value={severity} onValueChange={setSeverity}>
+        <Select value={severity || "_all_"} onValueChange={(v) => setSeverity(v === "_all_" ? "" : v)}>
           <SelectTrigger className="w-32 h-8 text-sm"><SelectValue placeholder="Severity" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All</SelectItem>
+            <SelectItem value="_all_">All</SelectItem>
             {SEVERITIES.map(s => <SelectItem key={s} value={s}>{capitalize(s)}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={status} onValueChange={setStatus}>
+        <Select value={status || "_all_"} onValueChange={(v) => setStatus(v === "_all_" ? "" : v)}>
           <SelectTrigger className="w-36 h-8 text-sm"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All</SelectItem>
+            <SelectItem value="_all_">All</SelectItem>
             {STATUSES.map(s => <SelectItem key={s} value={s}>{capitalize(s)}</SelectItem>)}
           </SelectContent>
         </Select>

@@ -100,12 +100,12 @@ export default function CompliancePage() {
               : "All Controls"}
           </h2>
           <div className="flex gap-2">
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter || "_all_"} onValueChange={(v) => setStatusFilter(v === "_all_" ? "" : v)}>
               <SelectTrigger className="w-36 h-7 text-xs">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All</SelectItem>
+                <SelectItem value="_all_">All</SelectItem>
                 <SelectItem value="compliant">Compliant</SelectItem>
                 <SelectItem value="in_progress">In Progress</SelectItem>
                 <SelectItem value="non_compliant">Non-Compliant</SelectItem>

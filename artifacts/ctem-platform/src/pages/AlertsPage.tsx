@@ -63,10 +63,10 @@ export default function AlertsPage() {
 
         <TabsContent value="inbox" className="space-y-3 mt-3">
           <div className="flex gap-2">
-            <Select value={severityFilter} onValueChange={setSeverityFilter}>
+            <Select value={severityFilter || "_all_"} onValueChange={(v) => setSeverityFilter(v === "_all_" ? "" : v)}>
               <SelectTrigger className="w-32 h-7 text-xs"><SelectValue placeholder="All severity" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All</SelectItem>
+                <SelectItem value="_all_">All</SelectItem>
                 <SelectItem value="critical">Critical</SelectItem>
                 <SelectItem value="high">High</SelectItem>
                 <SelectItem value="medium">Medium</SelectItem>

@@ -1,10 +1,11 @@
 import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Suspense, lazy } from "react";
+import { attemptTokenRefresh } from "@/lib/auth";
 
 // Lazy-load pages for faster initial bundle
 const LoginPage = lazy(() => import("@/pages/LoginPage"));
@@ -25,10 +26,30 @@ const AuditLogsPage = lazy(() => import("@/pages/AuditLogsPage"));
 const UsersPage = lazy(() => import("@/pages/UsersPage"));
 const TenantSettingsPage = lazy(() => import("@/pages/TenantSettingsPage"));
 
+async function handle401(error: unknown) {
+  if ((error as any)?.status === 401) {
+    const refreshed = await attemptTokenRefresh();
+    if (refreshed) {
+      queryClient.invalidateQueries();
+    } else {
+      useAuth.getState().logout();
+    }
+  }
+}
+
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: handle401,
+  }),
+  mutationCache: new MutationCache({
+    onError: handle401,
+  }),
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount, error) => {
+        if ((error as any)?.status === 401) return false;
+        return failureCount < 1;
+      },
       staleTime: 30_000,
       refetchOnWindowFocus: false,
     },
