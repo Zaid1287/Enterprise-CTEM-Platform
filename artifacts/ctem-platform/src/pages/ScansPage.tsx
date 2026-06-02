@@ -42,7 +42,7 @@ export default function ScansPage() {
       alert("Select at least one asset");
       return;
     }
-    await createScan.mutateAsync({ ...form } as any);
+    await createScan.mutateAsync({ data: form } as any);
     queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
     setShowCreate(false);
     setForm({ name: "", type: "full", assetIds: [] });

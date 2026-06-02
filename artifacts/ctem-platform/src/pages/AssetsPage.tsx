@@ -34,7 +34,7 @@ export default function AssetsPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    await createAsset.mutateAsync({ ...newAsset } as any);
+    await createAsset.mutateAsync({ data: newAsset } as any);
     queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
     setShowCreate(false);
     setNewAsset({ name: "", type: "domain", value: "", description: "" });

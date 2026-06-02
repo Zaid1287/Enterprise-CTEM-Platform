@@ -36,7 +36,7 @@ export default function ReportsPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    await createReport.mutateAsync(form as any);
+    await createReport.mutateAsync({ data: form } as any);
     queryClient.invalidateQueries({ queryKey: getListReportsQueryKey() });
     setShowCreate(false);
     setForm({ title: "", type: "executive", format: "pdf" });

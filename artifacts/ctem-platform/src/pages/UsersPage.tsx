@@ -29,7 +29,7 @@ export default function UsersPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    await createUser.mutateAsync(form as any);
+    await createUser.mutateAsync({ data: form } as any);
     queryClient.invalidateQueries({ queryKey: getListUsersQueryKey() });
     setShowCreate(false);
     setForm({ email: "", firstName: "", lastName: "", role: "client", password: "" });

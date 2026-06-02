@@ -44,27 +44,27 @@ export default function AiCopilotPage() {
   const handleExplain = async () => {
     if (!selectedFinding) return;
     setExplanation(null);
-    const res = await explainMutation.mutateAsync({ findingId: parseInt(selectedFinding) } as any);
+    const res = await explainMutation.mutateAsync({ data: { findingId: parseInt(selectedFinding) } } as any);
     setExplanation((res as any).content);
   };
 
   const handleRemediation = async () => {
     if (!selectedFinding) return;
     setRemediation(null);
-    const res = await remediationMutation.mutateAsync({ findingId: parseInt(selectedFinding) } as any);
+    const res = await remediationMutation.mutateAsync({ data: { findingId: parseInt(selectedFinding) } } as any);
     setRemediation(res);
   };
 
   const handleExecSummary = async () => {
     setExecSummary(null);
-    const res = await execSummaryMutation.mutateAsync({} as any);
+    const res = await execSummaryMutation.mutateAsync({ data: {} } as any);
     setExecSummary((res as any).content);
   };
 
   const handleComplianceGuidance = async () => {
     if (!selectedControl) return;
     setCompliance(null);
-    const res = await complianceMutation.mutateAsync({ controlId: parseInt(selectedControl) } as any);
+    const res = await complianceMutation.mutateAsync({ data: { controlId: parseInt(selectedControl) } } as any);
     setCompliance((res as any).content);
   };
 

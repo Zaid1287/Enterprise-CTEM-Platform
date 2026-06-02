@@ -37,7 +37,7 @@ export default function AlertsPage() {
 
   const handleCreateRule = async (e: React.FormEvent) => {
     e.preventDefault();
-    await createRule.mutateAsync(ruleForm as any);
+    await createRule.mutateAsync({ data: ruleForm } as any);
     queryClient.invalidateQueries({ queryKey: getListAlertRulesQueryKey() });
     setShowCreateRule(false);
     setRuleForm({ name: "", triggerType: "new_vulnerability", channel: "email", destination: "" });

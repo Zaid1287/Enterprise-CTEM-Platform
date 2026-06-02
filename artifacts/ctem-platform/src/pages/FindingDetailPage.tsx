@@ -55,14 +55,14 @@ export default function FindingDetailPage() {
   const handleExplain = async () => {
     setAiType("explanation");
     setAiContent(null);
-    const res = await explainMutation.mutateAsync({ findingId: id } as any);
+    const res = await explainMutation.mutateAsync({ data: { findingId: id } } as any);
     setAiContent((res as any).content);
   };
 
   const handleRemediation = async () => {
     setAiType("remediation");
     setRemSteps(null);
-    const res = await remediationMutation.mutateAsync({ findingId: id } as any);
+    const res = await remediationMutation.mutateAsync({ data: { findingId: id } } as any);
     setRemSteps(res as any);
   };
 

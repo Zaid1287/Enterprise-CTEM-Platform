@@ -28,7 +28,7 @@ export default function AssetGroupsPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    await createGroup.mutateAsync(form as any);
+    await createGroup.mutateAsync({ data: form } as any);
     queryClient.invalidateQueries({ queryKey: getListAssetGroupsQueryKey() });
     setShowCreate(false);
     setForm({ name: "", description: "", assetIds: [] });
