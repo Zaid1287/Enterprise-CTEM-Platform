@@ -16,6 +16,12 @@ export interface SecurityTool {
   category: string;
   /** @nullable */
   runCommand?: string | null;
+  /** @nullable */
+  installCommand?: string | null;
+  /** @nullable */
+  updateCommand?: string | null;
+  /** @nullable */
+  outputFormat?: string | null;
   isActive: boolean;
   /** @nullable */
   createdBy?: number | null;

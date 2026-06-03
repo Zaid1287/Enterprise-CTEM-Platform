@@ -509,6 +509,12 @@ export interface SecurityTool {
   category: string;
   /** @nullable */
   runCommand?: string | null;
+  /** @nullable */
+  installCommand?: string | null;
+  /** @nullable */
+  updateCommand?: string | null;
+  /** @nullable */
+  outputFormat?: string | null;
   isActive: boolean;
   /** @nullable */
   createdBy?: number | null;
@@ -521,6 +527,9 @@ export interface SecurityToolInput {
   githubUrl: string;
   category?: string;
   runCommand?: string;
+  installCommand?: string;
+  updateCommand?: string;
+  outputFormat?: string;
 }
 
 export interface SecurityToolUpdate {
@@ -531,6 +540,12 @@ export interface SecurityToolUpdate {
   category?: string;
   /** @nullable */
   runCommand?: string | null;
+  /** @nullable */
+  installCommand?: string | null;
+  /** @nullable */
+  updateCommand?: string | null;
+  /** @nullable */
+  outputFormat?: string | null;
   isActive?: boolean;
 }
 

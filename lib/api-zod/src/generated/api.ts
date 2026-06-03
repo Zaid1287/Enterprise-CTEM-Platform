@@ -1215,6 +1215,9 @@ export const ListSecurityToolsResponseItem = zod.object({
   "githubUrl": zod.string(),
   "category": zod.string(),
   "runCommand": zod.string().nullish(),
+  "installCommand": zod.string().nullish(),
+  "updateCommand": zod.string().nullish(),
+  "outputFormat": zod.string().nullish(),
   "isActive": zod.boolean(),
   "createdBy": zod.number().nullish(),
   "createdAt": zod.string()
@@ -1230,7 +1233,10 @@ export const CreateSecurityToolBody = zod.object({
   "description": zod.string().optional(),
   "githubUrl": zod.string(),
   "category": zod.string().optional(),
-  "runCommand": zod.string().optional()
+  "runCommand": zod.string().optional(),
+  "installCommand": zod.string().optional(),
+  "updateCommand": zod.string().optional(),
+  "outputFormat": zod.string().optional()
 })
 
 
@@ -1249,6 +1255,9 @@ export const GetSecurityToolResponse = zod.object({
   "githubUrl": zod.string(),
   "category": zod.string(),
   "runCommand": zod.string().nullish(),
+  "installCommand": zod.string().nullish(),
+  "updateCommand": zod.string().nullish(),
+  "outputFormat": zod.string().nullish(),
   "isActive": zod.boolean(),
   "createdBy": zod.number().nullish(),
   "createdAt": zod.string()
@@ -1268,6 +1277,9 @@ export const UpdateSecurityToolBody = zod.object({
   "githubUrl": zod.string().optional(),
   "category": zod.string().optional(),
   "runCommand": zod.string().nullish(),
+  "installCommand": zod.string().nullish(),
+  "updateCommand": zod.string().nullish(),
+  "outputFormat": zod.string().nullish(),
   "isActive": zod.boolean().optional()
 })
 
@@ -1279,6 +1291,9 @@ export const UpdateSecurityToolResponse = zod.object({
   "githubUrl": zod.string(),
   "category": zod.string(),
   "runCommand": zod.string().nullish(),
+  "installCommand": zod.string().nullish(),
+  "updateCommand": zod.string().nullish(),
+  "outputFormat": zod.string().nullish(),
   "isActive": zod.boolean(),
   "createdBy": zod.number().nullish(),
   "createdAt": zod.string()

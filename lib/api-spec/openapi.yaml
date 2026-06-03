@@ -2442,6 +2442,12 @@ components:
           type: string
         runCommand:
           type: ["string", "null"]
+        installCommand:
+          type: ["string", "null"]
+        updateCommand:
+          type: ["string", "null"]
+        outputFormat:
+          type: ["string", "null"]
         isActive:
           type: boolean
         createdBy:
@@ -2463,6 +2469,12 @@ components:
           type: string
         runCommand:
           type: string
+        installCommand:
+          type: string
+        updateCommand:
+          type: string
+        outputFormat:
+          type: string
 
     SecurityToolUpdate:
       type: object
@@ -2476,6 +2488,12 @@ components:
         category:
           type: string
         runCommand:
+          type: ["string", "null"]
+        installCommand:
+          type: ["string", "null"]
+        updateCommand:
+          type: ["string", "null"]
+        outputFormat:
           type: ["string", "null"]
         isActive:
           type: boolean

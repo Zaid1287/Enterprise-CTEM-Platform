@@ -8,12 +8,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Trash2, Play, GitBranch, ChevronUp, ChevronDown, Settings2,
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
-  ArrowRight, ToggleLeft, ToggleRight, Eye,
+  ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn, capitalize, formatDateTime } from "@/lib/utils";
 
 const CATEGORIES = ["recon", "vuln_scan", "port_scan", "ssl_check", "web_recon", "osint"];
+const OUTPUT_FORMATS = ["json", "text", "xml", "csv", "markdown"];
 
 const categoryColor: Record<string, string> = {
   recon: "bg-blue-500/15 text-blue-400 border-blue-500/30",
@@ -40,7 +40,10 @@ const statusIcon = (status: string) => {
 
 type Tab = "tools" | "pipeline" | "runs";
 
-const emptyForm = { name: "", githubUrl: "", category: "recon", description: "", runCommand: "" };
+const emptyForm = {
+  name: "", githubUrl: "", category: "recon", description: "",
+  runCommand: "", installCommand: "", updateCommand: "", outputFormat: "json",
+};
 
 export default function SecurityToolsPage() {
   const [tab, setTab] = useState<Tab>("tools");
@@ -50,6 +53,7 @@ export default function SecurityToolsPage() {
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
   const [pipelineDirty, setPipelineDirty] = useState(false);
   const [localPipeline, setLocalPipeline] = useState<any[]>([]);
+  const [seedingDefaults, setSeedingDefaults] = useState(false);
   const qc = useQueryClient();
 
   const { data: toolsData, isLoading: toolsLoading } = useListSecurityTools();
@@ -73,7 +77,6 @@ export default function SecurityToolsPage() {
   const runTool = useRunSecurityTool();
   const setPipeline = useSetToolPipeline();
 
-  // Sync local pipeline from server when tab changes or data loads
   const effectivePipeline = pipelineDirty ? localPipeline : pipeline;
 
   const handleAddTool = async (e: React.FormEvent) => {
@@ -104,6 +107,18 @@ export default function SecurityToolsPage() {
       setTab("runs");
     } finally {
       setRunningId(null);
+    }
+  };
+
+  const handleSeedDefaults = async () => {
+    setSeedingDefaults(true);
+    try {
+      const res = await fetch("/api/tools/seed-defaults", { method: "POST", headers: { "Authorization": `Bearer ${sessionStorage.getItem("access_token")}` } });
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: getListSecurityToolsQueryKey() });
+      }
+    } finally {
+      setSeedingDefaults(false);
     }
   };
 
@@ -179,21 +194,29 @@ export default function SecurityToolsPage() {
           <h1 className="text-lg font-semibold">Security Tools</h1>
           <p className="text-sm text-muted-foreground">Add GitHub-hosted tools, configure execution order, and run against assets</p>
         </div>
-        {tab === "tools" && (
-          <Button size="sm" onClick={() => setShowAdd(true)}>
-            <Plus className="w-4 h-4 mr-1.5" /> Add Tool
-          </Button>
-        )}
-        {tab === "pipeline" && pipelineDirty && (
-          <Button size="sm" onClick={savePipeline} disabled={setPipeline.isPending}>
-            {setPipeline.isPending ? "Saving…" : "Save Pipeline"}
-          </Button>
-        )}
-        {tab === "runs" && (
-          <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: getListToolRunsQueryKey({}) })}>
-            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {tab === "tools" && (
+            <>
+              <Button variant="outline" size="sm" onClick={handleSeedDefaults} disabled={seedingDefaults}>
+                <Download className="w-3.5 h-3.5 mr-1.5" />
+                {seedingDefaults ? "Loading…" : "Load Defaults"}
+              </Button>
+              <Button size="sm" onClick={() => setShowAdd(true)}>
+                <Plus className="w-4 h-4 mr-1.5" /> Add Tool
+              </Button>
+            </>
+          )}
+          {tab === "pipeline" && pipelineDirty && (
+            <Button size="sm" onClick={savePipeline} disabled={setPipeline.isPending}>
+              {setPipeline.isPending ? "Saving…" : "Save Pipeline"}
+            </Button>
+          )}
+          {tab === "runs" && (
+            <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: getListToolRunsQueryKey({}) })}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -219,11 +242,15 @@ export default function SecurityToolsPage() {
       {/* ── Tool Library ── */}
       {tab === "tools" && (
         <div className="space-y-2">
-          {toolsLoading && [...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+          {toolsLoading && [...Array(3)].map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
           {!toolsLoading && tools.length === 0 && (
             <div className="bg-card border border-border rounded-xl p-8 text-center">
               <GitBranch className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No tools yet. Add a GitHub-hosted security tool to get started.</p>
+              <p className="text-sm text-muted-foreground mb-3">No tools yet. Add a GitHub-hosted security tool or load the built-in defaults.</p>
+              <Button variant="outline" size="sm" onClick={handleSeedDefaults} disabled={seedingDefaults}>
+                <Download className="w-3.5 h-3.5 mr-1.5" />
+                {seedingDefaults ? "Loading…" : "Load Default Tools"}
+              </Button>
             </div>
           )}
           {tools.map((tool: any) => (
@@ -237,17 +264,43 @@ export default function SecurityToolsPage() {
                   <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", categoryColor[tool.category] ?? categoryColor.recon)}>
                     {tool.category}
                   </span>
+                  {tool.outputFormat && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-accent/40 text-muted-foreground border-border flex items-center gap-1">
+                      <FileText className="w-2.5 h-2.5" />{tool.outputFormat}
+                    </span>
+                  )}
                   {!tool.isActive && <span className="text-[10px] text-muted-foreground bg-accent/50 px-1.5 py-0.5 rounded">inactive</span>}
                 </div>
                 <a href={tool.githubUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
                   <ExternalLink className="w-3 h-3" /> {tool.githubUrl}
                 </a>
                 {tool.description && <p className="text-xs text-muted-foreground mt-1">{tool.description}</p>}
-                {tool.runCommand && (
-                  <code className="text-[10px] font-mono bg-accent/60 text-foreground/80 px-1.5 py-0.5 rounded mt-1 inline-block">
-                    {tool.runCommand}
-                  </code>
-                )}
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {tool.installCommand && (
+                    <div className="flex items-center gap-1">
+                      <Download className="w-2.5 h-2.5 text-muted-foreground" />
+                      <code className="text-[10px] font-mono bg-accent/60 text-foreground/80 px-1.5 py-0.5 rounded truncate max-w-[220px]" title={tool.installCommand}>
+                        {tool.installCommand}
+                      </code>
+                    </div>
+                  )}
+                  {tool.runCommand && (
+                    <div className="flex items-center gap-1">
+                      <Play className="w-2.5 h-2.5 text-muted-foreground" />
+                      <code className="text-[10px] font-mono bg-accent/60 text-foreground/80 px-1.5 py-0.5 rounded truncate max-w-[220px]" title={tool.runCommand}>
+                        {tool.runCommand}
+                      </code>
+                    </div>
+                  )}
+                  {tool.updateCommand && (
+                    <div className="flex items-center gap-1">
+                      <RotateCcw className="w-2.5 h-2.5 text-muted-foreground" />
+                      <code className="text-[10px] font-mono bg-accent/60 text-foreground/80 px-1.5 py-0.5 rounded truncate max-w-[220px]" title={tool.updateCommand}>
+                        {tool.updateCommand}
+                      </code>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <Button
@@ -354,7 +407,6 @@ export default function SecurityToolsPage() {
             </div>
           </div>
 
-          {/* Available tools not in pipeline */}
           {tools.filter((t: any) => !effectivePipeline.some((s: any) => s.toolId === t.id)).length > 0 && (
             <div className="bg-card border border-border rounded-xl p-4">
               <h3 className="text-sm font-medium mb-2 text-muted-foreground">Available tools (not in pipeline)</h3>
@@ -434,7 +486,6 @@ export default function SecurityToolsPage() {
             </table>
           </div>
 
-          {/* Output panel */}
           {selectedRun && (
             <div className="w-[420px] shrink-0 bg-card border border-border rounded-xl flex flex-col">
               <div className="flex items-center justify-between px-4 py-3 border-b border-border">
@@ -465,35 +516,65 @@ export default function SecurityToolsPage() {
 
       {/* Add Tool Dialog */}
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Security Tool</DialogTitle></DialogHeader>
           <form onSubmit={handleAddTool} className="space-y-3 mt-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Tool Name *</Label>
-              <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Nuclei, Subfinder, Nmap" required className="h-9" />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Tool Name *</Label>
+                <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. httpx, subfinder" required className="h-9" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Category</Label>
+                <Select value={form.category} onValueChange={v => setForm(p => ({ ...p, category: v }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+
             <div className="space-y-1.5">
               <Label className="text-xs">GitHub URL *</Label>
-              <Input value={form.githubUrl} onChange={e => setForm(p => ({ ...p, githubUrl: e.target.value }))} placeholder="https://github.com/projectdiscovery/nuclei" required className="h-9 font-mono text-xs" />
+              <Input value={form.githubUrl} onChange={e => setForm(p => ({ ...p, githubUrl: e.target.value }))} placeholder="https://github.com/projectdiscovery/httpx" required className="h-9 font-mono text-xs" />
             </div>
+
             <div className="space-y-1.5">
-              <Label className="text-xs">Category</Label>
-              <Select value={form.category} onValueChange={v => setForm(p => ({ ...p, category: v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label className="text-xs">Install Command</Label>
+              <Input value={form.installCommand} onChange={e => setForm(p => ({ ...p, installCommand: e.target.value }))} placeholder="go install github.com/projectdiscovery/httpx/cmd/httpx@latest" className="h-9 font-mono text-xs" />
             </div>
+
             <div className="space-y-1.5">
-              <Label className="text-xs">Run Command (optional)</Label>
-              <Input value={form.runCommand} onChange={e => setForm(p => ({ ...p, runCommand: e.target.value }))} placeholder="nuclei -u {target} -t cves/" className="h-9 font-mono text-xs" />
-              <p className="text-[10px] text-muted-foreground">Use <code className="bg-accent px-1 rounded">{"{target}"}</code> as placeholder for the asset value</p>
+              <Label className="text-xs">Update Command</Label>
+              <Input value={form.updateCommand} onChange={e => setForm(p => ({ ...p, updateCommand: e.target.value }))} placeholder="go install github.com/projectdiscovery/httpx/cmd/httpx@latest" className="h-9 font-mono text-xs" />
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Run Command</Label>
+                <Input value={form.runCommand} onChange={e => setForm(p => ({ ...p, runCommand: e.target.value }))} placeholder="httpx -u {target} -json" className="h-9 font-mono text-xs" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Output Format</Label>
+                <Select value={form.outputFormat} onValueChange={v => setForm(p => ({ ...p, outputFormat: v }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {OUTPUT_FORMATS.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-muted-foreground">
+              Use <code className="bg-accent px-1 rounded">{"{target}"}</code> in run command as placeholder for the asset value
+            </p>
+
             <div className="space-y-1.5">
               <Label className="text-xs">Description (optional)</Label>
               <Textarea value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} className="h-16 resize-none text-xs" placeholder="What does this tool do?" />
             </div>
+
             <DialogFooter className="mt-4">
               <Button variant="outline" type="button" onClick={() => setShowAdd(false)}>Cancel</Button>
               <Button type="submit" disabled={createTool.isPending}>{createTool.isPending ? "Adding…" : "Add Tool"}</Button>

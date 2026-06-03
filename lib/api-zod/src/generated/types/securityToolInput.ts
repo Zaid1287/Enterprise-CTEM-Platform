@@ -12,4 +12,7 @@ export interface SecurityToolInput {
   githubUrl: string;
   category?: string;
   runCommand?: string;
+  installCommand?: string;
+  updateCommand?: string;
+  outputFormat?: string;
 }
