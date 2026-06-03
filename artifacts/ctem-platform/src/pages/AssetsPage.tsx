@@ -1,19 +1,20 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 
 import {
   useListAssets, useCreateAsset, useDeleteAsset, useCheckAssetVerification,
-  useListUsers, useGetToolPipeline,
-  getListAssetsQueryKey, getGetToolPipelineQueryKey,
+  useListUsers, useGetToolPipeline, useListScans, useStopScan, useRunPipelineScan,
+  getListAssetsQueryKey, getGetToolPipelineQueryKey, getListScansQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck, Zap } from "lucide-react";
+import { Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck, Zap, Square, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, statusBadgeClass, capitalize, formatDate, riskLevelBg } from "@/lib/utils";
 import { Link } from "wouter";
 import RunScanDialog from "@/components/scan/RunScanDialog";
@@ -32,9 +33,12 @@ export default function AssetsPage() {
   const [typeFilter, setTypeFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [newAsset, setNewAsset] = useState({ ...emptyForm });
+  const [selectedToolIds, setSelectedToolIds] = useState<number[]>([]);
+  const [runAfterAdd, setRunAfterAdd] = useState(false);
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
   const [showRunScan, setShowRunScan] = useState(false);
   const [preSelectedAssetIds, setPreSelectedAssetIds] = useState<number[]>([]);
+  const [stoppingId, setStoppingId] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
   const params = { search: search || undefined, type: typeFilter || undefined };
@@ -45,16 +49,34 @@ export default function AssetsPage() {
   const { data: pipelineData } = useGetToolPipeline({
     query: { queryKey: getGetToolPipelineQueryKey() },
   });
+  const { data: scansData } = useListScans(
+    { status: "running" } as any,
+    { query: { queryKey: getListScansQueryKey({ status: "running" } as any), refetchInterval: 5000 } },
+  );
 
   const users = (usersData as any[]) ?? [];
   const clients = users.filter((u: any) => u.role === "client");
   const accountManagers = users.filter((u: any) => u.role === "account_manager");
   const pipeline = (pipelineData as any[]) ?? [];
+  const enabledTools = pipeline.filter((s: any) => s.isEnabled);
   const allAssets = (assets as any[]) ?? [];
+  const runningScans = (scansData as any[]) ?? [];
+
+  const runningByAsset = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const scan of runningScans) {
+      for (const assetId of (scan.assetIds ?? [])) {
+        map[assetId] = scan.id;
+      }
+    }
+    return map;
+  }, [runningScans]);
 
   const createAsset = useCreateAsset();
   const deleteAsset = useDeleteAsset();
   const verifyAsset = useCheckAssetVerification();
+  const stopScan = useStopScan();
+  const runPipeline = useRunPipelineScan();
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,10 +88,25 @@ export default function AssetsPage() {
     };
     if (newAsset.assignedClientId) payload.assignedClientId = newAsset.assignedClientId;
     if (newAsset.assignedAccountManagerId) payload.assignedAccountManagerId = newAsset.assignedAccountManagerId;
-    await createAsset.mutateAsync({ data: payload } as any);
-    queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    const created = await createAsset.mutateAsync({ data: payload } as any);
+    await queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
     setShowCreate(false);
     setNewAsset({ ...emptyForm });
+
+    if (runAfterAdd && selectedToolIds.length > 0 && (created as any)?.id) {
+      const newId = (created as any).id;
+      const result = await runPipeline.mutateAsync({
+        data: {
+          name: `Scan – ${newAsset.name}`,
+          assetToolConfigs: [{ assetId: newId, toolIds: selectedToolIds }],
+        } as any,
+      });
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+      navigate(`/scan-reports/${(result as any).scanId}`);
+    }
+
+    setSelectedToolIds([]);
+    setRunAfterAdd(false);
   };
 
   const handleDelete = async (id: number) => {
@@ -88,19 +125,35 @@ export default function AssetsPage() {
     }
   };
 
-  function openRunScanAll() {
-    setPreSelectedAssetIds(allAssets.map((a: any) => a.id));
-    setShowRunScan(true);
-  }
+  const handleStop = async (scanId: number) => {
+    setStoppingId(scanId);
+    try {
+      await stopScan.mutateAsync({ scanId });
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+    } finally {
+      setStoppingId(null);
+    }
+  };
 
   function openRunScanOne(assetId: number) {
     setPreSelectedAssetIds([assetId]);
     setShowRunScan(true);
   }
 
+  function openRunScanAll() {
+    setPreSelectedAssetIds(allAssets.map((a: any) => a.id));
+    setShowRunScan(true);
+  }
+
   const pipelineTools = pipeline.map((s: any) => ({
     id: s.toolId, name: s.toolName, category: s.toolCategory, isActive: s.isEnabled,
   }));
+
+  function toggleTool(toolId: number) {
+    setSelectedToolIds(prev =>
+      prev.includes(toolId) ? prev.filter(id => id !== toolId) : [...prev, toolId]
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -167,64 +220,86 @@ export default function AssetsPage() {
                 {[...Array(9)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
               </tr>
             ))}
-            {!isLoading && allAssets.map((asset: any) => (
-              <tr key={asset.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
-                <td className="px-4 py-2.5">
-                  <Link href={`/assets/${asset.id}`}>
-                    <span className="font-medium text-primary hover:underline cursor-pointer">{asset.name}</span>
-                  </Link>
-                </td>
-                <td className="px-4 py-2.5">
-                  <span className="text-xs text-muted-foreground bg-accent/50 px-2 py-0.5 rounded">{asset.type}</span>
-                </td>
-                <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{asset.value}</td>
-                <td className="px-4 py-2.5">
-                  <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", riskLevelBg(asset.riskLevel))}>
-                    {asset.riskLevel}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5">
-                  <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", statusBadgeClass(asset.verificationStatus))}>
-                    {asset.verificationStatus}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">{asset.assignedClientName ?? "—"}</td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">{asset.assignedAccountManagerName ?? "—"}</td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(asset.lastScannedAt)}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-primary hover:text-primary hover:bg-primary/10"
-                      onClick={() => openRunScanOne(asset.id)}
-                    >
-                      <Zap className="w-3 h-3 mr-1" /> Scan
-                    </Button>
-                    {asset.verificationStatus !== "verified" && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs text-green-500 hover:text-green-400 hover:bg-green-500/10"
-                        disabled={verifyingId === asset.id}
-                        onClick={() => handleVerify(asset.id)}
-                      >
-                        <ShieldCheck className="w-3.5 h-3.5 mr-1" />
-                        {verifyingId === asset.id ? "…" : "Verify"}
-                      </Button>
-                    )}
+            {!isLoading && allAssets.map((asset: any) => {
+              const runningScanId = runningByAsset[asset.id];
+              const isRunning = Boolean(runningScanId);
+              return (
+                <tr key={asset.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
+                  <td className="px-4 py-2.5">
                     <Link href={`/assets/${asset.id}`}>
-                      <Button variant="ghost" size="icon" className="h-7 w-7">
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </Button>
+                      <span className="font-medium text-primary hover:underline cursor-pointer">{asset.name}</span>
                     </Link>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(asset.id)}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className="text-xs text-muted-foreground bg-accent/50 px-2 py-0.5 rounded">{asset.type}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{asset.value}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", riskLevelBg(asset.riskLevel))}>
+                      {asset.riskLevel}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", statusBadgeClass(asset.verificationStatus))}>
+                      {asset.verificationStatus}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{asset.assignedClientName ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{asset.assignedAccountManagerName ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                    {isRunning
+                      ? <span className="flex items-center gap-1 text-blue-400"><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</span>
+                      : formatDate(asset.lastScannedAt)
+                    }
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-1">
+                      {isRunning ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                          disabled={stoppingId === runningScanId}
+                          onClick={() => handleStop(runningScanId)}
+                        >
+                          <Square className="w-3 h-3 mr-1 fill-current" />
+                          {stoppingId === runningScanId ? "…" : "Stop"}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-primary hover:text-primary hover:bg-primary/10"
+                          onClick={() => openRunScanOne(asset.id)}
+                        >
+                          <Zap className="w-3 h-3 mr-1" /> Run
+                        </Button>
+                      )}
+                      {asset.verificationStatus !== "verified" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-green-500 hover:text-green-400 hover:bg-green-500/10"
+                          disabled={verifyingId === asset.id}
+                          onClick={() => handleVerify(asset.id)}
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+                          {verifyingId === asset.id ? "…" : "Verify"}
+                        </Button>
+                      )}
+                      <Link href={`/assets/${asset.id}`}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7">
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </Button>
+                      </Link>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(asset.id)}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
             {!isLoading && allAssets.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
@@ -236,9 +311,9 @@ export default function AssetsPage() {
         </table>
       </div>
 
-      {/* Create Dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent>
+      {/* Add Asset Dialog */}
+      <Dialog open={showCreate} onOpenChange={(v) => { setShowCreate(v); if (!v) { setSelectedToolIds([]); setRunAfterAdd(false); } }}>
+        <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Add Asset</DialogTitle></DialogHeader>
           <form onSubmit={handleCreate} className="space-y-3 mt-2">
             <div className="space-y-1.5">
@@ -294,9 +369,52 @@ export default function AssetsPage() {
                 </Select>
               </div>
             </div>
+
+            {/* Tool Selection */}
+            {enabledTools.length > 0 && (
+              <div className="space-y-2 pt-1">
+                <Label className="text-xs">Tools to run on this asset</Label>
+                <div className="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                  {enabledTools.map((tool: any) => (
+                    <label
+                      key={tool.toolId}
+                      className={cn(
+                        "flex items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer text-xs transition-colors",
+                        selectedToolIds.includes(tool.toolId)
+                          ? "border-primary/50 bg-primary/10 text-primary"
+                          : "border-border hover:border-border/80 hover:bg-accent/30 text-muted-foreground"
+                      )}
+                    >
+                      <Checkbox
+                        checked={selectedToolIds.includes(tool.toolId)}
+                        onCheckedChange={() => toggleTool(tool.toolId)}
+                        className="h-3.5 w-3.5"
+                      />
+                      {tool.toolName}
+                    </label>
+                  ))}
+                </div>
+                {selectedToolIds.length > 0 && (
+                  <label className="flex items-center gap-2 cursor-pointer mt-1">
+                    <Checkbox
+                      checked={runAfterAdd}
+                      onCheckedChange={(v) => setRunAfterAdd(Boolean(v))}
+                      className="h-3.5 w-3.5"
+                    />
+                    <span className="text-xs text-muted-foreground">Run scan immediately after adding</span>
+                  </label>
+                )}
+              </div>
+            )}
+
             <DialogFooter className="mt-4">
               <Button variant="outline" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
-              <Button type="submit" disabled={createAsset.isPending}>{createAsset.isPending ? "Creating..." : "Add Asset"}</Button>
+              <Button type="submit" disabled={createAsset.isPending || runPipeline.isPending}>
+                {createAsset.isPending || runPipeline.isPending
+                  ? (runPipeline.isPending ? "Starting scan…" : "Creating…")
+                  : runAfterAdd && selectedToolIds.length > 0 ? "Add & Run Scan" : "Add Asset"
+                }
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
