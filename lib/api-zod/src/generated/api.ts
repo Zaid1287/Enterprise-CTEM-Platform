@@ -1204,3 +1204,232 @@ export const GetExposureBreakdownResponseItem = zod.object({
 export const GetExposureBreakdownResponse = zod.array(GetExposureBreakdownResponseItem)
 
 
+/**
+ * @summary List all security tools
+ */
+export const ListSecurityToolsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "name": zod.string(),
+  "description": zod.string().nullish(),
+  "githubUrl": zod.string(),
+  "category": zod.string(),
+  "runCommand": zod.string().nullish(),
+  "isActive": zod.boolean(),
+  "createdBy": zod.number().nullish(),
+  "createdAt": zod.string()
+})
+export const ListSecurityToolsResponse = zod.array(ListSecurityToolsResponseItem)
+
+
+/**
+ * @summary Add a new security tool
+ */
+export const CreateSecurityToolBody = zod.object({
+  "name": zod.string(),
+  "description": zod.string().optional(),
+  "githubUrl": zod.string(),
+  "category": zod.string().optional(),
+  "runCommand": zod.string().optional()
+})
+
+
+/**
+ * @summary Get a security tool by ID
+ */
+export const GetSecurityToolParams = zod.object({
+  "toolId": zod.coerce.number()
+})
+
+export const GetSecurityToolResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "name": zod.string(),
+  "description": zod.string().nullish(),
+  "githubUrl": zod.string(),
+  "category": zod.string(),
+  "runCommand": zod.string().nullish(),
+  "isActive": zod.boolean(),
+  "createdBy": zod.number().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Update a security tool
+ */
+export const UpdateSecurityToolParams = zod.object({
+  "toolId": zod.coerce.number()
+})
+
+export const UpdateSecurityToolBody = zod.object({
+  "name": zod.string().optional(),
+  "description": zod.string().nullish(),
+  "githubUrl": zod.string().optional(),
+  "category": zod.string().optional(),
+  "runCommand": zod.string().nullish(),
+  "isActive": zod.boolean().optional()
+})
+
+export const UpdateSecurityToolResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "name": zod.string(),
+  "description": zod.string().nullish(),
+  "githubUrl": zod.string(),
+  "category": zod.string(),
+  "runCommand": zod.string().nullish(),
+  "isActive": zod.boolean(),
+  "createdBy": zod.number().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a security tool
+ */
+export const DeleteSecurityToolParams = zod.object({
+  "toolId": zod.coerce.number()
+})
+
+
+/**
+ * @summary Run a security tool against one or more assets
+ */
+export const RunSecurityToolParams = zod.object({
+  "toolId": zod.coerce.number()
+})
+
+export const RunSecurityToolBody = zod.object({
+  "assetId": zod.number().optional(),
+  "assetIds": zod.array(zod.number()).optional()
+})
+
+export const RunSecurityToolResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "toolId": zod.number(),
+  "toolName": zod.string().optional(),
+  "assetId": zod.number().nullish(),
+  "assetName": zod.string().nullish(),
+  "status": zod.string(),
+  "output": zod.string().nullish(),
+  "triggeredBy": zod.number().nullish(),
+  "startedAt": zod.string().nullish(),
+  "completedAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const RunSecurityToolResponse = zod.array(RunSecurityToolResponseItem)
+
+
+/**
+ * @summary Get the ordered tool execution pipeline
+ */
+export const GetToolPipelineResponseItem = zod.object({
+  "id": zod.number(),
+  "toolId": zod.number(),
+  "toolName": zod.string().optional(),
+  "toolGithubUrl": zod.string().optional(),
+  "toolCategory": zod.string().optional(),
+  "stepOrder": zod.number(),
+  "isEnabled": zod.boolean()
+})
+export const GetToolPipelineResponse = zod.array(GetToolPipelineResponseItem)
+
+
+/**
+ * @summary Set (replace) the tool execution pipeline order
+ */
+export const SetToolPipelineBody = zod.object({
+  "steps": zod.array(zod.object({
+  "toolId": zod.number(),
+  "stepOrder": zod.number(),
+  "isEnabled": zod.boolean()
+}))
+})
+
+export const SetToolPipelineResponseItem = zod.object({
+  "id": zod.number(),
+  "toolId": zod.number(),
+  "toolName": zod.string().optional(),
+  "toolGithubUrl": zod.string().optional(),
+  "toolCategory": zod.string().optional(),
+  "stepOrder": zod.number(),
+  "isEnabled": zod.boolean()
+})
+export const SetToolPipelineResponse = zod.array(SetToolPipelineResponseItem)
+
+
+/**
+ * @summary List all tool run history
+ */
+export const ListToolRunsQueryParams = zod.object({
+  "toolId": zod.coerce.number().optional(),
+  "assetId": zod.coerce.number().optional(),
+  "status": zod.coerce.string().optional()
+})
+
+export const ListToolRunsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "toolId": zod.number(),
+  "toolName": zod.string().optional(),
+  "assetId": zod.number().nullish(),
+  "assetName": zod.string().nullish(),
+  "status": zod.string(),
+  "output": zod.string().nullish(),
+  "triggeredBy": zod.number().nullish(),
+  "startedAt": zod.string().nullish(),
+  "completedAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const ListToolRunsResponse = zod.array(ListToolRunsResponseItem)
+
+
+/**
+ * @summary Get a specific tool run with full output
+ */
+export const GetToolRunParams = zod.object({
+  "runId": zod.coerce.number()
+})
+
+export const GetToolRunResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "toolId": zod.number(),
+  "toolName": zod.string().optional(),
+  "assetId": zod.number().nullish(),
+  "assetName": zod.string().nullish(),
+  "status": zod.string(),
+  "output": zod.string().nullish(),
+  "triggeredBy": zod.number().nullish(),
+  "startedAt": zod.string().nullish(),
+  "completedAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Run the full tool pipeline for a specific asset
+ */
+export const RunPipelineForAssetParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const RunPipelineForAssetResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "toolId": zod.number(),
+  "toolName": zod.string().optional(),
+  "assetId": zod.number().nullish(),
+  "assetName": zod.string().nullish(),
+  "status": zod.string(),
+  "output": zod.string().nullish(),
+  "triggeredBy": zod.number().nullish(),
+  "startedAt": zod.string().nullish(),
+  "completedAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const RunPipelineForAssetResponse = zod.array(RunPipelineForAssetResponseItem)
+
+

@@ -1332,6 +1332,225 @@ paths:
                 items:
                   $ref: "#/components/schemas/ExposureCount"
 
+  # ──────────────────────────────────────────────────────────
+  # SECURITY TOOLS
+  # ──────────────────────────────────────────────────────────
+  /tools:
+    get:
+      operationId: listSecurityTools
+      tags: [tools]
+      summary: List all security tools
+      responses:
+        "200":
+          description: List of security tools
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SecurityTool"
+    post:
+      operationId: createSecurityTool
+      tags: [tools]
+      summary: Add a new security tool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityToolInput"
+      responses:
+        "201":
+          description: Tool created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityTool"
+
+  /tools/{toolId}:
+    get:
+      operationId: getSecurityTool
+      tags: [tools]
+      summary: Get a security tool by ID
+      parameters:
+        - name: toolId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Security tool
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityTool"
+    patch:
+      operationId: updateSecurityTool
+      tags: [tools]
+      summary: Update a security tool
+      parameters:
+        - name: toolId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityToolUpdate"
+      responses:
+        "200":
+          description: Updated tool
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityTool"
+    delete:
+      operationId: deleteSecurityTool
+      tags: [tools]
+      summary: Delete a security tool
+      parameters:
+        - name: toolId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /tools/{toolId}/run:
+    post:
+      operationId: runSecurityTool
+      tags: [tools]
+      summary: Run a security tool against one or more assets
+      parameters:
+        - name: toolId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunToolBody"
+      responses:
+        "200":
+          description: Run results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolRun"
+
+  /tools/pipeline:
+    get:
+      operationId: getToolPipeline
+      tags: [tools]
+      summary: Get the ordered tool execution pipeline
+      responses:
+        "200":
+          description: Ordered pipeline steps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolPipelineStep"
+    put:
+      operationId: setToolPipeline
+      tags: [tools]
+      summary: Set (replace) the tool execution pipeline order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPipelineBody"
+      responses:
+        "200":
+          description: Updated pipeline
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolPipelineStep"
+
+  /tool-runs:
+    get:
+      operationId: listToolRuns
+      tags: [tools]
+      summary: List all tool run history
+      parameters:
+        - name: toolId
+          in: query
+          schema:
+            type: integer
+        - name: assetId
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tool run history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolRun"
+
+  /tool-runs/{runId}:
+    get:
+      operationId: getToolRun
+      tags: [tools]
+      summary: Get a specific tool run with full output
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Tool run detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolRun"
+
+  /assets/{assetId}/run-pipeline:
+    post:
+      operationId: runPipelineForAsset
+      tags: [tools]
+      summary: Run the full tool pipeline for a specific asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Pipeline run results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolRun"
+
 components:
   schemas:
     HealthStatus:
@@ -2202,4 +2421,143 @@ components:
         exposureType:
           type: string
         count:
+          type: integer
+
+    # ── Security Tools ─────────────────────────────────────────
+    SecurityTool:
+      type: object
+      required: [id, tenantId, name, githubUrl, category, isActive, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        githubUrl:
+          type: string
+        category:
+          type: string
+        runCommand:
+          type: ["string", "null"]
+        isActive:
+          type: boolean
+        createdBy:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+
+    SecurityToolInput:
+      type: object
+      required: [name, githubUrl]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        githubUrl:
+          type: string
+        category:
+          type: string
+        runCommand:
+          type: string
+
+    SecurityToolUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        githubUrl:
+          type: string
+        category:
+          type: string
+        runCommand:
+          type: ["string", "null"]
+        isActive:
+          type: boolean
+
+    ToolPipelineStep:
+      type: object
+      required: [id, toolId, stepOrder, isEnabled]
+      properties:
+        id:
+          type: integer
+        toolId:
+          type: integer
+        toolName:
+          type: string
+        toolGithubUrl:
+          type: string
+        toolCategory:
+          type: string
+        stepOrder:
+          type: integer
+        isEnabled:
+          type: boolean
+
+    SetPipelineBody:
+      type: object
+      required: [steps]
+      properties:
+        steps:
+          type: array
+          items:
+            type: object
+            required: [toolId, stepOrder, isEnabled]
+            properties:
+              toolId:
+                type: integer
+              stepOrder:
+                type: integer
+              isEnabled:
+                type: boolean
+
+    ToolRun:
+      type: object
+      required: [id, tenantId, toolId, status, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        toolId:
+          type: integer
+        toolName:
+          type: string
+        assetId:
+          type: ["integer", "null"]
+        assetName:
+          type: ["string", "null"]
+        status:
+          type: string
+        output:
+          type: ["string", "null"]
+        triggeredBy:
+          type: ["integer", "null"]
+        startedAt:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    RunToolBody:
+      type: object
+      properties:
+        assetId:
+          type: integer
+        assetIds:
+          type: array
+          items:
+            type: integer
+
+    RunPipelineBody:
+      type: object
+      required: [assetId]
+      properties:
+        assetId:
           type: integer

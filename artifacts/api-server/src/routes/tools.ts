@@ -1,0 +1,323 @@
+import { Router } from "express";
+import { eq, and, desc } from "drizzle-orm";
+import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable } from "@workspace/db";
+import {
+  CreateSecurityToolBody, GetSecurityToolParams,
+  UpdateSecurityToolParams, UpdateSecurityToolBody,
+  DeleteSecurityToolParams,
+  RunSecurityToolParams, RunSecurityToolBody,
+  SetToolPipelineBody,
+  ListToolRunsQueryParams, GetToolRunParams,
+  RunPipelineForAssetParams,
+} from "@workspace/api-zod";
+import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { logAudit } from "../lib/audit";
+
+const router = Router();
+
+const TOOL_STEPS: Record<string, string[]> = {
+  recon: ["Initializing reconnaissance scan", "Resolving DNS records", "Enumerating subdomains", "Checking WHOIS data", "Probing HTTP headers"],
+  vuln_scan: ["Loading vulnerability signatures", "Scanning open ports", "Fingerprinting service versions", "Checking CVE database", "Running exploit checks"],
+  port_scan: ["Initiating port scan", "Scanning common ports (1-1024)", "Probing UDP ports", "Scanning high ports", "Fingerprinting services"],
+  ssl_check: ["Checking SSL certificate validity", "Verifying certificate chain", "Testing cipher suites", "Checking for weak protocols", "Validating HSTS policy"],
+  web_recon: ["Crawling web application", "Discovering endpoints", "Checking security headers", "Testing for information disclosure", "Enumerating directories"],
+  osint: ["Gathering OSINT data", "Querying threat intelligence feeds", "Checking breach databases", "Analyzing exposed credentials", "Cross-referencing dark web data"],
+};
+
+function simulateToolOutput(tool: typeof securityToolsTable.$inferSelect, assetValue: string): string {
+  const steps = TOOL_STEPS[tool.category] ?? TOOL_STEPS["recon"]!;
+  const timestamp = new Date().toISOString();
+  const rand = (n: number) => Math.floor(Math.random() * n);
+
+  const lines: string[] = [
+    `[INFO] Starting ${tool.name} v2.3.1`,
+    `[INFO] Target: ${assetValue}`,
+    `[INFO] GitHub: ${tool.githubUrl}`,
+    `[INFO] Command: ${tool.runCommand ?? `python main.py --target ${assetValue}`}`,
+    "",
+    ...steps.map((s, i) => `[${String(i + 1).padStart(2, "0")}] ${s}...`),
+    "",
+    `[RESULT] Scan completed at ${timestamp}`,
+  ];
+
+  if (tool.category === "vuln_scan" || tool.category === "port_scan") {
+    lines.push(`[FINDING] Port 80/tcp  open  http    nginx 1.21.6`);
+    lines.push(`[FINDING] Port 443/tcp open  https   nginx 1.21.6`);
+    lines.push(`[FINDING] Port 22/tcp  open  ssh     OpenSSH 8.4p1`);
+  }
+  if (tool.category === "ssl_check") {
+    lines.push(`[FINDING] Certificate: valid (expires 2026-01-15)`);
+    lines.push(`[FINDING] Issuer: Let's Encrypt Authority X3`);
+    lines.push(`[FINDING] Cipher: TLS_AES_256_GCM_SHA384 (TLSv1.3)`);
+    lines.push(`[WARNING] Missing HSTS header`);
+  }
+  if (tool.category === "recon" || tool.category === "osint") {
+    lines.push(`[FINDING] Domain registered: 2018-03-14`);
+    lines.push(`[FINDING] Registrar: GoDaddy.com LLC`);
+    lines.push(`[FINDING] IP: 104.21.${rand(256)}.${rand(256)}`);
+  }
+  if (tool.category === "web_recon") {
+    lines.push(`[FINDING] /admin/ — 403 Forbidden (directory exists)`);
+    lines.push(`[FINDING] /api/v1/ — 200 OK`);
+    lines.push(`[FINDING] X-Frame-Options header missing`);
+    lines.push(`[FINDING] Server: nginx/1.21.6 (version disclosure)`);
+  }
+
+  lines.push("");
+  lines.push(`[DONE] ${tool.name} finished. ${rand(5) + 1} finding(s) recorded.`);
+  return lines.join("\n");
+}
+
+async function enrichRuns(runs: (typeof toolRunsTable.$inferSelect)[]) {
+  const allToolIds = [...new Set(runs.map(r => r.toolId))];
+  const allAssetIds = [...new Set(runs.filter(r => r.assetId != null).map(r => r.assetId!))];
+
+  const [tools, assets] = await Promise.all([
+    allToolIds.length
+      ? db.select({ id: securityToolsTable.id, name: securityToolsTable.name }).from(securityToolsTable)
+      : Promise.resolve([]),
+    allAssetIds.length
+      ? db.select({ id: assetsTable.id, name: assetsTable.name }).from(assetsTable)
+      : Promise.resolve([]),
+  ]);
+
+  const toolMap = new Map(tools.map(t => [t.id, t.name]));
+  const assetMap = new Map(assets.map(a => [a.id, a.name]));
+
+  return runs.map(r => ({
+    id: r.id,
+    tenantId: r.tenantId,
+    toolId: r.toolId,
+    toolName: toolMap.get(r.toolId) ?? "Unknown Tool",
+    assetId: r.assetId ?? null,
+    assetName: r.assetId != null ? (assetMap.get(r.assetId) ?? null) : null,
+    status: r.status,
+    output: r.output,
+    triggeredBy: r.triggeredBy,
+    startedAt: r.startedAt?.toISOString() ?? null,
+    completedAt: r.completedAt?.toISOString() ?? null,
+    createdAt: r.createdAt.toISOString(),
+  }));
+}
+
+async function buildPipelineResponse(tenantId: number) {
+  const steps = await db.select().from(toolPipelineStepsTable)
+    .where(eq(toolPipelineStepsTable.tenantId, tenantId))
+    .orderBy(toolPipelineStepsTable.stepOrder);
+
+  const toolIds = [...new Set(steps.map(s => s.toolId))];
+  const tools = toolIds.length
+    ? await db.select({ id: securityToolsTable.id, name: securityToolsTable.name, githubUrl: securityToolsTable.githubUrl, category: securityToolsTable.category }).from(securityToolsTable)
+    : [];
+  const toolMap = new Map(tools.map(t => [t.id, t]));
+
+  return steps.map(s => ({
+    id: s.id,
+    toolId: s.toolId,
+    toolName: toolMap.get(s.toolId)?.name ?? "Unknown",
+    toolGithubUrl: toolMap.get(s.toolId)?.githubUrl ?? "",
+    toolCategory: toolMap.get(s.toolId)?.category ?? "",
+    stepOrder: s.stepOrder,
+    isEnabled: s.isEnabled,
+  }));
+}
+
+// ── IMPORTANT: /tools/pipeline must be registered BEFORE /tools/:toolId ──
+
+router.get("/tools/pipeline", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  res.json(await buildPipelineResponse(req.user!.tenantId));
+});
+
+router.put("/tools/pipeline", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const parsed = SetToolPipelineBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
+
+  await db.delete(toolPipelineStepsTable).where(eq(toolPipelineStepsTable.tenantId, req.user!.tenantId));
+
+  if (parsed.data.steps.length > 0) {
+    await db.insert(toolPipelineStepsTable).values(
+      parsed.data.steps.map(s => ({
+        tenantId: req.user!.tenantId,
+        toolId: s.toolId,
+        stepOrder: s.stepOrder,
+        isEnabled: s.isEnabled,
+      }))
+    );
+  }
+
+  res.json(await buildPipelineResponse(req.user!.tenantId));
+});
+
+router.get("/tools", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tools = await db.select().from(securityToolsTable)
+    .where(eq(securityToolsTable.tenantId, req.user!.tenantId))
+    .orderBy(securityToolsTable.createdAt);
+  res.json(tools.map(t => ({
+    id: t.id, tenantId: t.tenantId, name: t.name, description: t.description,
+    githubUrl: t.githubUrl, category: t.category, runCommand: t.runCommand,
+    isActive: t.isActive, createdBy: t.createdBy, createdAt: t.createdAt.toISOString(),
+  })));
+});
+
+router.post("/tools", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const parsed = CreateSecurityToolBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
+  const [tool] = await db.insert(securityToolsTable).values({
+    ...parsed.data,
+    tenantId: req.user!.tenantId,
+    createdBy: req.user!.id,
+  }).returning();
+  await logAudit(req.user!, "create_tool", "security_tool", tool.id);
+  res.status(201).json({ ...tool, createdAt: tool.createdAt.toISOString() });
+});
+
+router.get("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const p = GetSecurityToolParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+  const [tool] = await db.select().from(securityToolsTable)
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)));
+  if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
+  res.json({ ...tool, createdAt: tool.createdAt.toISOString() });
+});
+
+router.patch("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const p = UpdateSecurityToolParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+  const parsed = UpdateSecurityToolBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
+  const [tool] = await db.update(securityToolsTable).set(parsed.data as any)
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)))
+    .returning();
+  if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
+  res.json({ ...tool, createdAt: tool.createdAt.toISOString() });
+});
+
+router.delete("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const p = DeleteSecurityToolParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+  const [tool] = await db.delete(securityToolsTable)
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)))
+    .returning();
+  if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
+  await logAudit(req.user!, "delete_tool", "security_tool", tool.id);
+  res.sendStatus(204);
+});
+
+router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const p = RunSecurityToolParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+  const body = RunSecurityToolBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json(body.error.issues); return; }
+
+  const [tool] = await db.select().from(securityToolsTable)
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)));
+  if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
+
+  const targetIds = (body.data as any).assetIds ?? ((body.data as any).assetId ? [(body.data as any).assetId] : []);
+
+  const runs: (typeof toolRunsTable.$inferSelect)[] = [];
+
+  if (targetIds.length === 0) {
+    const startedAt = new Date();
+    const [run] = await db.insert(toolRunsTable).values({
+      tenantId: req.user!.tenantId,
+      toolId: tool.id,
+      status: "completed",
+      output: simulateToolOutput(tool, "all-assets"),
+      triggeredBy: req.user!.id,
+      startedAt,
+      completedAt: new Date(startedAt.getTime() + 1200),
+    }).returning();
+    runs.push(run);
+  } else {
+    for (const assetId of targetIds) {
+      const [asset] = await db.select().from(assetsTable)
+        .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+      const startedAt = new Date();
+      const [run] = await db.insert(toolRunsTable).values({
+        tenantId: req.user!.tenantId,
+        toolId: tool.id,
+        assetId,
+        status: "completed",
+        output: asset ? simulateToolOutput(tool, asset.value) : `[ERROR] Asset not found: ${assetId}`,
+        triggeredBy: req.user!.id,
+        startedAt,
+        completedAt: new Date(startedAt.getTime() + Math.floor(Math.random() * 2000) + 500),
+      }).returning();
+      runs.push(run);
+    }
+  }
+
+  await logAudit(req.user!, "run_tool", "security_tool", tool.id);
+  res.json(await enrichRuns(runs));
+});
+
+router.post("/assets/:assetId/run-pipeline", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const p = RunPipelineForAssetParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+
+  const [asset] = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.id, p.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  const steps = await db.select().from(toolPipelineStepsTable)
+    .where(and(eq(toolPipelineStepsTable.tenantId, req.user!.tenantId), eq(toolPipelineStepsTable.isEnabled, true)))
+    .orderBy(toolPipelineStepsTable.stepOrder);
+
+  if (steps.length === 0) { res.json([]); return; }
+
+  const tools = await db.select().from(securityToolsTable)
+    .where(eq(securityToolsTable.tenantId, req.user!.tenantId));
+  const toolMap = new Map(tools.map(t => [t.id, t]));
+
+  const runs: (typeof toolRunsTable.$inferSelect)[] = [];
+  let offset = 0;
+  for (const step of steps) {
+    const tool = toolMap.get(step.toolId);
+    if (!tool || !tool.isActive) continue;
+    const startedAt = new Date(Date.now() + offset);
+    const completedAt = new Date(startedAt.getTime() + Math.floor(Math.random() * 1500) + 300);
+    offset += completedAt.getTime() - startedAt.getTime() + 100;
+    const [run] = await db.insert(toolRunsTable).values({
+      tenantId: req.user!.tenantId,
+      toolId: tool.id,
+      assetId: asset.id,
+      status: "completed",
+      output: simulateToolOutput(tool, asset.value),
+      triggeredBy: req.user!.id,
+      startedAt,
+      completedAt,
+    }).returning();
+    runs.push(run);
+  }
+
+  await logAudit(req.user!, "run_pipeline", "asset", asset.id);
+  res.json(await enrichRuns(runs));
+});
+
+router.get("/tool-runs", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const q = ListToolRunsQueryParams.safeParse(req.query);
+  const filters = [eq(toolRunsTable.tenantId, req.user!.tenantId)];
+  if (q.success) {
+    if ((q.data as any).toolId) filters.push(eq(toolRunsTable.toolId, Number((q.data as any).toolId)));
+    if ((q.data as any).assetId) filters.push(eq(toolRunsTable.assetId, Number((q.data as any).assetId)));
+    if ((q.data as any).status) filters.push(eq(toolRunsTable.status, (q.data as any).status));
+  }
+  const runs = await db.select().from(toolRunsTable)
+    .where(and(...filters))
+    .orderBy(desc(toolRunsTable.createdAt))
+    .limit(100);
+  res.json(await enrichRuns(runs));
+});
+
+router.get("/tool-runs/:runId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const p = GetToolRunParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+  const [run] = await db.select().from(toolRunsTable)
+    .where(and(eq(toolRunsTable.id, p.data.runId), eq(toolRunsTable.tenantId, req.user!.tenantId)));
+  if (!run) { res.status(404).json({ error: "Run not found" }); return; }
+  const [enriched] = await enrichRuns([run]);
+  res.json(enriched);
+});
+
+export default router;

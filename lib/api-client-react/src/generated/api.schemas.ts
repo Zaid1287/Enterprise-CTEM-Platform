@@ -499,6 +499,91 @@ export interface ExposureCount {
   count: number;
 }
 
+export interface SecurityTool {
+  id: number;
+  tenantId: number;
+  name: string;
+  /** @nullable */
+  description?: string | null;
+  githubUrl: string;
+  category: string;
+  /** @nullable */
+  runCommand?: string | null;
+  isActive: boolean;
+  /** @nullable */
+  createdBy?: number | null;
+  createdAt: string;
+}
+
+export interface SecurityToolInput {
+  name: string;
+  description?: string;
+  githubUrl: string;
+  category?: string;
+  runCommand?: string;
+}
+
+export interface SecurityToolUpdate {
+  name?: string;
+  /** @nullable */
+  description?: string | null;
+  githubUrl?: string;
+  category?: string;
+  /** @nullable */
+  runCommand?: string | null;
+  isActive?: boolean;
+}
+
+export interface ToolPipelineStep {
+  id: number;
+  toolId: number;
+  toolName?: string;
+  toolGithubUrl?: string;
+  toolCategory?: string;
+  stepOrder: number;
+  isEnabled: boolean;
+}
+
+export type SetPipelineBodyStepsItem = {
+  toolId: number;
+  stepOrder: number;
+  isEnabled: boolean;
+};
+
+export interface SetPipelineBody {
+  steps: SetPipelineBodyStepsItem[];
+}
+
+export interface ToolRun {
+  id: number;
+  tenantId: number;
+  toolId: number;
+  toolName?: string;
+  /** @nullable */
+  assetId?: number | null;
+  /** @nullable */
+  assetName?: string | null;
+  status: string;
+  /** @nullable */
+  output?: string | null;
+  /** @nullable */
+  triggeredBy?: number | null;
+  /** @nullable */
+  startedAt?: string | null;
+  /** @nullable */
+  completedAt?: string | null;
+  createdAt: string;
+}
+
+export interface RunToolBody {
+  assetId?: number;
+  assetIds?: number[];
+}
+
+export interface RunPipelineBody {
+  assetId: number;
+}
+
 export type ListAssetsParams = {
 type?: string;
 tag?: string;
@@ -541,5 +626,11 @@ days?: number;
 
 export type GetTopRiskyAssetsParams = {
 limit?: number;
+};
+
+export type ListToolRunsParams = {
+toolId?: number;
+assetId?: number;
+status?: string;
 };
 

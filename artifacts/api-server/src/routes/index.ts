@@ -14,6 +14,7 @@ import riskRouter from "./risk";
 import auditLogsRouter from "./auditLogs";
 import aiRouter from "./ai";
 import dashboardRouter from "./dashboard";
+import toolsRouter from "./tools";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(riskRouter);
 router.use(auditLogsRouter);
 router.use(aiRouter);
 router.use(dashboardRouter);
+router.use(toolsRouter);
 
 export default router;

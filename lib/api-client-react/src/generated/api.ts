@@ -61,19 +61,27 @@ import type {
   ListComplianceControlsParams,
   ListFindingsParams,
   ListScansParams,
+  ListToolRunsParams,
   LoginInput,
   RefreshTokenInput,
   RegisterInput,
   Report,
   ReportInput,
   RiskScore,
+  RunToolBody,
   Scan,
   ScanInput,
   ScanJob,
+  SecurityTool,
+  SecurityToolInput,
+  SecurityToolUpdate,
+  SetPipelineBody,
   SeverityCount,
   Tenant,
   TenantInput,
   TenantUpdate,
+  ToolPipelineStep,
+  ToolRun,
   TrendPoint,
   User,
   UserInput,
@@ -5118,4 +5126,822 @@ export function useGetExposureBreakdown<TData = Awaited<ReturnType<typeof getExp
 
 
 
+
+export const getListSecurityToolsUrl = () => {
+
+
+
+
+  return `/api/tools`
+}
+
+/**
+ * @summary List all security tools
+ */
+export const listSecurityTools = async ( options?: RequestInit): Promise<SecurityTool[]> => {
+
+  return customFetch<SecurityTool[]>(getListSecurityToolsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSecurityToolsQueryKey = () => {
+    return [
+    `/api/tools`
+    ] as const;
+    }
+
+
+export const getListSecurityToolsQueryOptions = <TData = Awaited<ReturnType<typeof listSecurityTools>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSecurityTools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSecurityToolsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSecurityTools>>> = ({ signal }) => listSecurityTools({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSecurityTools>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSecurityToolsQueryResult = NonNullable<Awaited<ReturnType<typeof listSecurityTools>>>
+export type ListSecurityToolsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all security tools
+ */
+
+export function useListSecurityTools<TData = Awaited<ReturnType<typeof listSecurityTools>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSecurityTools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSecurityToolsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateSecurityToolUrl = () => {
+
+
+
+
+  return `/api/tools`
+}
+
+/**
+ * @summary Add a new security tool
+ */
+export const createSecurityTool = async (securityToolInput: SecurityToolInput, options?: RequestInit): Promise<SecurityTool> => {
+
+  return customFetch<SecurityTool>(getCreateSecurityToolUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      securityToolInput,)
+  }
+);}
+
+
+
+
+export const getCreateSecurityToolMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSecurityTool>>, TError,{data: BodyType<SecurityToolInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createSecurityTool>>, TError,{data: BodyType<SecurityToolInput>}, TContext> => {
+
+const mutationKey = ['createSecurityTool'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createSecurityTool>>, {data: BodyType<SecurityToolInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createSecurityTool(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateSecurityToolMutationResult = NonNullable<Awaited<ReturnType<typeof createSecurityTool>>>
+    export type CreateSecurityToolMutationBody = BodyType<SecurityToolInput>
+    export type CreateSecurityToolMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Add a new security tool
+ */
+export const useCreateSecurityTool = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSecurityTool>>, TError,{data: BodyType<SecurityToolInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createSecurityTool>>,
+        TError,
+        {data: BodyType<SecurityToolInput>},
+        TContext
+      > => {
+      return useMutation(getCreateSecurityToolMutationOptions(options));
+    }
+
+export const getGetSecurityToolUrl = (toolId: number,) => {
+
+
+
+
+  return `/api/tools/${toolId}`
+}
+
+/**
+ * @summary Get a security tool by ID
+ */
+export const getSecurityTool = async (toolId: number, options?: RequestInit): Promise<SecurityTool> => {
+
+  return customFetch<SecurityTool>(getGetSecurityToolUrl(toolId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSecurityToolQueryKey = (toolId: number,) => {
+    return [
+    `/api/tools/${toolId}`
+    ] as const;
+    }
+
+
+export const getGetSecurityToolQueryOptions = <TData = Awaited<ReturnType<typeof getSecurityTool>>, TError = ErrorType<unknown>>(toolId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSecurityTool>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSecurityToolQueryKey(toolId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSecurityTool>>> = ({ signal }) => getSecurityTool(toolId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(toolId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSecurityTool>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSecurityToolQueryResult = NonNullable<Awaited<ReturnType<typeof getSecurityTool>>>
+export type GetSecurityToolQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get a security tool by ID
+ */
+
+export function useGetSecurityTool<TData = Awaited<ReturnType<typeof getSecurityTool>>, TError = ErrorType<unknown>>(
+ toolId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSecurityTool>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSecurityToolQueryOptions(toolId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateSecurityToolUrl = (toolId: number,) => {
+
+
+
+
+  return `/api/tools/${toolId}`
+}
+
+/**
+ * @summary Update a security tool
+ */
+export const updateSecurityTool = async (toolId: number,
+    securityToolUpdate: SecurityToolUpdate, options?: RequestInit): Promise<SecurityTool> => {
+
+  return customFetch<SecurityTool>(getUpdateSecurityToolUrl(toolId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      securityToolUpdate,)
+  }
+);}
+
+
+
+
+export const getUpdateSecurityToolMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSecurityTool>>, TError,{toolId: number;data: BodyType<SecurityToolUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSecurityTool>>, TError,{toolId: number;data: BodyType<SecurityToolUpdate>}, TContext> => {
+
+const mutationKey = ['updateSecurityTool'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSecurityTool>>, {toolId: number;data: BodyType<SecurityToolUpdate>}> = (props) => {
+          const {toolId,data} = props ?? {};
+
+          return  updateSecurityTool(toolId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSecurityToolMutationResult = NonNullable<Awaited<ReturnType<typeof updateSecurityTool>>>
+    export type UpdateSecurityToolMutationBody = BodyType<SecurityToolUpdate>
+    export type UpdateSecurityToolMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update a security tool
+ */
+export const useUpdateSecurityTool = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSecurityTool>>, TError,{toolId: number;data: BodyType<SecurityToolUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateSecurityTool>>,
+        TError,
+        {toolId: number;data: BodyType<SecurityToolUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateSecurityToolMutationOptions(options));
+    }
+
+export const getDeleteSecurityToolUrl = (toolId: number,) => {
+
+
+
+
+  return `/api/tools/${toolId}`
+}
+
+/**
+ * @summary Delete a security tool
+ */
+export const deleteSecurityTool = async (toolId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteSecurityToolUrl(toolId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteSecurityToolMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSecurityTool>>, TError,{toolId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteSecurityTool>>, TError,{toolId: number}, TContext> => {
+
+const mutationKey = ['deleteSecurityTool'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteSecurityTool>>, {toolId: number}> = (props) => {
+          const {toolId} = props ?? {};
+
+          return  deleteSecurityTool(toolId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteSecurityToolMutationResult = NonNullable<Awaited<ReturnType<typeof deleteSecurityTool>>>
+
+    export type DeleteSecurityToolMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a security tool
+ */
+export const useDeleteSecurityTool = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSecurityTool>>, TError,{toolId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteSecurityTool>>,
+        TError,
+        {toolId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteSecurityToolMutationOptions(options));
+    }
+
+export const getRunSecurityToolUrl = (toolId: number,) => {
+
+
+
+
+  return `/api/tools/${toolId}/run`
+}
+
+/**
+ * @summary Run a security tool against one or more assets
+ */
+export const runSecurityTool = async (toolId: number,
+    runToolBody: RunToolBody, options?: RequestInit): Promise<ToolRun[]> => {
+
+  return customFetch<ToolRun[]>(getRunSecurityToolUrl(toolId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      runToolBody,)
+  }
+);}
+
+
+
+
+export const getRunSecurityToolMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runSecurityTool>>, TError,{toolId: number;data: BodyType<RunToolBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runSecurityTool>>, TError,{toolId: number;data: BodyType<RunToolBody>}, TContext> => {
+
+const mutationKey = ['runSecurityTool'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runSecurityTool>>, {toolId: number;data: BodyType<RunToolBody>}> = (props) => {
+          const {toolId,data} = props ?? {};
+
+          return  runSecurityTool(toolId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunSecurityToolMutationResult = NonNullable<Awaited<ReturnType<typeof runSecurityTool>>>
+    export type RunSecurityToolMutationBody = BodyType<RunToolBody>
+    export type RunSecurityToolMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Run a security tool against one or more assets
+ */
+export const useRunSecurityTool = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runSecurityTool>>, TError,{toolId: number;data: BodyType<RunToolBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runSecurityTool>>,
+        TError,
+        {toolId: number;data: BodyType<RunToolBody>},
+        TContext
+      > => {
+      return useMutation(getRunSecurityToolMutationOptions(options));
+    }
+
+export const getGetToolPipelineUrl = () => {
+
+
+
+
+  return `/api/tools/pipeline`
+}
+
+/**
+ * @summary Get the ordered tool execution pipeline
+ */
+export const getToolPipeline = async ( options?: RequestInit): Promise<ToolPipelineStep[]> => {
+
+  return customFetch<ToolPipelineStep[]>(getGetToolPipelineUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetToolPipelineQueryKey = () => {
+    return [
+    `/api/tools/pipeline`
+    ] as const;
+    }
+
+
+export const getGetToolPipelineQueryOptions = <TData = Awaited<ReturnType<typeof getToolPipeline>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getToolPipeline>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetToolPipelineQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getToolPipeline>>> = ({ signal }) => getToolPipeline({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getToolPipeline>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetToolPipelineQueryResult = NonNullable<Awaited<ReturnType<typeof getToolPipeline>>>
+export type GetToolPipelineQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the ordered tool execution pipeline
+ */
+
+export function useGetToolPipeline<TData = Awaited<ReturnType<typeof getToolPipeline>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getToolPipeline>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetToolPipelineQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getSetToolPipelineUrl = () => {
+
+
+
+
+  return `/api/tools/pipeline`
+}
+
+/**
+ * @summary Set (replace) the tool execution pipeline order
+ */
+export const setToolPipeline = async (setPipelineBody: SetPipelineBody, options?: RequestInit): Promise<ToolPipelineStep[]> => {
+
+  return customFetch<ToolPipelineStep[]>(getSetToolPipelineUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setPipelineBody,)
+  }
+);}
+
+
+
+
+export const getSetToolPipelineMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setToolPipeline>>, TError,{data: BodyType<SetPipelineBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setToolPipeline>>, TError,{data: BodyType<SetPipelineBody>}, TContext> => {
+
+const mutationKey = ['setToolPipeline'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setToolPipeline>>, {data: BodyType<SetPipelineBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setToolPipeline(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetToolPipelineMutationResult = NonNullable<Awaited<ReturnType<typeof setToolPipeline>>>
+    export type SetToolPipelineMutationBody = BodyType<SetPipelineBody>
+    export type SetToolPipelineMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Set (replace) the tool execution pipeline order
+ */
+export const useSetToolPipeline = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setToolPipeline>>, TError,{data: BodyType<SetPipelineBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setToolPipeline>>,
+        TError,
+        {data: BodyType<SetPipelineBody>},
+        TContext
+      > => {
+      return useMutation(getSetToolPipelineMutationOptions(options));
+    }
+
+export const getListToolRunsUrl = (params?: ListToolRunsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/tool-runs?${stringifiedParams}` : `/api/tool-runs`
+}
+
+/**
+ * @summary List all tool run history
+ */
+export const listToolRuns = async (params?: ListToolRunsParams, options?: RequestInit): Promise<ToolRun[]> => {
+
+  return customFetch<ToolRun[]>(getListToolRunsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListToolRunsQueryKey = (params?: ListToolRunsParams,) => {
+    return [
+    `/api/tool-runs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListToolRunsQueryOptions = <TData = Awaited<ReturnType<typeof listToolRuns>>, TError = ErrorType<unknown>>(params?: ListToolRunsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listToolRuns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListToolRunsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listToolRuns>>> = ({ signal }) => listToolRuns(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listToolRuns>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListToolRunsQueryResult = NonNullable<Awaited<ReturnType<typeof listToolRuns>>>
+export type ListToolRunsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all tool run history
+ */
+
+export function useListToolRuns<TData = Awaited<ReturnType<typeof listToolRuns>>, TError = ErrorType<unknown>>(
+ params?: ListToolRunsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listToolRuns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListToolRunsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetToolRunUrl = (runId: number,) => {
+
+
+
+
+  return `/api/tool-runs/${runId}`
+}
+
+/**
+ * @summary Get a specific tool run with full output
+ */
+export const getToolRun = async (runId: number, options?: RequestInit): Promise<ToolRun> => {
+
+  return customFetch<ToolRun>(getGetToolRunUrl(runId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetToolRunQueryKey = (runId: number,) => {
+    return [
+    `/api/tool-runs/${runId}`
+    ] as const;
+    }
+
+
+export const getGetToolRunQueryOptions = <TData = Awaited<ReturnType<typeof getToolRun>>, TError = ErrorType<unknown>>(runId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getToolRun>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetToolRunQueryKey(runId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getToolRun>>> = ({ signal }) => getToolRun(runId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(runId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getToolRun>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetToolRunQueryResult = NonNullable<Awaited<ReturnType<typeof getToolRun>>>
+export type GetToolRunQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get a specific tool run with full output
+ */
+
+export function useGetToolRun<TData = Awaited<ReturnType<typeof getToolRun>>, TError = ErrorType<unknown>>(
+ runId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getToolRun>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetToolRunQueryOptions(runId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getRunPipelineForAssetUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/assets/${assetId}/run-pipeline`
+}
+
+/**
+ * @summary Run the full tool pipeline for a specific asset
+ */
+export const runPipelineForAsset = async (assetId: number, options?: RequestInit): Promise<ToolRun[]> => {
+
+  return customFetch<ToolRun[]>(getRunPipelineForAssetUrl(assetId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRunPipelineForAssetMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPipelineForAsset>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runPipelineForAsset>>, TError,{assetId: number}, TContext> => {
+
+const mutationKey = ['runPipelineForAsset'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runPipelineForAsset>>, {assetId: number}> = (props) => {
+          const {assetId} = props ?? {};
+
+          return  runPipelineForAsset(assetId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunPipelineForAssetMutationResult = NonNullable<Awaited<ReturnType<typeof runPipelineForAsset>>>
+
+    export type RunPipelineForAssetMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Run the full tool pipeline for a specific asset
+ */
+export const useRunPipelineForAsset = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPipelineForAsset>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runPipelineForAsset>>,
+        TError,
+        {assetId: number},
+        TContext
+      > => {
+      return useMutation(getRunPipelineForAssetMutationOptions(options));
+    }
 
