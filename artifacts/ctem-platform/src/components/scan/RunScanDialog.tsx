@@ -37,6 +37,7 @@ interface Props {
   pipelineTools: PipelineTool[];
   assets: Asset[];
   onRunComplete: (scanId: number) => void;
+  preSelectedAssetIds?: number[];
 }
 
 const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -49,7 +50,7 @@ const categoryColor: Record<string, string> = {
   osint: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
 };
 
-export default function RunScanDialog({ open, onOpenChange, pipelineTools, assets, onRunComplete }: Props) {
+export default function RunScanDialog({ open, onOpenChange, pipelineTools, assets, onRunComplete, preSelectedAssetIds }: Props) {
   const [step, setStep] = useState<1 | 2>(1);
   const [scanName, setScanName] = useState("");
   const [assetConfigs, setAssetConfigs] = useState<AssetConfig[]>([]);
@@ -74,9 +75,10 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
       setScheduleMode("now");
       setIsRunning(false);
       setSaveSchedule(false);
-      setAssetConfigs(assets.map(a => ({
-        assetId: a.id, toolIds: enabledTools.map(t => t.id), included: false, expanded: false,
-      })));
+      setAssetConfigs(assets.map(a => {
+        const preSelected = preSelectedAssetIds ? preSelectedAssetIds.includes(a.id) : false;
+        return { assetId: a.id, toolIds: enabledTools.map(t => t.id), included: preSelected, expanded: preSelected };
+      }));
     }
   }, [open, assets.length, enabledTools.length]);
 

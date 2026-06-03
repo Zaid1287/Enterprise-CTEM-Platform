@@ -1,12 +1,13 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 
 import {
   useListAssets, useCreateAsset, useDeleteAsset, useCheckAssetVerification,
-  useListUsers,
-  getListAssetsQueryKey,
+  useListUsers, useGetToolPipeline,
+  getListAssetsQueryKey, getGetToolPipelineQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
+import { Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -15,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, statusBadgeClass, capitalize, formatDate, riskLevelBg } from "@/lib/utils";
 import { Link } from "wouter";
+import RunScanDialog from "@/components/scan/RunScanDialog";
 
 const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "host", "mobile_app"];
 
@@ -25,11 +27,14 @@ const emptyForm = {
 };
 
 export default function AssetsPage() {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [newAsset, setNewAsset] = useState({ ...emptyForm });
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
+  const [showRunScan, setShowRunScan] = useState(false);
+  const [preSelectedAssetIds, setPreSelectedAssetIds] = useState<number[]>([]);
   const queryClient = useQueryClient();
 
   const params = { search: search || undefined, type: typeFilter || undefined };
@@ -37,9 +42,15 @@ export default function AssetsPage() {
     query: { queryKey: getListAssetsQueryKey(params as any) },
   });
   const { data: usersData } = useListUsers();
+  const { data: pipelineData } = useGetToolPipeline({
+    query: { queryKey: getGetToolPipelineQueryKey() },
+  });
+
   const users = (usersData as any[]) ?? [];
   const clients = users.filter((u: any) => u.role === "client");
   const accountManagers = users.filter((u: any) => u.role === "account_manager");
+  const pipeline = (pipelineData as any[]) ?? [];
+  const allAssets = (assets as any[]) ?? [];
 
   const createAsset = useCreateAsset();
   const deleteAsset = useDeleteAsset();
@@ -77,16 +88,41 @@ export default function AssetsPage() {
     }
   };
 
+  function openRunScanAll() {
+    setPreSelectedAssetIds(allAssets.map((a: any) => a.id));
+    setShowRunScan(true);
+  }
+
+  function openRunScanOne(assetId: number) {
+    setPreSelectedAssetIds([assetId]);
+    setShowRunScan(true);
+  }
+
+  const pipelineTools = pipeline.map((s: any) => ({
+    id: s.toolId, name: s.toolName, category: s.toolCategory, isActive: s.isEnabled,
+  }));
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Asset Inventory</h1>
-          <p className="text-sm text-muted-foreground">{Array.isArray(assets) ? assets.length : 0} assets tracked</p>
+          <p className="text-sm text-muted-foreground">{allAssets.length} assets tracked</p>
         </div>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="w-4 h-4 mr-1.5" /> Add Asset
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={openRunScanAll}
+            disabled={allAssets.length === 0}
+            className="border-primary/40 text-primary hover:bg-primary/10"
+          >
+            <Zap className="w-3.5 h-3.5 mr-1.5" /> Run Scan
+          </Button>
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="w-4 h-4 mr-1.5" /> Add Asset
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -131,7 +167,7 @@ export default function AssetsPage() {
                 {[...Array(9)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
               </tr>
             ))}
-            {!isLoading && (assets as any[] ?? []).map((asset: any) => (
+            {!isLoading && allAssets.map((asset: any) => (
               <tr key={asset.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
                 <td className="px-4 py-2.5">
                   <Link href={`/assets/${asset.id}`}>
@@ -157,6 +193,14 @@ export default function AssetsPage() {
                 <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(asset.lastScannedAt)}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-primary hover:text-primary hover:bg-primary/10"
+                      onClick={() => openRunScanOne(asset.id)}
+                    >
+                      <Zap className="w-3 h-3 mr-1" /> Scan
+                    </Button>
                     {asset.verificationStatus !== "verified" && (
                       <Button
                         variant="ghost"
@@ -181,7 +225,7 @@ export default function AssetsPage() {
                 </td>
               </tr>
             ))}
-            {!isLoading && (assets as any[] ?? []).length === 0 && (
+            {!isLoading && allAssets.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   No assets found. Add your first asset to get started.
@@ -257,6 +301,16 @@ export default function AssetsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Run Scan Dialog */}
+      <RunScanDialog
+        open={showRunScan}
+        onOpenChange={setShowRunScan}
+        pipelineTools={pipelineTools}
+        assets={allAssets.map((a: any) => ({ id: a.id, name: a.name, value: a.value, type: a.type }))}
+        preSelectedAssetIds={preSelectedAssetIds}
+        onRunComplete={scanId => navigate(`/scan-reports/${scanId}`)}
+      />
     </div>
   );
 }
