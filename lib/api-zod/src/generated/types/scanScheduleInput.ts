@@ -7,9 +7,11 @@
  */
 import type { AssetToolConfigItem } from './assetToolConfigItem';
 
-export interface PipelineScanInput {
-  name?: string;
-  assetIds?: number[];
-  assetToolConfig?: AssetToolConfigItem[];
-  scheduleId?: number;
+export interface ScanScheduleInput {
+  name: string;
+  assetToolConfig: AssetToolConfigItem[];
+  frequency: string;
+  runTime: string;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
 }

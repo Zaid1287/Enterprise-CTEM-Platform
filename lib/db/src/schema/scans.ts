@@ -51,7 +51,26 @@ export const scanAssetResultsTable = pgTable("scan_asset_results", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const scanSchedulesTable = pgTable("scan_schedules", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenantsTable.id),
+  name: text("name").notNull(),
+  assetToolConfig: jsonb("asset_tool_config").notNull(),
+  frequency: text("frequency").notNull().default("once"),
+  runTime: text("run_time").notNull().default("09:00"),
+  dayOfWeek: integer("day_of_week"),
+  dayOfMonth: integer("day_of_month"),
+  status: text("status").notNull().default("active"),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+  lastScanId: integer("last_scan_id"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
 export const insertScanSchema = createInsertSchema(scansTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertScan = z.infer<typeof insertScanSchema>;
 export type Scan = typeof scansTable.$inferSelect;
 export type ScanAssetResult = typeof scanAssetResultsTable.$inferSelect;
+export type ScanSchedule = typeof scanSchedulesTable.$inferSelect;

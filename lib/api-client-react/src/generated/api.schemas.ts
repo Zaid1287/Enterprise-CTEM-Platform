@@ -599,9 +599,55 @@ export interface RunPipelineBody {
   assetId: number;
 }
 
+export interface AssetToolConfigItem {
+  assetId: number;
+  toolIds: number[];
+}
+
 export interface PipelineScanInput {
   name?: string;
-  assetIds: number[];
+  assetIds?: number[];
+  assetToolConfig?: AssetToolConfigItem[];
+  scheduleId?: number;
+}
+
+export interface ScanSchedule {
+  id: number;
+  name: string;
+  assetToolConfig: AssetToolConfigItem[];
+  frequency: string;
+  runTime: string;
+  /** @nullable */
+  dayOfWeek?: number | null;
+  /** @nullable */
+  dayOfMonth?: number | null;
+  status: string;
+  /** @nullable */
+  lastRunAt?: string | null;
+  /** @nullable */
+  nextRunAt?: string | null;
+  /** @nullable */
+  lastScanId?: number | null;
+  createdAt: string;
+}
+
+export interface ScanScheduleInput {
+  name: string;
+  assetToolConfig: AssetToolConfigItem[];
+  frequency: string;
+  runTime: string;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+}
+
+export interface ScanScheduleUpdate {
+  name?: string;
+  assetToolConfig?: AssetToolConfigItem[];
+  frequency?: string;
+  runTime?: string;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+  status?: string;
 }
 
 export interface PipelineScanCreated {

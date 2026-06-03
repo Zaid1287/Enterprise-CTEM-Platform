@@ -7,9 +7,12 @@
  */
 import type { AssetToolConfigItem } from './assetToolConfigItem';
 
-export interface PipelineScanInput {
+export interface ScanScheduleUpdate {
   name?: string;
-  assetIds?: number[];
   assetToolConfig?: AssetToolConfigItem[];
-  scheduleId?: number;
+  frequency?: string;
+  runTime?: string;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+  status?: string;
 }

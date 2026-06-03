@@ -659,6 +659,7 @@ paths:
   /scans/pipeline-run:
     post:
       operationId: runPipelineScan
+
       tags: [scans]
       summary: Run pipeline tools against selected assets and save structured findings
       requestBody:
@@ -674,6 +675,131 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PipelineScanCreated"
+
+  /scans/schedules:
+    get:
+      operationId: listScanSchedules
+      tags: [scans]
+      summary: List all scan schedules
+      responses:
+        "200":
+          description: List of schedules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScanSchedule"
+    post:
+      operationId: createScanSchedule
+      tags: [scans]
+      summary: Create a scan schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanScheduleInput"
+      responses:
+        "201":
+          description: Schedule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanSchedule"
+
+  /scans/schedules/{scheduleId}:
+    get:
+      operationId: getScanSchedule
+      tags: [scans]
+      summary: Get a scan schedule
+      parameters:
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Schedule details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanSchedule"
+    patch:
+      operationId: updateScanSchedule
+      tags: [scans]
+      summary: Update a scan schedule
+      parameters:
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanScheduleUpdate"
+      responses:
+        "200":
+          description: Schedule updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanSchedule"
+    delete:
+      operationId: deleteScanSchedule
+      tags: [scans]
+      summary: Delete a scan schedule
+      parameters:
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /scans/schedules/{scheduleId}/run-now:
+    post:
+      operationId: runScheduleNow
+      tags: [scans]
+      summary: Trigger a scheduled scan immediately
+      parameters:
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "201":
+          description: Scan started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineScanCreated"
+
+  /scans/{scanId}/stop:
+    post:
+      operationId: stopScan
+      tags: [scans]
+      summary: Stop a running scan
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
 
   /scans/{scanId}/asset-report:
     get:
@@ -2620,9 +2746,19 @@ components:
         assetId:
           type: integer
 
+    AssetToolConfigItem:
+      type: object
+      required: [assetId, toolIds]
+      properties:
+        assetId:
+          type: integer
+        toolIds:
+          type: array
+          items:
+            type: integer
+
     PipelineScanInput:
       type: object
-      required: [assetIds]
       properties:
         name:
           type: string
@@ -2630,6 +2766,82 @@ components:
           type: array
           items:
             type: integer
+        assetToolConfig:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssetToolConfigItem"
+        scheduleId:
+          type: integer
+
+    ScanSchedule:
+      type: object
+      required: [id, name, assetToolConfig, frequency, runTime, status, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        assetToolConfig:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssetToolConfigItem"
+        frequency:
+          type: string
+        runTime:
+          type: string
+        dayOfWeek:
+          type: ["integer", "null"]
+        dayOfMonth:
+          type: ["integer", "null"]
+        status:
+          type: string
+        lastRunAt:
+          type: ["string", "null"]
+        nextRunAt:
+          type: ["string", "null"]
+        lastScanId:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+
+    ScanScheduleInput:
+      type: object
+      required: [name, assetToolConfig, frequency, runTime]
+      properties:
+        name:
+          type: string
+        assetToolConfig:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssetToolConfigItem"
+        frequency:
+          type: string
+        runTime:
+          type: string
+        dayOfWeek:
+          type: integer
+        dayOfMonth:
+          type: integer
+
+    ScanScheduleUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        assetToolConfig:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssetToolConfigItem"
+        frequency:
+          type: string
+        runTime:
+          type: string
+        dayOfWeek:
+          type: integer
+        dayOfMonth:
+          type: integer
+        status:
+          type: string
 
     PipelineScanCreated:
       type: object

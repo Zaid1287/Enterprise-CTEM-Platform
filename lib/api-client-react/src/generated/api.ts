@@ -75,6 +75,9 @@ import type {
   Scan,
   ScanInput,
   ScanJob,
+  ScanSchedule,
+  ScanScheduleInput,
+  ScanScheduleUpdate,
   SecurityTool,
   SecurityToolInput,
   SecurityToolUpdate,
@@ -2602,6 +2605,513 @@ export const useRunPipelineScan = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getRunPipelineScanMutationOptions(options));
+    }
+
+export const getListScanSchedulesUrl = () => {
+
+
+
+
+  return `/api/scans/schedules`
+}
+
+/**
+ * @summary List all scan schedules
+ */
+export const listScanSchedules = async ( options?: RequestInit): Promise<ScanSchedule[]> => {
+
+  return customFetch<ScanSchedule[]>(getListScanSchedulesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListScanSchedulesQueryKey = () => {
+    return [
+    `/api/scans/schedules`
+    ] as const;
+    }
+
+
+export const getListScanSchedulesQueryOptions = <TData = Awaited<ReturnType<typeof listScanSchedules>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanSchedules>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListScanSchedulesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listScanSchedules>>> = ({ signal }) => listScanSchedules({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listScanSchedules>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListScanSchedulesQueryResult = NonNullable<Awaited<ReturnType<typeof listScanSchedules>>>
+export type ListScanSchedulesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all scan schedules
+ */
+
+export function useListScanSchedules<TData = Awaited<ReturnType<typeof listScanSchedules>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanSchedules>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListScanSchedulesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateScanScheduleUrl = () => {
+
+
+
+
+  return `/api/scans/schedules`
+}
+
+/**
+ * @summary Create a scan schedule
+ */
+export const createScanSchedule = async (scanScheduleInput: ScanScheduleInput, options?: RequestInit): Promise<ScanSchedule> => {
+
+  return customFetch<ScanSchedule>(getCreateScanScheduleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scanScheduleInput,)
+  }
+);}
+
+
+
+
+export const getCreateScanScheduleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createScanSchedule>>, TError,{data: BodyType<ScanScheduleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createScanSchedule>>, TError,{data: BodyType<ScanScheduleInput>}, TContext> => {
+
+const mutationKey = ['createScanSchedule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createScanSchedule>>, {data: BodyType<ScanScheduleInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createScanSchedule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateScanScheduleMutationResult = NonNullable<Awaited<ReturnType<typeof createScanSchedule>>>
+    export type CreateScanScheduleMutationBody = BodyType<ScanScheduleInput>
+    export type CreateScanScheduleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a scan schedule
+ */
+export const useCreateScanSchedule = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createScanSchedule>>, TError,{data: BodyType<ScanScheduleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createScanSchedule>>,
+        TError,
+        {data: BodyType<ScanScheduleInput>},
+        TContext
+      > => {
+      return useMutation(getCreateScanScheduleMutationOptions(options));
+    }
+
+export const getGetScanScheduleUrl = (scheduleId: number,) => {
+
+
+
+
+  return `/api/scans/schedules/${scheduleId}`
+}
+
+/**
+ * @summary Get a scan schedule
+ */
+export const getScanSchedule = async (scheduleId: number, options?: RequestInit): Promise<ScanSchedule> => {
+
+  return customFetch<ScanSchedule>(getGetScanScheduleUrl(scheduleId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScanScheduleQueryKey = (scheduleId: number,) => {
+    return [
+    `/api/scans/schedules/${scheduleId}`
+    ] as const;
+    }
+
+
+export const getGetScanScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getScanSchedule>>, TError = ErrorType<unknown>>(scheduleId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanSchedule>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScanScheduleQueryKey(scheduleId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScanSchedule>>> = ({ signal }) => getScanSchedule(scheduleId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(scheduleId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScanSchedule>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScanScheduleQueryResult = NonNullable<Awaited<ReturnType<typeof getScanSchedule>>>
+export type GetScanScheduleQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get a scan schedule
+ */
+
+export function useGetScanSchedule<TData = Awaited<ReturnType<typeof getScanSchedule>>, TError = ErrorType<unknown>>(
+ scheduleId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanSchedule>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetScanScheduleQueryOptions(scheduleId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateScanScheduleUrl = (scheduleId: number,) => {
+
+
+
+
+  return `/api/scans/schedules/${scheduleId}`
+}
+
+/**
+ * @summary Update a scan schedule
+ */
+export const updateScanSchedule = async (scheduleId: number,
+    scanScheduleUpdate: ScanScheduleUpdate, options?: RequestInit): Promise<ScanSchedule> => {
+
+  return customFetch<ScanSchedule>(getUpdateScanScheduleUrl(scheduleId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scanScheduleUpdate,)
+  }
+);}
+
+
+
+
+export const getUpdateScanScheduleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScanSchedule>>, TError,{scheduleId: number;data: BodyType<ScanScheduleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateScanSchedule>>, TError,{scheduleId: number;data: BodyType<ScanScheduleUpdate>}, TContext> => {
+
+const mutationKey = ['updateScanSchedule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateScanSchedule>>, {scheduleId: number;data: BodyType<ScanScheduleUpdate>}> = (props) => {
+          const {scheduleId,data} = props ?? {};
+
+          return  updateScanSchedule(scheduleId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateScanScheduleMutationResult = NonNullable<Awaited<ReturnType<typeof updateScanSchedule>>>
+    export type UpdateScanScheduleMutationBody = BodyType<ScanScheduleUpdate>
+    export type UpdateScanScheduleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update a scan schedule
+ */
+export const useUpdateScanSchedule = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScanSchedule>>, TError,{scheduleId: number;data: BodyType<ScanScheduleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateScanSchedule>>,
+        TError,
+        {scheduleId: number;data: BodyType<ScanScheduleUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateScanScheduleMutationOptions(options));
+    }
+
+export const getDeleteScanScheduleUrl = (scheduleId: number,) => {
+
+
+
+
+  return `/api/scans/schedules/${scheduleId}`
+}
+
+/**
+ * @summary Delete a scan schedule
+ */
+export const deleteScanSchedule = async (scheduleId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteScanScheduleUrl(scheduleId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteScanScheduleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteScanSchedule>>, TError,{scheduleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteScanSchedule>>, TError,{scheduleId: number}, TContext> => {
+
+const mutationKey = ['deleteScanSchedule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteScanSchedule>>, {scheduleId: number}> = (props) => {
+          const {scheduleId} = props ?? {};
+
+          return  deleteScanSchedule(scheduleId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteScanScheduleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteScanSchedule>>>
+
+    export type DeleteScanScheduleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a scan schedule
+ */
+export const useDeleteScanSchedule = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteScanSchedule>>, TError,{scheduleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteScanSchedule>>,
+        TError,
+        {scheduleId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteScanScheduleMutationOptions(options));
+    }
+
+export const getRunScheduleNowUrl = (scheduleId: number,) => {
+
+
+
+
+  return `/api/scans/schedules/${scheduleId}/run-now`
+}
+
+/**
+ * @summary Trigger a scheduled scan immediately
+ */
+export const runScheduleNow = async (scheduleId: number, options?: RequestInit): Promise<PipelineScanCreated> => {
+
+  return customFetch<PipelineScanCreated>(getRunScheduleNowUrl(scheduleId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRunScheduleNowMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runScheduleNow>>, TError,{scheduleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runScheduleNow>>, TError,{scheduleId: number}, TContext> => {
+
+const mutationKey = ['runScheduleNow'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runScheduleNow>>, {scheduleId: number}> = (props) => {
+          const {scheduleId} = props ?? {};
+
+          return  runScheduleNow(scheduleId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunScheduleNowMutationResult = NonNullable<Awaited<ReturnType<typeof runScheduleNow>>>
+
+    export type RunScheduleNowMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Trigger a scheduled scan immediately
+ */
+export const useRunScheduleNow = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runScheduleNow>>, TError,{scheduleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runScheduleNow>>,
+        TError,
+        {scheduleId: number},
+        TContext
+      > => {
+      return useMutation(getRunScheduleNowMutationOptions(options));
+    }
+
+export const getStopScanUrl = (scanId: number,) => {
+
+
+
+
+  return `/api/scans/${scanId}/stop`
+}
+
+/**
+ * @summary Stop a running scan
+ */
+export const stopScan = async (scanId: number, options?: RequestInit): Promise<Scan> => {
+
+  return customFetch<Scan>(getStopScanUrl(scanId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getStopScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopScan>>, TError,{scanId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stopScan>>, TError,{scanId: number}, TContext> => {
+
+const mutationKey = ['stopScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopScan>>, {scanId: number}> = (props) => {
+          const {scanId} = props ?? {};
+
+          return  stopScan(scanId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StopScanMutationResult = NonNullable<Awaited<ReturnType<typeof stopScan>>>
+
+    export type StopScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Stop a running scan
+ */
+export const useStopScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopScan>>, TError,{scanId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof stopScan>>,
+        TError,
+        {scanId: number},
+        TContext
+      > => {
+      return useMutation(getStopScanMutationOptions(options));
     }
 
 export const getGetScanAssetReportUrl = (scanId: number,) => {

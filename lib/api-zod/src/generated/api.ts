@@ -581,7 +581,154 @@ export const CancelScanResponse = zod.object({
  */
 export const RunPipelineScanBody = zod.object({
   "name": zod.string().optional(),
-  "assetIds": zod.array(zod.number())
+  "assetIds": zod.array(zod.number()).optional(),
+  "assetToolConfig": zod.array(zod.object({
+  "assetId": zod.number(),
+  "toolIds": zod.array(zod.number())
+})).optional(),
+  "scheduleId": zod.number().optional()
+})
+
+
+/**
+ * @summary List all scan schedules
+ */
+export const ListScanSchedulesResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "assetToolConfig": zod.array(zod.object({
+  "assetId": zod.number(),
+  "toolIds": zod.array(zod.number())
+})),
+  "frequency": zod.string(),
+  "runTime": zod.string(),
+  "dayOfWeek": zod.number().nullish(),
+  "dayOfMonth": zod.number().nullish(),
+  "status": zod.string(),
+  "lastRunAt": zod.string().nullish(),
+  "nextRunAt": zod.string().nullish(),
+  "lastScanId": zod.number().nullish(),
+  "createdAt": zod.string()
+})
+export const ListScanSchedulesResponse = zod.array(ListScanSchedulesResponseItem)
+
+
+/**
+ * @summary Create a scan schedule
+ */
+export const CreateScanScheduleBody = zod.object({
+  "name": zod.string(),
+  "assetToolConfig": zod.array(zod.object({
+  "assetId": zod.number(),
+  "toolIds": zod.array(zod.number())
+})),
+  "frequency": zod.string(),
+  "runTime": zod.string(),
+  "dayOfWeek": zod.number().optional(),
+  "dayOfMonth": zod.number().optional()
+})
+
+
+/**
+ * @summary Get a scan schedule
+ */
+export const GetScanScheduleParams = zod.object({
+  "scheduleId": zod.coerce.number()
+})
+
+export const GetScanScheduleResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "assetToolConfig": zod.array(zod.object({
+  "assetId": zod.number(),
+  "toolIds": zod.array(zod.number())
+})),
+  "frequency": zod.string(),
+  "runTime": zod.string(),
+  "dayOfWeek": zod.number().nullish(),
+  "dayOfMonth": zod.number().nullish(),
+  "status": zod.string(),
+  "lastRunAt": zod.string().nullish(),
+  "nextRunAt": zod.string().nullish(),
+  "lastScanId": zod.number().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Update a scan schedule
+ */
+export const UpdateScanScheduleParams = zod.object({
+  "scheduleId": zod.coerce.number()
+})
+
+export const UpdateScanScheduleBody = zod.object({
+  "name": zod.string().optional(),
+  "assetToolConfig": zod.array(zod.object({
+  "assetId": zod.number(),
+  "toolIds": zod.array(zod.number())
+})).optional(),
+  "frequency": zod.string().optional(),
+  "runTime": zod.string().optional(),
+  "dayOfWeek": zod.number().optional(),
+  "dayOfMonth": zod.number().optional(),
+  "status": zod.string().optional()
+})
+
+export const UpdateScanScheduleResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "assetToolConfig": zod.array(zod.object({
+  "assetId": zod.number(),
+  "toolIds": zod.array(zod.number())
+})),
+  "frequency": zod.string(),
+  "runTime": zod.string(),
+  "dayOfWeek": zod.number().nullish(),
+  "dayOfMonth": zod.number().nullish(),
+  "status": zod.string(),
+  "lastRunAt": zod.string().nullish(),
+  "nextRunAt": zod.string().nullish(),
+  "lastScanId": zod.number().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a scan schedule
+ */
+export const DeleteScanScheduleParams = zod.object({
+  "scheduleId": zod.coerce.number()
+})
+
+
+/**
+ * @summary Trigger a scheduled scan immediately
+ */
+export const RunScheduleNowParams = zod.object({
+  "scheduleId": zod.coerce.number()
+})
+
+
+/**
+ * @summary Stop a running scan
+ */
+export const StopScanParams = zod.object({
+  "scanId": zod.coerce.number()
+})
+
+export const StopScanResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "status": zod.string(),
+  "schedule": zod.string().nullish(),
+  "assetIds": zod.array(zod.number()).optional(),
+  "findingsCount": zod.number().optional(),
+  "startedAt": zod.string().nullish(),
+  "completedAt": zod.string().nullish(),
+  "createdAt": zod.string()
 })
 
 

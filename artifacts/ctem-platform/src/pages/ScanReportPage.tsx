@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useParams, Link } from "wouter";
-import { useGetScanAssetReport } from "@workspace/api-client-react";
+import { useGetScanAssetReport, useGetScan, useStopScan, getGetScanQueryKey } from "@workspace/api-client-react";
 import {
   ChevronLeft, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
-  Info, ExternalLink, Terminal, Wifi,
+  Info, ExternalLink, Terminal, Wifi, Square, Loader2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +49,29 @@ export default function ScanReportPage() {
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(0);
   const [assetTab, setAssetTab] = useState<AssetTab>("ports");
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   const { data: reports, isLoading, error } = useGetScanAssetReport(scanId);
+  const { data: scanData, refetch: refetchScan } = useGetScan(scanId, {
+    query: { queryKey: getGetScanQueryKey(scanId), refetchInterval: (q) => {
+      const s = (q.state.data as any)?.status;
+      return s === "running" || s === "pending" ? 4000 : false;
+    }},
+  });
+  const stopMutation = useStopScan();
+
+  const scan = scanData as any;
+  const scanStatus: string = scan?.status ?? "completed";
+
+  async function handleStop() {
+    setStopping(true);
+    try {
+      await stopMutation.mutateAsync({ scanId });
+      refetchScan();
+    } finally {
+      setStopping(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -112,8 +134,38 @@ export default function ScanReportPage() {
           <h1 className="text-lg font-semibold">Pipeline Scan Report #{scanId}</h1>
           <p className="text-xs text-muted-foreground">{assetReports.length} assets · {assetReports.reduce((acc: number, a: any) => acc + (a.summary?.vulnerabilities ?? 0), 0)} total vulnerabilities</p>
         </div>
-        <div className="ml-auto flex items-center gap-1.5 bg-green-500/10 border border-green-500/30 text-green-400 text-xs px-2.5 py-1 rounded-full">
-          <CheckCircle2 className="w-3 h-3" /> Completed
+        <div className="ml-auto flex items-center gap-2">
+          {(scanStatus === "running" || scanStatus === "pending") && (
+            <Button
+              size="sm" variant="outline"
+              className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10"
+              onClick={handleStop}
+              disabled={stopping}
+            >
+              {stopping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
+              Stop Scan
+            </Button>
+          )}
+          {scanStatus === "running" && (
+            <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs px-2.5 py-1 rounded-full">
+              <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
+            </div>
+          )}
+          {scanStatus === "completed" && (
+            <div className="flex items-center gap-1.5 bg-green-500/10 border border-green-500/30 text-green-400 text-xs px-2.5 py-1 rounded-full">
+              <CheckCircle2 className="w-3 h-3" /> Completed
+            </div>
+          )}
+          {scanStatus === "cancelled" && (
+            <div className="flex items-center gap-1.5 bg-muted border border-border text-muted-foreground text-xs px-2.5 py-1 rounded-full">
+              <XCircle className="w-3 h-3" /> Cancelled
+            </div>
+          )}
+          {(scanStatus === "pending") && (
+            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs px-2.5 py-1 rounded-full">
+              <Loader2 className="w-3 h-3 animate-spin" /> Pending…
+            </div>
+          )}
         </div>
       </div>
 
@@ -122,10 +174,18 @@ export default function ScanReportPage() {
 
         {/* Asset list */}
         <div className="w-56 shrink-0 space-y-1">
-          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1 mb-2">Assets Scanned</p>
+          <div className="flex items-center justify-between px-1 mb-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Assets Scanned</p>
+            {scanStatus === "running" && (
+              <span className="flex items-center gap-1 text-[10px] text-blue-400">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Live
+              </span>
+            )}
+          </div>
           {assetReports.map((asset: any, idx: number) => {
             const critVulns = asset.summary?.criticalVulns ?? 0;
             const highVulns = asset.summary?.highVulns ?? 0;
+            const isRunningAsset = scanStatus === "running";
             return (
               <button
                 key={asset.assetId}
@@ -137,12 +197,20 @@ export default function ScanReportPage() {
                     : "bg-card border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
                 )}
               >
-                <p className="text-sm font-medium truncate">{asset.assetName}</p>
+                <div className="flex items-center gap-1.5">
+                  {isRunningAsset && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin shrink-0" />}
+                  <p className="text-sm font-medium truncate">{asset.assetName}</p>
+                </div>
                 <p className="text-[10px] text-muted-foreground truncate mt-0.5">{asset.assetValue}</p>
                 <div className="flex gap-1.5 mt-1.5">
-                  <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1">{asset.summary?.openPorts ?? 0} ports</span>
-                  {critVulns > 0 && <span className="text-[10px] bg-red-500/15 text-red-400 rounded px-1">{critVulns} critical</span>}
-                  {highVulns > 0 && !critVulns && <span className="text-[10px] bg-orange-500/15 text-orange-400 rounded px-1">{highVulns} high</span>}
+                  {isRunningAsset
+                    ? <span className="text-[10px] text-blue-400">Scanning…</span>
+                    : <>
+                        <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1">{asset.summary?.openPorts ?? 0} ports</span>
+                        {critVulns > 0 && <span className="text-[10px] bg-red-500/15 text-red-400 rounded px-1">{critVulns} critical</span>}
+                        {highVulns > 0 && !critVulns && <span className="text-[10px] bg-orange-500/15 text-orange-400 rounded px-1">{highVulns} high</span>}
+                      </>
+                  }
                 </div>
               </button>
             );

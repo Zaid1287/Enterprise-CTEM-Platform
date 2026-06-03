@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import {
   useListSecurityTools, useCreateSecurityTool, useDeleteSecurityTool, useUpdateSecurityTool,
   useRunSecurityTool, useGetToolPipeline, useSetToolPipeline, useListToolRuns, useGetToolRun,
-  useListAssets, useRunPipelineScan,
+  useListAssets,
   getListSecurityToolsQueryKey, getGetToolPipelineQueryKey, getListToolRunsQueryKey, getGetToolRunQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, GitBranch, ChevronUp, ChevronDown, Settings2,
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
   ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
-  ScanSearch, Zap,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, capitalize, formatDateTime } from "@/lib/utils";
+import RunScanDialog from "@/components/scan/RunScanDialog";
+import ScheduledScansList from "@/components/scan/ScheduledScansList";
 
 const CATEGORIES = ["recon", "vuln_scan", "port_scan", "ssl_check", "web_recon", "osint"];
 const OUTPUT_FORMATS = ["json", "text", "xml", "csv", "markdown"];
@@ -58,9 +60,6 @@ export default function SecurityToolsPage() {
   const [localPipeline, setLocalPipeline] = useState<any[]>([]);
   const [seedingDefaults, setSeedingDefaults] = useState(false);
   const [showRunScan, setShowRunScan] = useState(false);
-  const [scanName, setScanName] = useState("");
-  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);
-  const [isRunningPipeline, setIsRunningPipeline] = useState(false);
   const qc = useQueryClient();
   const [, navigate] = useLocation();
 
@@ -87,7 +86,6 @@ export default function SecurityToolsPage() {
   const updateTool = useUpdateSecurityTool();
   const runTool = useRunSecurityTool();
   const setPipeline = useSetToolPipeline();
-  const runPipelineScan = useRunPipelineScan();
 
   const effectivePipeline = pipelineDirty ? localPipeline : pipeline;
 
@@ -120,31 +118,6 @@ export default function SecurityToolsPage() {
     } finally {
       setRunningId(null);
     }
-  };
-
-  const handleRunPipelineScan = async () => {
-    if (selectedAssetIds.length === 0) return;
-    setIsRunningPipeline(true);
-    try {
-      const result = await runPipelineScan.mutateAsync({
-        data: {
-          assetIds: selectedAssetIds,
-          name: scanName || undefined,
-        } as any,
-      });
-      setShowRunScan(false);
-      setSelectedAssetIds([]);
-      setScanName("");
-      navigate(`/scan-reports/${(result as any).scanId}`);
-    } finally {
-      setIsRunningPipeline(false);
-    }
-  };
-
-  const toggleAsset = (id: number) => {
-    setSelectedAssetIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
   };
 
   const handleSeedDefaults = async () => {
@@ -391,6 +364,7 @@ export default function SecurityToolsPage() {
       {/* ── Pipeline ── */}
       {tab === "pipeline" && (
         <div className="space-y-3">
+          <ScheduledScansList />
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -632,98 +606,15 @@ export default function SecurityToolsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Run Scan Dialog */}
-      <Dialog open={showRunScan} onOpenChange={open => { if (!isRunningPipeline) { setShowRunScan(open); if (!open) { setSelectedAssetIds([]); setScanName(""); } } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ScanSearch className="w-4.5 h-4.5 text-primary" />
-              Run Pipeline Scan
-            </DialogTitle>
-          </DialogHeader>
-
-          {isRunningPipeline ? (
-            <div className="py-10 flex flex-col items-center gap-4">
-              <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-              <div className="text-center">
-                <p className="text-sm font-medium">Running pipeline tools…</p>
-                <p className="text-xs text-muted-foreground mt-1">Scanning {selectedAssetIds.length} asset{selectedAssetIds.length > 1 ? "s" : ""} with {effectivePipeline.filter((s: any) => s.isEnabled).length} enabled tools</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-4">
-                <div>
-                  <Label className="text-xs mb-1.5 block">Scan Name (optional)</Label>
-                  <Input
-                    placeholder={`Pipeline Scan — ${new Date().toLocaleDateString()}`}
-                    value={scanName}
-                    onChange={e => setScanName(e.target.value)}
-                    className="text-sm"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <Label className="text-xs">Select Assets to Scan</Label>
-                    <button
-                      className="text-[10px] text-primary hover:underline"
-                      onClick={() => setSelectedAssetIds(allAssets.length === selectedAssetIds.length ? [] : allAssets.map((a: any) => a.id))}
-                    >
-                      {selectedAssetIds.length === allAssets.length ? "Deselect all" : "Select all"}
-                    </button>
-                  </div>
-                  <div className="border border-border rounded-lg max-h-52 overflow-y-auto divide-y divide-border/50">
-                    {allAssets.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-muted-foreground">No assets found. Add assets in Asset Inventory first.</div>
-                    ) : (
-                      allAssets.map((asset: any) => {
-                        const selected = selectedAssetIds.includes(asset.id);
-                        return (
-                          <button
-                            key={asset.id}
-                            onClick={() => toggleAsset(asset.id)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${selected ? "bg-primary/10" : "hover:bg-accent/40"}`}
-                          >
-                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${selected ? "bg-primary border-primary" : "border-muted-foreground"}`}>
-                              {selected && <div className="w-2 h-2 bg-white rounded-sm" />}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium truncate">{asset.name}</p>
-                              <p className="text-[10px] text-muted-foreground font-mono truncate">{asset.value}</p>
-                            </div>
-                            <span className="text-[10px] bg-accent/60 text-muted-foreground rounded px-1.5 py-0.5 shrink-0">{asset.type}</span>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-accent/30 rounded-lg px-3 py-2.5 text-xs text-muted-foreground space-y-1">
-                  <p className="flex items-center gap-1.5">
-                    <Zap className="w-3 h-3 text-primary" />
-                    <span className="font-medium text-foreground">{effectivePipeline.filter((s: any) => s.isEnabled).length} tools</span> will run against each selected asset
-                  </p>
-                  <p>Categories: {[...new Set(effectivePipeline.filter((s: any) => s.isEnabled).map((s: any) => s.toolCategory))].join(", ") || "none"}</p>
-                </div>
-              </div>
-
-              <DialogFooter>
-                <Button variant="outline" onClick={() => { setShowRunScan(false); setSelectedAssetIds([]); setScanName(""); }}>Cancel</Button>
-                <Button
-                  onClick={handleRunPipelineScan}
-                  disabled={selectedAssetIds.length === 0 || isRunningPipeline}
-                  className="bg-primary/90 hover:bg-primary"
-                >
-                  <Zap className="w-3.5 h-3.5 mr-1.5" />
-                  Run Scan ({selectedAssetIds.length} asset{selectedAssetIds.length !== 1 ? "s" : ""})
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      <RunScanDialog
+        open={showRunScan}
+        onOpenChange={setShowRunScan}
+        pipelineTools={effectivePipeline.map((s: any) => ({
+          id: s.toolId, name: s.toolName, category: s.toolCategory, isActive: s.isEnabled,
+        }))}
+        assets={allAssets.map((a: any) => ({ id: a.id, name: a.name, value: a.value, type: a.type }))}
+        onRunComplete={scanId => navigate(`/scan-reports/${scanId}`)}
+      />
     </div>
   );
 }
