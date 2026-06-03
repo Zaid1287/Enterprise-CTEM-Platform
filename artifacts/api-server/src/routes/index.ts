@@ -15,6 +15,7 @@ import auditLogsRouter from "./auditLogs";
 import aiRouter from "./ai";
 import dashboardRouter from "./dashboard";
 import toolsRouter from "./tools";
+import pipelineScansRouter from "./pipelineScans";
 
 const router: IRouter = Router();
 
@@ -24,6 +25,7 @@ router.use(tenantsRouter);
 router.use(usersRouter);
 router.use(assetsRouter);
 router.use(assetGroupsRouter);
+router.use(pipelineScansRouter);
 router.use(scansRouter);
 router.use(findingsRouter);
 router.use(complianceRouter);

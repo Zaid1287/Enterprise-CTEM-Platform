@@ -656,6 +656,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/Scan"
 
+  /scans/pipeline-run:
+    post:
+      operationId: runPipelineScan
+      tags: [scans]
+      summary: Run pipeline tools against selected assets and save structured findings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelineScanInput"
+      responses:
+        "201":
+          description: Scan started and completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineScanCreated"
+
+  /scans/{scanId}/asset-report:
+    get:
+      operationId: getScanAssetReport
+      tags: [scans]
+      summary: Get detailed per-asset structured results for a pipeline scan
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Per-asset scan results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetScanReport"
+
   /scans/{scanId}/jobs:
     get:
       operationId: listScanJobs
@@ -2579,3 +2619,47 @@ components:
       properties:
         assetId:
           type: integer
+
+    PipelineScanInput:
+      type: object
+      required: [assetIds]
+      properties:
+        name:
+          type: string
+        assetIds:
+          type: array
+          items:
+            type: integer
+
+    PipelineScanCreated:
+      type: object
+      required: [scanId, status, assetCount]
+      properties:
+        scanId:
+          type: integer
+        status:
+          type: string
+        assetCount:
+          type: integer
+        findingsCount:
+          type: integer
+
+    AssetScanReport:
+      type: object
+      required: [assetId, assetName, assetValue, toolResults, summary]
+      properties:
+        assetId:
+          type: integer
+        assetName:
+          type: string
+        assetValue:
+          type: string
+        assetType:
+          type: string
+        summary:
+          type: object
+        toolResults:
+          type: array
+          items:
+            type: object
+

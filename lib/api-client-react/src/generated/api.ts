@@ -37,6 +37,7 @@ import type {
   AssetGroupUpdate,
   AssetInput,
   AssetRiskSummary,
+  AssetScanReport,
   AssetTypeCount,
   AssetUpdate,
   AuditLog,
@@ -63,6 +64,8 @@ import type {
   ListScansParams,
   ListToolRunsParams,
   LoginInput,
+  PipelineScanCreated,
+  PipelineScanInput,
   RefreshTokenInput,
   RegisterInput,
   Report,
@@ -2529,6 +2532,154 @@ export const useCancelScan = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCancelScanMutationOptions(options));
     }
+
+export const getRunPipelineScanUrl = () => {
+
+
+
+
+  return `/api/scans/pipeline-run`
+}
+
+/**
+ * @summary Run pipeline tools against selected assets and save structured findings
+ */
+export const runPipelineScan = async (pipelineScanInput: PipelineScanInput, options?: RequestInit): Promise<PipelineScanCreated> => {
+
+  return customFetch<PipelineScanCreated>(getRunPipelineScanUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      pipelineScanInput,)
+  }
+);}
+
+
+
+
+export const getRunPipelineScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPipelineScan>>, TError,{data: BodyType<PipelineScanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runPipelineScan>>, TError,{data: BodyType<PipelineScanInput>}, TContext> => {
+
+const mutationKey = ['runPipelineScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runPipelineScan>>, {data: BodyType<PipelineScanInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  runPipelineScan(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunPipelineScanMutationResult = NonNullable<Awaited<ReturnType<typeof runPipelineScan>>>
+    export type RunPipelineScanMutationBody = BodyType<PipelineScanInput>
+    export type RunPipelineScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Run pipeline tools against selected assets and save structured findings
+ */
+export const useRunPipelineScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPipelineScan>>, TError,{data: BodyType<PipelineScanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runPipelineScan>>,
+        TError,
+        {data: BodyType<PipelineScanInput>},
+        TContext
+      > => {
+      return useMutation(getRunPipelineScanMutationOptions(options));
+    }
+
+export const getGetScanAssetReportUrl = (scanId: number,) => {
+
+
+
+
+  return `/api/scans/${scanId}/asset-report`
+}
+
+/**
+ * @summary Get detailed per-asset structured results for a pipeline scan
+ */
+export const getScanAssetReport = async (scanId: number, options?: RequestInit): Promise<AssetScanReport[]> => {
+
+  return customFetch<AssetScanReport[]>(getGetScanAssetReportUrl(scanId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScanAssetReportQueryKey = (scanId: number,) => {
+    return [
+    `/api/scans/${scanId}/asset-report`
+    ] as const;
+    }
+
+
+export const getGetScanAssetReportQueryOptions = <TData = Awaited<ReturnType<typeof getScanAssetReport>>, TError = ErrorType<unknown>>(scanId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanAssetReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScanAssetReportQueryKey(scanId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScanAssetReport>>> = ({ signal }) => getScanAssetReport(scanId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(scanId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScanAssetReport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScanAssetReportQueryResult = NonNullable<Awaited<ReturnType<typeof getScanAssetReport>>>
+export type GetScanAssetReportQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get detailed per-asset structured results for a pipeline scan
+ */
+
+export function useGetScanAssetReport<TData = Awaited<ReturnType<typeof getScanAssetReport>>, TError = ErrorType<unknown>>(
+ scanId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanAssetReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetScanAssetReportQueryOptions(scanId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getListScanJobsUrl = (scanId: number,) => {
 

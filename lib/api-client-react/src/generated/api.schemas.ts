@@ -599,6 +599,31 @@ export interface RunPipelineBody {
   assetId: number;
 }
 
+export interface PipelineScanInput {
+  name?: string;
+  assetIds: number[];
+}
+
+export interface PipelineScanCreated {
+  scanId: number;
+  status: string;
+  assetCount: number;
+  findingsCount?: number;
+}
+
+export type AssetScanReportSummary = { [key: string]: unknown };
+
+export type AssetScanReportToolResultsItem = { [key: string]: unknown };
+
+export interface AssetScanReport {
+  assetId: number;
+  assetName: string;
+  assetValue: string;
+  assetType?: string;
+  summary: AssetScanReportSummary;
+  toolResults: AssetScanReportToolResultsItem[];
+}
+
 export type ListAssetsParams = {
 type?: string;
 tag?: string;

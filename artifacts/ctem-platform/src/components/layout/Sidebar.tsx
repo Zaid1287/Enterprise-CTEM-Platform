@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Server, Layers, Radar, Bug, ShieldCheck,
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
-  Users, Building2, ChevronRight, Shield, GitBranch,
+  Users, Building2, ChevronRight, Shield, GitBranch, ScanSearch,
 } from "lucide-react";
 
 interface NavItem {
@@ -38,6 +38,7 @@ const navGroups: NavGroup[] = [
       { label: "Findings", href: "/findings", icon: Bug },
       { label: "Risk Scoring", href: "/risk", icon: TrendingUp },
       { label: "Security Tools", href: "/tools", icon: GitBranch },
+      { label: "Scan Reports", href: "/scan-reports", icon: ScanSearch },
     ],
   },
   {

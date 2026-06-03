@@ -577,6 +577,37 @@ export const CancelScanResponse = zod.object({
 
 
 /**
+ * @summary Run pipeline tools against selected assets and save structured findings
+ */
+export const RunPipelineScanBody = zod.object({
+  "name": zod.string().optional(),
+  "assetIds": zod.array(zod.number())
+})
+
+
+/**
+ * @summary Get detailed per-asset structured results for a pipeline scan
+ */
+export const GetScanAssetReportParams = zod.object({
+  "scanId": zod.coerce.number()
+})
+
+export const GetScanAssetReportResponseItem = zod.object({
+  "assetId": zod.number(),
+  "assetName": zod.string(),
+  "assetValue": zod.string(),
+  "assetType": zod.string().optional(),
+  "summary": zod.object({
+
+}).passthrough(),
+  "toolResults": zod.array(zod.object({
+
+}).passthrough())
+})
+export const GetScanAssetReportResponse = zod.array(GetScanAssetReportResponseItem)
+
+
+/**
  * @summary List scan jobs for a scan
  */
 export const ListScanJobsParams = zod.object({

@@ -1,7 +1,8 @@
-import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { tenantsTable } from "./tenants";
+import { assetsTable } from "./assets";
 
 export const scansTable = pgTable("scans", {
   id: serial("id").primaryKey(),
@@ -32,6 +33,25 @@ export const scanJobsTable = pgTable("scan_jobs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
+export const scanAssetResultsTable = pgTable("scan_asset_results", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenantsTable.id),
+  scanId: integer("scan_id").notNull().references(() => scansTable.id, { onDelete: "cascade" }),
+  assetId: integer("asset_id").notNull().references(() => assetsTable.id),
+  toolName: text("tool_name").notNull(),
+  toolCategory: text("tool_category").notNull(),
+  rawOutput: text("raw_output"),
+  ports: jsonb("ports"),
+  subdomains: jsonb("subdomains"),
+  endpoints: jsonb("endpoints"),
+  httpInfo: jsonb("http_info"),
+  dnsRecords: jsonb("dns_records"),
+  intelligence: jsonb("intelligence"),
+  vulnerabilities: jsonb("vulnerabilities"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const insertScanSchema = createInsertSchema(scansTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertScan = z.infer<typeof insertScanSchema>;
 export type Scan = typeof scansTable.$inferSelect;
+export type ScanAssetResult = typeof scanAssetResultsTable.$inferSelect;

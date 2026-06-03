@@ -1,2 +1,6 @@
 - [Orval mutation wrapper pattern](orval-mutation-wrapper.md) — Orval-generated mutations require `{ data: ... }` wrapper, never raw objects
 - [CTEM auth flow](ctem-auth-flow.md) — JWT tokens via sessionStorage + setAuthTokenGetter; logout mutation takes void params
+- [Express route ordering](express-route-ordering.md) — static sub-paths (e.g. /scans/pipeline-run) must be registered BEFORE param routes (/scans/:scanId) to avoid shadowing.
+- [API server Zod imports](api-zod-imports.md) — API server cannot import zod directly; esbuild can't resolve it. Always use @workspace/api-zod generated schemas.
+- [OpenAPI schema name collision](openapi-schema-collision.md) — Schema names matching auto-generated param type names (e.g. GetXxxParams) cause ambiguous re-export errors in api-zod; remove duplicates.
+- [TanStack Query queryKey required](tanstack-querykey.md) — Hooks like useGetToolRun require queryKey in query options or TS errors block Vite HMR module reloads.
