@@ -1,16 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "wouter";
 import { useGetScanAssetReport, useGetScan, useStopScan, getGetScanQueryKey, getGetScanAssetReportQueryKey } from "@workspace/api-client-react";
 import {
   ChevronLeft, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
-  Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock,
+  Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
+  Lock, Fingerprint,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "raw";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw";
 
 const severityConfig = {
   critical: { cls: "bg-red-500/15 text-red-400 border-red-500/40", icon: XCircle },
@@ -37,6 +38,13 @@ function formatDuration(startMs: number, endMs: number): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
+function formatMs(ms: number | null): string {
+  if (ms === null) return "";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+}
+
 function StatCard({ icon: Icon, label, value, className }: { icon: React.ElementType; label: string; value: number | string; className?: string }) {
   return (
     <div className={cn("bg-card border border-border rounded-xl p-4 flex items-center gap-3", className)}>
@@ -46,6 +54,261 @@ function StatCard({ icon: Icon, label, value, className }: { icon: React.Element
       <div>
         <p className="text-lg font-bold leading-tight">{value}</p>
         <p className="text-xs text-muted-foreground">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+interface ToolProgress {
+  toolName: string;
+  toolCategory: string;
+  phase: number;
+  status: "queued" | "running" | "done" | "failed";
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  findingsCount: number;
+  detail: string;
+}
+interface AssetProgress {
+  assetId: number;
+  assetName: string;
+  assetValue: string;
+  tools: ToolProgress[];
+}
+
+const PHASE_NAMES: Record<number, string> = {
+  1: "Recon & OSINT",
+  2: "Port Scanning",
+  3: "Web Recon",
+  4: "Vuln & Secrets",
+  5: "SSL/TLS Analysis",
+};
+
+const PHASE_COLORS: Record<number, string> = {
+  1: "text-violet-400 bg-violet-500/10 border-violet-500/30",
+  2: "text-blue-400 bg-blue-500/10 border-blue-500/30",
+  3: "text-cyan-400 bg-cyan-500/10 border-cyan-500/30",
+  4: "text-orange-400 bg-orange-500/10 border-orange-500/30",
+  5: "text-green-400 bg-green-500/10 border-green-500/30",
+};
+
+function ToolStatusIcon({ status }: { status: ToolProgress["status"] }) {
+  if (status === "running") return <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />;
+  if (status === "done") return <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />;
+  if (status === "failed") return <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />;
+  return <div className="w-3.5 h-3.5 rounded-full border border-border bg-muted/40 shrink-0" />;
+}
+
+function LiveProgressView({
+  scanId,
+  scanStatus,
+  scan,
+  stopping,
+  onStop,
+}: {
+  scanId: number;
+  scanStatus: string;
+  scan: any;
+  stopping: boolean;
+  onStop: () => void;
+}) {
+  const [progress, setProgress] = useState<AssetProgress[]>([]);
+  const [selectedAssetIdx, setSelectedAssetIdx] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const token = sessionStorage.getItem("access_token");
+
+    async function fetchProgress() {
+      try {
+        const res = await fetch(`/api/scans/${scanId}/progress`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) setProgress(data);
+        }
+      } catch {}
+    }
+
+    fetchProgress();
+    intervalRef.current = setInterval(fetchProgress, 2000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [scanId]);
+
+  const selectedAsset = progress[selectedAssetIdx] ?? progress[0];
+  const tools = selectedAsset?.tools ?? [];
+
+  const phaseGroups = [1, 2, 3, 4, 5].map(phase => ({
+    phase,
+    name: PHASE_NAMES[phase],
+    tools: tools.filter(t => t.phase === phase),
+  })).filter(g => g.tools.length > 0);
+
+  const totalTools = tools.length;
+  const doneTools = tools.filter(t => t.status === "done" || t.status === "failed").length;
+  const runningTools = tools.filter(t => t.status === "running").length;
+  const pct = totalTools > 0 ? Math.round((doneTools / totalTools) * 100) : 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Link href="/scan-reports">
+          <button className="w-8 h-8 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center transition-colors">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+        </Link>
+        <div>
+          <h1 className="text-lg font-semibold">Pipeline Scan Report #{scanId}</h1>
+          <p className="text-xs text-muted-foreground">Scan in progress — live tool execution</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            size="sm" variant="outline"
+            className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10"
+            onClick={onStop} disabled={stopping}
+          >
+            {stopping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
+            Stop Scan
+          </Button>
+          <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs px-2.5 py-1 rounded-full">
+            <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-4 items-start">
+        {/* Asset list */}
+        {progress.length > 0 && (
+          <div className="w-52 shrink-0 space-y-1">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1 mb-2">Assets</p>
+            {progress.map((a, idx) => {
+              const aDone = a.tools.filter(t => t.status === "done" || t.status === "failed").length;
+              const aTotal = a.tools.length;
+              const aPct = aTotal > 0 ? Math.round((aDone / aTotal) * 100) : 0;
+              const aRunning = a.tools.some(t => t.status === "running");
+              return (
+                <button
+                  key={a.assetId}
+                  onClick={() => setSelectedAssetIdx(idx)}
+                  className={cn(
+                    "w-full text-left rounded-lg px-3 py-2.5 transition-colors border",
+                    idx === selectedAssetIdx
+                      ? "bg-primary/10 border-primary/30 text-foreground"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  )}
+                >
+                  <div className="flex items-center gap-1.5">
+                    {aRunning && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin shrink-0" />}
+                    <p className="text-sm font-medium truncate">{a.assetName}</p>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground truncate mt-0.5">{a.assetValue}</p>
+                  <div className="mt-1.5 w-full bg-muted/40 rounded-full h-1">
+                    <div className="bg-primary h-1 rounded-full transition-all duration-500" style={{ width: `${aPct}%` }} />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{aDone}/{aTotal} tools · {aPct}%</p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Progress content */}
+        <div className="flex-1 min-w-0 space-y-3">
+          {/* Overall progress bar */}
+          {totalTools > 0 && (
+            <div className="bg-card border border-border rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="text-sm font-semibold">{selectedAsset?.assetName ?? "Loading…"}</p>
+                  <p className="text-xs text-muted-foreground">{selectedAsset?.assetValue}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-lg font-bold text-primary">{pct}%</p>
+                  <p className="text-[10px] text-muted-foreground">{doneTools}/{totalTools} tools</p>
+                </div>
+              </div>
+              <div className="w-full bg-muted/40 rounded-full h-2">
+                <div className="bg-primary h-2 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+              </div>
+              {runningTools > 0 && (
+                <p className="text-[10px] text-blue-400 mt-1.5 flex items-center gap-1">
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                  {runningTools} tool{runningTools > 1 ? "s" : ""} actively running
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Phase groups */}
+          {phaseGroups.length > 0 ? (
+            <div className="space-y-3">
+              {phaseGroups.map(group => (
+                <div key={group.phase} className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className={cn("flex items-center gap-2 px-4 py-2 border-b border-border/50 text-xs font-semibold", PHASE_COLORS[group.phase])}>
+                    <span className="opacity-60">Phase {group.phase}</span>
+                    <span>—</span>
+                    <span>{group.name}</span>
+                    <span className="ml-auto opacity-60">
+                      {group.tools.filter(t => t.status === "done" || t.status === "failed").length}/{group.tools.length}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-border/40">
+                    {group.tools.map(tool => (
+                      <div key={tool.toolName} className={cn(
+                        "flex items-center gap-3 px-4 py-2.5 transition-colors",
+                        tool.status === "running" ? "bg-blue-500/5" : ""
+                      )}>
+                        <ToolStatusIcon status={tool.status} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={cn(
+                              "text-sm font-medium",
+                              tool.status === "running" ? "text-blue-300" :
+                              tool.status === "done" ? "text-foreground" :
+                              tool.status === "failed" ? "text-red-400" :
+                              "text-muted-foreground"
+                            )}>
+                              {tool.toolName}
+                            </span>
+                            {tool.status === "running" && (
+                              <span className="text-[10px] bg-blue-500/15 border border-blue-500/30 text-blue-400 px-1.5 py-0.5 rounded animate-pulse">
+                                RUNNING
+                              </span>
+                            )}
+                            {tool.findingsCount > 0 && (
+                              <span className="text-[10px] bg-orange-500/15 border border-orange-500/30 text-orange-400 px-1.5 py-0.5 rounded">
+                                {tool.findingsCount} finding{tool.findingsCount !== 1 ? "s" : ""}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">{tool.detail}</p>
+                        </div>
+                        {tool.durationMs !== null && (
+                          <span className="text-[10px] text-muted-foreground shrink-0">{formatMs(tool.durationMs)}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-card border border-border rounded-xl p-14 text-center">
+              <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-4">
+                <Loader2 className="w-7 h-7 text-primary animate-spin" />
+              </div>
+              <p className="text-base font-semibold">Initializing scan pipeline…</p>
+              <p className="text-sm text-muted-foreground mt-1.5">Setting up tools and queuing phases</p>
+              {scan?.startedAt && (
+                <p className="text-xs text-muted-foreground mt-3 flex items-center justify-center gap-1">
+                  <Clock className="w-3 h-3" /> Started {new Date(scan.startedAt).toLocaleTimeString()}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -114,47 +377,13 @@ export default function ScanReportPage() {
   if ((reports as unknown[]).length === 0) {
     if (scanStatus === "running" || scanStatus === "pending" || scanStatus === "unknown") {
       return (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <Link href="/scan-reports">
-              <button className="w-8 h-8 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center transition-colors">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-            </Link>
-            <div>
-              <h1 className="text-lg font-semibold">Pipeline Scan Report #{scanId}</h1>
-              <p className="text-xs text-muted-foreground">Scan in progress — results will appear shortly</p>
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                size="sm" variant="outline"
-                className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10"
-                onClick={handleStop} disabled={stopping}
-              >
-                {stopping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
-                Stop Scan
-              </Button>
-              <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs px-2.5 py-1 rounded-full">
-                <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
-              </div>
-            </div>
-          </div>
-          <div className="bg-card border border-border rounded-xl p-14 text-center">
-            <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-4">
-              <Loader2 className="w-7 h-7 text-primary animate-spin" />
-            </div>
-            <p className="text-base font-semibold">Live Scan Running</p>
-            <p className="text-sm text-muted-foreground mt-1.5">
-              Running nmap, DNS recon, HTTP probing, SSL analysis and OSINT collection…
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">Results will auto-load when the scan completes</p>
-            {scan?.startedAt && (
-              <p className="text-xs text-muted-foreground mt-3 flex items-center justify-center gap-1">
-                <Clock className="w-3 h-3" /> Started {new Date(scan.startedAt).toLocaleTimeString()}
-              </p>
-            )}
-          </div>
-        </div>
+        <LiveProgressView
+          scanId={scanId}
+          scanStatus={scanStatus}
+          scan={scan}
+          stopping={stopping}
+          onStop={handleStop}
+        />
       );
     }
     return (
@@ -170,15 +399,17 @@ export default function ScanReportPage() {
   const selectedAsset = assetReports[selectedAssetIdx] ?? assetReports[0];
   const summary = selectedAsset?.summary ?? {};
 
+  const secretsCount = (selectedAsset?.secrets ?? []).length;
   const assetTabs: { key: AssetTab; label: string; icon: React.ElementType; count?: number }[] = [
-    { key: "ports", label: "Open Ports", icon: Network, count: summary.openPorts },
-    { key: "vulns", label: "Vulnerabilities", icon: AlertTriangle, count: summary.vulnerabilities },
-    { key: "subdomains", label: "Subdomains", icon: Globe, count: summary.subdomains },
-    { key: "http", label: "HTTP Info", icon: Wifi },
-    { key: "dns", label: "DNS Records", icon: Database, count: summary.dnsRecords },
-    { key: "endpoints", label: "Endpoints", icon: Search, count: summary.endpoints },
-    { key: "intel", label: "Intelligence", icon: Eye, count: summary.intelItems },
-    { key: "raw", label: "Raw Output", icon: Terminal },
+    { key: "ports",      label: "Open Ports",     icon: Network,      count: summary.openPorts },
+    { key: "vulns",      label: "CVEs",            icon: AlertTriangle, count: (selectedAsset?.cves ?? []).length },
+    { key: "secrets",    label: "Secrets",         icon: Key,           count: secretsCount },
+    { key: "subdomains", label: "Subdomains",      icon: Globe,         count: summary.subdomains },
+    { key: "http",       label: "HTTP Info",       icon: Wifi },
+    { key: "dns",        label: "DNS Records",     icon: Database,      count: summary.dnsRecords },
+    { key: "endpoints",  label: "Endpoints",       icon: Search,        count: summary.endpoints },
+    { key: "intel",      label: "Intelligence",    icon: Eye,           count: summary.intelItems },
+    { key: "raw",        label: "Raw Output",      icon: Terminal },
   ];
 
   const toolResults = selectedAsset?.toolResults ?? [];
@@ -196,7 +427,7 @@ export default function ScanReportPage() {
         <div>
           <h1 className="text-lg font-semibold">{scan?.name ?? `Pipeline Scan Report #${scanId}`}</h1>
           <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-            <p className="text-xs text-muted-foreground">{assetReports.length} assets · {assetReports.reduce((acc: number, a: any) => acc + (a.summary?.vulnerabilities ?? 0), 0)} total vulnerabilities</p>
+            <p className="text-xs text-muted-foreground">{assetReports.length} assets · {assetReports.reduce((acc: number, a: any) => acc + (a.summary?.vulnerabilities ?? 0), 0)} total findings</p>
             {scan?.startedAt && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Clock className="w-3 h-3" />
@@ -266,7 +497,7 @@ export default function ScanReportPage() {
           {assetReports.map((asset: any, idx: number) => {
             const critVulns = asset.summary?.criticalVulns ?? 0;
             const highVulns = asset.summary?.highVulns ?? 0;
-            const isRunningAsset = scanStatus === "running";
+            const secretsNum = (asset.secrets ?? []).length;
             return (
               <button
                 key={asset.assetId}
@@ -278,20 +509,13 @@ export default function ScanReportPage() {
                     : "bg-card border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
                 )}
               >
-                <div className="flex items-center gap-1.5">
-                  {isRunningAsset && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin shrink-0" />}
-                  <p className="text-sm font-medium truncate">{asset.assetName}</p>
-                </div>
+                <p className="text-sm font-medium truncate">{asset.assetName}</p>
                 <p className="text-[10px] text-muted-foreground truncate mt-0.5">{asset.assetValue}</p>
-                <div className="flex gap-1.5 mt-1.5">
-                  {isRunningAsset
-                    ? <span className="text-[10px] text-blue-400">Scanning…</span>
-                    : <>
-                        <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1">{asset.summary?.openPorts ?? 0} ports</span>
-                        {critVulns > 0 && <span className="text-[10px] bg-red-500/15 text-red-400 rounded px-1">{critVulns} critical</span>}
-                        {highVulns > 0 && !critVulns && <span className="text-[10px] bg-orange-500/15 text-orange-400 rounded px-1">{highVulns} high</span>}
-                      </>
-                  }
+                <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                  <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1">{asset.summary?.openPorts ?? 0} ports</span>
+                  {critVulns > 0 && <span className="text-[10px] bg-red-500/15 text-red-400 rounded px-1">{critVulns} crit</span>}
+                  {highVulns > 0 && !critVulns && <span className="text-[10px] bg-orange-500/15 text-orange-400 rounded px-1">{highVulns} high</span>}
+                  {secretsNum > 0 && <span className="text-[10px] bg-yellow-500/15 text-yellow-400 rounded px-1"><Key className="w-2 h-2 inline mr-0.5" />{secretsNum}</span>}
                 </div>
               </button>
             );
@@ -304,10 +528,11 @@ export default function ScanReportPage() {
           {/* Summary stats */}
           <div className="grid grid-cols-4 gap-3">
             <StatCard icon={Network} label="Open Ports" value={summary.openPorts ?? 0} />
-            <StatCard icon={AlertTriangle} label="Vulnerabilities" value={summary.vulnerabilities ?? 0}
+            <StatCard icon={AlertTriangle} label="CVEs Found" value={(selectedAsset?.cves ?? []).length}
               className={(summary.criticalVulns ?? 0) > 0 ? "border-red-500/30" : ""} />
+            <StatCard icon={Key} label="Secrets Found" value={secretsCount}
+              className={secretsCount > 0 ? "border-yellow-500/30" : ""} />
             <StatCard icon={Globe} label="Subdomains" value={summary.subdomains ?? 0} />
-            <StatCard icon={Search} label="Endpoints" value={summary.endpoints ?? 0} />
           </div>
 
           {/* WAF / CDN info bar */}
@@ -349,7 +574,10 @@ export default function ScanReportPage() {
                   <t.icon className="w-3.5 h-3.5" />
                   {t.label}
                   {t.count !== undefined && t.count > 0 && (
-                    <span className="ml-0.5 text-[10px] bg-primary/20 text-primary rounded-full px-1.5">{t.count}</span>
+                    <span className={cn(
+                      "ml-0.5 text-[10px] rounded-full px-1.5",
+                      t.key === "secrets" ? "bg-yellow-500/20 text-yellow-400" : "bg-primary/20 text-primary"
+                    )}>{t.count}</span>
                   )}
                 </button>
               ))}
@@ -390,13 +618,13 @@ export default function ScanReportPage() {
                 </div>
               )}
 
-              {/* Vulnerabilities tab */}
+              {/* CVEs tab */}
               {assetTab === "vulns" && (
                 <div className="space-y-2">
-                  {(selectedAsset.vulnerabilities ?? []).length === 0 ? (
-                    <EmptyState message="No vulnerabilities detected" icon={CheckCircle2} />
+                  {(selectedAsset.cves ?? selectedAsset.vulnerabilities ?? []).length === 0 ? (
+                    <EmptyState message="No CVEs detected" icon={CheckCircle2} />
                   ) : (
-                    (selectedAsset.vulnerabilities ?? []).map((v: any, i: number) => (
+                    (selectedAsset.cves ?? selectedAsset.vulnerabilities ?? []).map((v: any, i: number) => (
                       <div key={i} className={cn("rounded-lg border p-3.5", v.severity === "critical" ? "border-red-500/30 bg-red-500/5" : v.severity === "high" ? "border-orange-500/30 bg-orange-500/5" : "border-border bg-card")}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-2">
@@ -420,6 +648,51 @@ export default function ScanReportPage() {
                         </a>
                       </div>
                     ))
+                  )}
+                </div>
+              )}
+
+              {/* Secrets tab */}
+              {assetTab === "secrets" && (
+                <div className="space-y-2">
+                  {(selectedAsset.secrets ?? []).length === 0 ? (
+                    <EmptyState message="No secrets or credentials detected" icon={Lock} />
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 mb-3 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
+                        <Fingerprint className="w-4 h-4 text-yellow-400 shrink-0" />
+                        <p className="text-xs text-yellow-300">
+                          <span className="font-semibold">{(selectedAsset.secrets ?? []).length} credential{(selectedAsset.secrets ?? []).length !== 1 ? "s" : ""} detected</span>
+                          {" "}— exposed secrets can enable full account takeover. Rotate immediately.
+                        </p>
+                      </div>
+                      {(selectedAsset.secrets ?? []).map((s: any, i: number) => (
+                        <div key={i} className={cn(
+                          "rounded-lg border p-3.5",
+                          s.severity === "critical" ? "border-red-500/30 bg-red-500/5" :
+                          s.severity === "high" ? "border-orange-500/30 bg-orange-500/5" :
+                          "border-yellow-500/20 bg-yellow-500/5"
+                        )}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <SeverityBadge severity={s.severity} />
+                              <span className="text-xs font-mono text-muted-foreground">{s.cve}</span>
+                              {s.cwe && <span className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">{s.cwe}</span>}
+                            </div>
+                            <Key className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" />
+                          </div>
+                          <p className="text-sm font-semibold mt-1.5">{s.title}</p>
+                          {s.source && (
+                            <p className="text-xs font-mono text-muted-foreground mt-1 bg-muted/30 rounded px-2 py-1 break-all">
+                              {s.source}
+                            </p>
+                          )}
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            <span className="text-foreground font-medium">Remediation: </span>{s.remediation}
+                          </p>
+                        </div>
+                      ))}
+                    </>
                   )}
                 </div>
               )}

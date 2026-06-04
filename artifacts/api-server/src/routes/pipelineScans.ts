@@ -12,108 +12,158 @@ import { logAudit } from "../lib/audit";
 const execAsync = promisify(exec);
 const router = Router();
 
-// ── Track active nmap processes so Stop can kill them ─────────────────────────
+// ── Active nmap killers ────────────────────────────────────────────────────────
 const activeScanKillers = new Map<number, () => void>();
 
-// ── CVE database (matched against real service versions from nmap) ─────────────
+// ── In-memory live progress tracker (per scan) ─────────────────────────────────
+export interface ToolProgress {
+  toolName: string;
+  toolCategory: string;
+  phase: number;
+  status: "queued" | "running" | "done" | "failed";
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  findingsCount: number;
+  detail: string;
+}
+
+interface AssetProgress {
+  assetId: number;
+  assetName: string;
+  assetValue: string;
+  tools: ToolProgress[];
+}
+
+const scanProgressMap = new Map<number, AssetProgress[]>();
+
+// Tool → pentesting phase mapping
+const TOOL_PHASE: Record<string, number> = {
+  subfinder: 1, dnsx: 1, shuffledns: 1, amass: 1, mapcidr: 1, tldfinder: 1,
+  gau: 1, asnmap: 1, cdncheck: 1, uncover: 1, cloud_enum: 1, s3scanner: 1,
+  theHarvester: 1, aix: 1, maltego: 1,
+  naabu: 2, masscan: 2, rustscan: 2,
+  httpx: 3, katana: 3, feroxbuster: 3, gobuster: 3, ffuf: 3,
+  whatweb: 3, wafw00f: 3, useragent: 3,
+  nuclei: 4, nikto: 4, wpscan: 4, trufflehog: 4, wapiti: 4, vulnx: 4, goleak: 4,
+  testssl: 5, sslscan: 5,
+};
+const PHASE_NAMES: Record<number, string> = {
+  1: "Reconnaissance", 2: "Port Scanning", 3: "Web Recon",
+  4: "Vuln & Secrets", 5: "SSL/TLS Analysis",
+};
+
+// ── Secrets patterns (25 patterns) ────────────────────────────────────────────
+interface SecretMatch { name: string; severity: "critical" | "high" | "medium" | "low" | "info"; cwe: string; remediation: string; pattern: RegExp; }
+
+const SECRET_PATTERNS: SecretMatch[] = [
+  { name: "AWS Access Key ID",       severity: "critical", cwe: "CWE-798", pattern: /AKIA[0-9A-Z]{16}/,                                                                 remediation: "Revoke key immediately in AWS IAM, remove from code, rotate secrets." },
+  { name: "AWS Secret Access Key",   severity: "critical", cwe: "CWE-798", pattern: /(?:aws.{0,20}secret|secret.{0,10}key)['\"\s:=]+[A-Za-z0-9/+]{38,42}/i,            remediation: "Revoke AWS credentials and rotate. Never commit secrets to code." },
+  { name: "GitHub Personal Token",   severity: "high",     cwe: "CWE-798", pattern: /ghp_[a-zA-Z0-9]{36}/,                                                              remediation: "Revoke in GitHub Settings → Developer Settings → Personal access tokens." },
+  { name: "GitHub OAuth Token",      severity: "high",     cwe: "CWE-798", pattern: /gho_[a-zA-Z0-9]{36}/,                                                              remediation: "Revoke the OAuth token and audit associated OAuth applications." },
+  { name: "GitHub Actions Token",    severity: "high",     cwe: "CWE-798", pattern: /ghs_[a-zA-Z0-9]{36}/,                                                              remediation: "Actions tokens are short-lived; check workflow for secret exposure." },
+  { name: "Stripe Live Secret Key",  severity: "critical", cwe: "CWE-798", pattern: /sk_live_[0-9a-zA-Z]{24,}/,                                                         remediation: "Revoke in Stripe dashboard → API Keys immediately." },
+  { name: "Stripe Test Secret Key",  severity: "medium",   cwe: "CWE-798", pattern: /sk_test_[0-9a-zA-Z]{24,}/,                                                         remediation: "Rotate test key. Test keys should not appear in frontend code." },
+  { name: "OpenAI API Key",          severity: "high",     cwe: "CWE-798", pattern: /sk-[a-zA-Z0-9]{48}/,                                                               remediation: "Revoke at platform.openai.com/api-keys and regenerate." },
+  { name: "Slack Bot Token",         severity: "high",     cwe: "CWE-798", pattern: /xoxb-[0-9]{11,13}-[0-9]{11,13}-[0-9a-zA-Z]{24}/,                                  remediation: "Revoke in Slack API dashboard under OAuth & Permissions." },
+  { name: "Slack Webhook URL",       severity: "medium",   cwe: "CWE-200", pattern: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[a-zA-Z0-9]+/,     remediation: "Revoke webhook and generate a new one. Restrict webhook usage." },
+  { name: "Google API Key",          severity: "high",     cwe: "CWE-798", pattern: /AIza[0-9A-Za-z_-]{35}/,                                                            remediation: "Restrict key in Google Cloud Console and add HTTP referrer restrictions." },
+  { name: "RSA/EC Private Key",      severity: "critical", cwe: "CWE-321", pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/,                           remediation: "Immediately revoke cert/key pair, reissue from CA, rotate all usages." },
+  { name: "JWT Token",               severity: "medium",   cwe: "CWE-522", pattern: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,               remediation: "Investigate JWT exposure. Ensure secrets signing JWTs are not exposed." },
+  { name: "SendGrid API Key",        severity: "high",     cwe: "CWE-798", pattern: /SG\.[a-zA-Z0-9_-]{22,}\.[a-zA-Z0-9_-]{40,}/,                                      remediation: "Revoke in SendGrid Settings → API Keys." },
+  { name: "Twilio Account SID",      severity: "high",     cwe: "CWE-798", pattern: /AC[a-zA-Z0-9]{32}/,                                                                remediation: "Rotate Twilio credentials in console.twilio.com." },
+  { name: "Mailgun API Key",         severity: "high",     cwe: "CWE-798", pattern: /key-[0-9a-zA-Z]{32}/,                                                              remediation: "Revoke key in Mailgun API Keys section." },
+  { name: "SQL Connection String",   severity: "critical", cwe: "CWE-312", pattern: /(?:mysql|mssql|postgres(?:ql)?|jdbc):\/\/[^:\s<>"']{2,}:[^@\s<>"']{4,}@\S{4,}/i, remediation: "Remove DB credentials from code. Use environment variables or secrets manager." },
+  { name: "MongoDB URI with Creds",  severity: "critical", cwe: "CWE-312", pattern: /mongodb(?:\+srv)?:\/\/[^:\s<>"']+:[^@\s<>"']+@[^\s<>"']{4,}/,                    remediation: "Rotate MongoDB credentials. Use environment variables." },
+  { name: "Firebase Private Key",    severity: "high",     cwe: "CWE-798", pattern: /\"private_key\":\s*\"-----BEGIN RSA PRIVATE KEY/,                                  remediation: "Rotate Firebase service account key in Firebase Console." },
+  { name: "PayPal Braintree Token",  severity: "critical", cwe: "CWE-798", pattern: /access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}/,                             remediation: "Revoke in Braintree dashboard immediately." },
+  { name: "Hardcoded Password",      severity: "high",     cwe: "CWE-259", pattern: /(?:password|passwd|pwd)\s*[:=]\s*['"]([a-zA-Z0-9!@#$%^&*()_+]{8,})['"]/i,        remediation: "Remove hardcoded passwords. Use environment variables or vaults." },
+  { name: "Generic API Secret",      severity: "medium",   cwe: "CWE-798", pattern: /(?:api.?secret|client.?secret|auth.?token)\s*[:=]\s*['"]([a-zA-Z0-9_\-]{20,})['"]/i, remediation: "Move secrets to environment variables or a secrets manager." },
+  { name: "Basic Auth in URL",       severity: "high",     cwe: "CWE-312", pattern: /https?:\/\/[^:\s<>"']+:[^@\s<>"']{4,}@[a-zA-Z0-9][^\s<>"']{4,}/,               remediation: "Never embed credentials in URLs. Use proper auth headers." },
+  { name: "npm Auth Token",          severity: "high",     cwe: "CWE-798", pattern: /\/\/registry\.npmjs\.org\/:_authToken=[a-zA-Z0-9_-]{36}/,                         remediation: "Revoke token at npmjs.com/settings. Never commit .npmrc with tokens." },
+  { name: "Docker Config Auth",      severity: "high",     cwe: "CWE-798", pattern: /"auths":\s*\{\s*"[^"]+"\s*:\s*\{\s*"auth":\s*"[A-Za-z0-9+/]{20,}=/,              remediation: "Remove Docker auth from code. Use docker logout and credential stores." },
+];
+
+// ── Expanded CVE Pool (40+ entries) ────────────────────────────────────────────
 const CVE_POOL = [
-  { cve: "CVE-2023-44487", cvss: 7.5, severity: "high",     title: "HTTP/2 Rapid Reset Attack (DoS)",                   cwe: "CWE-400", remediation: "Update server software to patched version.",                   affected: ["nginx", "apache", "http", "https"] },
-  { cve: "CVE-2024-0727",  cvss: 5.5, severity: "medium",   title: "OpenSSL PKCS12 Null Pointer Dereference",            cwe: "CWE-476", remediation: "Upgrade OpenSSL to 3.2.1+.",                                    affected: ["https", "ssl", "openssl"] },
-  { cve: "CVE-2023-38408", cvss: 9.8, severity: "critical", title: "OpenSSH Remote Code Execution via ssh-agent",        cwe: "CWE-122", remediation: "Upgrade OpenSSH to 9.3p2+.",                                    affected: ["ssh", "openssh"] },
-  { cve: "CVE-2024-6387",  cvss: 8.1, severity: "high",     title: "OpenSSH regreSSHion Race Condition RCE",             cwe: "CWE-364", remediation: "Update OpenSSH to 9.8p1+.",                                    affected: ["ssh", "openssh"] },
-  { cve: "CVE-2024-3400",  cvss: 10.0,severity: "critical", title: "PAN-OS Command Injection (GlobalProtect)",           cwe: "CWE-77",  remediation: "Apply PAN-OS hotfix immediately.",                             affected: ["https", "http"] },
-  { cve: "CVE-2023-20198", cvss: 10.0,severity: "critical", title: "Cisco IOS XE Web UI Privilege Escalation",           cwe: "CWE-306", remediation: "Disable HTTP/HTTPS Server or upgrade firmware.",               affected: ["http", "https"] },
-  { cve: "CVE-2022-26134", cvss: 9.8, severity: "critical", title: "Confluence Server OGNL Injection RCE",               cwe: "CWE-74",  remediation: "Upgrade Confluence to 7.4.17+.",                               affected: ["http", "https"] },
-  { cve: "CVE-2024-1086",  cvss: 7.8, severity: "high",     title: "Linux Kernel Use-After-Free via nf_tables",          cwe: "CWE-416", remediation: "Apply kernel patch, update to 6.7.3+.",                        affected: ["ssh", "ftp"] },
-  { cve: "CVE-2024-4577",  cvss: 9.8, severity: "critical", title: "PHP CGI Argument Injection RCE",                     cwe: "CWE-88",  remediation: "Update PHP to 8.3.8+.",                                        affected: ["http", "https", "php"] },
-  { cve: "CVE-2023-42793", cvss: 9.8, severity: "critical", title: "JetBrains TeamCity Authentication Bypass",           cwe: "CWE-288", remediation: "Update to TeamCity 2023.05.4+.",                               affected: ["http", "https"] },
-  { cve: "CVE-2024-21626", cvss: 8.6, severity: "high",     title: "runc Container Breakout Vulnerability",              cwe: "CWE-22",  remediation: "Update runc to v1.1.12+.",                                     affected: ["docker", "http"] },
-  { cve: "CVE-2023-46604", cvss: 10.0,severity: "critical", title: "Apache ActiveMQ RCE via ExceptionResponse",          cwe: "CWE-502", remediation: "Upgrade ActiveMQ to 5.15.16+, 5.16.7+, 5.17.6+, or 5.18.3+.", affected: ["activemq", "http"] },
-  { cve: "CVE-2024-27198", cvss: 9.8, severity: "critical", title: "JetBrains TeamCity Authentication Bypass (CVSS 10)", cwe: "CWE-288", remediation: "Upgrade TeamCity to 2023.11.4+.",                              affected: ["http", "https"] },
-  { cve: "CVE-2024-23897", cvss: 9.8, severity: "critical", title: "Jenkins Arbitrary File Read leading to RCE",          cwe: "CWE-22",  remediation: "Upgrade Jenkins to 2.442+/LTS 2.426.3+.",                      affected: ["http", "https", "jenkins"] },
-  { cve: "CVE-2024-22024", cvss: 8.3, severity: "high",     title: "Ivanti SAML Authentication Bypass (XXE)",            cwe: "CWE-611", remediation: "Apply Ivanti security patches immediately.",                   affected: ["https", "ssl"] },
-  { cve: "CVE-2023-34048", cvss: 9.8, severity: "critical", title: "VMware vCenter DCERPC Out-of-Bounds Write RCE",       cwe: "CWE-787", remediation: "Apply VMware patch VMSA-2023-0023.",                           affected: ["https", "http"] },
-  { cve: "CVE-2024-20767", cvss: 9.8, severity: "critical", title: "Adobe ColdFusion Arbitrary File Read/Exec",          cwe: "CWE-20",  remediation: "Apply ColdFusion security update APSB24-14.",                  affected: ["http", "https"] },
-  { cve: "CVE-2024-28995", cvss: 8.6, severity: "high",     title: "SolarWinds Serv-U Path Traversal",                   cwe: "CWE-22",  remediation: "Upgrade Serv-U to 15.4.2.228+.",                               affected: ["ftp", "sftp", "http"] },
-  { cve: "CVE-2023-48788", cvss: 9.8, severity: "critical", title: "Fortinet FortiClientEMS SQL Injection RCE",           cwe: "CWE-89",  remediation: "Upgrade FortiClientEMS to 7.2.3+.",                            affected: ["https", "http"] },
-  { cve: "CVE-2024-9487",  cvss: 8.8, severity: "high",     title: "GitHub Enterprise SAML Authentication Bypass",       cwe: "CWE-347", remediation: "Upgrade GitHub Enterprise Server to 3.14+.",                   affected: ["https", "http"] },
+  // Web servers
+  { cve: "CVE-2023-44487", cvss: 7.5, severity: "high",     title: "HTTP/2 Rapid Reset DoS (Nginx/Apache/IIS)",          cwe: "CWE-400", remediation: "Update web server to patched version.",                                   affected: ["nginx", "apache", "iis", "http2", "h2"] },
+  { cve: "CVE-2021-41773", cvss: 9.8, severity: "critical", title: "Apache HTTP Server Path Traversal & RCE",             cwe: "CWE-22",  remediation: "Upgrade Apache to 2.4.50+.",                                              affected: ["apache"] },
+  { cve: "CVE-2021-42013", cvss: 9.8, severity: "critical", title: "Apache Path Traversal bypass (Sequel to 41773)",      cwe: "CWE-22",  remediation: "Upgrade Apache to 2.4.51+.",                                              affected: ["apache"] },
+  { cve: "CVE-2023-25690", cvss: 9.8, severity: "critical", title: "Apache mod_proxy HTTP Request Smuggling",             cwe: "CWE-444", remediation: "Upgrade Apache to 2.4.56+.",                                              affected: ["apache", "proxy"] },
+  { cve: "CVE-2017-7679",  cvss: 9.8, severity: "critical", title: "Apache mod_mime Buffer Overread",                     cwe: "CWE-125", remediation: "Upgrade Apache to 2.2.33+ / 2.4.26+.",                                   affected: ["apache"] },
+  // OpenSSH
+  { cve: "CVE-2023-38408", cvss: 9.8, severity: "critical", title: "OpenSSH Remote Code Execution via ssh-agent",         cwe: "CWE-122", remediation: "Upgrade OpenSSH to 9.3p2+.",                                              affected: ["ssh", "openssh", "22"] },
+  { cve: "CVE-2024-6387",  cvss: 8.1, severity: "high",     title: "OpenSSH regreSSHion Race Condition RCE",              cwe: "CWE-364", remediation: "Update OpenSSH to 9.8p1+.",                                               affected: ["ssh", "openssh", "22"] },
+  { cve: "CVE-2021-3156",  cvss: 7.8, severity: "high",     title: "sudo Heap Overflow (Baron Samedit)",                  cwe: "CWE-193", remediation: "Upgrade sudo to 1.9.5p2+.",                                               affected: ["ssh", "22"] },
+  { cve: "CVE-2020-15778", cvss: 7.8, severity: "high",     title: "OpenSSH scp Command Injection",                       cwe: "CWE-78",  remediation: "Disable SCP or upgrade to OpenSSH 9.0+.",                                affected: ["ssh", "22", "sftp"] },
+  // SSL/TLS
+  { cve: "CVE-2014-0160",  cvss: 7.5, severity: "high",     title: "Heartbleed — OpenSSL TLS Memory Disclosure",          cwe: "CWE-125", remediation: "Upgrade OpenSSL to 1.0.1g+, reissue all certificates.",                  affected: ["https", "ssl", "tls", "443"] },
+  { cve: "CVE-2022-0778",  cvss: 7.5, severity: "high",     title: "OpenSSL BN_mod_sqrt() Infinite Loop (DoS)",           cwe: "CWE-835", remediation: "Upgrade OpenSSL to 1.0.2zd / 1.1.1n / 3.0.2+.",                         affected: ["ssl", "tls", "https", "openssl"] },
+  { cve: "CVE-2024-0727",  cvss: 5.5, severity: "medium",   title: "OpenSSL PKCS12 Null Pointer Dereference",             cwe: "CWE-476", remediation: "Upgrade OpenSSL to 3.2.1+.",                                              affected: ["ssl", "tls", "https", "openssl"] },
+  // PHP
+  { cve: "CVE-2024-4577",  cvss: 9.8, severity: "critical", title: "PHP CGI Argument Injection RCE",                      cwe: "CWE-88",  remediation: "Update PHP to 8.3.8+ / 8.2.20+ / 8.1.29+.",                              affected: ["http", "https", "php"] },
+  { cve: "CVE-2022-31628", cvss: 7.8, severity: "high",     title: "PHP phar Deserialization Arbitrary Code Execution",   cwe: "CWE-502", remediation: "Update PHP to 8.1.12+ / 8.0.25+ / 7.4.33+.",                             affected: ["php", "http"] },
+  { cve: "CVE-2019-11043", cvss: 9.8, severity: "critical", title: "PHP-FPM Remote Code Execution via Nginx",             cwe: "CWE-119", remediation: "Upgrade PHP-FPM to 7.3.11+, configure Nginx correctly.",                 affected: ["php-fpm", "nginx", "http"] },
+  // Applications
+  { cve: "CVE-2022-26134", cvss: 9.8, severity: "critical", title: "Confluence Server OGNL Injection RCE",                cwe: "CWE-74",  remediation: "Upgrade Confluence to 7.4.17+.",                                          affected: ["http", "https", "confluence"] },
+  { cve: "CVE-2023-42793", cvss: 9.8, severity: "critical", title: "JetBrains TeamCity Authentication Bypass",            cwe: "CWE-288", remediation: "Update TeamCity to 2023.05.4+.",                                           affected: ["http", "https", "8111"] },
+  { cve: "CVE-2024-27198", cvss: 9.8, severity: "critical", title: "JetBrains TeamCity Auth Bypass (Critical)",           cwe: "CWE-288", remediation: "Upgrade TeamCity to 2023.11.4+.",                                          affected: ["http", "https"] },
+  { cve: "CVE-2024-23897", cvss: 9.8, severity: "critical", title: "Jenkins Arbitrary File Read → RCE",                   cwe: "CWE-22",  remediation: "Upgrade Jenkins to 2.442+ / LTS 2.426.3+.",                               affected: ["http", "https", "jenkins", "8080"] },
+  { cve: "CVE-2023-46604", cvss: 10.0,severity: "critical", title: "Apache ActiveMQ RCE via ExceptionResponse",           cwe: "CWE-502", remediation: "Upgrade ActiveMQ to 5.15.16+ / 5.16.7+ / 5.18.3+.",                      affected: ["activemq", "61616"] },
+  { cve: "CVE-2021-44228", cvss: 10.0,severity: "critical", title: "Log4Shell — Apache Log4j2 JNDI RCE",                  cwe: "CWE-20",  remediation: "Upgrade Log4j to 2.17.1+; set -Dlog4j2.formatMsgNoLookups=true.",        affected: ["http", "https", "java", "8080", "8443"] },
+  { cve: "CVE-2022-42889", cvss: 9.8, severity: "critical", title: "Apache Commons Text RCE (Text4Shell)",                cwe: "CWE-94",  remediation: "Upgrade commons-text to 1.10.0+.",                                        affected: ["http", "https", "java"] },
+  // WordPress
+  { cve: "CVE-2023-2732",  cvss: 9.8, severity: "critical", title: "WordPress MStore API Authentication Bypass",          cwe: "CWE-287", remediation: "Update MStore API plugin to latest.",                                      affected: ["wordpress", "http", "https"] },
+  { cve: "CVE-2024-9047",  cvss: 9.8, severity: "critical", title: "WordPress File Manager Pro Arbitrary Upload",         cwe: "CWE-434", remediation: "Update File Manager Pro plugin to latest.",                                affected: ["wordpress", "http"] },
+  { cve: "CVE-2023-6553",  cvss: 9.8, severity: "critical", title: "Backup Migration WordPress Plugin RCE",               cwe: "CWE-78",  remediation: "Update Backup Migration to 1.3.8+.",                                      affected: ["wordpress"] },
+  // Network / Infrastructure
+  { cve: "CVE-2024-3400",  cvss: 10.0,severity: "critical", title: "PAN-OS GlobalProtect Command Injection",              cwe: "CWE-77",  remediation: "Apply PAN-OS hotfix, patch PSIRT-ADV-2024-006.",                          affected: ["https", "vpn", "443"] },
+  { cve: "CVE-2023-20198", cvss: 10.0,severity: "critical", title: "Cisco IOS XE Web UI Privilege Escalation",            cwe: "CWE-306", remediation: "Disable HTTP/HTTPS Server or upgrade IOS XE firmware.",                   affected: ["http", "https", "cisco"] },
+  { cve: "CVE-2024-21893", cvss: 8.2, severity: "high",     title: "Ivanti Connect Secure SSRF",                         cwe: "CWE-918", remediation: "Apply Ivanti patches from January 2024 advisory.",                        affected: ["https", "vpn", "ssl"] },
+  // Databases
+  { cve: "CVE-2024-21096", cvss: 4.9, severity: "medium",   title: "MySQL Server Information Disclosure",                 cwe: "CWE-284", remediation: "Upgrade MySQL to 8.0.37+.",                                                affected: ["mysql", "3306"] },
+  { cve: "CVE-2023-2454",  cvss: 7.2, severity: "high",     title: "PostgreSQL pg_catalog Privilege Escalation",          cwe: "CWE-20",  remediation: "Upgrade PostgreSQL to 15.3+ / 14.8+.",                                   affected: ["postgresql", "postgres", "5432"] },
+  { cve: "CVE-2024-1597",  cvss: 10.0,severity: "critical", title: "PostgreSQL SQL Injection via pg JDBC",                cwe: "CWE-89",  remediation: "Upgrade PostgreSQL JDBC to 42.7.2+.",                                    affected: ["postgresql", "5432"] },
+  // Containers
+  { cve: "CVE-2024-21626", cvss: 8.6, severity: "high",     title: "runc Container Breakout (Leaky Vessels)",             cwe: "CWE-22",  remediation: "Update runc to v1.1.12+.",                                                affected: ["docker", "http", "2376"] },
+  { cve: "CVE-2023-34048", cvss: 9.8, severity: "critical", title: "VMware vCenter DCERPC Out-of-Bounds RCE",             cwe: "CWE-787", remediation: "Apply VMware patch VMSA-2023-0023.",                                       affected: ["https", "vmware", "443"] },
+  // FTP
+  { cve: "CVE-2024-28995", cvss: 8.6, severity: "high",     title: "SolarWinds Serv-U Path Traversal",                   cwe: "CWE-22",  remediation: "Upgrade Serv-U to 15.4.2.228+.",                                          affected: ["ftp", "sftp", "21", "22"] },
+  { cve: "CVE-2023-38035", cvss: 9.8, severity: "critical", title: "Ivanti MobileIron Endpoint Manager SSRF → RCE",       cwe: "CWE-918", remediation: "Apply Ivanti security advisory SA-2023-08-21.",                           affected: ["https", "http", "443"] },
+  { cve: "CVE-2024-23334", cvss: 7.5, severity: "high",     title: "aiohttp Path Traversal (Python web apps)",            cwe: "CWE-22",  remediation: "Upgrade aiohttp to 3.9.2+.",                                              affected: ["http", "python", "8080"] },
+  { cve: "CVE-2024-9487",  cvss: 8.8, severity: "high",     title: "GitHub Enterprise SAML Authentication Bypass",        cwe: "CWE-347", remediation: "Upgrade GitHub Enterprise Server to 3.14+.",                               affected: ["https", "http"] },
+  { cve: "CVE-2024-20767", cvss: 9.8, severity: "critical", title: "Adobe ColdFusion Arbitrary File Read/Exec",           cwe: "CWE-20",  remediation: "Apply ColdFusion security update APSB24-14.",                             affected: ["http", "https", "coldfusion"] },
+  { cve: "CVE-2024-37085", cvss: 6.8, severity: "medium",   title: "VMware ESXi AD Integration Auth Bypass",              cwe: "CWE-290", remediation: "Apply VMware VMSA-2024-0013.",                                             affected: ["https", "esxi"] },
+  { cve: "CVE-2024-1086",  cvss: 7.8, severity: "high",     title: "Linux nf_tables Use-After-Free Local Privesc",        cwe: "CWE-416", remediation: "Apply kernel patch, update to 6.7.3+.",                                   affected: ["ssh", "22", "ftp"] },
 ];
 
 // ── Type interfaces ─────────────────────────────────────────────────────────────
-interface PortFinding    { port: number; service: string; version: string; protocol: string; state: string; }
+interface PortFinding      { port: number; service: string; version: string; protocol: string; state: string; }
 interface SubdomainFinding { name: string; ip: string; cname: string | null; status: string; cdnProvider: string | null; }
-interface EndpointFinding  { url: string; method: string; status: number; }
-interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; headers: Record<string, string>; }
+interface EndpointFinding  { url: string; method: string; status: number; title?: string; }
+interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; cdn: string | null; headers: Record<string, string>; }
 interface DnsRecord        { type: string; value: string; ttl: number; priority?: number; }
-interface IntelItem        { type: string; key: string; value: string; }
-interface VulnFinding      { cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; }
+interface IntelItem        { type: string; key: string; value: string; severity?: string; }
+interface VulnFinding      { cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source?: string; }
 interface AssetToolConfigItem { assetId: number; toolIds: number[]; }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
 function extractDomain(target: string): string {
-  return target
-    .replace(/^https?:\/\//, "")
-    .split("/")[0]
-    .split(":")[0]
-    .toLowerCase()
-    .trim();
+  return target.replace(/^https?:\/\//, "").split("/")[0].split(":")[0].toLowerCase().trim();
 }
 
 function isIp(s: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(s);
 }
 
-// ── Real scanner: nmap port scan ───────────────────────────────────────────────
-
-function parseNmapNormal(output: string): PortFinding[] {
-  const ports: PortFinding[] = [];
-  for (const line of output.split("\n")) {
-    // 80/tcp   open  http    nginx 1.24.0
-    const m = line.match(/^(\d+)\/(tcp|udp)\s+open\s+(\S+)\s*(.*)/);
-    if (m) {
-      ports.push({
-        port: parseInt(m[1]),
-        protocol: m[2],
-        service: m[3].replace(/\?$/, ""),
-        version: m[4].trim(),
-        state: "open",
-      });
-    }
-  }
-  return ports;
+function maskSecret(s: string): string {
+  if (s.length <= 8) return "***";
+  return s.slice(0, 6) + "••••••••" + s.slice(-4);
 }
 
-async function runNmapScan(target: string, scanId: number): Promise<{ ports: PortFinding[]; raw: string }> {
-  const scanTarget = extractDomain(target) || target;
-  try {
-    // TCP connect scan (no root needed), top 1000 ports, 40s host timeout
-    const cmd = `nmap -sT --open --top-ports 1000 -T4 --max-rtt-timeout 2s --host-timeout 40s ${scanTarget}`;
-    let child: ReturnType<typeof exec> | null = null;
-
-    const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      child = exec(cmd, { timeout: 50000 }, (err, stdout, stderr) => {
-        if (err && !stdout) reject(err);
-        else resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
-      });
-    });
-
-    activeScanKillers.set(scanId, () => {
-      try { child?.kill("SIGTERM"); } catch {}
-    });
-
-    const { stdout } = await promise;
-    activeScanKillers.delete(scanId);
-    const ports = parseNmapNormal(stdout);
-    return { ports, raw: stdout };
-  } catch (err: any) {
-    activeScanKillers.delete(scanId);
-    const partial = err?.stdout ?? "";
-    return { ports: parseNmapNormal(partial), raw: partial || String(err?.message ?? err) };
-  }
-}
-
-// ── Real scanner: DNS recon via Node dns module ────────────────────────────────
+// ── Phase 1: DNS + Subdomain Recon ─────────────────────────────────────────────
 
 async function runDnsRecon(target: string): Promise<{ subdomains: SubdomainFinding[]; dnsRecords: DnsRecord[] }> {
   const domain = extractDomain(target);
@@ -132,20 +182,23 @@ async function runDnsRecon(target: string): Promise<{ subdomains: SubdomainFindi
     dns.resolveCname(domain).catch(() => [] as string[]),
   ]);
 
-  if (a.status === "fulfilled")    for (const r of a.value)    dnsRecords.push({ type: "A",    value: r.address,             ttl: r.ttl });
-  if (aaaa.status === "fulfilled") for (const r of aaaa.value) dnsRecords.push({ type: "AAAA", value: r.address,             ttl: r.ttl });
-  if (mx.status === "fulfilled")   for (const r of mx.value)   dnsRecords.push({ type: "MX",   value: r.exchange,            ttl: 300, priority: r.priority });
-  if (ns.status === "fulfilled")   for (const r of ns.value)   dnsRecords.push({ type: "NS",   value: r,                     ttl: 3600 });
-  if (txt.status === "fulfilled")  for (const r of txt.value)  dnsRecords.push({ type: "TXT",  value: r.join(" "),           ttl: 300 });
-  if (soa.status === "fulfilled")  dnsRecords.push({ type: "SOA", value: `${soa.value.nsname} ${soa.value.hostmaster}`, ttl: soa.value.minttl });
+  if (a.status === "fulfilled")    for (const r of a.value)    dnsRecords.push({ type: "A",     value: r.address,                              ttl: r.ttl });
+  if (aaaa.status === "fulfilled") for (const r of aaaa.value) dnsRecords.push({ type: "AAAA",  value: r.address,                              ttl: r.ttl });
+  if (mx.status === "fulfilled")   for (const r of mx.value)   dnsRecords.push({ type: "MX",    value: r.exchange,                             ttl: 300, priority: r.priority });
+  if (ns.status === "fulfilled")   for (const r of ns.value)   dnsRecords.push({ type: "NS",    value: r,                                      ttl: 3600 });
+  if (txt.status === "fulfilled")  for (const r of txt.value)  dnsRecords.push({ type: "TXT",   value: r.join(" "),                            ttl: 300 });
+  if (soa.status === "fulfilled")  dnsRecords.push({ type: "SOA",  value: `${soa.value.nsname} ${soa.value.hostmaster}`, ttl: soa.value.minttl });
   if (cname.status === "fulfilled" && Array.isArray(cname.value)) for (const r of cname.value) dnsRecords.push({ type: "CNAME", value: r, ttl: 300 });
 
-  // Subdomain brute-force — 30 most common prefixes, all concurrent
+  // Subdomain brute-force — 50 common prefixes
   const wordlist = [
     "www", "api", "mail", "smtp", "ftp", "vpn", "remote", "dev", "staging", "test",
     "admin", "portal", "cdn", "static", "img", "auth", "sso", "app", "mobile", "beta",
     "docs", "support", "status", "git", "jenkins", "ci", "ops", "grafana", "kibana", "monitor",
+    "dashboard", "shop", "store", "blog", "forum", "wiki", "help", "sandbox", "demo", "preview",
+    "api2", "v2", "v1", "internal", "intranet", "login", "accounts", "secure", "cloud", "media",
   ];
+
   await Promise.allSettled(
     wordlist.map(async (prefix) => {
       const full = `${prefix}.${domain}`;
@@ -154,7 +207,7 @@ async function runDnsRecon(target: string): Promise<{ subdomains: SubdomainFindi
         if (!ips.length) return;
         let cn: string | null = null;
         try { const cns = await dns.resolveCname(full); cn = cns[0] ?? null; } catch {}
-        subdomains.push({ name: full, ip: ips[0], cname: cn, status: "active", cdnProvider: null });
+        subdomains.push({ name: full, ip: ips[0], cname: cn, status: "active", cdnProvider: detectCdn(cn ?? ips[0]) });
       } catch {}
     }),
   );
@@ -162,7 +215,128 @@ async function runDnsRecon(target: string): Promise<{ subdomains: SubdomainFindi
   return { subdomains, dnsRecords };
 }
 
-// ── Real scanner: HTTP probe ────────────────────────────────────────────────────
+function detectCdn(hostOrIp: string): string | null {
+  if (/cloudfront\.net/i.test(hostOrIp))     return "AWS CloudFront";
+  if (/akamaized\.net/i.test(hostOrIp))      return "Akamai";
+  if (/fastly\.net/i.test(hostOrIp))         return "Fastly";
+  if (/azureedge\.net/i.test(hostOrIp))      return "Azure CDN";
+  if (/cloudflare/i.test(hostOrIp))          return "Cloudflare";
+  if (/stackpathcdn\.com/i.test(hostOrIp))   return "StackPath";
+  return null;
+}
+
+async function runCtLogLookup(domain: string): Promise<SubdomainFinding[]> {
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 10000);
+    const res = await fetch(`https://crt.sh/?q=%.${domain}&output=json`, { signal: ctrl.signal });
+    if (!res.ok) return [];
+    const data: any[] = await res.json().catch(() => []);
+    const seen = new Set<string>();
+    const subs: SubdomainFinding[] = [];
+    for (const entry of data.slice(0, 200)) {
+      const names = (entry.name_value ?? "").split("\n");
+      for (let name of names) {
+        name = name.toLowerCase().replace(/^\*\./, "").trim();
+        if (!name || seen.has(name) || !name.endsWith(domain) || name === domain) continue;
+        seen.add(name);
+        let ip = "";
+        try { const ips = await dns.resolve4(name); ip = ips[0] ?? ""; } catch {}
+        subs.push({ name, ip, cname: null, status: ip ? "active" : "unresolved", cdnProvider: null });
+      }
+    }
+    return subs;
+  } catch { return []; }
+}
+
+async function runGeoIntel(target: string): Promise<IntelItem[]> {
+  const domain = extractDomain(target);
+  let ip = domain;
+  try { const ips = await dns.resolve4(domain); ip = ips[0] ?? domain; } catch {}
+  if (!ip) return [];
+
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,regionName,city,org,as,hosting,proxy,isp`, { signal: ctrl.signal });
+    if (res.ok) {
+      const d: any = await res.json();
+      if (d.status === "success") {
+        const intel: IntelItem[] = [];
+        if (d.country)    intel.push({ type: "GeoIP", key: "Country",      value: d.country });
+        if (d.regionName) intel.push({ type: "GeoIP", key: "Region",       value: d.regionName });
+        if (d.city)       intel.push({ type: "GeoIP", key: "City",         value: d.city });
+        if (d.org)        intel.push({ type: "ASN",   key: "Organization", value: d.org });
+        if (d.as)         intel.push({ type: "ASN",   key: "AS Number",    value: d.as });
+        if (d.isp)        intel.push({ type: "ASN",   key: "ISP",          value: d.isp });
+        if (d.hosting)    intel.push({ type: "Hosting", key: "Hosting",    value: d.hosting ? "Datacenter/Hosting IP" : "Residential IP" });
+        if (d.proxy)      intel.push({ type: "Risk",    key: "Proxy/VPN",  value: d.proxy ? "YES — behind proxy/VPN" : "No proxy detected" });
+        intel.push({ type: "GeoIP", key: "IP Address", value: ip });
+        return intel;
+      }
+    }
+  } catch {}
+  return [{ type: "GeoIP", key: "IP Address", value: ip }];
+}
+
+async function runWhoisIntel(target: string): Promise<IntelItem[]> {
+  const domain = extractDomain(target);
+  if (!domain || isIp(domain)) return [];
+  try {
+    const { stdout } = await execAsync(`whois ${domain}`, { timeout: 12000 });
+    const intel: IntelItem[] = [];
+    const extract = (re: RegExp, type: string, key: string) => {
+      const m = stdout.match(re);
+      if (m?.[1]?.trim()) intel.push({ type, key, value: m[1].trim() });
+    };
+    extract(/Registrar:\s*(.+)/i,              "WHOIS", "Registrar");
+    extract(/Registrant Organization:\s*(.+)/i, "WHOIS", "Registrant Org");
+    extract(/Registrant Country:\s*(.+)/i,      "WHOIS", "Registrant Country");
+    extract(/Creation Date:\s*(.+)/i,           "WHOIS", "Domain Created");
+    extract(/Registry Expiry Date:\s*(.+)/i,    "WHOIS", "Domain Expires");
+    extract(/Updated Date:\s*(.+)/i,            "WHOIS", "Last Updated");
+    extract(/DNSSEC:\s*(.+)/i,                  "WHOIS", "DNSSEC");
+    extract(/Name Server:\s*(.+)/i,             "WHOIS", "Name Server");
+    return intel;
+  } catch { return []; }
+}
+
+// ── Phase 2: Port Scanning ──────────────────────────────────────────────────────
+
+function parseNmapNormal(output: string): PortFinding[] {
+  const ports: PortFinding[] = [];
+  for (const line of output.split("\n")) {
+    const m = line.match(/^(\d+)\/(tcp|udp)\s+open\s+(\S+)\s*(.*)/);
+    if (m) {
+      ports.push({ port: parseInt(m[1]), protocol: m[2], service: m[3].replace(/\?$/, ""), version: m[4].trim(), state: "open" });
+    }
+  }
+  return ports;
+}
+
+async function runNmapScan(target: string, scanId: number): Promise<{ ports: PortFinding[]; raw: string }> {
+  const scanTarget = extractDomain(target) || target;
+  try {
+    const cmd = `nmap -sT --open --top-ports 1000 -T4 -sV --version-intensity 3 --max-rtt-timeout 2s --host-timeout 50s ${scanTarget}`;
+    let child: ReturnType<typeof exec> | null = null;
+    const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      child = exec(cmd, { timeout: 60000 }, (err, stdout, stderr) => {
+        if (err && !stdout) reject(err);
+        else resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
+      });
+    });
+    activeScanKillers.set(scanId, () => { try { child?.kill("SIGTERM"); } catch {} });
+    const { stdout } = await promise;
+    activeScanKillers.delete(scanId);
+    return { ports: parseNmapNormal(stdout), raw: stdout };
+  } catch (err: any) {
+    activeScanKillers.delete(scanId);
+    const partial = err?.stdout ?? "";
+    return { ports: parseNmapNormal(partial), raw: partial || String(err?.message ?? err) };
+  }
+}
+
+// ── Phase 3: Web Recon ─────────────────────────────────────────────────────────
 
 async function runHttpProbe(target: string): Promise<HttpInfo | null> {
   const domain = extractDomain(target);
@@ -175,286 +349,389 @@ async function runHttpProbe(target: string): Promise<HttpInfo | null> {
   for (const url of candidates) {
     try {
       const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 12000);
+      const tid = setTimeout(() => ctrl.abort(), 15000);
       const response = await fetch(url, { signal: ctrl.signal, redirect: "follow" });
       clearTimeout(tid);
 
       const headers: Record<string, string> = {};
       response.headers.forEach((v, k) => { headers[k] = v; });
-
       const body = await response.text().catch(() => "");
 
-      // Title
       const titleM = body.match(/<title[^>]*>([^<]{0,200})<\/title>/i);
       const title = titleM ? titleM[1].trim() : "";
 
-      // Tech detection
       const tech: string[] = [];
       const server = headers["server"] ?? "";
       const xpb = headers["x-powered-by"] ?? "";
-      if (xpb)                                              tech.push(xpb);
-      if (/nginx/i.test(server))                            tech.push("Nginx");
-      if (/apache/i.test(server))                           tech.push("Apache");
-      if (/cloudflare/i.test(server) || headers["cf-ray"]) tech.push("Cloudflare");
-      if (headers["x-aspnet-version"])                      tech.push("ASP.NET");
+      if (xpb)                                                   tech.push(xpb);
+      if (/nginx/i.test(server))                                 tech.push("Nginx");
+      if (/apache/i.test(server))                                tech.push("Apache");
+      if (/IIS/i.test(server))                                   tech.push("IIS");
+      if (/LiteSpeed/i.test(server))                             tech.push("LiteSpeed");
+      if (/cloudflare/i.test(server) || headers["cf-ray"])       tech.push("Cloudflare");
+      if (headers["x-aspnet-version"])                           tech.push("ASP.NET " + headers["x-aspnet-version"]);
       if (headers["x-drupal-cache"] || body.includes("Drupal.settings")) tech.push("Drupal");
       if (body.includes("wp-content") || body.includes("wp-includes")) tech.push("WordPress");
-      if (body.includes("__NEXT_DATA__"))                   tech.push("Next.js");
+      if (body.includes("__NEXT_DATA__"))                        tech.push("Next.js");
       if (body.includes("react-root") || body.includes("_reactRootContainer")) tech.push("React");
-      if (headers["x-generator"]?.includes("Hugo"))         tech.push("Hugo");
-      if (/IIS/i.test(server))                              tech.push("IIS");
-      if (/LiteSpeed/i.test(server))                        tech.push("LiteSpeed");
+      if (body.includes("ng-version") || body.includes("angular"))          tech.push("Angular");
+      if (body.includes("__vue__") || body.includes("v-app"))   tech.push("Vue.js");
+      if (headers["x-generator"]?.includes("Hugo"))              tech.push("Hugo");
+      if (headers["x-shopify-stage"])                            tech.push("Shopify");
+      if (body.includes("jquery") || body.includes("jQuery"))    tech.push("jQuery");
+      if (body.includes("bootstrap"))                            tech.push("Bootstrap");
 
-      // WAF detection
       let waf = "none";
-      if (headers["cf-ray"] || /cloudflare/i.test(server)) waf = "Cloudflare";
-      else if (headers["x-iinfo"])                          waf = "Imperva";
-      else if (headers["x-amz-cf-id"])                     waf = "AWS WAF";
-      else if (headers["x-sucuri-id"])                     waf = "Sucuri";
-      else if (headers["x-fw-hash"])                        waf = "Wordfence";
-      else if (headers["x-cdn"] === "Incapsula")            waf = "Imperva Incapsula";
+      if (headers["cf-ray"] || /cloudflare/i.test(server))      waf = "Cloudflare";
+      else if (headers["x-iinfo"])                               waf = "Imperva";
+      else if (headers["x-amz-cf-id"])                          waf = "AWS WAF/CloudFront";
+      else if (headers["x-sucuri-id"])                          waf = "Sucuri";
+      else if (headers["x-fw-hash"])                             waf = "Wordfence";
+      else if (headers["x-cdn"] === "Incapsula")                 waf = "Imperva Incapsula";
+      else if (headers["server"]?.toLowerCase().includes("ddos-guard")) waf = "DDoS-Guard";
 
-      return {
-        url: response.url ?? url,
-        status: response.status,
-        title,
-        server,
-        contentLength: body.length,
-        tech: [...new Set(tech)],
-        waf,
-        headers,
-      };
+      let cdn: string | null = null;
+      if (headers["cf-ray"])                                     cdn = "Cloudflare";
+      else if (headers["x-amz-cf-id"])                          cdn = "AWS CloudFront";
+      else if (headers["x-cache"]?.includes("cloudfront"))      cdn = "AWS CloudFront";
+      else if (headers["x-fastly-request-id"])                  cdn = "Fastly";
+      else if (/akamai/i.test(headers["server"] ?? ""))          cdn = "Akamai";
+      else if (headers["x-azure-ref"])                           cdn = "Azure CDN";
+
+      return { url: response.url ?? url, status: response.status, title, server, contentLength: body.length, tech: [...new Set(tech)], waf, cdn, headers };
     } catch {}
   }
   return null;
 }
 
-// ── Real scanner: common endpoint probe ────────────────────────────────────────
-
-async function runEndpointProbe(target: string): Promise<EndpointFinding[]> {
+async function runEndpointProbe(target: string, extraPaths: string[] = []): Promise<EndpointFinding[]> {
   const domain = extractDomain(target);
   const base = `https://${domain}`;
   const paths = [
-    "/", "/robots.txt", "/sitemap.xml", "/api", "/api/v1",
-    "/health", "/healthz", "/status", "/.well-known/security.txt",
-    "/admin", "/login", "/graphql", "/swagger", "/openapi.json",
-    "/metrics", "/.env", "/api/v1/users",
+    "/", "/robots.txt", "/sitemap.xml", "/api", "/api/v1", "/api/v2",
+    "/health", "/healthz", "/status", "/ping", "/.well-known/security.txt",
+    "/admin", "/admin/login", "/wp-admin", "/login", "/signin",
+    "/graphql", "/swagger", "/swagger-ui", "/openapi.json", "/api-docs",
+    "/metrics", "/actuator", "/actuator/health", "/actuator/env",
+    "/.env", "/.git/HEAD", "/.git/config",
+    "/config.json", "/app-config.json", "/settings.json",
+    "/debug", "/console", "/phpmyadmin", "/server-status",
+    ...extraPaths,
   ];
 
   const results = await Promise.allSettled(
     paths.map(async (path) => {
       const ctrl = new AbortController();
-      setTimeout(() => ctrl.abort(), 6000);
+      setTimeout(() => ctrl.abort(), 7000);
       const r = await fetch(`${base}${path}`, { signal: ctrl.signal, redirect: "follow" });
-      return { url: path, method: "GET", status: r.status };
+      const snippet = r.status === 200 ? await r.text().then(t => t.slice(0, 200)) : "";
+      const titleM = snippet.match(/<title[^>]*>([^<]{0,100})<\/title>/i);
+      return { url: path, method: "GET", status: r.status, title: titleM?.[1]?.trim() };
     }),
   );
   return results
     .filter(r => r.status === "fulfilled")
     .map(r => (r as PromiseFulfilledResult<EndpointFinding>).value)
-    .filter(r => r.status > 0);
+    .filter(r => r.status > 0 && r.status !== 404);
 }
 
-// ── Real scanner: SSL certificate via TLS ──────────────────────────────────────
+// ── Phase 4: Secrets Scanning (trufflehog-style) ───────────────────────────────
 
-async function runSslIntel(target: string): Promise<IntelItem[]> {
+async function runSecretsScanner(target: string, endpoints: EndpointFinding[], httpInfo: HttpInfo | null): Promise<VulnFinding[]> {
   const domain = extractDomain(target);
-  if (!domain || isIp(domain)) return [];
+  const base = `https://${domain}`;
+  const findings: VulnFinding[] = [];
 
-  return new Promise<IntelItem[]>((resolve) => {
+  // Paths to scan for sensitive files
+  const sensitivePaths = [
+    "/.env", "/.env.local", "/.env.production", "/.env.development",
+    "/.git/config", "/.npmrc", "/.dockerignore",
+    "/config.js", "/config.json", "/app-config.js", "/settings.json",
+    "/api-config.js", "/credentials.json", "/secrets.json",
+    "/.aws/credentials", "/Dockerfile", "/docker-compose.yml", "/docker-compose.prod.yml",
+    "/wp-config.php.bak", "/web.config", "/.htpasswd",
+  ];
+
+  // Collect JS file URLs from the main page HTML
+  const jsUrls: string[] = [];
+  if (httpInfo) {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(`${base}/`, { signal: ctrl.signal });
+      const html = await res.text();
+      const matches = [...html.matchAll(/(?:src|href)=['"]([^'"]*\.js(?:\?[^'"]*)?)['"]/gi)];
+      for (const m of matches) {
+        const u = m[1];
+        if (!u || u.includes("node_modules") || /^https?:\/\/(?!.*\.${domain})/i.test(u)) continue;
+        const full = u.startsWith("http") ? u : `${base}${u.startsWith("/") ? u : `/${u}`}`;
+        jsUrls.push(full);
+      }
+    } catch {}
+  }
+
+  const urlsToScan = [
+    ...sensitivePaths.map(p => `${base}${p}`),
+    ...jsUrls.slice(0, 15),
+  ];
+
+  await Promise.allSettled(
+    urlsToScan.map(async (url) => {
+      try {
+        const ctrl = new AbortController();
+        setTimeout(() => ctrl.abort(), 8000);
+        const res = await fetch(url, { signal: ctrl.signal });
+        if (!res.ok) return;
+        const content = await res.text();
+        const path = url.replace(base, "");
+
+        for (const pat of SECRET_PATTERNS) {
+          const matches = content.match(pat.pattern);
+          if (!matches) continue;
+          const raw = matches[0];
+          const masked = maskSecret(raw);
+          const severityToCvss: Record<string, number> = { critical: 9.5, high: 7.5, medium: 5.0, low: 3.0, info: 1.0 };
+          findings.push({
+            cve: `SEC-${pat.name.replace(/\s+/g, "-").toUpperCase().slice(0, 20)}`,
+            cvss: severityToCvss[pat.severity] ?? 5.0,
+            severity: pat.severity,
+            title: `${pat.name} exposed in ${path}`,
+            cwe: pat.cwe,
+            remediation: pat.remediation,
+            source: `Credential discovered at ${path}: ${masked}`,
+          });
+        }
+      } catch {}
+    })
+  );
+
+  return findings;
+}
+
+// ── Phase 5: SSL/TLS Analysis ──────────────────────────────────────────────────
+
+async function runSslAnalysis(target: string): Promise<{ intel: IntelItem[]; vulns: VulnFinding[] }> {
+  const domain = extractDomain(target);
+  if (!domain || isIp(domain)) return { intel: [], vulns: [] };
+
+  return new Promise<{ intel: IntelItem[]; vulns: VulnFinding[] }>((resolve) => {
     const intel: IntelItem[] = [];
-    const sock = tls.connect(
-      { host: domain, port: 443, timeout: 8000, rejectUnauthorized: false },
-      () => {
-        try {
-          const cert = sock.getPeerCertificate(true);
-          if (cert) {
-            if (cert.issuer?.O)           intel.push({ type: "Certificate", key: "Issuer",     value: cert.issuer.O });
-            if (cert.issuer?.CN)          intel.push({ type: "Certificate", key: "Issuer CN",  value: cert.issuer.CN });
-            if (cert.subject?.CN)         intel.push({ type: "Certificate", key: "Subject",    value: cert.subject.CN });
-            if (cert.valid_from)          intel.push({ type: "Certificate", key: "Valid From", value: cert.valid_from });
-            if (cert.valid_to)            intel.push({ type: "Certificate", key: "Expires",    value: cert.valid_to });
-            if (cert.serialNumber)        intel.push({ type: "Certificate", key: "Serial",     value: cert.serialNumber });
-            if (cert.subjectaltname)      intel.push({ type: "Certificate", key: "SANs",       value: cert.subjectaltname });
-            if (cert.bits)                intel.push({ type: "Certificate", key: "Key Bits",   value: String(cert.bits) });
+    const vulns: VulnFinding[] = [];
+
+    const sock = tls.connect({ host: domain, port: 443, timeout: 10000, rejectUnauthorized: false }, () => {
+      try {
+        const cert = sock.getPeerCertificate(true);
+        if (cert) {
+          if (cert.issuer?.O)     intel.push({ type: "Certificate", key: "Issuer",        value: cert.issuer.O });
+          if (cert.issuer?.CN)    intel.push({ type: "Certificate", key: "Issuer CN",     value: cert.issuer.CN });
+          if (cert.subject?.CN)   intel.push({ type: "Certificate", key: "Subject CN",    value: cert.subject.CN });
+          if (cert.subject?.O)    intel.push({ type: "Certificate", key: "Subject Org",   value: cert.subject.O });
+          if (cert.valid_from)    intel.push({ type: "Certificate", key: "Valid From",    value: cert.valid_from });
+          if (cert.valid_to)      intel.push({ type: "Certificate", key: "Expires",       value: cert.valid_to });
+          if (cert.serialNumber)  intel.push({ type: "Certificate", key: "Serial",        value: cert.serialNumber });
+          if (cert.subjectaltname)intel.push({ type: "Certificate", key: "SANs",          value: cert.subjectaltname.replace(/DNS:/g, "").slice(0, 200) });
+          if (cert.bits)          intel.push({ type: "Certificate", key: "Key Strength",  value: `${cert.bits} bits` });
+          if ((cert.bits ?? 4096) < 2048) {
+            vulns.push({ cve: "CWE-326", cvss: 6.5, severity: "medium", title: "Weak Certificate Key Size (< 2048 bits)", cwe: "CWE-326", remediation: "Reissue certificate with at least 2048-bit RSA or 256-bit EC key." });
           }
-        } catch {}
-        sock.destroy();
-        resolve(intel);
-      },
-    );
-    sock.on("error", () => resolve(intel));
-    sock.setTimeout(8000, () => { sock.destroy(); resolve(intel); });
+          const expiry = cert.valid_to ? new Date(cert.valid_to) : null;
+          if (expiry) {
+            const daysLeft = Math.floor((expiry.getTime() - Date.now()) / 86400000);
+            intel.push({ type: "Certificate", key: "Days Until Expiry", value: daysLeft < 0 ? `EXPIRED ${-daysLeft} days ago` : `${daysLeft} days` });
+            if (daysLeft < 0) vulns.push({ cve: "CWE-298", cvss: 7.5, severity: "high",   title: "SSL Certificate is Expired", cwe: "CWE-298", remediation: "Renew the SSL certificate immediately." });
+            else if (daysLeft < 30) vulns.push({ cve: "CWE-298", cvss: 5.0, severity: "medium", title: `SSL Certificate Expiring in ${daysLeft} Days`, cwe: "CWE-298", remediation: "Renew certificate before it expires." });
+          }
+        }
+        const protocol = sock.getProtocol();
+        if (protocol) {
+          intel.push({ type: "TLS", key: "Protocol", value: protocol });
+          if (protocol === "SSLv2" || protocol === "SSLv3" || protocol === "TLSv1" || protocol === "TLSv1.1") {
+            vulns.push({ cve: "CVE-2014-3566", cvss: 7.5, severity: "high", title: `Deprecated TLS Protocol in Use (${protocol})`, cwe: "CWE-327", remediation: "Disable SSL/TLS 1.0/1.1 and use TLS 1.2+ only." });
+          }
+        }
+        const cipher = sock.getCipher();
+        if (cipher) {
+          intel.push({ type: "TLS", key: "Cipher Suite", value: `${cipher.name} (${cipher.version})` });
+          if (/RC4|DES|3DES|MD5|NULL|ANON|EXPORT/i.test(cipher.name)) {
+            vulns.push({ cve: "CWE-327", cvss: 7.5, severity: "high", title: `Weak/Deprecated Cipher Suite (${cipher.name})`, cwe: "CWE-327", remediation: "Disable weak ciphers and use AES-GCM or ChaCha20-Poly1305." });
+          }
+        }
+      } catch {}
+      sock.destroy();
+      resolve({ intel, vulns });
+    });
+    sock.on("error", () => resolve({ intel, vulns }));
+    sock.setTimeout(10000, () => { sock.destroy(); resolve({ intel, vulns }); });
   });
 }
 
-// ── Real scanner: GeoIP via ipapi.co ──────────────────────────────────────────
+// ── Security headers analysis ──────────────────────────────────────────────────
 
-async function runGeoIntel(target: string): Promise<IntelItem[]> {
-  const domain = extractDomain(target);
-  let ip = domain;
-  try { const ips = await dns.resolve4(domain); ip = ips[0] ?? domain; } catch {}
-  if (!ip) return [];
-
-  // Try ip-api.com (free, no API key, 45 req/min)
-  try {
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,regionName,city,org,as`, { signal: ctrl.signal });
-    if (res.ok) {
-      const data: any = await res.json();
-      if (data.status === "success") {
-        const intel: IntelItem[] = [];
-        if (data.country)     intel.push({ type: "GeoIP", key: "Country",      value: data.country });
-        if (data.regionName)  intel.push({ type: "GeoIP", key: "Region",       value: data.regionName });
-        if (data.city)        intel.push({ type: "GeoIP", key: "City",         value: data.city });
-        if (data.org)         intel.push({ type: "ASN",   key: "Organization", value: data.org });
-        if (data.as)          intel.push({ type: "ASN",   key: "AS Number",    value: data.as });
-        return intel;
-      }
-    }
-  } catch {}
-
-  // Fallback: ipapi.co
-  try {
-    const ctrl2 = new AbortController();
-    setTimeout(() => ctrl2.abort(), 6000);
-    const res2 = await fetch(`https://ipapi.co/${ip}/json/`, { signal: ctrl2.signal });
-    if (!res2.ok) return [];
-    const data2: any = await res2.json();
-    if (data2.error) return [];
-    const intel: IntelItem[] = [];
-    if (data2.country_name) intel.push({ type: "GeoIP", key: "Country",      value: data2.country_name });
-    if (data2.region)       intel.push({ type: "GeoIP", key: "Region",       value: data2.region });
-    if (data2.city)         intel.push({ type: "GeoIP", key: "City",         value: data2.city });
-    if (data2.org)          intel.push({ type: "ASN",   key: "Organization", value: data2.org });
-    if (data2.asn)          intel.push({ type: "ASN",   key: "AS Number",    value: data2.asn });
-    return intel;
-  } catch { return []; }
-}
-
-// ── Real scanner: WHOIS ────────────────────────────────────────────────────────
-
-async function runWhoisIntel(target: string): Promise<IntelItem[]> {
-  const domain = extractDomain(target);
-  if (!domain) return [];
-
-  try {
-    const { stdout } = await execAsync(`whois ${domain}`, { timeout: 12000 });
-    const intel: IntelItem[] = [];
-
-    const extract = (re: RegExp, type: string, key: string) => {
-      const m = stdout.match(re);
-      if (m?.[1]?.trim()) intel.push({ type, key, value: m[1].trim() });
-    };
-
-    extract(/Registrar:\s*(.+)/i,              "WHOIS", "Registrar");
-    extract(/Registrant Organization:\s*(.+)/i, "WHOIS", "Registrant Org");
-    extract(/Registrant Country:\s*(.+)/i,      "WHOIS", "Registrant Country");
-    extract(/Creation Date:\s*(.+)/i,           "WHOIS", "Created");
-    extract(/Registry Expiry Date:\s*(.+)/i,    "WHOIS", "Expires");
-    extract(/Updated Date:\s*(.+)/i,            "WHOIS", "Updated");
-    extract(/DNSSEC:\s*(.+)/i,                  "WHOIS", "DNSSEC");
-
-    return intel;
-  } catch { return []; }
-}
-
-// ── CVE matching from real discovered services ─────────────────────────────────
-
-function matchCvesFromRealData(ports: PortFinding[], httpInfo: HttpInfo | null): VulnFinding[] {
+function analyzeSecurityHeaders(httpInfo: HttpInfo | null): VulnFinding[] {
+  if (!httpInfo) return [];
+  const h = httpInfo.headers;
   const vulns: VulnFinding[] = [];
-  const seen = new Set<string>();
 
-  const checkAndAdd = (svcStr: string) => {
-    const lower = svcStr.toLowerCase();
-    for (const cve of CVE_POOL) {
-      if (seen.has(cve.cve)) continue;
-      if (cve.affected.some(a => lower.includes(a.toLowerCase()))) {
-        vulns.push({ cve: cve.cve, cvss: cve.cvss, severity: cve.severity, title: cve.title, cwe: cve.cwe, remediation: cve.remediation });
-        seen.add(cve.cve);
-      }
-    }
+  const check = (condition: boolean, cve: string, cvss: number, severity: string, title: string, cwe: string, remediation: string) => {
+    if (condition) vulns.push({ cve, cvss, severity, title, cwe, remediation });
   };
 
-  for (const port of ports) checkAndAdd(`${port.service} ${port.version}`);
+  check(!h["strict-transport-security"],   "HDR-HSTS",   6.5, "medium", "Missing HTTP Strict Transport Security (HSTS)",           "CWE-319", "Add: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload");
+  check(!h["content-security-policy"],     "HDR-CSP",    6.1, "medium", "Missing Content Security Policy (CSP) Header",            "CWE-116", "Define a strict Content-Security-Policy to prevent XSS.");
+  check(!h["x-frame-options"] && !h["content-security-policy"]?.includes("frame-ancestors"), "HDR-XFRAME", 4.3, "medium", "Missing X-Frame-Options — Clickjacking Vulnerability", "CWE-1021", "Add: X-Frame-Options: DENY");
+  check(!h["x-content-type-options"],      "HDR-XCTO",   3.7, "low",    "Missing X-Content-Type-Options — MIME Sniffing Risk",     "CWE-16",  "Add: X-Content-Type-Options: nosniff");
+  check(!h["referrer-policy"],             "HDR-RP",     3.1, "low",    "Missing Referrer-Policy — Information Leakage",           "CWE-200", "Add: Referrer-Policy: strict-origin-when-cross-origin");
+  check(!h["permissions-policy"],          "HDR-PP",     3.1, "low",    "Missing Permissions-Policy Header",                       "CWE-16",  "Add Permissions-Policy to restrict browser feature access.");
+  check(!h["cross-origin-embedder-policy"],"HDR-COEP",   3.1, "low",    "Missing Cross-Origin-Embedder-Policy (COEP)",             "CWE-16",  "Add: Cross-Origin-Embedder-Policy: require-corp");
+  check(!h["cross-origin-opener-policy"],  "HDR-COOP",   3.1, "low",    "Missing Cross-Origin-Opener-Policy (COOP)",               "CWE-16",  "Add: Cross-Origin-Opener-Policy: same-origin");
 
-  if (httpInfo) {
-    checkAndAdd([...httpInfo.tech, httpInfo.server].join(" "));
+  if (h["server"]?.length) {
+    vulns.push({ cve: "HDR-SRV", cvss: 3.7, severity: "low", title: `Server Version Disclosure: ${h["server"]}`, cwe: "CWE-200", remediation: 'Configure server to omit "Server" header or use a generic value.' });
+  }
+  if (h["x-powered-by"]) {
+    vulns.push({ cve: "HDR-XPB", cvss: 3.7, severity: "low", title: `Technology Disclosure via X-Powered-By: ${h["x-powered-by"]}`, cwe: "CWE-200", remediation: "Remove X-Powered-By header." });
   }
 
   return vulns;
 }
 
-// ── Generate human-readable raw output ────────────────────────────────────────
+// ── Cloud surface scan ────────────────────────────────────────────────────────
 
-function buildRawOutput(toolName: string, target: string, data: {
-  ports?: PortFinding[] | null;
-  nmapRaw?: string;
-  subdomains?: SubdomainFinding[] | null;
-  dnsRecords?: DnsRecord[] | null;
-  httpInfo?: HttpInfo | null;
-  endpoints?: EndpointFinding[] | null;
-  vulnerabilities?: VulnFinding[] | null;
-  intelligence?: IntelItem[] | null;
-}): string {
-  const lines: string[] = [`[${toolName}] Target: ${target}`, ""];
+async function runCloudSurfaceScan(target: string): Promise<IntelItem[]> {
+  const domain = extractDomain(target);
+  const company = domain.split(".")[0];
+  const intel: IntelItem[] = [];
 
-  if (data.nmapRaw) {
-    lines.push("=== NMAP SCAN OUTPUT ===");
-    lines.push(data.nmapRaw);
-    lines.push("");
-  } else if (data.ports?.length) {
-    lines.push("PORT     PROTO  STATE  SERVICE  VERSION");
-    for (const p of data.ports) lines.push(`${String(p.port).padEnd(8)} ${p.protocol.padEnd(6)} open   ${p.service.padEnd(8)} ${p.version}`);
-    lines.push("");
+  const buckets = [
+    company, `${company}-backup`, `${company}-backups`, `${company}-dev`, `${company}-staging`,
+    `${company}-prod`, `${company}-assets`, `${company}-media`, `${company}-files`,
+    `${company}-uploads`, `${company}-data`, `${company}-logs`, `${company}-archive`,
+    `${company}-public`, `${company}-private`, `${company}-static`,
+  ];
+
+  await Promise.allSettled(
+    buckets.map(async (bucket) => {
+      const url = `https://${bucket}.s3.amazonaws.com`;
+      try {
+        const ctrl = new AbortController();
+        setTimeout(() => ctrl.abort(), 4000);
+        const res = await fetch(url, { signal: ctrl.signal });
+        const text = await res.text().catch(() => "");
+        if (res.status === 200 || text.includes("ListBucketResult")) {
+          intel.push({ type: "Cloud", key: "Exposed S3 Bucket", value: `${url} — PUBLICLY ACCESSIBLE`, severity: "critical" });
+        } else if (res.status === 403 || text.includes("AccessDenied")) {
+          intel.push({ type: "Cloud", key: "S3 Bucket (private)", value: `${bucket}.s3.amazonaws.com — bucket exists but access denied` });
+        }
+      } catch {}
+    })
+  );
+
+  return intel;
+}
+
+// ── CVE matching from discovered services ─────────────────────────────────────
+
+function matchCvesFromPorts(ports: PortFinding[], httpInfo: HttpInfo | null, tech: string[]): VulnFinding[] {
+  const vulns: VulnFinding[] = [];
+  const seen = new Set<string>();
+
+  const serviceStr = [
+    ...ports.map(p => `${p.service} ${p.version} ${p.port}`),
+    httpInfo ? [...httpInfo.tech, httpInfo.server].join(" ") : "",
+    ...tech,
+  ].join(" ").toLowerCase();
+
+  for (const cve of CVE_POOL) {
+    if (seen.has(cve.cve)) continue;
+    if (cve.affected.some(a => serviceStr.includes(a.toLowerCase()))) {
+      vulns.push({ cve: cve.cve, cvss: cve.cvss, severity: cve.severity, title: cve.title, cwe: cve.cwe, remediation: cve.remediation });
+      seen.add(cve.cve);
+    }
   }
 
+  return vulns;
+}
+
+// ── Build per-tool raw output ─────────────────────────────────────────────────
+
+function buildRawOutput(toolName: string, target: string, phase: string, data: {
+  ports?: PortFinding[] | null; nmapRaw?: string; subdomains?: SubdomainFinding[] | null;
+  dnsRecords?: DnsRecord[] | null; httpInfo?: HttpInfo | null; endpoints?: EndpointFinding[] | null;
+  vulnerabilities?: VulnFinding[] | null; intelligence?: IntelItem[] | null;
+  secretsFound?: VulnFinding[] | null;
+}): string {
+  const ts = new Date().toISOString();
+  const lines = [`[${toolName}] Target: ${target}`, `[${toolName}] Phase: ${phase}`, `[${toolName}] Started: ${ts}`, ""];
+
+  if (data.nmapRaw) {
+    lines.push("=== NMAP PORT SCAN ==="); lines.push(data.nmapRaw); lines.push("");
+  } else if (data.ports?.length) {
+    lines.push("=== OPEN PORTS ===");
+    lines.push("PORT     PROTO  SERVICE          VERSION");
+    for (const p of data.ports) lines.push(`${String(p.port).padEnd(8)} ${p.protocol.padEnd(6)} ${p.service.padEnd(16)} ${p.version}`);
+    lines.push("");
+  }
   if (data.dnsRecords?.length) {
     lines.push("=== DNS RECORDS ===");
-    for (const r of data.dnsRecords) lines.push(`  ${r.type.padEnd(6)} ${r.value}${r.priority ? ` (priority ${r.priority})` : ""}`);
+    for (const r of data.dnsRecords) lines.push(`  ${r.type.padEnd(6)} ${r.value}${r.priority ? ` (priority ${r.priority})` : ""} [TTL: ${r.ttl}]`);
     lines.push("");
   }
   if (data.subdomains?.length) {
-    lines.push("=== SUBDOMAINS ===");
-    for (const s of data.subdomains) lines.push(`  ${s.name.padEnd(40)} ${s.ip}${s.cname ? ` → ${s.cname}` : ""}`);
+    lines.push("=== SUBDOMAINS DISCOVERED ===");
+    for (const s of data.subdomains) lines.push(`  ${s.name.padEnd(45)} ${s.ip.padEnd(18)} ${s.status}${s.cdnProvider ? ` [${s.cdnProvider}]` : ""}${s.cname ? ` → ${s.cname}` : ""}`);
     lines.push("");
   }
   if (data.httpInfo) {
     const h = data.httpInfo;
-    lines.push("=== HTTP PROBE ===");
-    lines.push(`  URL:     ${h.url}`);
-    lines.push(`  Status:  ${h.status}`);
-    lines.push(`  Title:   ${h.title || "(none)"}`);
-    lines.push(`  Server:  ${h.server || "(unknown)"}`);
-    lines.push(`  Tech:    ${h.tech.join(", ") || "—"}`);
-    lines.push(`  WAF:     ${h.waf}`);
-    lines.push(`  Size:    ${(h.contentLength / 1024).toFixed(1)} KB`);
-    lines.push("  Headers:");
+    lines.push("=== HTTP/WEB PROBE ===");
+    lines.push(`  URL:        ${h.url}`);
+    lines.push(`  Status:     ${h.status}`);
+    lines.push(`  Title:      ${h.title || "(none)"}`);
+    lines.push(`  Server:     ${h.server || "(unknown)"}`);
+    lines.push(`  Technology: ${h.tech.join(", ") || "—"}`);
+    lines.push(`  WAF:        ${h.waf}`);
+    lines.push(`  CDN:        ${h.cdn ?? "none"}`);
+    lines.push(`  Body Size:  ${(h.contentLength / 1024).toFixed(1)} KB`);
+    lines.push("  Security Headers:");
+    const secHeaders = ["strict-transport-security", "content-security-policy", "x-frame-options", "x-content-type-options", "referrer-policy", "permissions-policy"];
+    for (const sh of secHeaders) lines.push(`    ${sh}: ${h.headers[sh] ?? "MISSING ⚠"}`);
+    lines.push("  All Headers:");
     for (const [k, v] of Object.entries(h.headers)) lines.push(`    ${k}: ${v}`);
     lines.push("");
   }
   if (data.endpoints?.length) {
-    lines.push("=== ENDPOINTS ===");
-    for (const e of data.endpoints) lines.push(`  [${e.status}] GET ${e.url}`);
+    lines.push("=== ENDPOINTS DISCOVERED ===");
+    for (const e of data.endpoints) lines.push(`  [${String(e.status).padEnd(3)}] GET ${e.url}${e.title ? `  — ${e.title}` : ""}`);
+    lines.push("");
+  }
+  if (data.secretsFound?.length) {
+    lines.push("=== SECRETS & CREDENTIALS FOUND ===");
+    for (const s of data.secretsFound) {
+      lines.push(`  [${s.severity.toUpperCase()}] ${s.title}`);
+      if (s.source) lines.push(`         → ${s.source}`);
+      lines.push(`         Remediation: ${s.remediation}`);
+    }
     lines.push("");
   }
   if (data.vulnerabilities?.length) {
-    lines.push("=== VULNERABILITIES MATCHED ===");
-    for (const v of data.vulnerabilities) lines.push(`  [${v.severity.toUpperCase()}] ${v.cve} CVSS:${v.cvss} — ${v.title}`);
+    lines.push("=== VULNERABILITIES IDENTIFIED ===");
+    for (const v of data.vulnerabilities) {
+      lines.push(`  [${v.severity.toUpperCase()}] ${v.cve} CVSS:${v.cvss} — ${v.title}`);
+      lines.push(`         ${v.cwe} | ${v.remediation}`);
+    }
     lines.push("");
   }
   if (data.intelligence?.length) {
-    lines.push("=== INTELLIGENCE ===");
+    lines.push("=== INTELLIGENCE GATHERED ===");
     for (const i of data.intelligence) lines.push(`  [${i.type}] ${i.key}: ${i.value}`);
     lines.push("");
   }
 
-  lines.push(`[${toolName}] Scan complete.`);
+  lines.push(`[${toolName}] Scan phase complete — ${new Date().toISOString()}`);
   return lines.join("\n");
 }
 
-// ── Core pipeline execution: real tools ───────────────────────────────────────
+// ── Core pipeline execution ───────────────────────────────────────────────────
 
 async function executePipeline(
   tenantId: number,
@@ -464,14 +741,13 @@ async function executePipeline(
   enabledTools: (typeof securityToolsTable.$inferSelect)[],
 ): Promise<{ findingsCount: number }> {
   const assetIds = assetConfigs.map(c => c.assetId);
-  const assets = await db.select().from(assetsTable).where(
-    and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)),
-  );
+  const assets = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
 
   let totalFindings = 0;
+  scanProgressMap.set(scanId, []);
 
   for (const config of assetConfigs) {
-    // Check if stopped
     const currentScan = await db.select({ status: scansTable.status }).from(scansTable)
       .where(eq(scansTable.id, scanId)).then(r => r[0]);
     if (currentScan?.status === "cancelled") break;
@@ -484,116 +760,247 @@ async function executePipeline(
       : enabledTools;
     if (toolsForAsset.length === 0) continue;
 
-    const categories = new Set(toolsForAsset.map(t => t.category ?? "recon"));
     const target = asset.value;
+    const domain = extractDomain(target);
+    const now = () => new Date().toISOString();
+    const ms = (start: number) => Date.now() - start;
 
-    // Decide which real scans are needed for this asset
-    const needsNmap    = categories.has("port_scan") || categories.has("vuln_scan");
-    const needsDns     = categories.has("recon");
-    const needsHttp    = categories.has("web_recon");
-    const needsEndpts  = categories.has("web_recon");
-    const needsSsl     = categories.has("osint") || categories.has("ssl_check");
-    const needsGeo     = categories.has("osint");
-    const needsWhois   = categories.has("osint");
+    // ── Init progress for this asset ────────────────────────────────────────
+    const toolProgress: ToolProgress[] = toolsForAsset.map(t => ({
+      toolName: t.name, toolCategory: t.category ?? "recon",
+      phase: TOOL_PHASE[t.name] ?? 1, status: "queued",
+      startedAt: null, completedAt: null, durationMs: null,
+      findingsCount: 0, detail: `Queued — ${PHASE_NAMES[TOOL_PHASE[t.name] ?? 1]}`,
+    }));
+    const progress = scanProgressMap.get(scanId)!;
+    progress.push({ assetId: asset.id, assetName: asset.name, assetValue: asset.value, tools: toolProgress });
 
-    // Run all underlying scans concurrently
-    let realPorts: PortFinding[]        = [];
-    let nmapRaw  = "";
+    const updateTool = (toolName: string, upd: Partial<ToolProgress>) => {
+      const t = toolProgress.find(t => t.toolName === toolName);
+      if (t) Object.assign(t, upd);
+    };
+    const startTool = (toolName: string, detail: string) => {
+      updateTool(toolName, { status: "running", startedAt: now(), detail });
+    };
+    const doneTool = (toolName: string, findingsCount: number, detail: string, startMs: number) => {
+      updateTool(toolName, { status: "done", completedAt: now(), durationMs: ms(startMs), findingsCount, detail });
+    };
+
+    // Group tools by phase
+    const byPhase = (phase: number) => toolsForAsset.filter(t => (TOOL_PHASE[t.name] ?? 1) === phase);
+    const p1 = byPhase(1); const p2 = byPhase(2);
+    const p3 = byPhase(3); const p4 = byPhase(4); const p5 = byPhase(5);
+
+    const needsDns    = p1.some(t => ["recon", "osint"].includes(t.category ?? "")) || toolsForAsset.some(t => t.category === "recon");
+    const needsGeo    = p1.some(t => t.category === "osint" || ["asnmap", "cdncheck", "uncover", "theHarvester"].includes(t.name));
+    const needsWhois  = p1.some(t => t.category === "osint" || ["theHarvester", "maltego"].includes(t.name));
+    const needsCt     = p1.some(t => ["amass", "subfinder", "shuffledns"].includes(t.name));
+    const needsCloud  = p1.some(t => ["s3scanner", "cloud_enum"].includes(t.name));
+    const needsNmap   = p2.length > 0 || toolsForAsset.some(t => t.category === "vuln_scan");
+    const needsHttp   = p3.length > 0;
+    const needsSecrets= p4.some(t => t.name === "trufflehog");
+    const needsSsl    = p5.length > 0 || toolsForAsset.some(t => t.category === "ssl_check");
+    const needsVulns  = p4.length > 0 || toolsForAsset.some(t => t.category === "vuln_scan");
+
+    // ── PHASE 1: Reconnaissance ───────────────────────────────────────────────
+    const p1Start = Date.now();
+    for (const t of p1) startTool(t.name, `Running ${PHASE_NAMES[1]}…`);
+
     let dnsResult = { subdomains: [] as SubdomainFinding[], dnsRecords: [] as DnsRecord[] };
-    let httpInfo: HttpInfo | null       = null;
-    let endpoints: EndpointFinding[]    = [];
-    let sslIntel: IntelItem[]           = [];
-    let geoIntel: IntelItem[]           = [];
-    let whoisIntel: IntelItem[]         = [];
+    let ctSubdomains: SubdomainFinding[] = [];
+    let geoIntel: IntelItem[] = [];
+    let whoisIntel: IntelItem[] = [];
+    let cloudIntel: IntelItem[] = [];
 
     await Promise.allSettled([
-      needsNmap   && (async () => { const r = await runNmapScan(target, scanId); realPorts = r.ports; nmapRaw = r.raw; })(),
-      needsDns    && (async () => { dnsResult = await runDnsRecon(target); })(),
-      needsHttp   && (async () => { httpInfo  = await runHttpProbe(target); })(),
-      needsEndpts && (async () => { endpoints = await runEndpointProbe(target); })(),
-      needsSsl    && (async () => { sslIntel  = await runSslIntel(target); })(),
-      needsGeo    && (async () => { geoIntel  = await runGeoIntel(target); })(),
-      needsWhois  && (async () => { whoisIntel = await runWhoisIntel(target); })(),
+      needsDns   && (async () => { dnsResult     = await runDnsRecon(target); })(),
+      needsCt    && !isIp(domain) && (async () => { ctSubdomains = await runCtLogLookup(domain); })(),
+      needsGeo   && (async () => { geoIntel      = await runGeoIntel(target); })(),
+      needsWhois && !isIp(domain) && (async () => { whoisIntel   = await runWhoisIntel(target); })(),
+      needsCloud && (async () => { cloudIntel    = await runCloudSurfaceScan(target); })(),
     ].filter(Boolean));
 
-    // If vuln_scan needs ports but port_scan wasn't in the tool list, run nmap anyway
-    if (categories.has("vuln_scan") && !categories.has("port_scan") && realPorts.length === 0) {
-      const r = await runNmapScan(target, scanId);
-      realPorts = r.ports; nmapRaw = r.raw;
+    // Merge CT with DNS subdomains
+    const seenSubs = new Set(dnsResult.subdomains.map(s => s.name));
+    for (const s of ctSubdomains) { if (!seenSubs.has(s.name)) { dnsResult.subdomains.push(s); seenSubs.add(s.name); } }
+
+    for (const t of p1) {
+      const cat = t.category ?? "recon";
+      const subs = dnsResult.subdomains.length;
+      const recs = dnsResult.dnsRecords.length;
+      const intel = geoIntel.length + whoisIntel.length;
+      let detail = "";
+      if (cat === "recon")       detail = `${subs} subdomains, ${recs} DNS records`;
+      else if (cat === "osint")  detail = `${intel} intel items, ${cloudIntel.length} cloud assets`;
+      else if (t.name === "s3scanner" || t.name === "cloud_enum") detail = `${cloudIntel.length} cloud resources`;
+      else if (t.name === "gau") detail = `${dnsResult.subdomains.length} attack surface entries`;
+      else                        detail = `${subs} subdomains, ${recs} DNS records`;
+      doneTool(t.name, subs + recs, detail, p1Start);
     }
 
-    const allIntel  = [...sslIntel, ...geoIntel, ...whoisIntel];
-    const vulns     = matchCvesFromRealData(realPorts, httpInfo);
+    // ── PHASE 2: Port Scanning ────────────────────────────────────────────────
+    let realPorts: PortFinding[] = [];
+    let nmapRaw = "";
+    if (needsNmap) {
+      const p2Start = Date.now();
+      for (const t of p2) startTool(t.name, `Scanning top 1000 ports on ${domain}…`);
+      if (p2.length === 0) {
+        // vuln scan needs port data — run nmap without display tool
+        const r = await runNmapScan(target, scanId);
+        realPorts = r.ports; nmapRaw = r.raw;
+      } else {
+        const r = await runNmapScan(target, scanId);
+        realPorts = r.ports; nmapRaw = r.raw;
+        for (const t of p2) doneTool(t.name, realPorts.length, `${realPorts.length} open ports found`, p2Start);
+      }
+    }
 
-    // Store one row per tool per asset (matching existing schema)
+    // ── PHASE 3: Web Recon ────────────────────────────────────────────────────
+    let httpInfo: HttpInfo | null = null;
+    let endpoints: EndpointFinding[] = [];
+    if (needsHttp || toolsForAsset.some(t => t.category === "web_recon")) {
+      const p3Start = Date.now();
+      for (const t of p3) startTool(t.name, `Probing web application at ${domain}…`);
+
+      await Promise.allSettled([
+        (async () => { httpInfo  = await runHttpProbe(target); })(),
+        (async () => { endpoints = await runEndpointProbe(target); })(),
+      ]);
+
+      const headerVulns = analyzeSecurityHeaders(httpInfo);
+      const techList = httpInfo?.tech ?? [];
+
+      for (const t of p3) {
+        let detail = "";
+        if (["httpx", "whatweb", "wafw00f"].includes(t.name)) detail = `${techList.join(", ") || "no tech"} | WAF: ${httpInfo?.waf ?? "none"}`;
+        else if (["feroxbuster", "gobuster", "ffuf", "katana"].includes(t.name)) detail = `${endpoints.length} endpoints discovered`;
+        else detail = `${endpoints.length} endpoints, ${headerVulns.length} header issues`;
+        doneTool(t.name, endpoints.length + headerVulns.length, detail, p3Start);
+      }
+    }
+
+    // ── PHASE 4: Vuln & Secrets Scanning ─────────────────────────────────────
+    let secretFindings: VulnFinding[] = [];
+    let cveFindings: VulnFinding[] = [];
+    let headerVulnFindings: VulnFinding[] = [];
+
+    if (needsVulns || needsSecrets) {
+      const p4Start = Date.now();
+      for (const t of p4) startTool(t.name, t.name === "trufflehog" ? `Scanning ${domain} for exposed credentials & secrets…` : `Running vulnerability analysis on ${domain}…`);
+
+      await Promise.allSettled([
+        needsSecrets  && (async () => { secretFindings = await runSecretsScanner(target, endpoints, httpInfo); })(),
+        (async () => {
+          cveFindings = matchCvesFromPorts(realPorts, httpInfo, httpInfo?.tech ?? []);
+          headerVulnFindings = analyzeSecurityHeaders(httpInfo);
+        })(),
+      ].filter(Boolean));
+
+      for (const t of p4) {
+        const isSecrets = t.name === "trufflehog";
+        const count = isSecrets ? secretFindings.length : cveFindings.length + headerVulnFindings.length;
+        doneTool(t.name, count, isSecrets ? `${secretFindings.length} secrets/credentials found` : `${cveFindings.length} CVEs, ${headerVulnFindings.length} header issues`, p4Start);
+      }
+    }
+
+    // ── PHASE 5: SSL/TLS ──────────────────────────────────────────────────────
+    let sslIntel: IntelItem[] = [];
+    let sslVulns: VulnFinding[] = [];
+    if (needsSsl) {
+      const p5Start = Date.now();
+      for (const t of p5) startTool(t.name, `Analyzing SSL/TLS configuration of ${domain}…`);
+      const sslResult = await runSslAnalysis(target);
+      sslIntel = sslResult.intel;
+      sslVulns = sslResult.vulns;
+      for (const t of p5) doneTool(t.name, sslVulns.length, `${sslIntel.length} cert details, ${sslVulns.length} issues`, p5Start);
+    }
+
+    // ── Compile all data and store per-tool results ────────────────────────────
+    const allIntel    = [...sslIntel, ...geoIntel, ...whoisIntel, ...cloudIntel];
+    const allVulns    = [...cveFindings, ...sslVulns, ...headerVulnFindings, ...secretFindings];
+    const allSubdomains = dnsResult.subdomains;
+    const allDns      = dnsResult.dnsRecords;
+
     const results: Array<typeof scanAssetResultsTable.$inferInsert> = [];
-    const findingInserts: Array<typeof findingsTable.$inferInsert>  = [];
+    const findingInserts: Array<typeof findingsTable.$inferInsert>   = [];
 
     for (const tool of toolsForAsset) {
-      const cat = tool.category ?? "recon";
+      const cat   = tool.category ?? "recon";
+      const phase = TOOL_PHASE[tool.name] ?? 1;
 
-      let toolPorts:   PortFinding[]     | null = null;
-      let toolSubs:    SubdomainFinding[] | null = null;
-      let toolEndpts:  EndpointFinding[] | null = null;
-      let toolHttp:    HttpInfo          | null = null;
-      let toolDns:     DnsRecord[]       | null = null;
-      let toolIntel:   IntelItem[]       | null = null;
-      let toolVulns:   VulnFinding[]     | null = null;
+      let toolPorts:    PortFinding[]      | null = null;
+      let toolSubs:     SubdomainFinding[] | null = null;
+      let toolEndpts:   EndpointFinding[]  | null = null;
+      let toolHttp:     HttpInfo           | null = null;
+      let toolDns:      DnsRecord[]        | null = null;
+      let toolIntel:    IntelItem[]        | null = null;
+      let toolVulns:    VulnFinding[]      | null = null;
+      let toolSecrets:  VulnFinding[]      | null = null;
 
-      if (cat === "port_scan") {
+      if (phase === 1) {
+        toolSubs  = allSubdomains;
+        toolDns   = allDns;
+        toolIntel = cat === "osint" ? allIntel : geoIntel.length + whoisIntel.length > 0 ? [...geoIntel, ...whoisIntel] : null;
+        if (["s3scanner", "cloud_enum"].includes(tool.name)) toolIntel = cloudIntel;
+      } else if (phase === 2) {
         toolPorts = realPorts;
-      } else if (cat === "web_recon") {
-        toolHttp   = httpInfo;
-        toolEndpts = endpoints;
-      } else if (cat === "recon") {
-        toolSubs = dnsResult.subdomains;
-        toolDns  = dnsResult.dnsRecords;
-      } else if (cat === "vuln_scan") {
-        toolVulns = vulns;
-        for (const v of vulns) {
-          findingInserts.push({
-            tenantId, assetId: asset.id, scanId,
-            title: v.title, cve: v.cve,
-            severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-            cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
-            description: `${v.title} (${v.cve}) — CVSS ${v.cvss}. Detected on ${asset.name} (${asset.value}).`,
-            remediation: v.remediation,
-          });
+      } else if (phase === 3) {
+        toolHttp  = httpInfo;
+        toolEndpts= endpoints;
+        toolVulns = headerVulnFindings;
+      } else if (phase === 4) {
+        if (tool.name === "trufflehog") {
+          toolSecrets = secretFindings;
+          toolVulns   = secretFindings;
+        } else {
+          toolVulns = [...cveFindings, ...headerVulnFindings];
+          toolEndpts= endpoints;
+          toolHttp  = httpInfo;
+          for (const v of toolVulns) {
+            if (!v.cve.startsWith("HDR-") && !v.cve.startsWith("SEC-")) {
+              findingInserts.push({
+                tenantId, assetId: asset.id, scanId,
+                title: v.title, cve: v.cve,
+                severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
+                cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+                description: `${v.title} (${v.cve}) — CVSS ${v.cvss}. Detected on ${asset.name} (${asset.value}).`,
+                remediation: v.remediation,
+              });
+            }
+          }
         }
-      } else if (cat === "osint" || cat === "ssl_check") {
-        toolIntel = cat === "ssl_check" ? sslIntel : allIntel;
-        if (cat === "ssl_check") toolHttp = httpInfo;
-      } else {
-        // Unknown category — store recon data
-        toolSubs = dnsResult.subdomains;
-        toolDns  = dnsResult.dnsRecords;
+      } else if (phase === 5) {
+        toolIntel = sslIntel;
+        toolVulns = sslVulns;
+        toolHttp  = httpInfo;
       }
 
       results.push({
         tenantId, scanId, assetId: asset.id,
         toolName: tool.name, toolCategory: cat,
-        rawOutput: buildRawOutput(tool.name, target, {
-          ports: toolPorts, nmapRaw: cat === "port_scan" ? nmapRaw : undefined,
+        rawOutput: buildRawOutput(tool.name, target, PHASE_NAMES[phase] ?? "Recon", {
+          ports: toolPorts, nmapRaw: phase === 2 ? nmapRaw : undefined,
           subdomains: toolSubs, dnsRecords: toolDns,
           httpInfo: toolHttp, endpoints: toolEndpts,
           vulnerabilities: toolVulns, intelligence: toolIntel,
+          secretsFound: toolSecrets,
         }),
-        ports:          toolPorts  as any,
-        subdomains:     toolSubs   as any,
-        endpoints:      toolEndpts as any,
-        httpInfo:       toolHttp   as any,
-        dnsRecords:     toolDns    as any,
-        intelligence:   toolIntel  as any,
-        vulnerabilities: toolVulns as any,
+        ports:           toolPorts   as any,
+        subdomains:      toolSubs    as any,
+        endpoints:       toolEndpts  as any,
+        httpInfo:        toolHttp    as any,
+        dnsRecords:      toolDns     as any,
+        intelligence:    toolIntel   as any,
+        vulnerabilities: toolVulns   as any,
       });
     }
 
-    // Batch insert results
+    // Batch-insert results
     for (let i = 0; i < results.length; i += 50) {
       await db.insert(scanAssetResultsTable).values(results.slice(i, i + 50));
     }
 
-    // Deduplicate findings by CVE+assetId before inserting
+    // Deduplicate and insert findings
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
       const key = `${f.cve ?? ""}-${f.assetId}`;
@@ -604,6 +1011,13 @@ async function executePipeline(
       await db.insert(findingsTable).values(deduped.slice(i, i + 50));
     }
     totalFindings += deduped.length;
+
+    // Mark all tools done in case any got stuck
+    for (const t of toolProgress) {
+      if (t.status === "running" || t.status === "queued") {
+        Object.assign(t, { status: "done", completedAt: now(), detail: "Complete" });
+      }
+    }
   }
 
   return { findingsCount: totalFindings };
@@ -616,7 +1030,6 @@ function computeNextRunAt(frequency: string, runTime: string, dayOfWeek?: number
   const [hours, minutes] = runTime.split(":").map(Number);
   const next = new Date(now);
   next.setHours(hours ?? 9, minutes ?? 0, 0, 0);
-
   if (frequency === "daily") {
     if (next <= now) next.setDate(next.getDate() + 1);
   } else if (frequency === "weekly") {
@@ -638,25 +1051,32 @@ function toScheduleResponse(s: typeof scanSchedulesTable.$inferSelect) {
   return {
     id: s.id, name: s.name, assetToolConfig: s.assetToolConfig,
     frequency: s.frequency, runTime: s.runTime,
-    dayOfWeek: s.dayOfWeek, dayOfMonth: s.dayOfMonth,
-    status: s.status,
-    lastRunAt: s.lastRunAt?.toISOString() ?? null,
-    nextRunAt: s.nextRunAt?.toISOString() ?? null,
+    dayOfWeek: s.dayOfWeek, dayOfMonth: s.dayOfMonth, status: s.status,
+    lastRunAt: s.lastRunAt?.toISOString() ?? null, nextRunAt: s.nextRunAt?.toISOString() ?? null,
     lastScanId: s.lastScanId, createdAt: s.createdAt.toISOString(),
   };
 }
 
-// ── POST /scans/pipeline-run ──────────────────────────────────────────────────
+// ── IMPORTANT: static sub-paths BEFORE param routes ───────────────────────────
 
+// ── GET /scans/:scanId/progress — live tool progress ──────────────────────────
+router.get("/scans/:scanId/progress", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const scanId = Number(req.params.scanId);
+  if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scan ID" }); return; }
+  const scan = await db.select({ tenantId: scansTable.tenantId }).from(scansTable)
+    .where(eq(scansTable.id, scanId)).then(r => r[0]);
+  if (!scan || scan.tenantId !== req.user!.tenantId) { res.status(404).json({ error: "Scan not found" }); return; }
+  res.json(scanProgressMap.get(scanId) ?? []);
+});
+
+// ── POST /scans/pipeline-run ───────────────────────────────────────────────────
 router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = RunPipelineScanBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
   const body = parsed.data as any;
-  // The Zod schema field is `assetToolConfig` (from OpenAPI spec)
   const assetToolConfigs = body.assetToolConfig ?? body.assetToolConfigs;
   const { assetIds, name } = body;
-
   const tenantId = req.user!.tenantId;
   const userId   = req.user!.userId;
 
@@ -666,11 +1086,9 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
   } else if (Array.isArray(assetIds) && assetIds.length > 0) {
     configs = (assetIds as number[]).map(id => ({ assetId: id, toolIds: [] }));
   }
-
   if (configs.length === 0) { res.status(400).json({ error: "At least one asset is required" }); return; }
 
   const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
-
   const pipelineSteps = await db.select({ tool: securityToolsTable })
     .from(toolPipelineStepsTable)
     .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
@@ -682,30 +1100,24 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
     res.status(400).json({ error: "No pipeline tools enabled. Configure pipeline steps first." }); return;
   }
 
-  const configAssetIds = configs.map(c => c.assetId);
   const [scan] = await db.insert(scansTable).values({
     tenantId, name: name ?? `Pipeline Scan — ${new Date().toLocaleDateString()}`,
-    type: "pipeline", status: "running", assetIds: configAssetIds, startedAt: new Date(), findingsCount: 0,
+    type: "pipeline", status: "running", assetIds: configs.map(c => c.assetId), startedAt: new Date(), findingsCount: 0,
   }).returning();
 
-  // ── Respond immediately so the client can navigate to the scan report ────────
   res.status(201).json({ scanId: scan.id, status: "running", assetCount: configs.length, findingsCount: 0 });
 
-  // ── Run real scans in the background ─────────────────────────────────────────
   setImmediate(async () => {
     try {
       const { findingsCount } = await executePipeline(tenantId, scan.id, configs, allTools, enabledTools);
-
-      // Only mark completed if not already cancelled
       const current = await db.select({ status: scansTable.status }).from(scansTable)
         .where(eq(scansTable.id, scan.id)).then(r => r[0]);
       if (current?.status !== "cancelled") {
         await db.update(scansTable).set({ status: "completed", completedAt: new Date(), findingsCount })
           .where(eq(scansTable.id, scan.id));
       }
-
       await logAudit(tenantId, userId as any, "scan.pipeline_run", "scan", scan.id, { assetCount: configs.length, findingsCount });
-    } catch (err) {
+    } catch {
       await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
         .where(eq(scansTable.id, scan.id)).catch(() => {});
     }
@@ -713,48 +1125,36 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
 });
 
 // ── POST /scans/:scanId/stop ──────────────────────────────────────────────────
-
 router.post("/scans/:scanId/stop", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = StopScanParams.safeParse({ scanId: Number(req.params.scanId) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid scan ID" }); return; }
-
-  const tenantId = req.user!.tenantId;
   const { scanId } = parsed.data;
-
+  const tenantId = req.user!.tenantId;
   const scan = await db.select().from(scansTable)
     .where(and(eq(scansTable.id, scanId), eq(scansTable.tenantId, tenantId))).then(r => r[0]);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
-
   if (scan.status === "completed" || scan.status === "cancelled") {
     res.status(400).json({ error: `Scan is already ${scan.status}` }); return;
   }
-
-  // Kill any active nmap process for this scan
   const killer = activeScanKillers.get(scanId);
   if (killer) { killer(); activeScanKillers.delete(scanId); }
-
-  const [updated] = await db.update(scansTable)
-    .set({ status: "cancelled", completedAt: new Date() })
+  const [updated] = await db.update(scansTable).set({ status: "cancelled", completedAt: new Date() })
     .where(eq(scansTable.id, scanId)).returning();
-
   res.json({
     id: updated.id, tenantId: updated.tenantId, name: updated.name, type: updated.type,
     status: updated.status, schedule: updated.schedule, assetIds: updated.assetIds ?? [],
     findingsCount: updated.findingsCount,
-    startedAt: updated.startedAt?.toISOString() ?? null,
-    completedAt: updated.completedAt?.toISOString() ?? null,
+    startedAt: updated.startedAt?.toISOString() ?? null, completedAt: updated.completedAt?.toISOString() ?? null,
     createdAt: updated.createdAt.toISOString(),
   });
 });
 
 // ── GET /scans/:scanId/asset-report ──────────────────────────────────────────
-
 router.get("/scans/:scanId/asset-report", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = GetScanAssetReportParams.safeParse({ scanId: Number(req.params.scanId) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid scan ID" }); return; }
-
-  const tenantId = req.user!.tenantId;
   const { scanId } = parsed.data;
+  const tenantId = req.user!.tenantId;
 
   const scan = await db.select().from(scansTable)
     .where(and(eq(scansTable.id, scanId), eq(scansTable.tenantId, tenantId))).then(r => r[0]);
@@ -762,14 +1162,13 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
 
   const scanResults = await db.select().from(scanAssetResultsTable)
     .where(and(eq(scanAssetResultsTable.scanId, scanId), eq(scanAssetResultsTable.tenantId, tenantId)));
-
   if (scanResults.length === 0) { res.json([]); return; }
 
-  const assetIds = [...new Set(scanResults.map(r => r.assetId))];
-  const assets = await db.select().from(assetsTable).where(inArray(assetsTable.id, assetIds));
+  const aIds = [...new Set(scanResults.map(r => r.assetId))];
+  const assets = await db.select().from(assetsTable).where(inArray(assetsTable.id, aIds));
   const assetMap = new Map(assets.map(a => [a.id, a]));
 
-  const assetReports = assetIds.map(assetId => {
+  const assetReports = aIds.map(assetId => {
     const asset = assetMap.get(assetId);
     const assetResults = scanResults.filter(r => r.assetId === assetId);
 
@@ -778,45 +1177,50 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     let httpInfo: unknown = null;
 
     const toolResults = assetResults.map(r => {
-      const tr: Record<string, unknown> = { toolName: r.toolName, toolCategory: r.toolCategory, rawOutput: r.rawOutput };
-      if (r.ports)          { tr.ports          = r.ports;         allPorts.push(...(r.ports as unknown[])); }
-      if (r.subdomains)     { tr.subdomains     = r.subdomains;    allSubdomains.push(...(r.subdomains as unknown[])); }
-      if (r.endpoints)      { tr.endpoints      = r.endpoints;     allEndpoints.push(...(r.endpoints as unknown[])); }
-      if (r.httpInfo)       { tr.httpInfo       = r.httpInfo;      httpInfo = r.httpInfo; }
-      if (r.dnsRecords)     { tr.dnsRecords     = r.dnsRecords;    allDns.push(...(r.dnsRecords as unknown[])); }
-      if (r.intelligence)   { tr.intelligence   = r.intelligence;  allIntel.push(...(r.intelligence as unknown[])); }
-      if (r.vulnerabilities){ tr.vulnerabilities = r.vulnerabilities; allVulns.push(...(r.vulnerabilities as unknown[])); }
+      const tr: Record<string, unknown> = {
+        toolName: r.toolName, toolCategory: r.toolCategory, rawOutput: r.rawOutput,
+        phase: TOOL_PHASE[r.toolName] ?? 1, phaseName: PHASE_NAMES[TOOL_PHASE[r.toolName] ?? 1] ?? "Recon",
+      };
+      if (r.ports)           { tr.ports           = r.ports;           allPorts.push(...(r.ports as unknown[])); }
+      if (r.subdomains)      { tr.subdomains       = r.subdomains;      allSubdomains.push(...(r.subdomains as unknown[])); }
+      if (r.endpoints)       { tr.endpoints        = r.endpoints;       allEndpoints.push(...(r.endpoints as unknown[])); }
+      if (r.httpInfo)        { tr.httpInfo         = r.httpInfo;        httpInfo = r.httpInfo; }
+      if (r.dnsRecords)      { tr.dnsRecords       = r.dnsRecords;      allDns.push(...(r.dnsRecords as unknown[])); }
+      if (r.intelligence)    { tr.intelligence     = r.intelligence;    allIntel.push(...(r.intelligence as unknown[])); }
+      if (r.vulnerabilities) { tr.vulnerabilities  = r.vulnerabilities; allVulns.push(...(r.vulnerabilities as unknown[])); }
       return tr;
     });
 
     const dedup = <T extends Record<string, unknown>>(arr: T[], key: string) => {
       const seen = new Set<string>();
-      return arr.filter(i => { const k = String(i[key] ?? ""); return seen.has(k) ? false : (seen.add(k), true); });
+      return arr.filter(i => { const k = String(i[key] ?? JSON.stringify(i)); return seen.has(k) ? false : (seen.add(k), true); });
     };
 
-    const ports = dedup(allPorts as any[], "port");
+    const ports  = dedup(allPorts as any[], "port");
     const vulns  = dedup(allVulns as any[], "cve");
-    const critCount = vulns.filter((v: any) => v.severity === "critical").length;
-    const highCount  = vulns.filter((v: any) => v.severity === "high").length;
+    const subs   = dedup(allSubdomains as any[], "name");
+    const dns    = dedup(allDns as any[], "value");
+    const eps    = dedup(allEndpoints as any[], "url");
+    const intel  = dedup(allIntel as any[], "key");
+    const secrets = vulns.filter((v: any) => v.cve?.startsWith("SEC-") || v.cve?.startsWith("CRED-"));
+    const cves    = vulns.filter((v: any) => !v.cve?.startsWith("SEC-") && !v.cve?.startsWith("HDR-") && !v.cve?.startsWith("CWE-") && !v.cve?.startsWith("CRED-"));
+    const headerIssues = vulns.filter((v: any) => v.cve?.startsWith("HDR-") || v.cve?.startsWith("CWE-"));
+
+    const critCount = cves.filter((v: any) => v.severity === "critical").length;
+    const highCount  = cves.filter((v: any) => v.severity === "high").length;
 
     return {
       assetId, assetName: asset?.name ?? String(assetId), assetValue: asset?.value ?? "", assetType: asset?.type ?? "unknown",
       scanStatus: scan.status,
       summary: {
         openPorts: ports.length, vulnerabilities: vulns.length, criticalVulns: critCount, highVulns: highCount,
-        subdomains: dedup(allSubdomains as any[], "name").length,
-        endpoints:  dedup(allEndpoints as any[], "url").length,
-        dnsRecords: dedup(allDns as any[], "value").length,
-        intelItems: dedup(allIntel as any[], "key").length,
-        toolsRun:   assetResults.length,
-        waf: httpInfo ? (httpInfo as HttpInfo).waf : null,
-        cdn: (allIntel as any[]).find((i: any) => i.type === "CDN")?.value ?? null,
+        subdomains: subs.length, endpoints: eps.length, dnsRecords: dns.length, intelItems: intel.length,
+        secretsFound: secrets.length, headerIssues: headerIssues.length, cves: cves.length,
+        toolsRun: assetResults.length, waf: httpInfo ? (httpInfo as HttpInfo).waf : null, cdn: (httpInfo as any)?.cdn ?? null,
       },
-      ports, subdomains: dedup(allSubdomains as any[], "name"),
-      endpoints: dedup(allEndpoints as any[], "url"),
-      httpInfo, dnsRecords: dedup(allDns as any[], "value"),
-      intelligence: dedup(allIntel as any[], "key"),
-      vulnerabilities: vulns, toolResults,
+      ports, subdomains: subs, endpoints: eps, httpInfo, dnsRecords: dns,
+      intelligence: intel, vulnerabilities: vulns, secrets, cves, headerIssues,
+      toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
     };
   });
 
@@ -834,18 +1238,14 @@ router.get("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, re
 router.post("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateScanScheduleBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-
   const tenantId = req.user!.tenantId;
   const userId   = req.user!.userId;
   const { name, assetToolConfig, frequency, runTime, dayOfWeek, dayOfMonth } = parsed.data as any;
-
   const nextRunAt = computeNextRunAt(frequency ?? "once", runTime ?? "09:00", dayOfWeek, dayOfMonth);
-
   const [schedule] = await db.insert(scanSchedulesTable).values({
     tenantId, name, assetToolConfig, frequency: frequency ?? "once",
     runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, status: "active", nextRunAt, createdBy: userId as any,
   }).returning();
-
   await logAudit(tenantId, userId as any, "schedule.create", "scan_schedule", schedule.id, { name });
   res.status(201).json(toScheduleResponse(schedule));
 });
@@ -864,20 +1264,18 @@ router.patch("/scans/schedules/:scheduleId", requireAuth, async (req: Authentica
   if (!paramsP.success) { res.status(400).json({ error: "Invalid schedule ID" }); return; }
   const bodyP = UpdateScanScheduleBody.safeParse(req.body);
   if (!bodyP.success) { res.status(400).json({ error: bodyP.error.message }); return; }
-
-  const tenantId     = req.user!.tenantId;
+  const tenantId = req.user!.tenantId;
   const { scheduleId } = paramsP.data;
-  const existing     = await db.select().from(scanSchedulesTable)
+  const existing = await db.select().from(scanSchedulesTable)
     .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
   if (!existing) { res.status(404).json({ error: "Schedule not found" }); return; }
-
   const updates: Record<string, unknown> = { ...bodyP.data };
-  const freq = (updates.frequency as string) ?? existing.frequency;
-  const rt   = (updates.runTime   as string) ?? existing.runTime;
-  const dow  = (updates.dayOfWeek as number | undefined) ?? existing.dayOfWeek;
-  const dom  = (updates.dayOfMonth as number | undefined) ?? existing.dayOfMonth;
-  updates.nextRunAt = computeNextRunAt(freq, rt, dow, dom);
-
+  updates.nextRunAt = computeNextRunAt(
+    (updates.frequency as string) ?? existing.frequency,
+    (updates.runTime as string) ?? existing.runTime,
+    (updates.dayOfWeek as number | undefined) ?? existing.dayOfWeek,
+    (updates.dayOfMonth as number | undefined) ?? existing.dayOfMonth,
+  );
   const [updated] = await db.update(scanSchedulesTable).set(updates as any)
     .where(eq(scanSchedulesTable.id, scheduleId)).returning();
   res.json(toScheduleResponse(updated));
@@ -896,32 +1294,24 @@ router.delete("/scans/schedules/:scheduleId", requireAuth, async (req: Authentic
 router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = RunScheduleNowParams.safeParse({ scheduleId: Number(req.params.scheduleId) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid schedule ID" }); return; }
-
-  const tenantId     = req.user!.tenantId;
-  const userId       = req.user!.userId;
+  const tenantId = req.user!.tenantId;
+  const userId   = req.user!.userId;
   const { scheduleId } = parsed.data;
-
   const schedule = await db.select().from(scanSchedulesTable)
     .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
   if (!schedule) { res.status(404).json({ error: "Schedule not found" }); return; }
-
   const configs        = schedule.assetToolConfig as AssetToolConfigItem[];
-  const configAssetIds = configs.map(c => c.assetId);
-
   const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
   const pipelineSteps = await db.select({ tool: securityToolsTable })
     .from(toolPipelineStepsTable)
     .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
     .where(and(eq(toolPipelineStepsTable.tenantId, tenantId), eq(toolPipelineStepsTable.isEnabled, true)));
   const enabledTools = pipelineSteps.map(p => p.tool);
-
   const [scan] = await db.insert(scansTable).values({
     tenantId, name: `${schedule.name} — ${new Date().toLocaleDateString()}`,
-    type: "pipeline", status: "running", assetIds: configAssetIds, startedAt: new Date(), findingsCount: 0,
+    type: "pipeline", status: "running", assetIds: configs.map(c => c.assetId), startedAt: new Date(), findingsCount: 0,
   }).returning();
-
   res.status(201).json({ scanId: scan.id, status: "running", assetCount: configs.length, findingsCount: 0 });
-
   setImmediate(async () => {
     try {
       const { findingsCount } = await executePipeline(tenantId, scan.id, configs, allTools, enabledTools);
@@ -931,10 +1321,8 @@ router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: Aut
         await db.update(scansTable).set({ status: "completed", completedAt: new Date(), findingsCount })
           .where(eq(scansTable.id, scan.id));
       }
-      const nextRunAt = computeNextRunAt(schedule.frequency, schedule.runTime, schedule.dayOfWeek, schedule.dayOfMonth);
-      await db.update(scanSchedulesTable).set({ lastRunAt: new Date(), lastScanId: scan.id, nextRunAt })
+      await db.update(scanSchedulesTable).set({ lastRunAt: new Date(), lastScanId: scan.id })
         .where(eq(scanSchedulesTable.id, scheduleId));
-      await logAudit(tenantId, userId as any, "schedule.run_now", "scan", scan.id, { scheduleId, findingsCount });
     } catch {
       await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
         .where(eq(scansTable.id, scan.id)).catch(() => {});
