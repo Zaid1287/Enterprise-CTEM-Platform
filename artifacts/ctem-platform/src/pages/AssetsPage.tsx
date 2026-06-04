@@ -148,7 +148,7 @@ export default function AssetsPage() {
       const result = await runPipeline.mutateAsync({
         data: {
           name: `Scan – ${newAsset.name}`,
-          assetToolConfigs: [{ assetId: newId, toolIds: selectedToolIds }],
+          assetToolConfig: [{ assetId: newId, toolIds: selectedToolIds }],
         } as any,
       });
       queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });

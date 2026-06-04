@@ -106,9 +106,15 @@ export default function ScansPage() {
                 )}
               </div>
             </div>
-            <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
+            <div className="flex gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
               <span>Started: {formatDateTime(scan.startedAt)}</span>
               {scan.completedAt && <span>Completed: {formatDateTime(scan.completedAt)}</span>}
+              {scan.completedAt && scan.startedAt && (() => {
+                const ms = new Date(scan.completedAt).getTime() - new Date(scan.startedAt).getTime();
+                const totalSec = Math.max(0, Math.round(ms / 1000));
+                const dur = totalSec < 60 ? `${totalSec}s` : `${Math.floor(totalSec/60)}m ${totalSec%60}s`;
+                return <span className="text-foreground font-medium">Duration: {dur}</span>;
+              })()}
             </div>
           </div>
         ))}

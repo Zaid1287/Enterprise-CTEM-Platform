@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useParams, Link } from "wouter";
-import { useGetScanAssetReport, useGetScan, useStopScan, getGetScanQueryKey } from "@workspace/api-client-react";
+import { useGetScanAssetReport, useGetScan, useStopScan, getGetScanQueryKey, getGetScanAssetReportQueryKey } from "@workspace/api-client-react";
 import {
   ChevronLeft, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
-  Info, ExternalLink, Terminal, Wifi, Square, Loader2,
+  Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,6 +29,14 @@ function SeverityBadge({ severity }: { severity: string }) {
   );
 }
 
+function formatDuration(startMs: number, endMs: number): string {
+  const totalSec = Math.max(0, Math.round((endMs - startMs) / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 function StatCard({ icon: Icon, label, value, className }: { icon: React.ElementType; label: string; value: number | string; className?: string }) {
   return (
     <div className={cn("bg-card border border-border rounded-xl p-4 flex items-center gap-3", className)}>
@@ -51,17 +59,27 @@ export default function ScanReportPage() {
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
 
-  const { data: reports, isLoading, error } = useGetScanAssetReport(scanId);
   const { data: scanData, refetch: refetchScan } = useGetScan(scanId, {
     query: { queryKey: getGetScanQueryKey(scanId), refetchInterval: (q) => {
       const s = (q.state.data as any)?.status;
       return s === "running" || s === "pending" ? 4000 : false;
     }},
   });
-  const stopMutation = useStopScan();
-
   const scan = scanData as any;
-  const scanStatus: string = scan?.status ?? "completed";
+  const scanStatus: string = scan?.status ?? "unknown";
+
+  const { data: reports, isLoading, error } = useGetScanAssetReport(scanId, {
+    query: {
+      queryKey: getGetScanAssetReportQueryKey(scanId),
+      refetchInterval: (q) => {
+        const data = q.state.data as any[];
+        if (data && data.length > 0) return false;
+        if (scanStatus === "running" || scanStatus === "pending") return 3000;
+        return false;
+      },
+    },
+  });
+  const stopMutation = useStopScan();
 
   async function handleStop() {
     setStopping(true);
@@ -94,6 +112,51 @@ export default function ScanReportPage() {
   }
 
   if ((reports as unknown[]).length === 0) {
+    if (scanStatus === "running" || scanStatus === "pending" || scanStatus === "unknown") {
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Link href="/tools">
+              <button className="w-8 h-8 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center transition-colors">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </Link>
+            <div>
+              <h1 className="text-lg font-semibold">Pipeline Scan Report #{scanId}</h1>
+              <p className="text-xs text-muted-foreground">Scan in progress — results will appear shortly</p>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                size="sm" variant="outline"
+                className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10"
+                onClick={handleStop} disabled={stopping}
+              >
+                {stopping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
+                Stop Scan
+              </Button>
+              <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs px-2.5 py-1 rounded-full">
+                <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
+              </div>
+            </div>
+          </div>
+          <div className="bg-card border border-border rounded-xl p-14 text-center">
+            <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-4">
+              <Loader2 className="w-7 h-7 text-primary animate-spin" />
+            </div>
+            <p className="text-base font-semibold">Live Scan Running</p>
+            <p className="text-sm text-muted-foreground mt-1.5">
+              Running nmap, DNS recon, HTTP probing, SSL analysis and OSINT collection…
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">Results will auto-load when the scan completes</p>
+            {scan?.startedAt && (
+              <p className="text-xs text-muted-foreground mt-3 flex items-center justify-center gap-1">
+                <Clock className="w-3 h-3" /> Started {new Date(scan.startedAt).toLocaleTimeString()}
+              </p>
+            )}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="bg-card border border-border rounded-xl p-8 text-center">
         <Shield className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
@@ -131,8 +194,26 @@ export default function ScanReportPage() {
           </button>
         </Link>
         <div>
-          <h1 className="text-lg font-semibold">Pipeline Scan Report #{scanId}</h1>
-          <p className="text-xs text-muted-foreground">{assetReports.length} assets · {assetReports.reduce((acc: number, a: any) => acc + (a.summary?.vulnerabilities ?? 0), 0)} total vulnerabilities</p>
+          <h1 className="text-lg font-semibold">{scan?.name ?? `Pipeline Scan Report #${scanId}`}</h1>
+          <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+            <p className="text-xs text-muted-foreground">{assetReports.length} assets · {assetReports.reduce((acc: number, a: any) => acc + (a.summary?.vulnerabilities ?? 0), 0)} total vulnerabilities</p>
+            {scan?.startedAt && (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Clock className="w-3 h-3" />
+                Started {new Date(scan.startedAt).toLocaleString()}
+              </span>
+            )}
+            {scan?.completedAt && scan?.startedAt && (
+              <span className="text-xs text-muted-foreground">
+                · Duration: <span className="text-foreground font-medium">{formatDuration(new Date(scan.startedAt).getTime(), new Date(scan.completedAt).getTime())}</span>
+              </span>
+            )}
+            {scan?.completedAt && (
+              <span className="text-xs text-muted-foreground">
+                · Completed {new Date(scan.completedAt).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {(scanStatus === "running" || scanStatus === "pending") && (
