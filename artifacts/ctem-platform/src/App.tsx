@@ -27,6 +27,7 @@ const UsersPage = lazy(() => import("@/pages/UsersPage"));
 const TenantSettingsPage = lazy(() => import("@/pages/TenantSettingsPage"));
 const SecurityToolsPage = lazy(() => import("@/pages/SecurityToolsPage"));
 const ScanReportPage = lazy(() => import("@/pages/ScanReportPage"));
+const ScanReportsPage = lazy(() => import("@/pages/ScanReportsPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -113,6 +114,7 @@ function Router() {
       <Route path="/settings/users" component={() => <ProtectedRoute component={UsersPage} />} />
       <Route path="/settings/tenant" component={() => <ProtectedRoute component={TenantSettingsPage} />} />
       <Route path="/tools" component={() => <ProtectedRoute component={SecurityToolsPage} />} />
+      <Route path="/scan-reports" component={() => <ProtectedRoute component={ScanReportsPage} />} />
       <Route path="/scan-reports/:id" component={() => <ProtectedRoute component={ScanReportPage} />} />
 
       {/* Fallback */}
