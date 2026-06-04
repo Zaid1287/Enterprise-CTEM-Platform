@@ -106,7 +106,7 @@ export default function ScanReportPage() {
       <div className="bg-card border border-destructive/30 rounded-xl p-8 text-center">
         <XCircle className="w-8 h-8 text-destructive mx-auto mb-2" />
         <p className="text-sm text-muted-foreground">Failed to load scan report.</p>
-        <Link href="/tools" className="text-xs text-primary mt-2 inline-block">← Back to Security Tools</Link>
+        <Link href="/scan-reports" className="text-xs text-primary mt-2 inline-block">← Back to Scan Reports</Link>
       </div>
     );
   }
@@ -116,7 +116,7 @@ export default function ScanReportPage() {
       return (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <Link href="/tools">
+            <Link href="/scan-reports">
               <button className="w-8 h-8 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center transition-colors">
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -161,7 +161,7 @@ export default function ScanReportPage() {
       <div className="bg-card border border-border rounded-xl p-8 text-center">
         <Shield className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
         <p className="text-sm text-muted-foreground">No scan results found for this scan.</p>
-        <Link href="/tools" className="text-xs text-primary mt-2 inline-block">← Back to Security Tools</Link>
+        <Link href="/scan-reports" className="text-xs text-primary mt-2 inline-block">← Back to Scan Reports</Link>
       </div>
     );
   }
@@ -188,7 +188,7 @@ export default function ScanReportPage() {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link href="/tools">
+        <Link href="/scan-reports">
           <button className="w-8 h-8 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center transition-colors">
             <ChevronLeft className="w-4 h-4" />
           </button>

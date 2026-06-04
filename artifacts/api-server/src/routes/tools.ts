@@ -197,8 +197,13 @@ const DEFAULT_TOOLS = [
 ];
 
 async function seedDefaultTools(tenantId: number, userId: number): Promise<void> {
+  const existing = await db.select({ name: securityToolsTable.name }).from(securityToolsTable)
+    .where(eq(securityToolsTable.tenantId, tenantId));
+  const existingNames = new Set(existing.map(t => t.name.toLowerCase()));
+  const toInsert = DEFAULT_TOOLS.filter(t => !existingNames.has(t.name.toLowerCase()));
+  if (toInsert.length === 0) return;
   await db.insert(securityToolsTable).values(
-    DEFAULT_TOOLS.map(t => ({ ...t, tenantId, isActive: true, createdBy: userId }))
+    toInsert.map(t => ({ ...t, tenantId, isActive: true, createdBy: userId }))
   );
 }
 
@@ -226,16 +231,11 @@ router.post("/tools/seed-defaults", requireAuth, async (req: AuthenticatedReques
 
 router.get("/tools", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = req.user!.tenantId;
-  let tools = await db.select().from(securityToolsTable)
+  await seedDefaultTools(tenantId, req.user!.id);
+
+  const tools = await db.select().from(securityToolsTable)
     .where(eq(securityToolsTable.tenantId, tenantId))
     .orderBy(securityToolsTable.createdAt);
-
-  if (tools.length === 0) {
-    await seedDefaultTools(tenantId, req.user!.id);
-    tools = await db.select().from(securityToolsTable)
-      .where(eq(securityToolsTable.tenantId, tenantId))
-      .orderBy(securityToolsTable.createdAt);
-  }
 
   res.json(tools.map(mapTool));
 });
