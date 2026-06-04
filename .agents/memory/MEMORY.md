@@ -5,3 +5,4 @@
 - [OpenAPI schema name collision](openapi-schema-collision.md) — Schema names matching auto-generated param type names (e.g. GetXxxParams) cause ambiguous re-export errors in api-zod; remove duplicates.
 - [TanStack Query queryKey required](tanstack-querykey.md) — Hooks like useGetToolRun require queryKey in query options or TS errors block Vite HMR module reloads.
 - [API server logAudit userId cast](api-server-ts-quirks.md) — logAudit userId arg always needs `as any`; pre-existing TS error in esbuild build that doesn't block runtime.
+- [Real scan implementation](real-scan-impl.md) — pipelineScans.ts uses nmap(-sT), Node dns/promises, fetch, tls.connect, whois, ip-api.com; async background via setImmediate; field is assetToolConfig (no s).
