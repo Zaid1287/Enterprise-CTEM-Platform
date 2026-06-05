@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Server, Layers, Radar, Bug, ShieldCheck,
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, Shield, GitBranch, ScanSearch,
-  Package, UserCheck, ShieldOff,
+  Package, UserCheck, ShieldOff, Settings,
 } from "lucide-react";
 
 interface NavItem {
@@ -88,10 +88,18 @@ const navGroups: NavGroup[] = [
   // ─── Admin section ───────────────────────────────────────────────
   {
     title: "Admin",
+    onlyFor: ["super_admin", "admin", "account_manager"],
     items: [
-      { label: "Users", href: "/settings/users", icon: Users },
+      { label: "Users", href: "/settings/users", icon: Users, onlyFor: ["super_admin", "admin", "account_manager"] },
       { label: "Tenant", href: "/settings/tenant", icon: Building2, onlyFor: ["admin"] },
-      { label: "Audit Logs", href: "/audit-logs", icon: ClipboardList },
+      { label: "Audit Logs", href: "/audit-logs", icon: ClipboardList, onlyFor: ["super_admin", "admin", "account_manager"] },
+    ],
+  },
+  // ─── Account settings — visible to all ──────────────────────────
+  {
+    title: "Account",
+    items: [
+      { label: "Settings", href: "/settings/account", icon: Settings },
     ],
   },
 ];

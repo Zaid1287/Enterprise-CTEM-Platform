@@ -379,7 +379,8 @@ export default function AssetsPage() {
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Asset</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Type</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Value</th>
-              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Risk</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Risk Level</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Risk Score</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">IP / Port</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Vulnerabilities</th>
@@ -391,7 +392,7 @@ export default function AssetsPage() {
           <tbody>
             {isLoading && [...Array(5)].map((_, i) => (
               <tr key={i} className="border-b border-border/50">
-                {[...Array(10)].map((_, j) => <td key={j} className="px-3 py-3"><Skeleton className="h-4" /></td>)}
+                {[...Array(11)].map((_, j) => <td key={j} className="px-3 py-3"><Skeleton className="h-4" /></td>)}
               </tr>
             ))}
             {!isLoading && allAssets.map((asset: any) => {
@@ -419,16 +420,30 @@ export default function AssetsPage() {
                     <span className="text-xs text-muted-foreground font-mono block truncate">{asset.value}</span>
                   </td>
 
-                  {/* Risk */}
+                  {/* Risk Level */}
                   <td className="px-3 py-3">
-                    <div className="flex flex-col gap-0.5">
-                      <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium w-fit", riskLevelBg(asset.riskLevel))}>
-                        {asset.riskLevel}
-                      </span>
-                      {asset.riskScore != null && (
-                        <span className="text-[10px] text-muted-foreground tabular-nums">{asset.riskScore}/100</span>
-                      )}
-                    </div>
+                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium capitalize", riskLevelBg(asset.riskLevel))}>
+                      {asset.riskLevel ?? "—"}
+                    </span>
+                  </td>
+
+                  {/* Risk Score */}
+                  <td className="px-3 py-3">
+                    {asset.riskScore != null ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn(
+                          "text-sm font-bold tabular-nums",
+                          asset.riskScore >= 80 ? "text-red-400" :
+                          asset.riskScore >= 60 ? "text-orange-400" :
+                          asset.riskScore >= 40 ? "text-yellow-400" : "text-green-400",
+                        )}>
+                          {asset.riskScore}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">/100</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/40">—</span>
+                    )}
                   </td>
 
                   {/* Verification status */}
@@ -501,7 +516,14 @@ export default function AssetsPage() {
                         size="sm"
                         className="h-7 px-2.5 text-xs bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20"
                         variant="ghost"
-                        onClick={() => { setScanAssetId(asset.id); setShowScanConfirm(true); }}
+                        onClick={() => {
+                          if (isClient) {
+                            triggerScan(asset.id);
+                          } else {
+                            setScanAssetId(asset.id);
+                            setShowScanConfirm(true);
+                          }
+                        }}
                         disabled={enabledTools.length === 0}
                       >
                         <Zap className="w-3 h-3 mr-1" /> Run Scan
