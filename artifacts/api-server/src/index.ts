@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { seedPlatformOnStartup } from "./lib/seedPlatform";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,5 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
 });

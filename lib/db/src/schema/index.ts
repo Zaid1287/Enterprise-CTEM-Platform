@@ -11,3 +11,5 @@ export * from "./alerts";
 export * from "./riskScores";
 export * from "./auditLogs";
 export * from "./securityTools";
+export * from "./packages";
+export * from "./accountManagerClients";

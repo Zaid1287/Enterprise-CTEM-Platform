@@ -8,6 +8,7 @@ export const tenantsTable = pgTable("tenants", {
   slug: text("slug").notNull().unique(),
   plan: text("plan").notNull().default("starter"),
   isActive: boolean("is_active").notNull().default(true),
+  isPlatform: boolean("is_platform").notNull().default(false),
   maxAssets: integer("max_assets"),
   maxUsers: integer("max_users"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

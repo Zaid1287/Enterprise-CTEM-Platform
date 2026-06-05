@@ -16,6 +16,8 @@ import aiRouter from "./ai";
 import dashboardRouter from "./dashboard";
 import toolsRouter from "./tools";
 import pipelineScansRouter from "./pipelineScans";
+import packagesRouter from "./packages";
+import accountManagerRouter from "./accountManager";
 
 const router: IRouter = Router();
 
@@ -36,5 +38,7 @@ router.use(auditLogsRouter);
 router.use(aiRouter);
 router.use(dashboardRouter);
 router.use(toolsRouter);
+router.use(packagesRouter);
+router.use(accountManagerRouter);
 
 export default router;

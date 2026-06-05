@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, count, and, desc, sql } from "drizzle-orm";
-import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable } from "@workspace/db";
+import { eq, count, and, desc, sql, inArray } from "drizzle-orm";
+import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
@@ -146,6 +146,92 @@ router.get("/dashboard/exposure-breakdown", requireAuth, async (req: Authenticat
   res.json(Object.entries(exposureTypes)
     .filter(([, count]) => count > 0)
     .map(([exposureType, count]) => ({ exposureType, count })));
+});
+
+router.get("/dashboard/platform-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role !== "super_admin") { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const allTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+  const tenantIds = allTenants.map(t => t.id);
+
+  if (tenantIds.length === 0) {
+    res.json({ tenantCount: 0, activeTenantCount: 0, userCount: 0, assetCount: 0, findingCount: 0, criticalCount: 0, openFindingCount: 0, activeScans: 0, tenants: [] });
+    return;
+  }
+
+  const [allUsers, allAssets, allFindings, allScans] = await Promise.all([
+    db.select().from(usersTable).where(inArray(usersTable.tenantId, tenantIds)),
+    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, tenantIds)),
+    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, tenantIds)),
+    db.select().from(scansTable).where(inArray(scansTable.tenantId, tenantIds)),
+  ]);
+
+  const tenantMetrics = allTenants.map(t => ({
+    id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
+    createdAt: t.createdAt.toISOString(),
+    userCount: allUsers.filter(u => u.tenantId === t.id).length,
+    assetCount: allAssets.filter(a => a.tenantId === t.id).length,
+    findingCount: allFindings.filter(f => f.tenantId === t.id).length,
+    criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
+    openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
+    activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
+  }));
+
+  res.json({
+    tenantCount: allTenants.length,
+    activeTenantCount: allTenants.filter(t => t.isActive).length,
+    userCount: allUsers.length,
+    assetCount: allAssets.length,
+    findingCount: allFindings.length,
+    criticalCount: allFindings.filter(f => f.severity === "critical").length,
+    openFindingCount: allFindings.filter(f => f.status === "open").length,
+    activeScans: allScans.filter(s => s.status === "running" || s.status === "pending").length,
+    tenants: tenantMetrics,
+  });
+});
+
+router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role !== "account_manager" && req.user!.role !== "super_admin") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
+
+  const amUserId = req.user!.role === "super_admin" && req.query.userId
+    ? Number(req.query.userId) : req.user!.userId;
+
+  const assignments = await db.select().from(accountManagerClientsTable)
+    .where(eq(accountManagerClientsTable.accountManagerUserId, amUserId));
+  if (assignments.length === 0) {
+    res.json({ clientCount: 0, assetCount: 0, findingCount: 0, criticalCount: 0, openFindingCount: 0, activeScans: 0, clients: [] });
+    return;
+  }
+
+  const clientTenantIds = assignments.map(a => a.clientTenantId);
+  const [clients, allAssets, allFindings, allScans] = await Promise.all([
+    db.select().from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds)),
+    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, clientTenantIds)),
+    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, clientTenantIds)),
+    db.select().from(scansTable).where(inArray(scansTable.tenantId, clientTenantIds)),
+  ]);
+
+  const clientMetrics = clients.map(t => ({
+    id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
+    assetCount: allAssets.filter(a => a.tenantId === t.id).length,
+    findingCount: allFindings.filter(f => f.tenantId === t.id).length,
+    criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
+    openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
+    activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
+    assignedAt: assignments.find(a => a.clientTenantId === t.id)?.assignedAt?.toISOString() ?? null,
+  }));
+
+  res.json({
+    clientCount: clients.length,
+    assetCount: allAssets.length,
+    findingCount: allFindings.length,
+    criticalCount: allFindings.filter(f => f.severity === "critical").length,
+    openFindingCount: allFindings.filter(f => f.status === "open").length,
+    activeScans: allScans.filter(s => s.status === "running" || s.status === "pending").length,
+    clients: clientMetrics,
+  });
 });
 
 export default router;
