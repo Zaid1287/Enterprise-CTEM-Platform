@@ -12,12 +12,14 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ElementType;
-  roles?: string[];
+  /** Only shown if current user role is in this list. Omit = visible to all. */
+  onlyFor?: string[];
 }
 
 interface NavGroup {
   title: string;
-  roles?: string[];
+  /** Only shown if current user role is in this list. Omit = visible to all. */
+  onlyFor?: string[];
   items: NavItem[];
 }
 
@@ -28,63 +30,61 @@ const navGroups: NavGroup[] = [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     ],
   },
+  // ─── Platform-only (new) ────────────────────────────────────────
   {
     title: "Platform",
-    roles: ["super_admin"],
+    onlyFor: ["super_admin"],
     items: [
-      { label: "All Tenants", href: "/tenants", icon: Building2, roles: ["super_admin"] },
-      { label: "Packages", href: "/packages", icon: Package, roles: ["super_admin"] },
+      { label: "All Tenants", href: "/tenants", icon: Building2 },
+      { label: "Packages", href: "/packages", icon: Package },
     ],
   },
   {
     title: "Clients",
-    roles: ["account_manager"],
+    onlyFor: ["account_manager"],
     items: [
-      { label: "My Clients", href: "/my-clients", icon: UserCheck, roles: ["account_manager"] },
+      { label: "My Clients", href: "/my-clients", icon: UserCheck },
     ],
   },
+  // ─── Original CTEM modules — visible to all roles ───────────────
   {
     title: "Assets",
-    roles: ["admin", "client"],
     items: [
-      { label: "Asset Inventory", href: "/assets", icon: Server, roles: ["admin", "client"] },
-      { label: "Asset Groups", href: "/asset-groups", icon: Layers, roles: ["admin", "client"] },
+      { label: "Asset Inventory", href: "/assets", icon: Server },
+      { label: "Asset Groups", href: "/asset-groups", icon: Layers },
     ],
   },
   {
     title: "Security",
-    roles: ["admin", "client"],
     items: [
-      { label: "Scans", href: "/scans", icon: Radar, roles: ["admin"] },
-      { label: "Findings", href: "/findings", icon: Bug, roles: ["admin", "client"] },
-      { label: "Risk Scoring", href: "/risk", icon: TrendingUp, roles: ["admin", "client"] },
-      { label: "Security Tools", href: "/tools", icon: GitBranch, roles: ["admin"] },
-      { label: "Scan Reports", href: "/scan-reports", icon: ScanSearch, roles: ["admin"] },
+      { label: "Scans", href: "/scans", icon: Radar },
+      { label: "Findings", href: "/findings", icon: Bug },
+      { label: "Risk Scoring", href: "/risk", icon: TrendingUp },
+      { label: "Security Tools", href: "/tools", icon: GitBranch },
+      { label: "Scan Reports", href: "/scan-reports", icon: ScanSearch },
     ],
   },
   {
     title: "Governance",
-    roles: ["admin", "client"],
     items: [
-      { label: "Compliance", href: "/compliance", icon: ShieldCheck, roles: ["admin", "client"] },
-      { label: "Reports", href: "/reports", icon: FileBarChart2, roles: ["admin", "client"] },
-      { label: "Alerts", href: "/alerts", icon: Bell, roles: ["admin", "client"] },
+      { label: "Compliance", href: "/compliance", icon: ShieldCheck },
+      { label: "Reports", href: "/reports", icon: FileBarChart2 },
+      { label: "Alerts", href: "/alerts", icon: Bell },
     ],
   },
   {
     title: "Intelligence",
-    roles: ["admin"],
     items: [
-      { label: "AI Copilot", href: "/ai-copilot", icon: Brain, roles: ["admin"] },
+      { label: "AI Copilot", href: "/ai-copilot", icon: Brain },
     ],
   },
+  // ─── Admin section ───────────────────────────────────────────────
   {
     title: "Admin",
-    roles: ["super_admin", "admin", "account_manager"],
     items: [
-      { label: "Users", href: "/settings/users", icon: Users, roles: ["super_admin", "admin", "account_manager"] },
-      { label: "Tenant", href: "/settings/tenant", icon: Building2, roles: ["admin"] },
-      { label: "Audit Logs", href: "/audit-logs", icon: ClipboardList, roles: ["super_admin", "admin"] },
+      { label: "Users", href: "/settings/users", icon: Users },
+      { label: "Tenant", href: "/settings/tenant", icon: Building2, onlyFor: ["admin"] },
+      { label: "Audit Logs", href: "/audit-logs", icon: ClipboardList },
     ],
   },
 ];
@@ -95,10 +95,10 @@ export function Sidebar() {
   const role = user?.role ?? "client";
 
   const visibleGroups = navGroups
-    .filter(g => !g.roles || g.roles.includes(role))
+    .filter(g => !g.onlyFor || g.onlyFor.includes(role))
     .map(g => ({
       ...g,
-      items: g.items.filter(item => !item.roles || item.roles.includes(role)),
+      items: g.items.filter(item => !item.onlyFor || item.onlyFor.includes(role)),
     }))
     .filter(g => g.items.length > 0);
 
@@ -119,12 +119,12 @@ export function Sidebar() {
       <div className="px-5 py-2 border-b border-sidebar-border">
         <span className={cn(
           "text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider",
-          role === "super_admin" ? "bg-purple-500/20 text-purple-400 border border-purple-500/30" :
-          role === "account_manager" ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" :
-          role === "admin" ? "bg-green-500/20 text-green-400 border border-green-500/30" :
-          "bg-muted text-muted-foreground border border-border"
+          role === "super_admin"     ? "bg-purple-500/20 text-purple-400 border border-purple-500/30" :
+          role === "account_manager" ? "bg-blue-500/20   text-blue-400   border border-blue-500/30"   :
+          role === "admin"           ? "bg-green-500/20  text-green-400  border border-green-500/30"   :
+                                       "bg-muted text-muted-foreground border border-border"
         )}>
-          {role.replace("_", " ")}
+          {role.replace(/_/g, " ")}
         </span>
       </div>
 
@@ -140,14 +140,12 @@ export function Sidebar() {
                 const isActive = location === item.href || location.startsWith(item.href + "/");
                 return (
                   <Link key={item.href} href={item.href}>
-                    <div
-                      className={cn(
-                        "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm cursor-pointer transition-all",
-                        isActive
-                          ? "bg-sidebar-accent text-foreground font-medium"
-                          : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
-                      )}
-                    >
+                    <div className={cn(
+                      "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm cursor-pointer transition-all",
+                      isActive
+                        ? "bg-sidebar-accent text-foreground font-medium"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
+                    )}>
                       <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
                       <span className="flex-1 truncate">{item.label}</span>
                       {isActive && <ChevronRight className="w-3 h-3 text-primary opacity-70" />}

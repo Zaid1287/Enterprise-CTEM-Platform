@@ -1,5 +1,12 @@
+import { getToken } from "@/lib/auth";
+
+/**
+ * Authenticated fetch helper. Uses the same module-level token store as the
+ * Orval-generated hooks (auth.ts → setAuthTokenGetter).
+ * After a token refresh, getToken() always returns the current access token.
+ */
 export async function apiFetch<T = unknown>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("auth_token");
+  const token = getToken();
   const resp = await fetch(path, {
     ...options,
     headers: {
