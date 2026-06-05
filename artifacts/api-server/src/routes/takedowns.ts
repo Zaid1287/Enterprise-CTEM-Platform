@@ -3,8 +3,32 @@ import { eq, and, desc } from "drizzle-orm";
 import { db, takedownRequestsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import crypto from "crypto";
 
 const router = Router();
+
+const EVIDENCE_DIR = path.join(process.cwd(), "evidence");
+if (!fs.existsSync(EVIDENCE_DIR)) fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, EVIDENCE_DIR),
+    filename: (_req, file, cb) => {
+      const unique = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+      cb(null, `td-${unique}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+    },
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/png", "image/jpeg", "image/gif", "image/webp",
+      "application/pdf", "text/plain", "application/zip",
+      "video/mp4", "video/webm"];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
 
 // GET /api/takedowns
 router.get("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -17,8 +41,8 @@ router.get("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): Pr
   res.json(rows);
 });
 
-// POST /api/takedowns
-router.post("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+// POST /api/takedowns  (supports multipart/form-data for file uploads)
+router.post("/takedowns", requireAuth, upload.array("evidenceFiles", 10), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
   const { type, targetUrl, targetDomain, targetIp, hostingProvider, registrar,
           title, description, evidence, brandAbused, priority } = req.body;
@@ -28,11 +52,17 @@ router.post("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): P
     return;
   }
 
+  const uploadedFiles = (req.files as Express.Multer.File[] | undefined) ?? [];
+  const evidenceFilenames = uploadedFiles.map(f => f.filename);
+
   const [row] = await db.insert(takedownRequestsTable).values({
     tenantId: tid,
     submittedByUserId: req.user!.userId,
     type, targetUrl, targetDomain, targetIp, hostingProvider, registrar,
-    title, description, evidence, brandAbused,
+    title, description,
+    evidence: evidence ?? null,
+    evidenceFiles: evidenceFilenames.length > 0 ? evidenceFilenames : [],
+    brandAbused,
     priority: priority ?? "medium",
     status: "submitted",
   }).returning();
@@ -81,6 +111,14 @@ router.delete("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, r
 
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.status(204).end();
+});
+
+// Serve uploaded evidence files
+router.get("/takedowns/evidence/:filename", requireAuth, (req: AuthenticatedRequest, res): void => {
+  const filename = path.basename(req.params.filename);
+  const filePath = path.join(EVIDENCE_DIR, filename);
+  if (!fs.existsSync(filePath)) { res.status(404).json({ error: "File not found" }); return; }
+  res.sendFile(filePath);
 });
 
 export default router;

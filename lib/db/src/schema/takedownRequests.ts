@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, boolean, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { tenantsTable } from "./tenants";
@@ -22,8 +22,9 @@ export const takedownRequestsTable = pgTable("takedown_requests", {
   // Incident details
   title: text("title").notNull(),
   description: text("description"),
-  evidence: text("evidence"), // JSON blob: screenshots, logs, URLs
-  brandAbused: text("brand_abused"), // which brand/asset is being impersonated
+  evidence: text("evidence"),
+  evidenceFiles: json("evidence_files").$type<string[]>().default([]),
+  brandAbused: text("brand_abused"),
 
   // Workflow status
   status: text("status").notNull().default("submitted"), // "submitted" | "in_progress" | "closed" | "rejected"

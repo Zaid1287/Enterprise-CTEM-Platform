@@ -1,35 +1,36 @@
 import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
-
 import {
   useListAssets, useCreateAsset, useUpdateAsset, useDeleteAsset,
-  useCheckAssetVerification, useListUsers, useGetToolPipeline,
+  useCheckAssetVerification, useVerifyAsset, useListUsers, useGetToolPipeline,
   useListScans, useStopScan, useRunPipelineScan, useCreateScanSchedule,
-  getListAssetsQueryKey, getGetToolPipelineQueryKey,
-  getListScansQueryKey,
+  getListAssetsQueryKey, getGetToolPipelineQueryKey, getListScansQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck,
-  Zap, Square, Loader2, Pencil, Clock, CalendarDays,
+  Zap, Square, Loader2, Pencil, Copy, CheckCircle2, XCircle, AlertTriangle, Globe,
+  Shield, Server, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Checkbox } from "@/components/ui/checkbox";
 import { cn, statusBadgeClass, capitalize, formatDate, riskLevelBg } from "@/lib/utils";
 import { Link } from "wouter";
-import RunScanDialog from "@/components/scan/RunScanDialog";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import { apiFetch } from "@/lib/apiFetch";
 
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "host", "mobile_app"];
-const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const RISK_LEVELS = ["critical", "high", "medium", "low"];
 
 const emptyForm = {
   name: "", type: "domain", value: "", description: "",
@@ -37,35 +38,56 @@ const emptyForm = {
   assignedAccountManagerId: undefined as number | undefined,
 };
 
+type VerifyStep = "idle" | "token_shown" | "checking" | "verified" | "failed";
+
 export default function AssetsPage() {
   const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const isClient = user?.role === "client";
+
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  const [riskFilter, setRiskFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
 
   // Create dialog
   const [showCreate, setShowCreate] = useState(false);
   const [newAsset, setNewAsset] = useState({ ...emptyForm });
   const [selectedToolIds, setSelectedToolIds] = useState<number[]>([]);
   const [runNow, setRunNow] = useState(false);
-  const [schedFrequency, setSchedFrequency] = useState<"" | "daily" | "weekly" | "monthly">("");
-  const [schedTime, setSchedTime] = useState("09:00");
-  const [schedDayOfWeek, setSchedDayOfWeek] = useState(1);
-  const [schedDayOfMonth, setSchedDayOfMonth] = useState(1);
+
+  // DNS verify state (client flow)
+  const [verifyStep, setVerifyStep] = useState<VerifyStep>("idle");
+  const [verifyToken, setVerifyToken] = useState("");
+  const [verifyMsg, setVerifyMsg] = useState("");
+  const [pendingAssetId, setPendingAssetId] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Edit dialog
   const [showEdit, setShowEdit] = useState(false);
   const [editingAsset, setEditingAsset] = useState<any>(null);
   const [editForm, setEditForm] = useState({ ...emptyForm });
 
+  // Inline verify
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
   const [stoppingId, setStoppingId] = useState<number | null>(null);
   const [showRunScan, setShowRunScan] = useState(false);
   const [preSelectedAssetIds, setPreSelectedAssetIds] = useState<number[]>([]);
+  const [scanAssetId, setScanAssetId] = useState<number | null>(null);
+  const [showScanConfirm, setShowScanConfirm] = useState(false);
+
   const queryClient = useQueryClient();
 
-  const params = { search: search || undefined, type: typeFilter || undefined };
-  const { data: assets, isLoading } = useListAssets(params as any, {
-    query: { queryKey: getListAssetsQueryKey(params as any) },
+  const params = {
+    search: search || undefined,
+    type: typeFilter || undefined,
+    verificationStatus: statusFilter || undefined,
+  } as any;
+  if (riskFilter) params.riskLevel = riskFilter;
+
+  const { data: assets, isLoading } = useListAssets(params, {
+    query: { queryKey: getListAssetsQueryKey(params) },
   });
   const { data: usersData } = useListUsers();
   const { data: pipelineData } = useGetToolPipeline({
@@ -84,25 +106,19 @@ export default function AssetsPage() {
   const allAssets = (assets as any[]) ?? [];
   const runningScans = (scansData as any[]) ?? [];
 
-  // Map assetId → running scanId
   const runningByAsset = useMemo(() => {
     const map: Record<number, number> = {};
     for (const scan of runningScans) {
-      for (const assetId of (scan.assetIds ?? [])) {
-        map[assetId] = scan.id;
-      }
+      for (const assetId of (scan.assetIds ?? [])) map[assetId] = scan.id;
     }
     return map;
   }, [runningScans]);
 
-  const pipelineTools = pipeline.map((s: any) => ({
-    id: s.toolId, name: s.toolName, category: s.toolCategory, isActive: s.isEnabled,
-  }));
-
   const createAsset = useCreateAsset();
   const updateAsset = useUpdateAsset();
   const deleteAsset = useDeleteAsset();
-  const verifyAsset = useCheckAssetVerification();
+  const verifyAsset = useVerifyAsset();
+  const checkVerify = useCheckAssetVerification();
   const stopScan = useStopScan();
   const runPipeline = useRunPipelineScan();
   const createSchedule = useCreateScanSchedule();
@@ -111,10 +127,10 @@ export default function AssetsPage() {
     setNewAsset({ ...emptyForm });
     setSelectedToolIds([]);
     setRunNow(false);
-    setSchedFrequency("");
-    setSchedTime("09:00");
-    setSchedDayOfWeek(1);
-    setSchedDayOfMonth(1);
+    setVerifyStep("idle");
+    setVerifyToken("");
+    setVerifyMsg("");
+    setPendingAssetId(null);
   }
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -123,27 +139,22 @@ export default function AssetsPage() {
       name: newAsset.name, type: newAsset.type, value: newAsset.value,
       description: newAsset.description || undefined,
     };
-    if (newAsset.assignedClientId) payload.assignedClientId = newAsset.assignedClientId;
-    if (newAsset.assignedAccountManagerId) payload.assignedAccountManagerId = newAsset.assignedAccountManagerId;
+    if (!isClient) {
+      if (newAsset.assignedClientId) payload.assignedClientId = newAsset.assignedClientId;
+      if (newAsset.assignedAccountManagerId) payload.assignedAccountManagerId = newAsset.assignedAccountManagerId;
+    }
     const created = await createAsset.mutateAsync({ data: payload } as any);
     await queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
     const newId = (created as any)?.id;
 
-    // Create schedule if frequency selected
-    if (newId && selectedToolIds.length > 0 && schedFrequency) {
-      await createSchedule.mutateAsync({
-        data: {
-          name: `${newAsset.name} – ${schedFrequency}`,
-          assetToolConfig: [{ assetId: newId, toolIds: selectedToolIds }],
-          frequency: schedFrequency,
-          runTime: schedTime,
-          dayOfWeek: schedFrequency === "weekly" ? schedDayOfWeek : undefined,
-          dayOfMonth: schedFrequency === "monthly" ? schedDayOfMonth : undefined,
-        } as any,
-      });
+    // For domain/subdomain assets (client), show DNS TXT verify step
+    if (isClient && newId && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url")) {
+      setPendingAssetId(newId);
+      await initiateDnsVerify(newId);
+      return;
     }
 
-    // Run immediately if requested
+    // Non-client: optionally run scan
     if (newId && runNow && selectedToolIds.length > 0) {
       const result = await runPipeline.mutateAsync({
         data: {
@@ -160,7 +171,48 @@ export default function AssetsPage() {
 
     setShowCreate(false);
     resetCreateForm();
+    toast({ title: "Asset added successfully" });
   };
+
+  async function initiateDnsVerify(assetId: number) {
+    setVerifyStep("token_shown");
+    try {
+      const res = await verifyAsset.mutateAsync({
+        assetId,
+        data: { method: "dns_txt" } as any,
+      });
+      setVerifyToken((res as any).challenge ?? "");
+    } catch {
+      setVerifyStep("idle");
+      toast({ title: "Could not generate verification token", variant: "destructive" });
+    }
+  }
+
+  async function checkDnsVerify() {
+    if (!pendingAssetId) return;
+    setVerifyStep("checking");
+    try {
+      const res = await checkVerify.mutateAsync({ assetId: pendingAssetId });
+      if ((res as any).verified) {
+        setVerifyStep("verified");
+        setVerifyMsg((res as any).message ?? "Asset verified!");
+        queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+      } else {
+        setVerifyStep("failed");
+        setVerifyMsg((res as any).message ?? "TXT record not found yet.");
+      }
+    } catch {
+      setVerifyStep("failed");
+      setVerifyMsg("Verification check failed. Please try again.");
+    }
+  }
+
+  function copyToken() {
+    navigator.clipboard.writeText(verifyToken).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,12 +221,15 @@ export default function AssetsPage() {
       name: editForm.name, type: editForm.type, value: editForm.value,
       description: editForm.description || undefined,
     };
-    if (editForm.assignedClientId) payload.assignedClientId = editForm.assignedClientId;
-    if (editForm.assignedAccountManagerId) payload.assignedAccountManagerId = editForm.assignedAccountManagerId;
+    if (!isClient) {
+      if (editForm.assignedClientId) payload.assignedClientId = editForm.assignedClientId;
+      if (editForm.assignedAccountManagerId) payload.assignedAccountManagerId = editForm.assignedAccountManagerId;
+    }
     await updateAsset.mutateAsync({ assetId: editingAsset.id, data: payload } as any);
     queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
     setShowEdit(false);
     setEditingAsset(null);
+    toast({ title: "Asset updated" });
   };
 
   function openEdit(asset: any) {
@@ -191,18 +246,34 @@ export default function AssetsPage() {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Delete this asset?")) return;
+    if (!confirm("Delete this asset? This will also remove associated findings and scan data.")) return;
     await deleteAsset.mutateAsync({ assetId: id });
     queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    toast({ title: "Asset deleted" });
   };
 
-  const handleVerify = async (id: number) => {
-    setVerifyingId(id);
-    try {
-      await verifyAsset.mutateAsync({ assetId: id });
-      queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
-    } finally {
-      setVerifyingId(null);
+  const handleInlineVerify = async (asset: any) => {
+    if (asset.type === "domain" || asset.type === "subdomain" || asset.type === "url") {
+      setVerifyingId(asset.id);
+      setPendingAssetId(asset.id);
+      try {
+        const res = await verifyAsset.mutateAsync({ assetId: asset.id, data: { method: "dns_txt" } as any });
+        setVerifyToken((res as any).challenge ?? "");
+        setVerifyStep("token_shown");
+        setShowCreate(true);
+        setNewAsset(prev => ({ ...prev, name: asset.name, type: asset.type, value: asset.value }));
+      } finally {
+        setVerifyingId(null);
+      }
+    } else {
+      setVerifyingId(asset.id);
+      try {
+        await checkVerify.mutateAsync({ assetId: asset.id });
+        queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+        toast({ title: "Asset verified" });
+      } finally {
+        setVerifyingId(null);
+      }
     }
   };
 
@@ -216,11 +287,27 @@ export default function AssetsPage() {
     }
   };
 
-  function toggleTool(toolId: number) {
-    setSelectedToolIds(prev =>
-      prev.includes(toolId) ? prev.filter(id => id !== toolId) : [...prev, toolId],
-    );
+  async function triggerScan(assetId: number) {
+    const asset = allAssets.find((a: any) => a.id === assetId);
+    if (!asset) return;
+    try {
+      const result = await runPipeline.mutateAsync({
+        data: {
+          name: `Quick Scan – ${asset.name}`,
+          assetToolConfig: [{ assetId, toolIds: enabledTools.map((t: any) => t.toolId) }],
+        } as any,
+      });
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+      setShowScanConfirm(false);
+      setScanAssetId(null);
+      toast({ title: "Scan started", description: `Scanning ${asset.name}` });
+      navigate(`/scan-reports/${(result as any).scanId}`);
+    } catch {
+      toast({ title: "Failed to start scan", variant: "destructive" });
+    }
   }
+
+  const activeFilters = [typeFilter, riskFilter, statusFilter].filter(Boolean).length;
 
   return (
     <div className="space-y-4">
@@ -228,17 +315,19 @@ export default function AssetsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Asset Inventory</h1>
-          <p className="text-sm text-muted-foreground">{allAssets.length} assets tracked</p>
+          <p className="text-sm text-muted-foreground">{allAssets.length} asset{allAssets.length !== 1 ? "s" : ""} tracked</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            size="sm" variant="outline"
-            onClick={() => { setPreSelectedAssetIds(allAssets.map((a: any) => a.id)); setShowRunScan(true); }}
-            disabled={allAssets.length === 0}
-            className="border-primary/40 text-primary hover:bg-primary/10"
-          >
-            <Zap className="w-3.5 h-3.5 mr-1.5" /> Run Scan
-          </Button>
+          {!isClient && (
+            <Button
+              size="sm" variant="outline"
+              onClick={() => { setPreSelectedAssetIds(allAssets.map((a: any) => a.id)); setShowRunScan(true); }}
+              disabled={allAssets.length === 0}
+              className="border-primary/40 text-primary hover:bg-primary/10"
+            >
+              <Zap className="w-3.5 h-3.5 mr-1.5" /> Scan All
+            </Button>
+          )}
           <Button size="sm" onClick={() => setShowCreate(true)}>
             <Plus className="w-4 h-4 mr-1.5" /> Add Asset
           </Button>
@@ -246,120 +335,199 @@ export default function AssetsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-2">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search assets…" className="pl-8 h-8 text-sm" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name…" className="pl-8 h-8 text-sm" />
         </div>
         <Select value={typeFilter || "_all_"} onValueChange={v => setTypeFilter(v === "_all_" ? "" : v)}>
-          <SelectTrigger className="w-36 h-8 text-sm"><SelectValue placeholder="All types" /></SelectTrigger>
+          <SelectTrigger className="w-34 h-8 text-sm"><SelectValue placeholder="All types" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="_all_">All types</SelectItem>
-            {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t)}</SelectItem>)}
+            {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t.replace(/_/g, " "))}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={() => { setSearch(""); setTypeFilter(""); }}>
-          <RefreshCw className="w-3.5 h-3.5" />
-        </Button>
+        <Select value={riskFilter || "_all_"} onValueChange={v => setRiskFilter(v === "_all_" ? "" : v)}>
+          <SelectTrigger className="w-32 h-8 text-sm"><SelectValue placeholder="Risk level" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="_all_">All risks</SelectItem>
+            {RISK_LEVELS.map(r => <SelectItem key={r} value={r}>{capitalize(r)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter || "_all_"} onValueChange={v => setStatusFilter(v === "_all_" ? "" : v)}>
+          <SelectTrigger className="w-36 h-8 text-sm"><SelectValue placeholder="Verify status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="_all_">All statuses</SelectItem>
+            <SelectItem value="verified">Verified</SelectItem>
+            <SelectItem value="pending">Pending</SelectItem>
+            <SelectItem value="unverified">Unverified</SelectItem>
+          </SelectContent>
+        </Select>
+        {(search || activeFilters > 0) && (
+          <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => { setSearch(""); setTypeFilter(""); setRiskFilter(""); setStatusFilter(""); }}>
+            <RefreshCw className="w-3.5 h-3.5" /> Clear
+            {activeFilters > 0 && <span className="bg-primary text-primary-foreground text-[10px] rounded-full w-4 h-4 flex items-center justify-center">{activeFilters}</span>}
+          </Button>
+        )}
       </div>
 
       {/* Table */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-card border border-border rounded-xl overflow-x-auto">
+        <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="border-b border-border bg-accent/20">
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Name</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Type</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Value</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Risk</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Last Scan</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Scan</th>
-              <th className="px-4 py-2.5 text-xs font-medium text-muted-foreground text-right">Actions</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Asset</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Type</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Value</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Risk</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">IP / Port</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Vulnerabilities</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Last Scan</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Scan</th>
+              <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading && [...Array(5)].map((_, i) => (
               <tr key={i} className="border-b border-border/50">
-                {[...Array(8)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
+                {[...Array(10)].map((_, j) => <td key={j} className="px-3 py-3"><Skeleton className="h-4" /></td>)}
               </tr>
             ))}
             {!isLoading && allAssets.map((asset: any) => {
               const runningScanId = runningByAsset[asset.id];
               const isRunning = Boolean(runningScanId);
+              const vulns = asset.vulnerabilities ?? {};
+              const hasVulns = (vulns.total ?? 0) > 0;
+
               return (
                 <tr key={asset.id} className="border-b border-border/50 hover:bg-accent/20 transition-colors">
-                  <td className="px-4 py-3">
+                  {/* Asset name */}
+                  <td className="px-3 py-3 max-w-[140px]">
                     <Link href={`/assets/${asset.id}`}>
-                      <span className="font-medium text-primary hover:underline cursor-pointer">{asset.name}</span>
+                      <span className="font-medium text-primary hover:underline cursor-pointer block truncate">{asset.name}</span>
                     </Link>
                   </td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs text-muted-foreground bg-accent/50 px-2 py-0.5 rounded">{asset.type}</span>
+
+                  {/* Type */}
+                  <td className="px-3 py-3">
+                    <TypeBadge type={asset.type} />
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground text-xs font-mono max-w-[160px] truncate">{asset.value}</td>
-                  <td className="px-4 py-3">
-                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", riskLevelBg(asset.riskLevel))}>
-                      {asset.riskLevel}
-                    </span>
+
+                  {/* Value */}
+                  <td className="px-3 py-3 max-w-[160px]">
+                    <span className="text-xs text-muted-foreground font-mono block truncate">{asset.value}</span>
                   </td>
-                  <td className="px-4 py-3">
-                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", statusBadgeClass(asset.verificationStatus))}>
-                      {asset.verificationStatus}
-                    </span>
+
+                  {/* Risk */}
+                  <td className="px-3 py-3">
+                    <div className="flex flex-col gap-0.5">
+                      <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium w-fit", riskLevelBg(asset.riskLevel))}>
+                        {asset.riskLevel}
+                      </span>
+                      {asset.riskScore != null && (
+                        <span className="text-[10px] text-muted-foreground tabular-nums">{asset.riskScore}/100</span>
+                      )}
+                    </div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                    {formatDate(asset.lastScannedAt)}
+
+                  {/* Verification status */}
+                  <td className="px-3 py-3">
+                    <VerifyBadge status={asset.verificationStatus} />
+                  </td>
+
+                  {/* IP / Port */}
+                  <td className="px-3 py-3">
+                    {asset.ipAddress || asset.port ? (
+                      <div className="text-xs text-muted-foreground font-mono">
+                        {asset.ipAddress && <span className="block">{asset.ipAddress}</span>}
+                        {asset.port && <span className="block text-[10px] opacity-70">:{asset.port}</span>}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/40">—</span>
+                    )}
+                  </td>
+
+                  {/* Vulnerabilities */}
+                  <td className="px-3 py-3">
+                    {hasVulns ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Link href={`/findings?assetId=${asset.id}`}>
+                          <span className="text-xs font-semibold text-foreground hover:underline cursor-pointer tabular-nums">
+                            {vulns.total}
+                          </span>
+                        </Link>
+                        {vulns.critical > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-medium tabular-nums">
+                            {vulns.critical}C
+                          </span>
+                        )}
+                        {vulns.high > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-medium tabular-nums">
+                            {vulns.high}H
+                          </span>
+                        )}
+                        {vulns.open > 0 && vulns.open < vulns.total && (
+                          <span className="text-[10px] text-muted-foreground">{vulns.open} open</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-green-500/80">Clean</span>
+                    )}
+                  </td>
+
+                  {/* Last scan */}
+                  <td className="px-3 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                    {asset.lastScannedAt ? formatDate(asset.lastScannedAt) : <span className="text-muted-foreground/40">Never</span>}
                   </td>
 
                   {/* Scan column */}
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-3">
                     {isRunning ? (
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1.5 text-xs text-blue-400 font-medium">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Scanning…
+                      <div className="flex items-center gap-1.5">
+                        <span className="flex items-center gap-1 text-xs text-blue-400 font-medium">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Scanning
                         </span>
                         <Button
-                          size="sm"
-                          variant="destructive"
-                          className="h-7 px-2.5 text-xs"
+                          size="sm" variant="destructive" className="h-6 px-2 text-xs"
                           disabled={stoppingId === runningScanId}
                           onClick={() => handleStop(runningScanId)}
                         >
-                          <Square className="w-3 h-3 mr-1 fill-current" />
-                          {stoppingId === runningScanId ? "…" : "Stop"}
+                          <Square className="w-2.5 h-2.5 fill-current" />
                         </Button>
                       </div>
                     ) : (
                       <Button
                         size="sm"
-                        className="h-7 px-2.5 text-xs bg-primary/15 text-primary border border-primary/30 hover:bg-primary/25"
+                        className="h-7 px-2.5 text-xs bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20"
                         variant="ghost"
-                        onClick={() => { setPreSelectedAssetIds([asset.id]); setShowRunScan(true); }}
+                        onClick={() => { setScanAssetId(asset.id); setShowScanConfirm(true); }}
+                        disabled={enabledTools.length === 0}
                       >
                         <Zap className="w-3 h-3 mr-1" /> Run Scan
                       </Button>
                     )}
                   </td>
 
-                  {/* Actions column */}
-                  <td className="px-4 py-3">
+                  {/* Actions */}
+                  <td className="px-3 py-3">
                     <div className="flex items-center justify-end gap-1">
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        onClick={() => openEdit(asset)}
-                        title="Edit asset"
+                        onClick={() => openEdit(asset)} title="Edit"
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </Button>
                       {asset.verificationStatus !== "verified" && (
                         <Button
-                          variant="ghost" size="icon" className="h-7 w-7 text-green-500 hover:text-green-400"
+                          variant="ghost" size="icon" className="h-7 w-7 text-amber-500 hover:text-amber-400"
                           disabled={verifyingId === asset.id}
-                          onClick={() => handleVerify(asset.id)}
-                          title="Verify asset"
+                          onClick={() => handleInlineVerify(asset)}
+                          title="Verify ownership"
                         >
-                          <ShieldCheck className="w-3.5 h-3.5" />
+                          {verifyingId === asset.id
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <ShieldCheck className="w-3.5 h-3.5" />}
                         </Button>
                       )}
                       <Link href={`/assets/${asset.id}`}>
@@ -368,9 +536,8 @@ export default function AssetsPage() {
                         </Button>
                       </Link>
                       <Button
-                        variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => handleDelete(asset.id)}
-                        title="Delete asset"
+                        variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive/80"
+                        onClick={() => handleDelete(asset.id)} title="Delete"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
@@ -381,8 +548,12 @@ export default function AssetsPage() {
             })}
             {!isLoading && allAssets.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
-                  No assets found. Add your first asset to get started.
+                <td colSpan={10} className="px-4 py-16 text-center">
+                  <Globe className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
+                  <p className="text-sm font-medium text-muted-foreground">No assets found</p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">
+                    {search || activeFilters > 0 ? "Try adjusting your filters" : "Add your first asset to get started"}
+                  </p>
                 </td>
               </tr>
             )}
@@ -391,179 +562,168 @@ export default function AssetsPage() {
       </div>
 
       {/* ── Add Asset Dialog ── */}
-      <Dialog open={showCreate} onOpenChange={v => { setShowCreate(v); if (!v) resetCreateForm(); }}>
+      <Dialog open={showCreate} onOpenChange={v => { if (!v) { setShowCreate(false); resetCreateForm(); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Add Asset</DialogTitle></DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4 mt-1">
-            {/* Basic fields */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Asset Name</Label>
-              <Input value={newAsset.name} onChange={e => setNewAsset(p => ({ ...p, name: e.target.value }))} placeholder="Main Website" required className="h-9" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Type</Label>
-                <Select value={newAsset.type} onValueChange={v => setNewAsset(p => ({ ...p, type: v }))}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Value (domain / IP / URL)</Label>
-                <Input value={newAsset.value} onChange={e => setNewAsset(p => ({ ...p, value: e.target.value }))} placeholder="example.com" required className="h-9 font-mono text-sm" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Description (optional)</Label>
-              <Input value={newAsset.description} onChange={e => setNewAsset(p => ({ ...p, description: e.target.value }))} className="h-9" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Assign Client</Label>
-                <Select value={newAsset.assignedClientId?.toString() ?? "_none_"} onValueChange={v => setNewAsset(p => ({ ...p, assignedClientId: v === "_none_" ? undefined : parseInt(v) }))}>
-                  <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none_">None</SelectItem>
-                    {clients.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Account Manager</Label>
-                <Select value={newAsset.assignedAccountManagerId?.toString() ?? "_none_"} onValueChange={v => setNewAsset(p => ({ ...p, assignedAccountManagerId: v === "_none_" ? undefined : parseInt(v) }))}>
-                  <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none_">None</SelectItem>
-                    {accountManagers.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+          <DialogHeader>
+            <DialogTitle>Add Asset</DialogTitle>
+            <DialogDescription>
+              {isClient ? "Add a domain or IP you own. Domain assets require DNS verification." : "Add an asset to monitor for vulnerabilities."}
+            </DialogDescription>
+          </DialogHeader>
 
-            {/* Tool selection */}
-            {enabledTools.length > 0 && (
-              <div className="space-y-2 border-t border-border pt-3">
-                <Label className="text-xs font-semibold flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-primary" /> Tools to run on this asset
-                </Label>
-                <div className="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
-                  {enabledTools.map((tool: any) => (
-                    <label
-                      key={tool.toolId}
-                      className={cn(
-                        "flex items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer text-xs transition-colors",
-                        selectedToolIds.includes(tool.toolId)
-                          ? "border-primary/50 bg-primary/10 text-primary"
-                          : "border-border hover:bg-accent/30 text-muted-foreground",
-                      )}
-                    >
-                      <Checkbox
-                        checked={selectedToolIds.includes(tool.toolId)}
-                        onCheckedChange={() => toggleTool(tool.toolId)}
-                        className="h-3.5 w-3.5"
-                      />
-                      {tool.toolName}
-                    </label>
-                  ))}
+          {/* DNS Verify flow (shown after client creates domain asset) */}
+          {isClient && verifyStep !== "idle" ? (
+            <DnsTxtVerifyPanel
+              step={verifyStep}
+              token={verifyToken}
+              message={verifyMsg}
+              assetValue={newAsset.value}
+              copied={copied}
+              onCopy={copyToken}
+              onCheck={checkDnsVerify}
+              onRetry={() => setVerifyStep("token_shown")}
+              onDone={() => { setShowCreate(false); resetCreateForm(); }}
+            />
+          ) : (
+            <form onSubmit={handleCreate} className="space-y-4 mt-1">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Asset Name *</Label>
+                <Input
+                  value={newAsset.name}
+                  onChange={e => setNewAsset(p => ({ ...p, name: e.target.value }))}
+                  placeholder="My Website"
+                  required className="h-9"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Type *</Label>
+                  <Select value={newAsset.type} onValueChange={v => setNewAsset(p => ({ ...p, type: v }))}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t.replace(/_/g, " "))}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
-
-                {/* Schedule — only shown when at least one tool selected */}
-                {selectedToolIds.length > 0 && (
-                  <div className="space-y-3 pt-2">
-                    {/* Frequency */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs flex items-center gap-1.5">
-                        <CalendarDays className="w-3.5 h-3.5" /> Scan Frequency
-                      </Label>
-                      <Select value={schedFrequency || "_none_"} onValueChange={v => setSchedFrequency(v === "_none_" ? "" : v as any)}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="No schedule (manual only)" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_none_">No schedule (manual only)</SelectItem>
-                          <SelectItem value="daily">Daily</SelectItem>
-                          <SelectItem value="weekly">Weekly</SelectItem>
-                          <SelectItem value="monthly">Monthly</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* Time + day — shown when frequency is set */}
-                    {schedFrequency && (
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-xs flex items-center gap-1.5">
-                              <Clock className="w-3.5 h-3.5" /> Run Time
-                            </Label>
-                            <Input
-                              type="time"
-                              value={schedTime}
-                              onChange={e => setSchedTime(e.target.value)}
-                              className="h-9"
-                            />
-                          </div>
-                          {schedFrequency === "weekly" && (
-                            <div className="space-y-1.5">
-                              <Label className="text-xs">Day of Week</Label>
-                              <Select value={schedDayOfWeek.toString()} onValueChange={v => setSchedDayOfWeek(parseInt(v))}>
-                                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  {DAYS_OF_WEEK.map((d, i) => <SelectItem key={i} value={i.toString()}>{d}</SelectItem>)}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-                          {schedFrequency === "monthly" && (
-                            <div className="space-y-1.5">
-                              <Label className="text-xs">Day of Month</Label>
-                              <Select value={schedDayOfMonth.toString()} onValueChange={v => setSchedDayOfMonth(parseInt(v))}>
-                                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
-                                    <SelectItem key={d} value={d.toString()}>Day {d}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Run now checkbox */}
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <Checkbox checked={runNow} onCheckedChange={v => setRunNow(Boolean(v))} className="h-3.5 w-3.5" />
-                      <span className="text-xs text-muted-foreground">Also run scan immediately after adding</span>
-                    </label>
-                  </div>
-                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    {newAsset.type === "ip" ? "IP Address" : newAsset.type === "url" ? "URL" : "Domain / Value"} *
+                  </Label>
+                  <Input
+                    value={newAsset.value}
+                    onChange={e => setNewAsset(p => ({ ...p, value: e.target.value }))}
+                    placeholder={newAsset.type === "ip" ? "1.2.3.4" : newAsset.type === "url" ? "https://…" : "example.com"}
+                    required className="h-9 font-mono text-sm"
+                  />
+                </div>
               </div>
-            )}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Description (optional)</Label>
+                <Input
+                  value={newAsset.description}
+                  onChange={e => setNewAsset(p => ({ ...p, description: e.target.value }))}
+                  placeholder="e.g. Main production website"
+                  className="h-9"
+                />
+              </div>
 
-            <DialogFooter className="mt-2">
-              <Button variant="outline" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
-              <Button type="submit" disabled={createAsset.isPending || runPipeline.isPending || createSchedule.isPending}>
-                {(createAsset.isPending || runPipeline.isPending || createSchedule.isPending)
-                  ? "Saving…"
-                  : runNow && selectedToolIds.length > 0
-                    ? "Add & Run Scan"
-                    : schedFrequency && selectedToolIds.length > 0
-                      ? "Add & Schedule"
-                      : "Add Asset"}
-              </Button>
-            </DialogFooter>
-          </form>
+              {/* Admin/AM only fields */}
+              {!isClient && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Assign Client</Label>
+                    <Select
+                      value={newAsset.assignedClientId?.toString() ?? "_none_"}
+                      onValueChange={v => setNewAsset(p => ({ ...p, assignedClientId: v === "_none_" ? undefined : parseInt(v) }))}
+                    >
+                      <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="_none_">None</SelectItem>
+                        {clients.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Account Manager</Label>
+                    <Select
+                      value={newAsset.assignedAccountManagerId?.toString() ?? "_none_"}
+                      onValueChange={v => setNewAsset(p => ({ ...p, assignedAccountManagerId: v === "_none_" ? undefined : parseInt(v) }))}
+                    >
+                      <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="_none_">None</SelectItem>
+                        {accountManagers.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {/* Tools — admin only */}
+              {!isClient && enabledTools.length > 0 && (
+                <div className="space-y-2 border-t border-border pt-3">
+                  <Label className="text-xs font-semibold flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-primary" /> Tools to run on this asset
+                  </Label>
+                  <div className="grid grid-cols-2 gap-1.5 max-h-32 overflow-y-auto pr-1">
+                    {enabledTools.map((tool: any) => (
+                      <label
+                        key={tool.toolId}
+                        className={cn(
+                          "flex items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer text-xs transition-colors",
+                          selectedToolIds.includes(tool.toolId)
+                            ? "border-primary/50 bg-primary/10 text-primary"
+                            : "border-border hover:bg-accent/30 text-muted-foreground",
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 accent-current"
+                          checked={selectedToolIds.includes(tool.toolId)}
+                          onChange={() => setSelectedToolIds(prev =>
+                            prev.includes(tool.toolId) ? prev.filter(id => id !== tool.toolId) : [...prev, tool.toolId],
+                          )}
+                        />
+                        {tool.toolName}
+                      </label>
+                    ))}
+                  </div>
+                  {selectedToolIds.length > 0 && (
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-muted-foreground hover:text-foreground pt-1">
+                      <input type="checkbox" checked={runNow} onChange={e => setRunNow(e.target.checked)} className="h-3.5 w-3.5" />
+                      Run scan immediately after adding
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {/* Client info box */}
+              {isClient && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url") && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-400 flex items-start gap-2">
+                  <Shield className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>After adding, you'll need to verify ownership by adding a DNS TXT record to your domain.</span>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => { setShowCreate(false); resetCreateForm(); }}>Cancel</Button>
+                <Button type="submit" disabled={createAsset.isPending}>
+                  {createAsset.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
+                  Add Asset
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
-      {/* ── Edit Asset Dialog ── */}
+      {/* ── Edit Dialog ── */}
       <Dialog open={showEdit} onOpenChange={v => { setShowEdit(v); if (!v) setEditingAsset(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Edit Asset</DialogTitle></DialogHeader>
-          <form onSubmit={handleEdit} className="space-y-3 mt-1">
+          <form onSubmit={handleEdit} className="space-y-4 mt-1">
             <div className="space-y-1.5">
-              <Label className="text-xs">Asset Name</Label>
+              <Label className="text-xs">Asset Name *</Label>
               <Input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} required className="h-9" />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -572,7 +732,7 @@ export default function AssetsPage() {
                 <Select value={editForm.type} onValueChange={v => setEditForm(p => ({ ...p, type: v }))}>
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t)}</SelectItem>)}
+                    {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t.replace(/_/g, " "))}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -585,45 +745,204 @@ export default function AssetsPage() {
               <Label className="text-xs">Description</Label>
               <Input value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} className="h-9" />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Assign Client</Label>
-                <Select value={editForm.assignedClientId?.toString() ?? "_none_"} onValueChange={v => setEditForm(p => ({ ...p, assignedClientId: v === "_none_" ? undefined : parseInt(v) }))}>
-                  <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none_">None</SelectItem>
-                    {clients.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+            {!isClient && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Assign Client</Label>
+                  <Select
+                    value={editForm.assignedClientId?.toString() ?? "_none_"}
+                    onValueChange={v => setEditForm(p => ({ ...p, assignedClientId: v === "_none_" ? undefined : parseInt(v) }))}
+                  >
+                    <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_none_">None</SelectItem>
+                      {clients.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Account Manager</Label>
+                  <Select
+                    value={editForm.assignedAccountManagerId?.toString() ?? "_none_"}
+                    onValueChange={v => setEditForm(p => ({ ...p, assignedAccountManagerId: v === "_none_" ? undefined : parseInt(v) }))}
+                  >
+                    <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_none_">None</SelectItem>
+                      {accountManagers.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Account Manager</Label>
-                <Select value={editForm.assignedAccountManagerId?.toString() ?? "_none_"} onValueChange={v => setEditForm(p => ({ ...p, assignedAccountManagerId: v === "_none_" ? undefined : parseInt(v) }))}>
-                  <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none_">None</SelectItem>
-                    {accountManagers.map((u: any) => <SelectItem key={u.id} value={u.id.toString()}>{u.firstName} {u.lastName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <DialogFooter className="mt-3">
-              <Button variant="outline" type="button" onClick={() => setShowEdit(false)}>Cancel</Button>
-              <Button type="submit" disabled={updateAsset.isPending}>{updateAsset.isPending ? "Saving…" : "Save Changes"}</Button>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowEdit(false)}>Cancel</Button>
+              <Button type="submit" disabled={updateAsset.isPending}>
+                {updateAsset.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
+                Save Changes
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* ── Run Scan Dialog (multi-asset) ── */}
-      <RunScanDialog
-        open={showRunScan}
-        onOpenChange={setShowRunScan}
-        pipelineTools={pipelineTools}
-        assets={allAssets.map((a: any) => ({ id: a.id, name: a.name, value: a.value, type: a.type }))}
-        preSelectedAssetIds={preSelectedAssetIds}
-        onRunComplete={scanId => navigate(`/scan-reports/${scanId}`)}
-      />
+      {/* ── Scan Confirm Dialog ── */}
+      <Dialog open={showScanConfirm} onOpenChange={v => { setShowScanConfirm(v); if (!v) setScanAssetId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Run Scan</DialogTitle>
+            <DialogDescription>
+              This will trigger the enabled pipeline tools against{" "}
+              <strong>{allAssets.find((a: any) => a.id === scanAssetId)?.name ?? "this asset"}</strong>.
+              The scan may take several minutes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-accent/20 px-3 py-2.5 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground mb-1">Tools that will run:</p>
+            {enabledTools.length > 0
+              ? enabledTools.map((t: any) => <span key={t.toolId} className="inline-block bg-accent rounded px-1.5 py-0.5 mr-1 mb-1">{t.toolName}</span>)
+              : <span>No tools enabled in pipeline. Enable tools in Security Tools settings.</span>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowScanConfirm(false)}>Cancel</Button>
+            <Button onClick={() => scanAssetId && triggerScan(scanAssetId)} disabled={enabledTools.length === 0}>
+              <Zap className="w-4 h-4 mr-1.5" /> Start Scan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Sub-components ──
+
+function TypeBadge({ type }: { type: string }) {
+  const icons: Record<string, React.ElementType> = {
+    domain: Globe, subdomain: Globe, url: Globe, ip: Server,
+    host: Server, cidr: Server, cloud_asset: Shield, api: Zap,
+  };
+  const Icon = icons[type] ?? Globe;
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-accent/50 px-2 py-0.5 rounded">
+      <Icon className="w-3 h-3" />
+      {type.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function VerifyBadge({ status }: { status: string }) {
+  const cfg = {
+    verified:   { label: "Verified",   cls: "bg-green-500/15 text-green-400 border-green-500/30",  icon: CheckCircle2 },
+    pending:    { label: "Pending",     cls: "bg-amber-500/15 text-amber-400 border-amber-500/30",  icon: Loader2 },
+    unverified: { label: "Unverified",  cls: "bg-muted text-muted-foreground border-border",         icon: XCircle },
+  }[status] ?? { label: status, cls: "bg-muted text-muted-foreground border-border", icon: AlertTriangle };
+  const Icon = cfg.icon;
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md font-medium border", cfg.cls)}>
+      <Icon className="w-3 h-3" />
+      {cfg.label}
+    </span>
+  );
+}
+
+function DnsTxtVerifyPanel({
+  step, token, message, assetValue, copied, onCopy, onCheck, onRetry, onDone,
+}: {
+  step: VerifyStep;
+  token: string;
+  message: string;
+  assetValue: string;
+  copied: boolean;
+  onCopy: () => void;
+  onCheck: () => void;
+  onRetry: () => void;
+  onDone: () => void;
+}) {
+  const domain = assetValue.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
+
+  if (step === "verified") {
+    return (
+      <div className="py-6 text-center space-y-3">
+        <CheckCircle2 className="w-12 h-12 text-green-400 mx-auto" />
+        <p className="font-semibold">Domain Verified!</p>
+        <p className="text-sm text-muted-foreground">{message}</p>
+        <Button onClick={onDone} className="mt-2">Done</Button>
+      </div>
+    );
+  }
+
+  if (step === "failed") {
+    return (
+      <div className="py-4 space-y-4">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
+          <XCircle className="w-4 h-4 inline mr-2" />
+          {message}
+        </div>
+        <p className="text-xs text-muted-foreground">DNS changes can take up to 24 hours to propagate. Make sure the TXT record is saved correctly.</p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={onRetry}>Show Instructions Again</Button>
+          <Button onClick={onCheck} variant="outline">
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Try Again
+          </Button>
+        </div>
+        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onDone}>
+          Skip for now (verify later)
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 py-2">
+      <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
+        <p className="font-semibold text-foreground">Verify domain ownership</p>
+        <p className="text-xs text-muted-foreground">Your asset has been created. To enable scanning, verify you own <strong>{domain}</strong> by adding a DNS TXT record.</p>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 1 — Add this TXT record to your DNS</p>
+        <div className="rounded-lg border border-border bg-accent/20 p-3 space-y-2 text-xs font-mono">
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <p className="text-muted-foreground mb-0.5 font-sans">Type</p>
+              <span className="text-foreground">TXT</span>
+            </div>
+            <div>
+              <p className="text-muted-foreground mb-0.5 font-sans">Host / Name</p>
+              <span className="text-foreground">_ctem-challenge</span>
+            </div>
+            <div>
+              <p className="text-muted-foreground mb-0.5 font-sans">TTL</p>
+              <span className="text-foreground">300</span>
+            </div>
+          </div>
+          <div>
+            <p className="text-muted-foreground mb-1 font-sans">Value</p>
+            <div className="flex items-center gap-2 bg-background rounded px-2 py-1.5 border border-border">
+              <span className="flex-1 truncate text-primary">{token || "Generating…"}</span>
+              <Button size="sm" variant="ghost" className="h-6 px-2 shrink-0" onClick={onCopy}>
+                {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 2 — Verify the record</p>
+        <p className="text-xs text-muted-foreground">After adding the TXT record, click verify. DNS propagation can take a few minutes.</p>
+        <div className="flex gap-2">
+          <Button onClick={onCheck} disabled={step === "checking" || !token}>
+            {step === "checking"
+              ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Checking DNS…</>
+              : <><ShieldCheck className="w-4 h-4 mr-1.5" /> Verify Domain</>}
+          </Button>
+          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onDone}>
+            Skip for now
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
