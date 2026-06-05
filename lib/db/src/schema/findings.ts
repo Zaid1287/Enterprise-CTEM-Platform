@@ -22,6 +22,8 @@ export const findingsTable = pgTable("findings", {
   remediation: text("remediation"),
   evidence: text("evidence"),
   riskScore: real("risk_score"),
+  isFalsePositive: boolean("is_false_positive").notNull().default(false),
+  falsePositiveStatus: text("false_positive_status").default("none"), // "none" | "submitted" | "confirmed" | "rejected"
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

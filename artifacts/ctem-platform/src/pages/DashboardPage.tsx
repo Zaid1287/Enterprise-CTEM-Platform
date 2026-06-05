@@ -26,6 +26,7 @@ import { cn, riskLevelBg, capitalize } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch } from "@/lib/apiFetch";
+import ClientDashboardPage from "@/pages/ClientDashboardPage";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -443,6 +444,6 @@ export default function DashboardPage() {
   const { user } = useAuth();
   if (user?.role === "super_admin") return <SuperAdminDashboard />;
   if (user?.role === "account_manager") return <AccountManagerDashboard />;
-  if (user?.role === "client") return <ClientDashboard />;
+  if (user?.role === "client") return <ClientDashboardPage />;
   return <AdminDashboard />;
 }

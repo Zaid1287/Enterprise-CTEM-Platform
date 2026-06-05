@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Server, Layers, Radar, Bug, ShieldCheck,
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, Shield, GitBranch, ScanSearch,
-  Package, UserCheck,
+  Package, UserCheck, ShieldOff,
 } from "lucide-react";
 
 interface NavItem {
@@ -44,6 +44,13 @@ const navGroups: NavGroup[] = [
     onlyFor: ["account_manager"],
     items: [
       { label: "My Clients", href: "/my-clients", icon: UserCheck },
+    ],
+  },
+  {
+    title: "Protection",
+    onlyFor: ["client", "admin"],
+    items: [
+      { label: "Takedown Requests", href: "/takedowns", icon: ShieldOff },
     ],
   },
   // ─── Original CTEM modules — visible to all roles ───────────────

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, count, and, desc, sql, inArray } from "drizzle-orm";
-import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable } from "@workspace/db";
+import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
@@ -231,6 +231,90 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
     openFindingCount: allFindings.filter(f => f.status === "open").length,
     activeScans: allScans.filter(s => s.status === "running" || s.status === "pending").length,
     clients: clientMetrics,
+  });
+});
+
+router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tid = req.user!.tenantId;
+
+  const [assets, findings, alerts, scans, takedowns] = await Promise.all([
+    db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid)),
+    db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid)),
+    db.select().from(alertsTable).where(eq(alertsTable.tenantId, tid)),
+    db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
+    db.select().from(takedownRequestsTable).where(eq(takedownRequestsTable.tenantId, tid)),
+  ]);
+
+  const riskScores = await db.select().from(riskScoresTable)
+    .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
+    .where(eq(assetsTable.tenantId, tid));
+
+  // Risk score (avg across all assets, 0–100)
+  const avgRisk = riskScores.length > 0
+    ? Math.round(riskScores.reduce((s, r) => s + r.risk_scores.score, 0) / riskScores.length)
+    : 0;
+
+  // Assets at risk breakdown
+  const riskLevels = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const { risk_scores } of riskScores) {
+    const lvl = risk_scores.level as keyof typeof riskLevels;
+    if (lvl in riskLevels) riskLevels[lvl]++;
+  }
+
+  // Findings stats
+  const openFindings = findings.filter(f => f.status === "open" && !f.isFalsePositive);
+  const resolvedFindings = findings.filter(f => f.status === "resolved");
+  const criticalVulns = openFindings.filter(f => f.severity === "critical").length;
+
+  // New vulns from latest scan (findings added in last 7 days)
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const newVulnsFromLatestScan = openFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
+
+  // Severity breakdown of open findings
+  const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(sev => ({
+    severity: sev,
+    count: openFindings.filter(f => f.severity === sev).length,
+  }));
+
+  // Open alerts (unread)
+  const openAlerts = alerts.filter(a => !a.isRead);
+
+  // Recent alerts (last 5)
+  const recentAlerts = [...alerts]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 5)
+    .map(a => ({ id: a.id, title: a.title, message: a.message, severity: a.severity, isRead: a.isRead, createdAt: a.createdAt }));
+
+  // False positive breakdown
+  const fpSubmitted = findings.filter(f => f.falsePositiveStatus === "submitted").length;
+  const fpConfirmed = findings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpRejected = findings.filter(f => f.falsePositiveStatus === "rejected").length;
+
+  // Takedown breakdown
+  const tdTotal = takedowns.length;
+  const tdSubmitted = takedowns.filter(t => t.status === "submitted").length;
+  const tdInProgress = takedowns.filter(t => t.status === "in_progress").length;
+  const tdClosed = takedowns.filter(t => t.status === "closed").length;
+  const recentTakedowns = [...takedowns]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 5)
+    .map(t => ({ id: t.id, title: t.title, type: t.type, status: t.status, priority: t.priority, createdAt: t.createdAt }));
+
+  res.json({
+    riskScore: avgRisk,
+    totalAssets: assets.length,
+    openFindings: openFindings.length,
+    criticalVulns,
+    newVulnsFromLatestScan,
+    openVulnerabilities: openFindings.length,
+    openAlerts: openAlerts.length,
+    resolvedVulns: resolvedFindings.length,
+    riskLevels,
+    severityBreakdown,
+    recentAlerts,
+    takedowns: { total: tdTotal, submitted: tdSubmitted, inProgress: tdInProgress, closed: tdClosed },
+    recentTakedowns,
+    falsePositives: { submitted: fpSubmitted, confirmed: fpConfirmed, rejected: fpRejected },
   });
 });
 

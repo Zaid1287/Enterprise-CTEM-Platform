@@ -13,3 +13,4 @@ export * from "./auditLogs";
 export * from "./securityTools";
 export * from "./packages";
 export * from "./accountManagerClients";
+export * from "./takedownRequests";

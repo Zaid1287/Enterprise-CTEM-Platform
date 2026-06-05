@@ -18,6 +18,7 @@ import toolsRouter from "./tools";
 import pipelineScansRouter from "./pipelineScans";
 import packagesRouter from "./packages";
 import accountManagerRouter from "./accountManager";
+import takedownsRouter from "./takedowns";
 
 const router: IRouter = Router();
 
@@ -40,5 +41,6 @@ router.use(dashboardRouter);
 router.use(toolsRouter);
 router.use(packagesRouter);
 router.use(accountManagerRouter);
+router.use(takedownsRouter);
 
 export default router;
