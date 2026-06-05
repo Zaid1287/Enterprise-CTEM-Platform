@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, count, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, count, and, desc, sql, inArray, or, isNull } from "drizzle-orm";
 import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
@@ -42,16 +42,25 @@ router.get("/dashboard/overview", requireAuth, async (req: AuthenticatedRequest,
 
 router.get("/dashboard/risk-trend", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const days = parseInt(String(req.query.days ?? "30"), 10);
-  const trend = [];
+  const tid = req.user!.tenantId;
+
+  const riskRows = await db.select({
+    score: riskScoresTable.score,
+  }).from(riskScoresTable)
+    .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
+    .where(eq(assetsTable.tenantId, tid));
+
+  const currentAvg = riskRows.length > 0
+    ? Math.round(riskRows.reduce((s, r) => s + r.score, 0) / riskRows.length)
+    : 0;
+
   const now = new Date();
-  for (let i = days - 1; i >= 0; i--) {
+  const trend = Array.from({ length: days }, (_, i) => {
     const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    trend.push({
-      date: date.toISOString().split("T")[0],
-      value: Math.round(50 + Math.sin(i * 0.3) * 20 + Math.random() * 10),
-    });
-  }
+    date.setDate(date.getDate() - (days - 1 - i));
+    return { date: date.toISOString().split("T")[0], value: currentAvg };
+  });
+
   res.json(trend);
 });
 
@@ -236,18 +245,45 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
 
 router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
+  const uid = req.user!.userId;
+  const isClient = req.user!.role === "client";
 
-  const [assets, findings, alerts, scans, takedowns] = await Promise.all([
-    db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid)),
-    db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid)),
-    db.select().from(alertsTable).where(eq(alertsTable.tenantId, tid)),
+  // For client role: scope to only their assigned assets
+  const assetFilter = isClient
+    ? and(eq(assetsTable.tenantId, tid), eq(assetsTable.assignedClientId, uid))
+    : eq(assetsTable.tenantId, tid);
+
+  const assets = await db.select().from(assetsTable).where(assetFilter);
+  const assignedAssetIds = assets.map(a => a.id);
+
+  // Build findings/alerts/scans/takedowns filters based on assigned assets
+  const findingsWhere = isClient
+    ? (assignedAssetIds.length > 0 ? and(eq(findingsTable.tenantId, tid), inArray(findingsTable.assetId, assignedAssetIds)) : null)
+    : eq(findingsTable.tenantId, tid);
+  const alertsWhere = isClient
+    ? (assignedAssetIds.length > 0
+        ? and(eq(alertsTable.tenantId, tid), or(isNull(alertsTable.relatedAssetId), inArray(alertsTable.relatedAssetId, assignedAssetIds)))
+        : and(eq(alertsTable.tenantId, tid), isNull(alertsTable.relatedAssetId)))
+    : eq(alertsTable.tenantId, tid);
+
+  const [findings, alerts, scans, takedowns] = await Promise.all([
+    findingsWhere ? db.select().from(findingsTable).where(findingsWhere) : Promise.resolve([]),
+    db.select().from(alertsTable).where(alertsWhere!),
     db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
     db.select().from(takedownRequestsTable).where(eq(takedownRequestsTable.tenantId, tid)),
   ]);
 
-  const riskScores = await db.select().from(riskScoresTable)
-    .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
-    .where(eq(assetsTable.tenantId, tid));
+  const riskScoresWhere = isClient && assignedAssetIds.length > 0
+    ? inArray(riskScoresTable.assetId, assignedAssetIds)
+    : isClient
+      ? null
+      : undefined;
+
+  const riskScores = riskScoresWhere === null
+    ? []
+    : await db.select().from(riskScoresTable)
+        .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
+        .where(riskScoresWhere ?? eq(assetsTable.tenantId, tid));
 
   // Risk score (avg across all assets, 0–100)
   const avgRisk = riskScores.length > 0

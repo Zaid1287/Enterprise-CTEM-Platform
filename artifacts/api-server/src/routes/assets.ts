@@ -56,6 +56,9 @@ function toAssetResponse(a: typeof assetsTable.$inferSelect, userMap?: Map<numbe
 router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const query = ListAssetsQueryParams.safeParse(req.query);
   const filters = [eq(assetsTable.tenantId, req.user!.tenantId)];
+  if (req.user!.role === "client") {
+    filters.push(eq(assetsTable.assignedClientId, req.user!.userId));
+  }
   if (query.success) {
     if (query.data.type) filters.push(eq(assetsTable.type, query.data.type));
     if (query.data.verificationStatus) filters.push(eq(assetsTable.verificationStatus, query.data.verificationStatus));

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, ilike } from "drizzle-orm";
+import { eq, and, ilike, inArray } from "drizzle-orm";
 import { db, findingsTable, findingCommentsTable, assetsTable, usersTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
@@ -24,6 +24,15 @@ function toFindingResponse(f: typeof findingsTable.$inferSelect, assetName?: str
 router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListFindingsQueryParams.safeParse(req.query);
   const filters = [eq(findingsTable.tenantId, req.user!.tenantId)];
+
+  if (req.user!.role === "client") {
+    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    const assignedIds = assignedAssets.map(a => a.id);
+    if (assignedIds.length === 0) { res.json([]); return; }
+    filters.push(inArray(findingsTable.assetId, assignedIds));
+  }
+
   if (q.success) {
     if (q.data.status) filters.push(eq(findingsTable.status, q.data.status));
     if (q.data.severity) filters.push(eq(findingsTable.severity, q.data.severity));

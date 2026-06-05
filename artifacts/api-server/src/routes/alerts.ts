@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
-import { db, alertsTable, alertRulesTable } from "@workspace/db";
+import { eq, and, inArray, isNull, or } from "drizzle-orm";
+import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
   CreateAlertRuleBody,
@@ -21,6 +21,18 @@ function toAlertResponse(a: typeof alertsTable.$inferSelect) {
 router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListAlertsQueryParams.safeParse(req.query);
   const filters = [eq(alertsTable.tenantId, req.user!.tenantId)];
+
+  if (req.user!.role === "client") {
+    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    const assignedIds = assignedAssets.map(a => a.id);
+    if (assignedIds.length > 0) {
+      filters.push(or(isNull(alertsTable.relatedAssetId), inArray(alertsTable.relatedAssetId, assignedIds))!);
+    } else {
+      filters.push(isNull(alertsTable.relatedAssetId));
+    }
+  }
+
   if (q.success) {
     if (q.data.severity) filters.push(eq(alertsTable.severity, q.data.severity));
     if (q.data.read !== undefined) filters.push(eq(alertsTable.isRead, q.data.read));
