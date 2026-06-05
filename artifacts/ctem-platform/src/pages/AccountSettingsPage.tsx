@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import {
   User, Lock, Users, CreditCard, Eye, EyeOff, Loader2,
   CheckCircle2, Mail, Copy, Sparkles, ArrowUpRight, Shield,
-  Building2, UserPlus, X,
+  Building2, UserPlus, X, KeyRound, Trash2, ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,13 +16,14 @@ import { Badge } from "@/components/ui/badge";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "profile" | "password" | "team" | "billing";
+type Tab = "profile" | "password" | "team" | "billing" | "aikeys";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "profile",  label: "Profile",       icon: User },
   { id: "password", label: "Password",      icon: Lock },
   { id: "team",     label: "Team Members",  icon: Users },
   { id: "billing",  label: "Billing Plans", icon: CreditCard },
+  { id: "aikeys",   label: "AI Keys",       icon: KeyRound },
 ];
 
 const PLAN_TIERS = [
@@ -98,6 +99,7 @@ export default function AccountSettingsPage() {
       {tab === "password" && <PasswordTab />}
       {tab === "team"     && <TeamTab />}
       {tab === "billing"  && <BillingTab user={user} />}
+      {tab === "aikeys"   && <AiKeysTab />}
     </div>
   );
 }
@@ -599,6 +601,266 @@ function BillingTab({ user }: { user: any }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── AI Keys Tab ────────────────────────────────────────────────────
+
+const AI_PROVIDERS = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    description: "GPT-4, GPT-4o and other OpenAI models",
+    placeholder: "sk-...",
+    docsUrl: "https://platform.openai.com/api-keys",
+    color: "text-green-400",
+    bg: "bg-green-500/10 border-green-500/20",
+  },
+  {
+    id: "gemini",
+    name: "Google Gemini",
+    description: "Gemini 1.5 Pro, Gemini Flash",
+    placeholder: "AIza...",
+    docsUrl: "https://aistudio.google.com/app/apikey",
+    color: "text-blue-400",
+    bg: "bg-blue-500/10 border-blue-500/20",
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    description: "Claude 3.5 Sonnet, Claude 3 Haiku",
+    placeholder: "sk-ant-...",
+    docsUrl: "https://console.anthropic.com/settings/keys",
+    color: "text-orange-400",
+    bg: "bg-orange-500/10 border-orange-500/20",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    description: "Unified access to 100+ AI models",
+    placeholder: "sk-or-...",
+    docsUrl: "https://openrouter.ai/keys",
+    color: "text-purple-400",
+    bg: "bg-purple-500/10 border-purple-500/20",
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    description: "Local models (Llama, Mistral, etc.)",
+    placeholder: "Leave blank if using default local URL",
+    docsUrl: "https://ollama.ai",
+    color: "text-cyan-400",
+    bg: "bg-cyan-500/10 border-cyan-500/20",
+    hasBaseUrl: true,
+  },
+] as const;
+
+type ProviderId = typeof AI_PROVIDERS[number]["id"];
+
+function AiKeysTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState<ProviderId | null>(null);
+  const [inputs, setInputs] = useState<Record<string, { apiKey: string; baseUrl: string }>>({});
+  const [show, setShow] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState<ProviderId | null>(null);
+  const [deleting, setDeleting] = useState<ProviderId | null>(null);
+
+  const { data: settings = [], isLoading } = useQuery<any[]>({
+    queryKey: ["ai-settings"],
+    queryFn: () => apiFetch(`${BASE}/api/me/ai-settings`),
+  });
+
+  const savedByProvider = new Map<string, any>((settings as any[]).map((s: any) => [s.provider, s]));
+
+  function startEdit(providerId: ProviderId) {
+    const existing = savedByProvider.get(providerId);
+    setInputs(p => ({
+      ...p,
+      [providerId]: { apiKey: "", baseUrl: existing?.baseUrl ?? "" },
+    }));
+    setEditing(providerId);
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+  }
+
+  async function handleSave(providerId: ProviderId) {
+    const { apiKey, baseUrl } = inputs[providerId] ?? { apiKey: "", baseUrl: "" };
+    if (!apiKey.trim() && providerId !== "ollama") {
+      toast({ title: "API key cannot be empty", variant: "destructive" }); return;
+    }
+    setSaving(providerId);
+    try {
+      await apiFetch(`${BASE}/api/me/ai-settings/${providerId}`, {
+        method: "PUT",
+        body: JSON.stringify({ apiKey: apiKey.trim(), baseUrl: baseUrl.trim() || undefined }),
+      });
+      qc.invalidateQueries({ queryKey: ["ai-settings"] });
+      setEditing(null);
+      toast({ title: `${AI_PROVIDERS.find(p => p.id === providerId)?.name} key saved` });
+    } catch {
+      toast({ title: "Failed to save key", variant: "destructive" });
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function handleDelete(providerId: ProviderId) {
+    setDeleting(providerId);
+    try {
+      await apiFetch(`${BASE}/api/me/ai-settings/${providerId}`, { method: "DELETE" });
+      qc.invalidateQueries({ queryKey: ["ai-settings"] });
+      toast({ title: "API key removed" });
+    } catch {
+      toast({ title: "Failed to remove key", variant: "destructive" });
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header info */}
+      <div className="rounded-xl border border-border bg-card px-5 py-4">
+        <div className="flex items-start gap-3">
+          <KeyRound className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-sm">Your AI API Keys</p>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              Add your own API keys to power the AI Copilot with real AI models. Keys are stored securely and
+              used only for your AI Copilot requests. Your keys are never shared with other users.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {AI_PROVIDERS.map(provider => {
+            const saved = savedByProvider.get(provider.id);
+            const isEditingThis = editing === provider.id;
+            const inp = inputs[provider.id] ?? { apiKey: "", baseUrl: "" };
+            const showKey = show[provider.id] ?? false;
+
+            return (
+              <div
+                key={provider.id}
+                className={cn(
+                  "rounded-xl border p-5 transition-colors",
+                  saved ? "border-border bg-card" : "border-border/50 bg-card/50",
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 text-xs font-bold", provider.bg, provider.color)}>
+                      {provider.name[0]}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">{provider.name}</p>
+                        {saved?.hasKey && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30 font-semibold">
+                            ✓ Configured
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{provider.description}</p>
+                      {saved?.hasKey && !isEditingThis && (
+                        <p className="text-xs font-mono text-muted-foreground mt-1 truncate max-w-[220px]">
+                          {saved.apiKey}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <a href={provider.docsUrl} target="_blank" rel="noreferrer">
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground">
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </Button>
+                    </a>
+                    {!isEditingThis && (
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startEdit(provider.id)}>
+                        {saved?.hasKey ? "Update" : "Add Key"}
+                      </Button>
+                    )}
+                    {saved?.hasKey && !isEditingThis && (
+                      <Button
+                        size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                        disabled={deleting === provider.id}
+                        onClick={() => handleDelete(provider.id)}
+                      >
+                        {deleting === provider.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Edit form */}
+                {isEditingThis && (
+                  <div className="mt-4 space-y-3 pt-4 border-t border-border">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">API Key</Label>
+                      <div className="relative">
+                        <Input
+                          type={showKey ? "text" : "password"}
+                          value={inp.apiKey}
+                          onChange={e => setInputs(p => ({ ...p, [provider.id]: { ...inp, apiKey: e.target.value } }))}
+                          placeholder={provider.placeholder}
+                          className="h-9 font-mono text-xs pr-9"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setShow(p => ({ ...p, [provider.id]: !showKey }))}
+                        >
+                          {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {"hasBaseUrl" in provider && provider.hasBaseUrl && (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Base URL <span className="text-muted-foreground">(optional, default: http://localhost:11434)</span></Label>
+                        <Input
+                          type="text"
+                          value={inp.baseUrl}
+                          onChange={e => setInputs(p => ({ ...p, [provider.id]: { ...inp, baseUrl: e.target.value } }))}
+                          placeholder="http://localhost:11434"
+                          className="h-9 font-mono text-xs"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 justify-end">
+                      <Button size="sm" variant="outline" onClick={cancelEdit}>Cancel</Button>
+                      <Button size="sm" disabled={saving === provider.id} onClick={() => handleSave(provider.id)}>
+                        {saving === provider.id ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5 mr-1.5" />}
+                        Save Key
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 flex items-start gap-3">
+        <Shield className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        <p className="text-xs text-amber-400/90 leading-relaxed">
+          API keys are stored encrypted and are only used for your AI Copilot requests. We never log or share your keys.
+          Revoke access by removing the key at any time.
+        </p>
       </div>
     </div>
   );

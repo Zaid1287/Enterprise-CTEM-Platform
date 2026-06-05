@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
+import { startScanScheduler } from "./lib/scanScheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -24,4 +25,5 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
+  startScanScheduler();
 });

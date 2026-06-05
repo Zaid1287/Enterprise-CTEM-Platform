@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
-import { db, scansTable, scanJobsTable } from "@workspace/db";
+import { eq, and, inArray } from "drizzle-orm";
+import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable } from "@workspace/db";
 import {
   CreateScanBody, GetScanParams, DeleteScanParams, CancelScanParams,
   ListScansQueryParams, ListScanJobsParams,
@@ -20,6 +20,80 @@ function toScanResponse(s: typeof scansTable.$inferSelect) {
   };
 }
 
+function scoreToLevel(score: number): string {
+  if (score >= 80) return "critical";
+  if (score >= 55) return "high";
+  if (score >= 30) return "medium";
+  return "low";
+}
+
+/**
+ * After scan completes:
+ * 1. Stamp lastScannedAt on every scanned asset
+ * 2. Recompute riskScore + riskLevel from live findings
+ * 3. Upsert risk_scores and update assets.risk_level
+ */
+async function finalizeScannedAssets(assetIds: number[]) {
+  if (assetIds.length === 0) return;
+  const now = new Date();
+
+  await db.update(assetsTable)
+    .set({ lastScannedAt: now })
+    .where(inArray(assetsTable.id, assetIds));
+
+  const findings = await db
+    .select({
+      assetId: findingsTable.assetId,
+      severity: findingsTable.severity,
+      cvss: findingsTable.cvss,
+      epss: findingsTable.epss,
+      isKev: findingsTable.isKev,
+      status: findingsTable.status,
+    })
+    .from(findingsTable)
+    .where(inArray(findingsTable.assetId, assetIds));
+
+  const byAsset = new Map<number, typeof findings>();
+  for (const f of findings) {
+    if (!byAsset.has(f.assetId!)) byAsset.set(f.assetId!, []);
+    byAsset.get(f.assetId!)!.push(f);
+  }
+
+  for (const assetId of assetIds) {
+    const all = byAsset.get(assetId) ?? [];
+    const open = all.filter(f => f.status !== "mitigated" && f.status !== "resolved");
+
+    const critical = open.filter(f => f.severity === "critical").length;
+    const high     = open.filter(f => f.severity === "high").length;
+    const medium   = open.filter(f => f.severity === "medium").length;
+
+    let score = critical * 22 + high * 12 + medium * 5;
+
+    const cvssVals = open.map(f => f.cvss ?? 0).filter(v => v > 0);
+    const avgCvss = cvssVals.length ? cvssVals.reduce((a, b) => a + b, 0) / cvssVals.length : 0;
+    score += (avgCvss / 10) * 25;
+
+    const maxEpss = open.reduce((m, f) => Math.max(m, f.epss ?? 0), 0);
+    score += maxEpss * 15;
+
+    const kevCount = open.filter(f => f.isKev).length;
+    score += kevCount * 8;
+
+    score = Math.round(Math.min(100, Math.max(0, score)));
+    const level = scoreToLevel(score);
+
+    const [existing] = await db.select({ id: riskScoresTable.id })
+      .from(riskScoresTable).where(eq(riskScoresTable.assetId, assetId));
+    if (existing) {
+      await db.update(riskScoresTable).set({ score, level }).where(eq(riskScoresTable.assetId, assetId));
+    } else {
+      await db.insert(riskScoresTable).values({ assetId, score, level });
+    }
+
+    await db.update(assetsTable).set({ riskLevel: level }).where(eq(assetsTable.id, assetId));
+  }
+}
+
 router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListScansQueryParams.safeParse(req.query);
   const filters = [eq(scansTable.tenantId, req.user!.tenantId)];
@@ -35,18 +109,24 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
     ...parsed.data, tenantId: req.user!.tenantId, status: "pending",
     startedAt: new Date(),
   }).returning();
-  // Simulate scan jobs
+
   if (scan.assetIds.length > 0) {
     await db.insert(scanJobsTable).values(
       scan.assetIds.map(assetId => ({ scanId: scan.id, assetId, status: "pending" }))
     );
-    // Auto-simulate completion after insertion
     setTimeout(async () => {
-      await db.update(scansTable).set({ status: "running" }).where(eq(scansTable.id, scan.id));
+      try {
+        await db.update(scansTable).set({ status: "running" }).where(eq(scansTable.id, scan.id));
+        await db.update(scanJobsTable).set({ status: "running" }).where(eq(scanJobsTable.scanId, scan.id));
+      } catch { /* ignore */ }
       setTimeout(async () => {
-        await db.update(scansTable).set({ status: "completed", completedAt: new Date() }).where(eq(scansTable.id, scan.id));
-        await db.update(scanJobsTable).set({ status: "completed", completedAt: new Date() }).where(eq(scanJobsTable.scanId, scan.id));
-      }, 5000);
+        try {
+          const completedAt = new Date();
+          await db.update(scansTable).set({ status: "completed", completedAt }).where(eq(scansTable.id, scan.id));
+          await db.update(scanJobsTable).set({ status: "completed", completedAt }).where(eq(scanJobsTable.scanId, scan.id));
+          await finalizeScannedAssets(scan.assetIds as number[]);
+        } catch { /* ignore */ }
+      }, 8000);
     }, 2000);
   }
   await logAudit(req.user!, "create_scan", "scan", scan.id);

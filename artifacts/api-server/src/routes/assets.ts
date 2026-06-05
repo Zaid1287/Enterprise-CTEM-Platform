@@ -108,6 +108,7 @@ function toAssetResponse(
     assignedClientName: (a.assignedClientId && userMap) ? (userMap.get(a.assignedClientId) ?? null) : null,
     assignedAccountManagerId: a.assignedAccountManagerId ?? null,
     assignedAccountManagerName: (a.assignedAccountManagerId && userMap) ? (userMap.get(a.assignedAccountManagerId) ?? null) : null,
+    scanFrequency: a.scanFrequency ?? "manual",
     lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
     createdAt: a.createdAt.toISOString(),
     vulnerabilities: {
@@ -152,6 +153,7 @@ router.post("/assets", requireAuth, async (req: AuthenticatedRequest, res): Prom
     assignedClientId: clientId,
     assignedAccountManagerId: req.user!.role === "client" ? null : (assignedAccountManagerId ?? null),
     verificationStatus: "unverified",
+    scanFrequency: (req.body.scanFrequency as string) ?? "manual",
   }).returning();
   await logAudit(req.user!, "create_asset", "asset", asset.id);
   const [enriched] = await enrichAssets([asset]);
@@ -178,6 +180,7 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
 
   const updateData: any = { ...parsed.data };
+  if (req.body.scanFrequency) updateData.scanFrequency = req.body.scanFrequency;
   // Clients cannot change assignment fields
   if (req.user!.role === "client") {
     delete updateData.assignedClientId;

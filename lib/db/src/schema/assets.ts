@@ -20,6 +20,7 @@ export const assetsTable = pgTable("assets", {
   isActive: boolean("is_active").notNull().default(true),
   assignedClientId: integer("assigned_client_id").references(() => usersTable.id),
   assignedAccountManagerId: integer("assigned_account_manager_id").references(() => usersTable.id),
+  scanFrequency: text("scan_frequency").notNull().default("manual"),
   lastScannedAt: timestamp("last_scanned_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

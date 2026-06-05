@@ -32,8 +32,16 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "host", "mobile_app"];
 const RISK_LEVELS = ["critical", "high", "medium", "low"];
 
+const SCAN_FREQUENCIES = [
+  { value: "manual",  label: "Manual only" },
+  { value: "daily",   label: "Daily" },
+  { value: "weekly",  label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
 const emptyForm = {
   name: "", type: "domain", value: "", description: "",
+  scanFrequency: "manual",
   assignedClientId: undefined as number | undefined,
   assignedAccountManagerId: undefined as number | undefined,
 };
@@ -137,6 +145,7 @@ export default function AssetsPage() {
     e.preventDefault();
     const payload: any = {
       name: newAsset.name, type: newAsset.type, value: newAsset.value,
+      scanFrequency: newAsset.scanFrequency,
       description: newAsset.description || undefined,
     };
     if (!isClient) {
@@ -220,6 +229,7 @@ export default function AssetsPage() {
     const payload: any = {
       name: editForm.name, type: editForm.type, value: editForm.value,
       description: editForm.description || undefined,
+      scanFrequency: editForm.scanFrequency,
     };
     if (!isClient) {
       if (editForm.assignedClientId) payload.assignedClientId = editForm.assignedClientId;
@@ -239,6 +249,7 @@ export default function AssetsPage() {
       type: asset.type ?? "domain",
       value: asset.value ?? "",
       description: asset.description ?? "",
+      scanFrequency: asset.scanFrequency ?? "manual",
       assignedClientId: asset.assignedClientId,
       assignedAccountManagerId: asset.assignedAccountManagerId,
     });
@@ -648,6 +659,20 @@ export default function AssetsPage() {
                   className="h-9"
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Scan Frequency</Label>
+                <Select value={newAsset.scanFrequency} onValueChange={v => setNewAsset(p => ({ ...p, scanFrequency: v }))}>
+                  <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {newAsset.scanFrequency !== "manual" && (
+                  <p className="text-xs text-muted-foreground">
+                    This asset will be scanned automatically on a <strong>{newAsset.scanFrequency}</strong> schedule.
+                  </p>
+                )}
+              </div>
 
               {/* Admin/AM only fields */}
               {!isClient && (
@@ -766,6 +791,20 @@ export default function AssetsPage() {
             <div className="space-y-1.5">
               <Label className="text-xs">Description</Label>
               <Input value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} className="h-9" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Scan Frequency</Label>
+              <Select value={editForm.scanFrequency} onValueChange={v => setEditForm(p => ({ ...p, scanFrequency: v }))}>
+                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {editForm.scanFrequency !== "manual" && (
+                <p className="text-xs text-muted-foreground">
+                  Auto-scans run <strong>{editForm.scanFrequency}</strong>. Next scan triggers automatically.
+                </p>
+              )}
             </div>
             {!isClient && (
               <div className="grid grid-cols-2 gap-3">
