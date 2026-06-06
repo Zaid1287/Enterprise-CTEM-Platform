@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useRunPipelineScan, useCreateScanSchedule } from "@workspace/api-client-react";
+import { useAuth } from "@/hooks/useAuth";
 import {
   ChevronDown, ChevronRight, Zap, Calendar, Clock, Check, X, Settings2,
 } from "lucide-react";
@@ -51,6 +52,8 @@ const categoryColor: Record<string, string> = {
 };
 
 export default function RunScanDialog({ open, onOpenChange, pipelineTools, assets, onRunComplete, preSelectedAssetIds }: Props) {
+  const { user } = useAuth();
+  const isClient = user?.role === "client";
   const [step, setStep] = useState<1 | 2>(1);
   const [scanName, setScanName] = useState("");
   const [assetConfigs, setAssetConfigs] = useState<AssetConfig[]>([]);
@@ -77,7 +80,9 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
       setSaveSchedule(false);
       setAssetConfigs(assets.map(a => {
         const preSelected = preSelectedAssetIds ? preSelectedAssetIds.includes(a.id) : false;
-        return { assetId: a.id, toolIds: enabledTools.map(t => t.id), included: preSelected, expanded: preSelected };
+        // Client role: auto-select all tools (no per-tool control)
+        const toolIds = isClient ? enabledTools.map(t => t.id) : enabledTools.map(t => t.id);
+        return { assetId: a.id, toolIds, included: preSelected, expanded: preSelected };
       }));
     }
   }, [open, assets.length, enabledTools.length]);
@@ -239,14 +244,14 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
                           </span>
                         )}
 
-                        {cfg.included && (
+                        {cfg.included && !isClient && (
                           <button onClick={() => toggleExpand(asset.id)} className="text-muted-foreground hover:text-foreground shrink-0">
                             {cfg.expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                           </button>
                         )}
                       </div>
 
-                      {cfg.included && cfg.expanded && enabledTools.length > 0 && (
+                      {cfg.included && cfg.expanded && enabledTools.length > 0 && !isClient && (
                         <div className="px-3 pb-3 border-t border-border/40 bg-accent/10">
                           <div className="flex items-center justify-between py-1.5 mb-1">
                             <p className="text-[10px] text-muted-foreground font-medium">Select tools for this asset</p>

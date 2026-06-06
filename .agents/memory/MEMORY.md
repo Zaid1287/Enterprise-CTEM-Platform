@@ -6,3 +6,5 @@
 - [TanStack Query queryKey required](tanstack-querykey.md) — Hooks like useGetToolRun require queryKey in query options or TS errors block Vite HMR module reloads.
 - [API server logAudit userId cast](api-server-ts-quirks.md) — logAudit userId arg always needs `as any`; pre-existing TS error in esbuild build that doesn't block runtime.
 - [Real scan implementation](real-scan-impl.md) — pipelineScans.ts uses nmap(-sT), Node dns/promises, fetch, tls.connect, whois, ip-api.com; async background via setImmediate; field is assetToolConfig (no s).
+- [apiFetch FormData handling](apiFetch-formdata.md) — apiFetch must detect FormData body and skip Content-Type header so browser sets multipart boundary automatically.
+- [Wouter Link nesting](wouter-link-nesting.md) — Never nest `<Link>` inside `<Link>` (renders nested `<a>` which breaks JSX). Use onClick+navigate on the outer div instead.

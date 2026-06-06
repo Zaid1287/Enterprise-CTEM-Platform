@@ -4,10 +4,12 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   LayoutDashboard, Server, Layers, Radar, Bug, ShieldCheck,
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
-  Users, Building2, ChevronRight, Shield, GitBranch, ScanSearch,
+  Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { useState } from "react";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface NavItem {
   label: string;
@@ -99,7 +101,6 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-// Sidebar collapsed state stored in module scope so it persists across navigations
 let _collapsed = false;
 
 export function Sidebar() {
@@ -135,18 +136,22 @@ export function Sidebar() {
       )}>
         {!collapsed && (
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/20 border border-primary/30 shrink-0">
-              <Shield className="w-4 h-4 text-primary" />
-            </div>
-            <div className="leading-none min-w-0">
-              <p className="text-sm font-semibold text-foreground tracking-tight">CTEM</p>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Platform</p>
-            </div>
+            <img
+              src={`${BASE}/sentinelware-logo.png`}
+              alt="Sentinelware"
+              className="h-6 w-auto object-contain shrink-0"
+              onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
           </div>
         )}
         {collapsed && (
-          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/20 border border-primary/30">
-            <Shield className="w-4 h-4 text-primary" />
+          <div className="flex items-center justify-center w-7 h-7">
+            <img
+              src={`${BASE}/sentinelware-logo.png`}
+              alt="SW"
+              className="w-6 h-6 object-contain"
+              onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
           </div>
         )}
         <button
@@ -222,13 +227,6 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-
-      {/* Footer */}
-      {!collapsed && (
-        <div className="px-3 py-3 border-t border-sidebar-border">
-          <p className="px-2 text-[10px] text-muted-foreground/40">v1.0.0 — Enterprise Edition</p>
-        </div>
-      )}
     </aside>
   );
 }

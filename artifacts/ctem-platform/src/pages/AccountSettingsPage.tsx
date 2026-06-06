@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,6 +8,7 @@ import {
   User, Lock, Users, CreditCard, Eye, EyeOff, Loader2,
   CheckCircle2, Mail, Copy, Sparkles, ArrowUpRight, Shield,
   Building2, UserPlus, X, KeyRound, Trash2, ExternalLink,
+  Camera, SmartphoneNfc, Send, Clock, Check, Ticket,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -96,7 +97,7 @@ export default function AccountSettingsPage() {
       </div>
 
       {tab === "profile"  && <ProfileTab user={user} setUser={setUser} />}
-      {tab === "password" && <PasswordTab />}
+      {tab === "password" && <div className="space-y-5"><PasswordTab /><TwoFactorSection user={user} setUser={setUser} /></div>}
       {tab === "team"     && <TeamTab />}
       {tab === "billing"  && <BillingTab user={user} />}
       {tab === "aikeys"   && <AiKeysTab />}
@@ -121,10 +122,34 @@ function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void })
   });
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const initials = `${user?.firstName?.[0] ?? ""}${user?.lastName?.[0] ?? ""}`.toUpperCase();
   const fullName  = `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
   const roleCls   = ROLE_STYLE[user?.role] ?? ROLE_STYLE.client;
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const formData = new FormData();
+      formData.append("avatar", file);
+      const result = await apiFetch(`${BASE}/api/auth/avatar`, {
+        method: "POST",
+        body: formData,
+        headers: {}, // Don't set Content-Type — browser will set multipart boundary
+      });
+      setUser({ ...user, avatarUrl: (result as any).avatarUrl });
+      toast({ title: "Profile picture updated" });
+    } catch {
+      toast({ title: "Failed to upload picture", variant: "destructive" });
+    } finally {
+      setUploadingAvatar(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,10 +187,37 @@ function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void })
         <div className="p-6 flex flex-col sm:flex-row gap-8">
           {/* Left: avatar + name block */}
           <div className="flex items-center gap-5 shrink-0">
-            <div className="relative">
-              <div className="w-24 h-24 rounded-2xl bg-primary/15 border-2 border-primary/25 flex items-center justify-center text-3xl font-bold text-primary select-none shadow-inner">
-                {initials || "?"}
-              </div>
+            <div className="relative group">
+              {user?.avatarUrl ? (
+                <img
+                  src={`${BASE}${user.avatarUrl}`}
+                  alt={fullName}
+                  className="w-24 h-24 rounded-2xl border-2 border-primary/25 object-cover"
+                />
+              ) : (
+                <div className="w-24 h-24 rounded-2xl bg-primary/15 border-2 border-primary/25 flex items-center justify-center text-3xl font-bold text-primary select-none shadow-inner">
+                  {initials || "?"}
+                </div>
+              )}
+              {/* Upload overlay */}
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={uploadingAvatar}
+                className="absolute inset-0 rounded-2xl bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+              >
+                {uploadingAvatar
+                  ? <Loader2 className="w-6 h-6 text-white animate-spin" />
+                  : <Camera className="w-6 h-6 text-white" />
+                }
+              </button>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarUpload}
+              />
               <span className={cn(
                 "absolute -bottom-2.5 left-1/2 -translate-x-1/2 text-[9px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border whitespace-nowrap shadow",
                 roleCls,
@@ -179,6 +231,13 @@ function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void })
                 <>
                   <h2 className="text-2xl font-bold leading-tight">{fullName || "—"}</h2>
                   <p className="text-sm text-muted-foreground">{user?.email}</p>
+                  <button
+                    type="button"
+                    onClick={() => avatarInputRef.current?.click()}
+                    className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 mt-1"
+                  >
+                    <Camera className="w-3 h-3" /> Change photo
+                  </button>
                 </>
               )}
             </div>
@@ -417,114 +476,263 @@ function PasswordTab() {
   );
 }
 
+// ── Two-Factor Auth component ────────────────────────────────────────
+
+function TwoFactorSection({ user, setUser }: { user: any; setUser: (u: any) => void }) {
+  const { toast } = useToast();
+  const [step, setStep] = useState<"idle" | "pending_otp">("idle");
+  const [otp, setOtp] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [disablePassword, setDisablePassword] = useState("");
+  const [showDisable, setShowDisable] = useState(false);
+  const enabled = user?.twoFactorEnabled ?? false;
+
+  const handleEnable = async () => {
+    setLoading(true);
+    try {
+      await apiFetch(`${BASE}/api/auth/2fa/enable`, { method: "POST", body: JSON.stringify({}) });
+      setStep("pending_otp");
+      toast({ title: "Check your email for a verification code" });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to send code", variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await apiFetch(`${BASE}/api/auth/2fa/confirm`, { method: "POST", body: JSON.stringify({ otp }) });
+      setUser({ ...user, twoFactorEnabled: true });
+      setStep("idle"); setOtp("");
+      toast({ title: "Two-factor authentication enabled" });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Invalid code", variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  const handleDisable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await apiFetch(`${BASE}/api/auth/2fa/disable`, { method: "POST", body: JSON.stringify({ password: disablePassword }) });
+      setUser({ ...user, twoFactorEnabled: false });
+      setShowDisable(false); setDisablePassword("");
+      toast({ title: "Two-factor authentication disabled" });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to disable 2FA", variant: "destructive" });
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center border", enabled ? "bg-green-500/10 border-green-500/30" : "bg-muted border-border")}>
+            <SmartphoneNfc className={cn("w-4 h-4", enabled ? "text-green-400" : "text-muted-foreground")} />
+          </div>
+          <div>
+            <p className="font-medium text-sm">Two-factor authentication</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {enabled ? "Enabled — you'll need an email code to sign in" : "Not enabled — add extra protection to your account"}
+            </p>
+          </div>
+        </div>
+        <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border", enabled ? "bg-green-500/10 text-green-400 border-green-500/30" : "bg-muted text-muted-foreground border-border")}>
+          {enabled ? "On" : "Off"}
+        </span>
+      </div>
+
+      {!enabled && step === "idle" && (
+        <Button size="sm" onClick={handleEnable} disabled={loading} className="w-full">
+          {loading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <SmartphoneNfc className="w-3.5 h-3.5 mr-1.5" />}
+          Enable 2FA via Email
+        </Button>
+      )}
+
+      {step === "pending_otp" && (
+        <form onSubmit={handleConfirm} className="space-y-3 pt-3 border-t border-border">
+          <p className="text-xs text-muted-foreground">Enter the 6-digit code sent to <span className="text-foreground">{user?.email}</span></p>
+          <Input
+            type="text" inputMode="numeric" maxLength={6} value={otp}
+            onChange={e => setOtp(e.target.value.replace(/\D/g, ""))}
+            placeholder="000000" autoFocus className="text-center text-lg tracking-[0.5em] font-mono h-10"
+          />
+          <div className="flex gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => { setStep("idle"); setOtp(""); }} className="flex-1">Cancel</Button>
+            <Button type="submit" size="sm" disabled={loading || otp.length < 6} className="flex-1">
+              {loading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
+              Verify & Enable
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {enabled && !showDisable && (
+        <button type="button" onClick={() => setShowDisable(true)} className="text-xs text-destructive/70 hover:text-destructive">
+          Disable 2FA
+        </button>
+      )}
+
+      {enabled && showDisable && (
+        <form onSubmit={handleDisable} className="space-y-3 pt-3 border-t border-border">
+          <p className="text-xs text-muted-foreground">Enter your password to confirm disabling 2FA</p>
+          <Input type="password" value={disablePassword} onChange={e => setDisablePassword(e.target.value)} placeholder="Your password" className="h-9" />
+          <div className="flex gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => { setShowDisable(false); setDisablePassword(""); }} className="flex-1">Cancel</Button>
+            <Button type="submit" size="sm" variant="destructive" disabled={loading || !disablePassword} className="flex-1">
+              {loading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
+              Disable 2FA
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 // ── Team Tab ────────────────────────────────────────────────────────
+
+const INVITE_ROLES = [
+  { value: "vendor",      label: "Vendor",      color: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
+  { value: "employee",    label: "Employee",    color: "bg-sky-500/20 text-sky-400 border-sky-500/30" },
+  { value: "third_party", label: "Third Party", color: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
+];
+
+const INV_STATUS_COLOR: Record<string, string> = {
+  pending:  "bg-amber-500/10 text-amber-400 border-amber-500/25",
+  accepted: "bg-green-500/10 text-green-400 border-green-500/25",
+  rejected: "bg-red-500/10   text-red-400   border-red-500/25",
+};
 
 function TeamTab() {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("client");
-  const [sending, setSending] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ name: "", email: "", role: "employee" });
+  const [sending, setSending] = useState(false);
 
-  const { data: members = [], isLoading } = useQuery<any[]>({
+  const HIDDEN_ROLES = ["super_admin", "account_manager", "admin"];
+
+  const { data: membersRaw = [], isLoading } = useQuery<any[]>({
     queryKey: ["team-members"],
     queryFn: () => apiFetch(`${BASE}/api/users`),
   });
 
+  const { data: invitations = [], isLoading: invLoading } = useQuery<any[]>({
+    queryKey: ["invitations"],
+    queryFn: () => apiFetch(`${BASE}/api/invitations`),
+  });
+
+  const members = (membersRaw as any[]).filter((m: any) => !HIDDEN_ROLES.includes(m.role));
+
   const deactivateMutation = useMutation({
     mutationFn: (userId: number) =>
       apiFetch(`${BASE}/api/users/${userId}`, { method: "PATCH", body: JSON.stringify({ isActive: false }) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["team-members"] }); toast({ title: "User deactivated" }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["team-members"] });
+      toast({ title: "User deactivated" });
+    },
   });
+
+  const deleteInvMutation = useMutation({
+    mutationFn: (id: number) => apiFetch(`${BASE}/api/invitations/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invitations"] });
+      toast({ title: "Invitation removed" });
+    },
+  });
+
+  const canInvite = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     setSending(true);
     try {
-      await apiFetch(`${BASE}/api/users`, {
+      await apiFetch(`${BASE}/api/invitations`, {
         method: "POST",
-        body: JSON.stringify({
-          email: inviteEmail,
-          password: `Invite${Math.random().toString(36).slice(2, 10)}!`,
-          firstName: inviteEmail.split("@")[0],
-          lastName: "",
-          role: inviteRole,
-        }),
+        body: JSON.stringify(inviteForm),
       });
-      qc.invalidateQueries({ queryKey: ["team-members"] });
-      setInviteEmail("");
+      qc.invalidateQueries({ queryKey: ["invitations"] });
+      setInviteForm({ name: "", email: "", role: "employee" });
       setShowInvite(false);
-      toast({ title: "Team member added", description: `${inviteEmail} has been added to your workspace.` });
+      toast({ title: "Invitation sent", description: `${inviteForm.email} has been invited.` });
     } catch (err: any) {
-      toast({ title: err?.message ?? "Failed to add member", variant: "destructive" });
+      toast({ title: err?.message ?? "Failed to send invitation", variant: "destructive" });
     } finally {
       setSending(false);
     }
   };
 
   const roleColor: Record<string, string> = {
-    super_admin:     "bg-purple-500/20 text-purple-400 border-purple-500/30",
-    account_manager: "bg-blue-500/20   text-blue-400   border-blue-500/30",
-    admin:           "bg-green-500/20  text-green-400  border-green-500/30",
-    client:          "bg-muted text-muted-foreground border-border",
+    client:      "bg-muted text-muted-foreground border-border",
+    vendor:      "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    employee:    "bg-sky-500/20 text-sky-400 border-sky-500/30",
+    third_party: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30",
   };
 
-  const canInvite = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
-  const invitableRoles = user?.role === "super_admin"
-    ? ["admin", "account_manager", "client"]
-    : user?.role === "admin"
-    ? ["client"]
-    : ["client"];
-
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Invite panel */}
       {canInvite && (
         <div className="bg-card border border-border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium text-sm">Invite Team Member</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Add a new user to your workspace</p>
+              <p className="font-medium text-sm">Invite External Member</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Send an invitation to a vendor, employee, or third party</p>
             </div>
-            <Button size="sm" onClick={() => setShowInvite(v => !v)}>
+            <Button size="sm" onClick={() => setShowInvite(v => !v)} variant={showInvite ? "outline" : "default"}>
               <UserPlus className="w-4 h-4 mr-1.5" />
-              {showInvite ? "Cancel" : "Invite"}
+              {showInvite ? "Cancel" : "Send Invite"}
             </Button>
           </div>
 
           {showInvite && (
-            <form onSubmit={handleInvite} className="space-y-3 pt-3 border-t border-border">
+            <form onSubmit={handleInvite} className="space-y-3 pt-4 mt-4 border-t border-border">
               <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Full Name</Label>
+                  <Input
+                    value={inviteForm.name}
+                    onChange={e => setInviteForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Jane Smith"
+                    required className="h-9"
+                  />
+                </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Email Address</Label>
                   <Input
                     type="email"
-                    value={inviteEmail}
-                    onChange={e => setInviteEmail(e.target.value)}
-                    placeholder="colleague@company.com"
-                    required
-                    className="h-9"
+                    value={inviteForm.email}
+                    onChange={e => setInviteForm(p => ({ ...p, email: e.target.value }))}
+                    placeholder="jane@vendor.com"
+                    required className="h-9"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Role</Label>
-                  <select
-                    value={inviteRole}
-                    onChange={e => setInviteRole(e.target.value)}
-                    className="w-full h-9 rounded-md border border-border bg-background text-sm px-3 focus:outline-none focus:ring-1 focus:ring-primary"
-                  >
-                    {invitableRoles.map(r => (
-                      <option key={r} value={r}>{r.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</option>
-                    ))}
-                  </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Role</Label>
+                <div className="flex gap-2">
+                  {INVITE_ROLES.map(r => (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() => setInviteForm(p => ({ ...p, role: r.value }))}
+                      className={cn(
+                        "flex-1 py-2 rounded-lg border text-xs font-medium transition-all",
+                        inviteForm.role === r.value ? r.color : "border-border text-muted-foreground hover:border-border/80",
+                      )}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
                 </div>
               </div>
               <div className="flex justify-end">
                 <Button type="submit" size="sm" disabled={sending}>
-                  {sending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Mail className="w-3.5 h-3.5 mr-1.5" />}
-                  Add Member
+                  {sending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Send className="w-3.5 h-3.5 mr-1.5" />}
+                  Send Invitation
                 </Button>
               </div>
             </form>
@@ -532,27 +740,33 @@ function TeamTab() {
         </div>
       )}
 
-      {/* Members list */}
+      {/* Team members */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-border flex items-center justify-between">
           <p className="text-sm font-medium">Team Members</p>
-          <span className="text-xs text-muted-foreground">{(members as any[]).filter((m: any) => m.isActive).length} active</span>
+          <span className="text-xs text-muted-foreground">{members.filter((m: any) => m.isActive).length} active</span>
         </div>
         {isLoading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
           </div>
-        ) : (members as any[]).length === 0 ? (
-          <div className="py-10 text-center text-sm text-muted-foreground">No team members yet</div>
+        ) : members.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">No team members yet</div>
         ) : (
           <div className="divide-y divide-border">
-            {(members as any[]).map((m: any) => (
+            {members.map((m: any) => (
               <div key={m.id} className={cn("flex items-center gap-3 px-5 py-3.5", !m.isActive && "opacity-50")}>
-                <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-sm font-semibold shrink-0">
-                  {m.firstName?.[0]}{m.lastName?.[0]}
+                <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden">
+                  {m.avatarUrl
+                    ? <img src={`${BASE}${m.avatarUrl}`} alt="" className="w-full h-full object-cover" />
+                    : `${m.firstName?.[0] ?? ""}${m.lastName?.[0] ?? ""}`
+                  }
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{m.firstName} {m.lastName} {m.id === user?.id && <span className="text-xs text-muted-foreground">(you)</span>}</p>
+                  <p className="text-sm font-medium truncate">
+                    {m.firstName} {m.lastName}
+                    {m.id === user?.id && <span className="text-xs text-muted-foreground ml-1">(you)</span>}
+                  </p>
                   <p className="text-xs text-muted-foreground truncate">{m.email}</p>
                 </div>
                 <span className={cn("text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider border shrink-0", roleColor[m.role] ?? roleColor.client)}>
@@ -561,8 +775,57 @@ function TeamTab() {
                 {!m.isActive && <span className="text-xs text-muted-foreground">(inactive)</span>}
                 {m.isActive && m.id !== user?.id && canInvite && (
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                    onClick={() => deactivateMutation.mutate(m.id)} title="Deactivate user">
+                    onClick={() => deactivateMutation.mutate(m.id)} title="Deactivate">
                     <X className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Invitations tracking */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Ticket className="w-4 h-4 text-muted-foreground" />
+            <p className="text-sm font-medium">Pending Invitations</p>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {(invitations as any[]).filter((i: any) => i.status === "pending").length} pending
+          </span>
+        </div>
+        {invLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (invitations as any[]).length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">No invitations sent yet</div>
+        ) : (
+          <div className="divide-y divide-border">
+            {(invitations as any[]).map((inv: any) => (
+              <div key={inv.id} className="flex items-center gap-3 px-5 py-3.5">
+                <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-xs font-semibold shrink-0">
+                  {inv.name?.[0]?.toUpperCase() ?? "?"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{inv.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{inv.email}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", roleColor[inv.role] ?? roleColor.client)}>
+                    {inv.role?.replace(/_/g, " ")}
+                  </span>
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium flex items-center gap-1", INV_STATUS_COLOR[inv.status])}>
+                    {inv.status === "pending" ? <Clock className="w-2.5 h-2.5" /> : inv.status === "accepted" ? <CheckCircle2 className="w-2.5 h-2.5" /> : <X className="w-2.5 h-2.5" />}
+                    {inv.status}
+                  </span>
+                </div>
+                {canInvite && (
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                    onClick={() => deleteInvMutation.mutate(inv.id)} title="Remove invitation">
+                    <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 )}
               </div>

@@ -44,20 +44,22 @@ const STATUS_ICON: Record<string, React.ElementType> = {
 };
 
 const ASSET_TYPE_ICON: Record<string, React.ElementType> = {
-  domain:      Globe,
-  subdomain:   Network,
-  ip:          Server,
-  cidr:        Network,
-  url:         Globe,
-  api:         Code2,
-  ssl_cert:    ShieldAlert,
-  cloud_asset: Cpu,
-  host:        Server,
-  mobile_app:  Smartphone,
+  domain:       Globe,
+  subdomain:    Network,
+  ip:           Server,
+  cidr:         Network,
+  url:          Globe,
+  api:          Code2,
+  ssl_cert:     ShieldAlert,
+  cloud_asset:  Cpu,
+  host:         Server,
+  sentinelware: Server,
+  mobile_app:   Smartphone,
 };
 
 function assetTypeLabel(t: string | null) {
   if (!t) return "—";
+  if (t === "sentinelware") return "Sentinelware";
   return capitalize(t.replace(/_/g, " "));
 }
 

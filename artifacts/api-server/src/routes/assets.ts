@@ -220,8 +220,8 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
   if (!existing) { res.status(404).json({ error: "Asset not found" }); return; }
 
   let token = existing.verificationToken;
-  if (!token || !token.startsWith("ctem-verify-")) {
-    token = `ctem-verify-${crypto.randomBytes(16).toString("hex")}`;
+  if (!token || !token.startsWith("sentinelware-")) {
+    token = `sentinelware-${crypto.randomBytes(16).toString("hex")}`;
     await db.update(assetsTable)
       .set({ verificationToken: token, verificationStatus: "pending" })
       .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
@@ -234,7 +234,7 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
   const methodInstructions: Record<string, string> = {
     dns_txt: `Add a DNS TXT record to your domain with value: ${token}`,
     email: `Click the verification link sent to admin@<your-domain>`,
-    http_file: `Create a file at /.well-known/ctem-verification.txt with content: ${token}`,
+    http_file: `Create a file at /.well-known/sentinelware-verification.txt with content: ${token}`,
     cloud: `Add tag ctem-verification=${token} to the cloud resource`,
   };
 
@@ -244,7 +244,7 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
     instructions: methodInstructions[body.data.method] ?? `Use token: ${token}`,
     txtRecord: {
       type: "TXT",
-      host: "_ctem-challenge",
+      host: "_sentinelware-challenge",
       value: token,
       ttl: 300,
     },
@@ -266,7 +266,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   if (token && (asset.type === "domain" || asset.type === "subdomain" || asset.type === "url")) {
     const domain = asset.value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
     try {
-      const records = await dns.resolveTxt(`_ctem-challenge.${domain}`);
+      const records = await dns.resolveTxt(`_sentinelware-challenge.${domain}`);
       const flat = records.flat();
       const found = flat.some(r => r === token);
       if (found) {
@@ -276,11 +276,11 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
         await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
         res.json({ verified: true, message: "DNS TXT record found. Asset ownership verified." });
       } else {
-        res.json({ verified: false, message: `TXT record not found yet. Expected: ${token} on _ctem-challenge.${domain}` });
+        res.json({ verified: false, message: `TXT record not found yet. Expected: ${token} on _sentinelware-challenge.${domain}` });
       }
       return;
     } catch {
-      res.json({ verified: false, message: `Could not resolve DNS for _ctem-challenge.${domain}. Make sure the TXT record is added and DNS has propagated (may take up to 24h).` });
+      res.json({ verified: false, message: `Could not resolve DNS for _sentinelware-challenge.${domain}. Make sure the TXT record is added and DNS has propagated (may take up to 24h).` });
       return;
     }
   }

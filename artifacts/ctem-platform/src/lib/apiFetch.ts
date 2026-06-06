@@ -7,10 +7,12 @@ import { getToken } from "@/lib/auth";
  */
 export async function apiFetch<T = unknown>(path: string, options?: RequestInit): Promise<T> {
   const token = getToken();
+  // Don't set Content-Type for FormData — the browser must set it with the multipart boundary
+  const isFormData = options?.body instanceof FormData;
   const resp = await fetch(path, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },

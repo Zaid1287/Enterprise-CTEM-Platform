@@ -29,7 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiFetch } from "@/lib/apiFetch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "host", "mobile_app"];
+const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "sentinelware", "mobile_app"];
 const RISK_LEVELS = ["critical", "high", "medium", "low"];
 
 const SCAN_FREQUENCIES = [
@@ -890,13 +890,14 @@ export default function AssetsPage() {
 function TypeBadge({ type }: { type: string }) {
   const icons: Record<string, React.ElementType> = {
     domain: Globe, subdomain: Globe, url: Globe, ip: Server,
-    host: Server, cidr: Server, cloud_asset: Shield, api: Zap,
+    sentinelware: Server, host: Server, cidr: Server, cloud_asset: Shield, api: Zap,
   };
   const Icon = icons[type] ?? Globe;
+  const label = type === "sentinelware" ? "sentinelware" : type.replace(/_/g, " ");
   return (
     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-accent/50 px-2 py-0.5 rounded">
       <Icon className="w-3 h-3" />
-      {type.replace(/_/g, " ")}
+      {label}
     </span>
   );
 }

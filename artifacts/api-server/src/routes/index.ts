@@ -20,6 +20,7 @@ import packagesRouter from "./packages";
 import accountManagerRouter from "./accountManager";
 import takedownsRouter from "./takedowns";
 import userAiSettingsRouter from "./userAiSettings";
+import invitationsRouter from "./invitations";
 
 const router: IRouter = Router();
 
@@ -44,5 +45,6 @@ router.use(packagesRouter);
 router.use(accountManagerRouter);
 router.use(takedownsRouter);
 router.use(userAiSettingsRouter);
+router.use(invitationsRouter);
 
 export default router;

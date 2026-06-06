@@ -200,7 +200,8 @@ export default function ScanReportsPage() {
           return (
             <div
               key={scan.id}
-              className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors"
+              className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors cursor-pointer"
+              onClick={() => navigate(`/scan-reports/${scan.id}`)}
             >
               <div className="flex items-start gap-4">
                 {/* Status icon */}
