@@ -66,7 +66,7 @@ const navGroups: NavGroup[] = [
       { label: "Scans", href: "/scans", icon: Radar },
       { label: "Findings", href: "/findings", icon: Bug },
       { label: "Risk Scoring", href: "/risk", icon: TrendingUp },
-      { label: "Security Tools", href: "/tools", icon: GitBranch },
+      { label: "Security Tools", href: "/tools", icon: GitBranch, onlyFor: ["admin", "super_admin", "account_manager"] },
       { label: "Scan Reports", href: "/scan-reports", icon: ScanSearch },
     ],
   },
@@ -177,8 +177,8 @@ export function Sidebar() {
         </button>
       )}
 
-      {/* Role badge */}
-      {!collapsed && (
+      {/* Role badge — hidden for client role */}
+      {!collapsed && role !== "client" && (
         <div className="px-4 py-2 border-b border-sidebar-border">
           <span className={cn(
             "text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider",

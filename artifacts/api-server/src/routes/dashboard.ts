@@ -336,6 +336,123 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
     .slice(0, 5)
     .map(t => ({ id: t.id, title: t.title, type: t.type, status: t.status, priority: t.priority, createdAt: t.createdAt }));
 
+  // ── Score Timeline (30 days) ─────────────────────────────────────
+  const timelineDays = 30;
+  const now = new Date();
+  const scoreTimeline: { date: string; score: number }[] = [];
+  for (let i = timelineDays - 1; i >= 0; i--) {
+    const dayEnd = new Date(now);
+    dayEnd.setDate(dayEnd.getDate() - i);
+    dayEnd.setHours(23, 59, 59, 999);
+    const openOnDay = findings.filter(f => {
+      const created = new Date(f.createdAt);
+      if (created > dayEnd) return false;
+      if (f.status === "resolved") {
+        const resolved = new Date(f.updatedAt);
+        return resolved > dayEnd;
+      }
+      return true;
+    });
+    let penalty = 0;
+    for (const f of openOnDay) {
+      if (f.severity === "critical")     penalty += 20;
+      else if (f.severity === "high")    penalty += 12;
+      else if (f.severity === "medium")  penalty += 6;
+      else if (f.severity === "low")     penalty += 2;
+    }
+    const divisor = Math.max(1, assets.length);
+    const score = Math.max(0, Math.min(100, 100 - Math.round(penalty / divisor)));
+    scoreTimeline.push({ date: dayEnd.toISOString().split("T")[0], score });
+  }
+
+  // ── Category-Based Risk Scoring ──────────────────────────────────
+  const CATEGORY_RULES = [
+    { id: "security_hygiene",       name: "Security Hygiene",           keywords: ["patch", "update", "outdated", "version", "end-of-life", "deprecated", "unpatched", "obsolete"],  cwes: [] },
+    { id: "data_leakage",           name: "Data Leakage",               keywords: ["data leak", "pii", "sensitive data", "exposed data", "database dump", "breach", "disclosure"],   cwes: ["CWE-200", "CWE-359", "CWE-312"] },
+    { id: "dns_security",           name: "DNS Security",               keywords: ["dns", "dkim", "spf", "dmarc", "mx record", "nameserver", "zone transfer", "subdomain takeover"], cwes: ["CWE-290"] },
+    { id: "exposed_infrastructure", name: "Exposed Infrastructure",     keywords: ["exposed", "open port", "admin panel", "management interface", "rdp", "telnet", "ftp", "vnc"],   cwes: ["CWE-284"] },
+    { id: "information_leakage",    name: "Information Leakage",        keywords: ["information disclosure", "error message", "debug", "stack trace", "directory listing", "server banner", "header leak"], cwes: ["CWE-209"] },
+    { id: "network_security",       name: "Network Security",           keywords: ["network", "firewall", "routing", "icmp", "snmp", "mitm", "arp spoofing", "packet"],              cwes: ["CWE-311"] },
+    { id: "third_party_security",   name: "Third Party Security",       keywords: ["third party", "vendor", "supply chain", "dependency", "library", "component", "npm", "package", "outdated library"], cwes: ["CWE-1035", "CWE-937"] },
+    { id: "transport_layer",        name: "Transport Layer Security",   keywords: ["ssl", "tls", "certificate", "cipher", "https", "hsts", "weak cipher", "self-signed", "expired cert"], cwes: ["CWE-326", "CWE-295", "CWE-327"] },
+    { id: "weak_credentials",       name: "Weak / Default Credentials", keywords: ["credential", "password", "default password", "weak password", "brute force", "authentication bypass", "login"], cwes: ["CWE-521", "CWE-798", "CWE-307"] },
+    { id: "web_security",           name: "Web Security",               keywords: ["xss", "csrf", "sql injection", "rce", "lfi", "rfi", "clickjacking", "cors", "content security", "open redirect"], cwes: ["CWE-79", "CWE-89", "CWE-352", "CWE-78", "CWE-22"] },
+    { id: "dark_web",               name: "Dark Web",                   keywords: ["dark web", "darkweb", "paste", "leaked", "tor", "breach", "credential dump", "hacker forum", "underground"],        cwes: [] },
+    { id: "cloud_security",         name: "Cloud Security",             keywords: ["cloud", "s3 bucket", "azure", "aws", "gcp", "iam", "misconfigured", "storage bucket", "blob", "lambda"],          cwes: ["CWE-732"] },
+  ] as const;
+
+  const categoryScores = CATEGORY_RULES.map(cat => {
+    const catFindings = openFindings.filter(f => {
+      const text = `${f.title} ${f.description ?? ""} ${f.remediation ?? ""}`.toLowerCase();
+      const hasCwe = cat.cwes.length > 0 && (cat.cwes as readonly string[]).some(cwe => f.cwe === cwe);
+      const hasKeyword = (cat.keywords as readonly string[]).some(kw => text.includes(kw));
+      return hasCwe || hasKeyword;
+    });
+    let penalty = 0;
+    for (const f of catFindings) {
+      if (f.severity === "critical")     penalty += 25;
+      else if (f.severity === "high")    penalty += 15;
+      else if (f.severity === "medium")  penalty += 8;
+      else if (f.severity === "low")     penalty += 3;
+    }
+    const score = Math.max(0, Math.min(100, 100 - penalty));
+    return { id: cat.id, name: cat.name, score, findingsCount: catFindings.length };
+  });
+
+  // ── Top Asset Types Discovered ───────────────────────────────────
+  const typeMap: Record<string, number> = {};
+  for (const a of assets) { typeMap[a.type] = (typeMap[a.type] ?? 0) + 1; }
+  const topAssetTypes = Object.entries(typeMap)
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, count]) => ({ type, count }));
+
+  // ── Top Vulnerable Assets ────────────────────────────────────────
+  const findingsByAsset: Record<number, { total: number; critical: number; high: number }> = {};
+  for (const f of openFindings) {
+    if (!findingsByAsset[f.assetId]) findingsByAsset[f.assetId] = { total: 0, critical: 0, high: 0 };
+    findingsByAsset[f.assetId].total++;
+    if (f.severity === "critical") findingsByAsset[f.assetId].critical++;
+    if (f.severity === "high")     findingsByAsset[f.assetId].high++;
+  }
+  const riskScoreByAsset: Record<number, number> = {};
+  for (const { risk_scores } of riskScores) riskScoreByAsset[risk_scores.assetId] = risk_scores.score;
+
+  const topVulnerableAssets = assets
+    .filter(a => (findingsByAsset[a.id]?.total ?? 0) > 0)
+    .sort((a, b) => {
+      const scoreA = (riskScoreByAsset[a.id] ?? 0);
+      const scoreB = (riskScoreByAsset[b.id] ?? 0);
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return (findingsByAsset[b.id]?.total ?? 0) - (findingsByAsset[a.id]?.total ?? 0);
+    })
+    .slice(0, 6)
+    .map(a => ({
+      id: a.id, name: a.name, type: a.type, value: a.value,
+      riskScore: riskScoreByAsset[a.id] ?? null,
+      findings: findingsByAsset[a.id] ?? { total: 0, critical: 0, high: 0 },
+    }));
+
+  // ── Top Security Risks ───────────────────────────────────────────
+  const sevWeight: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+  const topSecurityRisks = [...openFindings]
+    .sort((a, b) => {
+      const wA = sevWeight[a.severity ?? "info"] ?? 0;
+      const wB = sevWeight[b.severity ?? "info"] ?? 0;
+      if (wB !== wA) return wB - wA;
+      if (a.isKev && !b.isKev) return -1;
+      if (!a.isKev && b.isKev) return 1;
+      return (b.cvss ?? 0) - (a.cvss ?? 0);
+    })
+    .slice(0, 8)
+    .map(f => {
+      const asset = assets.find(a => a.id === f.assetId);
+      return {
+        id: f.id, title: f.title, severity: f.severity, cve: f.cve, cwe: f.cwe,
+        cvss: f.cvss, epss: f.epss, isKev: f.isKev,
+        assetName: asset?.name ?? "Unknown", assetType: asset?.type ?? "unknown",
+      };
+    });
+
   res.json({
     riskScore: avgRisk,
     totalAssets: assets.length,
@@ -351,6 +468,11 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
     takedowns: { total: tdTotal, submitted: tdSubmitted, inProgress: tdInProgress, closed: tdClosed },
     recentTakedowns,
     falsePositives: { submitted: fpSubmitted, confirmed: fpConfirmed, rejected: fpRejected },
+    scoreTimeline,
+    categoryScores,
+    topAssetTypes,
+    topVulnerableAssets,
+    topSecurityRisks,
   });
 });
 

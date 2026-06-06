@@ -531,6 +531,11 @@ export default function AssetsPage() {
                           <Square className="w-2.5 h-2.5 fill-current" />
                         </Button>
                       </div>
+                    ) : asset.verificationStatus !== "verified" ? (
+                      <span className="flex items-center gap-1 text-[11px] text-amber-500/80 font-medium">
+                        <ShieldCheck className="w-3 h-3 shrink-0" />
+                        Verify first
+                      </span>
                     ) : (
                       <Button
                         size="sm"
