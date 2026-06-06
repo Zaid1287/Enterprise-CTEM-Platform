@@ -2122,6 +2122,12 @@ components:
           type: integer
         assetName:
           type: ["string", "null"]
+        assetValue:
+          type: ["string", "null"]
+        assetType:
+          type: ["string", "null"]
+        assetLastScannedAt:
+          type: ["string", "null"]
         title:
           type: string
         description:

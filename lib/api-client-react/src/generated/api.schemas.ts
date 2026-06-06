@@ -231,6 +231,12 @@ export interface Finding {
   assetId: number;
   /** @nullable */
   assetName?: string | null;
+  /** @nullable */
+  assetValue?: string | null;
+  /** @nullable */
+  assetType?: string | null;
+  /** @nullable */
+  assetLastScannedAt?: string | null;
   title: string;
   /** @nullable */
   description?: string | null;

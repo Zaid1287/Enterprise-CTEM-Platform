@@ -11,9 +11,19 @@ import { logAudit } from "../lib/audit";
 
 const router = Router();
 
-function toFindingResponse(f: typeof findingsTable.$inferSelect, assetName?: string | null) {
+function toFindingResponse(
+  f: typeof findingsTable.$inferSelect,
+  assetName?: string | null,
+  assetValue?: string | null,
+  assetType?: string | null,
+  assetLastScannedAt?: Date | null,
+) {
   return {
-    id: f.id, tenantId: f.tenantId, assetId: f.assetId, assetName: assetName ?? null,
+    id: f.id, tenantId: f.tenantId, assetId: f.assetId,
+    assetName: assetName ?? null,
+    assetValue: assetValue ?? null,
+    assetType: assetType ?? null,
+    assetLastScannedAt: assetLastScannedAt ? assetLastScannedAt.toISOString() : null,
     title: f.title, description: f.description, severity: f.severity, status: f.status,
     cve: f.cve, cvss: f.cvss, epss: f.epss, cwe: f.cwe, isKev: f.isKev,
     remediation: f.remediation, evidence: f.evidence, riskScore: f.riskScore,
@@ -42,10 +52,14 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
   const findings = await db.select({
     finding: findingsTable,
     assetName: assetsTable.name,
+    assetValue: assetsTable.value,
+    assetType: assetsTable.type,
+    assetLastScannedAt: assetsTable.lastScannedAt,
   }).from(findingsTable)
     .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
     .where(and(...filters));
-  res.json(findings.map(({ finding, assetName }) => toFindingResponse(finding, assetName)));
+  res.json(findings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt }) =>
+    toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt)));
 });
 
 router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
