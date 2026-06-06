@@ -920,6 +920,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/Finding"
 
+  /findings/{findingId}/scan-data:
+    get:
+      operationId: getFindingScanData
+      tags: [findings]
+      summary: Get aggregated scan data for the asset linked to a finding
+      parameters:
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan data for the finding asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingScanData"
+
   /findings/{findingId}/comments:
     get:
       operationId: listFindingComments
@@ -2128,6 +2147,14 @@ components:
           type: ["string", "null"]
         assetLastScannedAt:
           type: ["string", "null"]
+        assetIpAddress:
+          type: ["string", "null"]
+        assetPort:
+          type: ["integer", "null"]
+        assetTags:
+          type: array
+          items:
+            type: string
         title:
           type: string
         description:
@@ -2156,6 +2183,66 @@ components:
           type: string
         updatedAt:
           type: string
+
+    FindingScanData:
+      type: object
+      properties:
+        assetId:
+          type: integer
+        ports:
+          type: array
+          items:
+            type: object
+            properties:
+              port: { type: integer }
+              protocol: { type: string }
+              service: { type: string }
+              version: { type: string }
+              state: { type: string }
+        httpInfo:
+          type: object
+          nullable: true
+          properties:
+            url: { type: string }
+            title: { type: string }
+            status: { type: integer }
+            server: { type: string }
+            waf: { type: string }
+            cdn: { type: string }
+            tech:
+              type: array
+              items: { type: string }
+            headers:
+              type: object
+              additionalProperties: { type: string }
+        intelligence:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              type: { type: string }
+              value: { type: string }
+        subdomains:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              ip: { type: string }
+              cname: { type: string }
+              status: { type: string }
+        vulnerabilities:
+          type: array
+          items:
+            type: object
+            properties:
+              cve: { type: string }
+              title: { type: string }
+              severity: { type: string }
+              description: { type: string }
+              remediation: { type: string }
+              cvss: { type: number }
 
     FindingUpdate:
       type: object

@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, and, ilike, inArray } from "drizzle-orm";
-import { db, findingsTable, findingCommentsTable, assetsTable, usersTable } from "@workspace/db";
+import { eq, and, ilike, inArray, desc } from "drizzle-orm";
+import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
   ListFindingsQueryParams, ListFindingCommentsParams,
@@ -17,6 +17,9 @@ function toFindingResponse(
   assetValue?: string | null,
   assetType?: string | null,
   assetLastScannedAt?: Date | null,
+  assetIpAddress?: string | null,
+  assetPort?: number | null,
+  assetTags?: string[] | null,
 ) {
   return {
     id: f.id, tenantId: f.tenantId, assetId: f.assetId,
@@ -24,6 +27,9 @@ function toFindingResponse(
     assetValue: assetValue ?? null,
     assetType: assetType ?? null,
     assetLastScannedAt: assetLastScannedAt ? assetLastScannedAt.toISOString() : null,
+    assetIpAddress: assetIpAddress ?? null,
+    assetPort: assetPort ?? null,
+    assetTags: assetTags ?? [],
     title: f.title, description: f.description, severity: f.severity, status: f.status,
     cve: f.cve, cvss: f.cvss, epss: f.epss, cwe: f.cwe, isKev: f.isKev,
     remediation: f.remediation, evidence: f.evidence, riskScore: f.riskScore,
@@ -55,11 +61,14 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     assetValue: assetsTable.value,
     assetType: assetsTable.type,
     assetLastScannedAt: assetsTable.lastScannedAt,
+    assetIpAddress: assetsTable.ipAddress,
+    assetPort: assetsTable.port,
+    assetTags: assetsTable.tags,
   }).from(findingsTable)
     .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
     .where(and(...filters));
-  res.json(findings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt }) =>
-    toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt)));
+  res.json(findings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags }) =>
+    toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags)));
 });
 
 router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -68,11 +77,82 @@ router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest
   const [row] = await db.select({
     finding: findingsTable,
     assetName: assetsTable.name,
+    assetValue: assetsTable.value,
+    assetType: assetsTable.type,
+    assetLastScannedAt: assetsTable.lastScannedAt,
+    assetIpAddress: assetsTable.ipAddress,
+    assetPort: assetsTable.port,
+    assetTags: assetsTable.tags,
   }).from(findingsTable)
     .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
     .where(and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
   if (!row) { res.status(404).json({ error: "Finding not found" }); return; }
-  res.json(toFindingResponse(row.finding, row.assetName));
+  res.json(toFindingResponse(row.finding, row.assetName, row.assetValue, row.assetType, row.assetLastScannedAt, row.assetIpAddress, row.assetPort, row.assetTags));
+});
+
+// ── GET /findings/:findingId/scan-data ─────────────────────────────────────
+// Returns aggregated ports, httpInfo, intelligence, vulnerabilities from the
+// most recent scan that covered this finding's asset.
+router.get("/findings/:findingId/scan-data", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const params = GetFindingParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  const [finding] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId })
+    .from(findingsTable)
+    .where(and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
+  if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
+
+  // Get the most recent scan asset results for this asset
+  const scanResults = await db.select().from(scanAssetResultsTable)
+    .where(and(
+      eq(scanAssetResultsTable.assetId, finding.assetId),
+      eq(scanAssetResultsTable.tenantId, req.user!.tenantId),
+    ))
+    .orderBy(desc(scanAssetResultsTable.createdAt));
+
+  if (scanResults.length === 0) {
+    res.json({ assetId: finding.assetId, ports: [], httpInfo: null, intelligence: [], subdomains: [], vulnerabilities: [] });
+    return;
+  }
+
+  // Aggregate all results across tool runs
+  const allPorts: unknown[] = [];
+  const allVulns: unknown[] = [];
+  const allSubdomains: unknown[] = [];
+  const allDns: unknown[] = [];
+  const allIntel: unknown[] = [];
+  let httpInfo: unknown = null;
+
+  for (const r of scanResults) {
+    if (r.ports)        allPorts.push(...(r.ports as unknown[]));
+    if (r.vulnerabilities) allVulns.push(...(r.vulnerabilities as unknown[]));
+    if (r.subdomains)   allSubdomains.push(...(r.subdomains as unknown[]));
+    if (r.dnsRecords)   allDns.push(...(r.dnsRecords as unknown[]));
+    if (r.intelligence) allIntel.push(...(r.intelligence as unknown[]));
+    if (r.httpInfo && !httpInfo) httpInfo = r.httpInfo;
+  }
+
+  function dedup<T extends Record<string, unknown>>(arr: T[], key: string): T[] {
+    const seen = new Set<string>();
+    return arr.filter(i => {
+      const k = String(i[key] ?? JSON.stringify(i));
+      return seen.has(k) ? false : (seen.add(k), true);
+    });
+  }
+
+  const ports = dedup(allPorts as Record<string, unknown>[], "port");
+  const vulns = dedup(allVulns as Record<string, unknown>[], "cve");
+  const subs  = dedup(allSubdomains as Record<string, unknown>[], "name");
+  const intel = dedup(allIntel as Record<string, unknown>[], "key");
+
+  res.json({
+    assetId: finding.assetId,
+    ports,
+    httpInfo: httpInfo ?? null,
+    intelligence: intel,
+    subdomains: subs,
+    vulnerabilities: vulns,
+  });
 });
 
 router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

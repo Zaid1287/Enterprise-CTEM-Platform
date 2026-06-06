@@ -18,6 +18,11 @@ export interface Finding {
   assetType?: string | null;
   /** @nullable */
   assetLastScannedAt?: string | null;
+  /** @nullable */
+  assetIpAddress?: string | null;
+  /** @nullable */
+  assetPort?: number | null;
+  assetTags?: string[];
   title: string;
   /** @nullable */
   description?: string | null;

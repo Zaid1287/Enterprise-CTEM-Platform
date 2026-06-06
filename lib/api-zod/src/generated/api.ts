@@ -793,6 +793,9 @@ export const ListFindingsResponseItem = zod.object({
   "assetValue": zod.string().nullish(),
   "assetType": zod.string().nullish(),
   "assetLastScannedAt": zod.string().nullish(),
+  "assetIpAddress": zod.string().nullish(),
+  "assetPort": zod.number().nullish(),
+  "assetTags": zod.array(zod.string()).optional(),
   "title": zod.string(),
   "description": zod.string().nullish(),
   "severity": zod.string(),
@@ -826,6 +829,9 @@ export const GetFindingResponse = zod.object({
   "assetValue": zod.string().nullish(),
   "assetType": zod.string().nullish(),
   "assetLastScannedAt": zod.string().nullish(),
+  "assetIpAddress": zod.string().nullish(),
+  "assetPort": zod.number().nullish(),
+  "assetTags": zod.array(zod.string()).optional(),
   "title": zod.string(),
   "description": zod.string().nullish(),
   "severity": zod.string(),
@@ -864,6 +870,9 @@ export const UpdateFindingResponse = zod.object({
   "assetValue": zod.string().nullish(),
   "assetType": zod.string().nullish(),
   "assetLastScannedAt": zod.string().nullish(),
+  "assetIpAddress": zod.string().nullish(),
+  "assetPort": zod.number().nullish(),
+  "assetTags": zod.array(zod.string()).optional(),
   "title": zod.string(),
   "description": zod.string().nullish(),
   "severity": zod.string(),
@@ -878,6 +887,54 @@ export const UpdateFindingResponse = zod.object({
   "riskScore": zod.number().nullish(),
   "createdAt": zod.string(),
   "updatedAt": zod.string().optional()
+})
+
+
+/**
+ * @summary Get aggregated scan data for the asset linked to a finding
+ */
+export const GetFindingScanDataParams = zod.object({
+  "findingId": zod.coerce.number()
+})
+
+export const GetFindingScanDataResponse = zod.object({
+  "assetId": zod.number().optional(),
+  "ports": zod.array(zod.object({
+  "port": zod.number().optional(),
+  "protocol": zod.string().optional(),
+  "service": zod.string().optional(),
+  "version": zod.string().optional(),
+  "state": zod.string().optional()
+})).optional(),
+  "httpInfo": zod.object({
+  "url": zod.string().optional(),
+  "title": zod.string().optional(),
+  "status": zod.number().optional(),
+  "server": zod.string().optional(),
+  "waf": zod.string().optional(),
+  "cdn": zod.string().optional(),
+  "tech": zod.array(zod.string()).optional(),
+  "headers": zod.record(zod.string(), zod.string()).optional()
+}).nullish(),
+  "intelligence": zod.array(zod.object({
+  "key": zod.string().optional(),
+  "type": zod.string().optional(),
+  "value": zod.string().optional()
+})).optional(),
+  "subdomains": zod.array(zod.object({
+  "name": zod.string().optional(),
+  "ip": zod.string().optional(),
+  "cname": zod.string().optional(),
+  "status": zod.string().optional()
+})).optional(),
+  "vulnerabilities": zod.array(zod.object({
+  "cve": zod.string().optional(),
+  "title": zod.string().optional(),
+  "severity": zod.string().optional(),
+  "description": zod.string().optional(),
+  "remediation": zod.string().optional(),
+  "cvss": zod.number().optional()
+})).optional()
 })
 
 

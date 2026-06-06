@@ -52,6 +52,7 @@ import type {
   Finding,
   FindingComment,
   FindingCommentInput,
+  FindingScanData,
   FindingUpdate,
   GetRiskTrendParams,
   GetTopRiskyAssetsParams,
@@ -3500,6 +3501,83 @@ export const useUpdateFinding = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getUpdateFindingMutationOptions(options));
     }
+
+export const getGetFindingScanDataUrl = (findingId: number,) => {
+
+
+
+
+  return `/api/findings/${findingId}/scan-data`
+}
+
+/**
+ * @summary Get aggregated scan data for the asset linked to a finding
+ */
+export const getFindingScanData = async (findingId: number, options?: RequestInit): Promise<FindingScanData> => {
+
+  return customFetch<FindingScanData>(getGetFindingScanDataUrl(findingId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFindingScanDataQueryKey = (findingId: number,) => {
+    return [
+    `/api/findings/${findingId}/scan-data`
+    ] as const;
+    }
+
+
+export const getGetFindingScanDataQueryOptions = <TData = Awaited<ReturnType<typeof getFindingScanData>>, TError = ErrorType<unknown>>(findingId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFindingScanData>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFindingScanDataQueryKey(findingId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFindingScanData>>> = ({ signal }) => getFindingScanData(findingId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(findingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFindingScanData>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFindingScanDataQueryResult = NonNullable<Awaited<ReturnType<typeof getFindingScanData>>>
+export type GetFindingScanDataQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get aggregated scan data for the asset linked to a finding
+ */
+
+export function useGetFindingScanData<TData = Awaited<ReturnType<typeof getFindingScanData>>, TError = ErrorType<unknown>>(
+ findingId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFindingScanData>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFindingScanDataQueryOptions(findingId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getListFindingCommentsUrl = (findingId: number,) => {
 

@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useListFindings, getListFindingsQueryKey } from "@workspace/api-client-react";
 import {
   Search, ExternalLink, ChevronLeft, ChevronRight, X,
@@ -286,6 +286,7 @@ function FindingDrawer({ finding, mode, onClose }: { finding: any; mode: DrawerM
 // ── Main Page ──────────────────────────────────────────────────────────────
 
 export default function FindingsPage() {
+  const [, navigate] = useLocation();
   const [search, setSearch]   = useState("");
   const [severity, setSeverity] = useState("");
   const [status, setStatus]   = useState("");
@@ -421,7 +422,7 @@ export default function FindingsPage() {
                 const impScore = importanceScore(f);
 
                 return (
-                  <tr key={f.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors group">
+                  <tr key={f.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors group cursor-pointer" onClick={() => navigate(`/findings/${f.id}`)}>
                     {/* Title */}
                     <td className="px-3 py-2.5 max-w-[240px]">
                       <div className="flex items-start gap-1.5">
@@ -500,7 +501,7 @@ export default function FindingsPage() {
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => openDrawer(f, "metadata")}
+                          onClick={(e) => { e.stopPropagation(); openDrawer(f, "metadata"); }}
                           className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
                           title="View Metadata"
                         >
@@ -508,7 +509,7 @@ export default function FindingsPage() {
                           <span className="hidden xl:inline">Meta</span>
                         </button>
                         <button
-                          onClick={() => openDrawer(f, "headers")}
+                          onClick={(e) => { e.stopPropagation(); openDrawer(f, "headers"); }}
                           className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-accent/60 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors font-medium"
                           title="View HTTP Headers"
                         >
@@ -516,7 +517,7 @@ export default function FindingsPage() {
                           <span className="hidden xl:inline">Headers</span>
                         </button>
                         <button
-                          onClick={() => openDrawer(f, "screenshots")}
+                          onClick={(e) => { e.stopPropagation(); openDrawer(f, "screenshots"); }}
                           className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-accent/60 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors font-medium"
                           title="View Screenshots"
                         >

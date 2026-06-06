@@ -237,6 +237,11 @@ export interface Finding {
   assetType?: string | null;
   /** @nullable */
   assetLastScannedAt?: string | null;
+  /** @nullable */
+  assetIpAddress?: string | null;
+  /** @nullable */
+  assetPort?: number | null;
+  assetTags?: string[];
   title: string;
   /** @nullable */
   description?: string | null;
@@ -259,6 +264,58 @@ export interface Finding {
   riskScore?: number | null;
   createdAt: string;
   updatedAt?: string;
+}
+
+export type FindingScanDataPortsItem = {
+  port?: number;
+  protocol?: string;
+  service?: string;
+  version?: string;
+  state?: string;
+};
+
+export type FindingScanDataHttpInfoHeaders = {[key: string]: string};
+
+export type FindingScanDataHttpInfo = {
+  url?: string;
+  title?: string;
+  status?: number;
+  server?: string;
+  waf?: string;
+  cdn?: string;
+  tech?: string[];
+  headers?: FindingScanDataHttpInfoHeaders;
+} | null;
+
+export type FindingScanDataIntelligenceItem = {
+  key?: string;
+  type?: string;
+  value?: string;
+};
+
+export type FindingScanDataSubdomainsItem = {
+  name?: string;
+  ip?: string;
+  cname?: string;
+  status?: string;
+};
+
+export type FindingScanDataVulnerabilitiesItem = {
+  cve?: string;
+  title?: string;
+  severity?: string;
+  description?: string;
+  remediation?: string;
+  cvss?: number;
+};
+
+export interface FindingScanData {
+  assetId?: number;
+  ports?: FindingScanDataPortsItem[];
+  httpInfo?: FindingScanDataHttpInfo;
+  intelligence?: FindingScanDataIntelligenceItem[];
+  subdomains?: FindingScanDataSubdomainsItem[];
+  vulnerabilities?: FindingScanDataVulnerabilitiesItem[];
 }
 
 export interface FindingUpdate {
