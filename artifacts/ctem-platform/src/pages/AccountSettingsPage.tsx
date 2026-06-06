@@ -106,25 +106,40 @@ export default function AccountSettingsPage() {
 
 // ── Profile Tab ────────────────────────────────────────────────────
 
+const ROLE_STYLE: Record<string, string> = {
+  super_admin:     "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  account_manager: "bg-blue-500/20   text-blue-400   border-blue-500/30",
+  admin:           "bg-green-500/20  text-green-400  border-green-500/30",
+  client:          "bg-muted text-muted-foreground border-border",
+};
+
 function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void }) {
   const { toast } = useToast();
   const [form, setForm] = useState({
     firstName: user?.firstName ?? "",
-    lastName: user?.lastName ?? "",
-    email: user?.email ?? "",
+    lastName:  user?.lastName  ?? "",
   });
   const [saving, setSaving] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+
+  const initials = `${user?.firstName?.[0] ?? ""}${user?.lastName?.[0] ?? ""}`.toUpperCase();
+  const fullName  = `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
+  const roleCls   = ROLE_STYLE[user?.role] ?? ROLE_STYLE.client;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!form.firstName.trim() || !form.lastName.trim()) {
+      toast({ title: "Name fields cannot be empty", variant: "destructive" }); return;
+    }
     setSaving(true);
     try {
       const updated = await apiFetch(`${BASE}/api/users/${user.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ firstName: form.firstName, lastName: form.lastName }),
+        body: JSON.stringify({ firstName: form.firstName.trim(), lastName: form.lastName.trim() }),
       });
       setUser({ ...user, ...(updated as any) });
-      toast({ title: "Profile updated successfully" });
+      setEditMode(false);
+      toast({ title: "Profile updated" });
     } catch {
       toast({ title: "Failed to update profile", variant: "destructive" });
     } finally {
@@ -132,61 +147,103 @@ function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void })
     }
   };
 
+  const handleCancel = () => {
+    setForm({ firstName: user?.firstName ?? "", lastName: user?.lastName ?? "" });
+    setEditMode(false);
+  };
+
   return (
-    <div className="bg-card border border-border rounded-xl p-6 space-y-5">
-      {/* Avatar */}
-      <div className="flex items-center gap-4">
-        <div className="w-16 h-16 rounded-full bg-primary/15 border border-primary/30 flex items-center justify-center text-xl font-bold text-primary">
-          {user?.firstName?.[0]}{user?.lastName?.[0]}
-        </div>
-        <div>
-          <p className="font-semibold">{user?.firstName} {user?.lastName}</p>
-          <p className="text-sm text-muted-foreground">{user?.email}</p>
-          <span className={cn(
-            "text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider mt-1 inline-block",
-            user?.role === "super_admin"     ? "bg-purple-500/20 text-purple-400 border border-purple-500/30" :
-            user?.role === "account_manager" ? "bg-blue-500/20   text-blue-400   border border-blue-500/30"   :
-            user?.role === "admin"           ? "bg-green-500/20  text-green-400  border border-green-500/30"   :
-                                               "bg-muted text-muted-foreground border border-border",
-          )}>
-            {user?.role?.replace(/_/g, " ")}
-          </span>
+    <div className="space-y-4">
+      {/* Identity card */}
+      <div className="bg-card border border-border rounded-xl p-6">
+        <div className="flex items-start gap-5">
+          {/* Avatar */}
+          <div className="relative shrink-0">
+            <div className="w-20 h-20 rounded-2xl bg-primary/15 border-2 border-primary/25 flex items-center justify-center text-2xl font-bold text-primary select-none">
+              {initials || "?"}
+            </div>
+            <span className={cn(
+              "absolute -bottom-2 left-1/2 -translate-x-1/2 text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border whitespace-nowrap",
+              roleCls
+            )}>
+              {user?.role?.replace(/_/g, " ")}
+            </span>
+          </div>
+
+          {/* Info block */}
+          <div className="flex-1 min-w-0 pt-1">
+            {editMode ? (
+              <form onSubmit={handleSave} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">First Name</Label>
+                    <Input
+                      value={form.firstName}
+                      onChange={e => setForm(p => ({ ...p, firstName: e.target.value }))}
+                      placeholder="First name"
+                      autoFocus
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Last Name</Label>
+                    <Input
+                      value={form.lastName}
+                      onChange={e => setForm(p => ({ ...p, lastName: e.target.value }))}
+                      placeholder="Last name"
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={saving}>
+                    {saving && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                    Save Changes
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={handleCancel}>Cancel</Button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-bold leading-tight">{fullName || "—"}</h2>
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="text-xs text-muted-foreground hover:text-foreground border border-border hover:border-primary/40 rounded-md px-2.5 py-1 transition-colors"
+                  >
+                    Edit
+                  </button>
+                </div>
+                <p className="text-sm text-muted-foreground">{user?.email}</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <form onSubmit={handleSave} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>First Name</Label>
-            <Input value={form.firstName} onChange={e => setForm(p => ({ ...p, firstName: e.target.value }))} placeholder="First name" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Last Name</Label>
-            <Input value={form.lastName} onChange={e => setForm(p => ({ ...p, lastName: e.target.value }))} placeholder="Last name" />
-          </div>
+      {/* Account details grid */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Email</p>
+          <p className="text-sm font-medium truncate">{user?.email ?? "—"}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Cannot be changed · contact support</p>
         </div>
-        <div className="space-y-1.5">
-          <Label>Email Address</Label>
-          <Input value={form.email} disabled className="bg-muted/30 text-muted-foreground cursor-not-allowed" />
-          <p className="text-xs text-muted-foreground">Email cannot be changed. Contact support if needed.</p>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Role</p>
+          <p className="text-sm font-medium capitalize">{user?.role?.replace(/_/g, " ") ?? "—"}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Assigned by your administrator</p>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>Tenant</Label>
-            <Input value={`Tenant #${user?.tenantId}`} disabled className="bg-muted/30 text-muted-foreground cursor-not-allowed" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Member Since</Label>
-            <Input value={user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"} disabled className="bg-muted/30 text-muted-foreground cursor-not-allowed" />
-          </div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Member Since</p>
+          <p className="text-sm font-medium">
+            {user?.createdAt ? new Date(user.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "—"}
+          </p>
         </div>
-        <div className="flex justify-end pt-1">
-          <Button type="submit" disabled={saving}>
-            {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
-            Save Changes
-          </Button>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Workspace ID</p>
+          <p className="text-sm font-mono font-medium">tenant-{user?.tenantId ?? "?"}</p>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

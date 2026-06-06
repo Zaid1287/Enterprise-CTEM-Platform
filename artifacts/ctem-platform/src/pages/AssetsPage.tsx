@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import {
   useListAssets, useCreateAsset, useUpdateAsset, useDeleteAsset,
@@ -103,7 +103,7 @@ export default function AssetsPage() {
   });
   const { data: scansData } = useListScans(
     { status: "running" } as any,
-    { query: { queryKey: getListScansQueryKey({ status: "running" } as any), refetchInterval: 5000 } },
+    { query: { queryKey: getListScansQueryKey({ status: "running" } as any), refetchInterval: 4000 } },
   );
 
   const users = (usersData as any[]) ?? [];
@@ -121,6 +121,15 @@ export default function AssetsPage() {
     }
     return map;
   }, [runningScans]);
+
+  // Auto-refresh asset list when all running scans finish (updates lastScannedAt + risk)
+  const prevRunningCount = useRef(runningScans.length);
+  useEffect(() => {
+    if (prevRunningCount.current > 0 && runningScans.length === 0) {
+      queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    }
+    prevRunningCount.current = runningScans.length;
+  }, [runningScans.length, queryClient]);
 
   const createAsset = useCreateAsset();
   const updateAsset = useUpdateAsset();
@@ -167,7 +176,7 @@ export default function AssetsPage() {
     if (newId && runNow && selectedToolIds.length > 0) {
       const result = await runPipeline.mutateAsync({
         data: {
-          name: `Scan – ${newAsset.name}`,
+          name: `${newAsset.value} Scan Report – ${new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}`,
           assetToolConfig: [{ assetId: newId, toolIds: selectedToolIds }],
         } as any,
       });
@@ -304,7 +313,7 @@ export default function AssetsPage() {
     try {
       const result = await runPipeline.mutateAsync({
         data: {
-          name: `Quick Scan – ${asset.name}`,
+          name: `${asset.value} Scan Report – ${new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}`,
           assetToolConfig: [{ assetId, toolIds: enabledTools.map((t: any) => t.toolId) }],
         } as any,
       });
@@ -971,7 +980,7 @@ function DnsTxtVerifyPanel({
             </div>
             <div>
               <p className="text-muted-foreground mb-0.5 font-sans">Host / Name</p>
-              <span className="text-foreground">_ctem-challenge</span>
+              <span className="text-foreground">{domain}</span>
             </div>
             <div>
               <p className="text-muted-foreground mb-0.5 font-sans">TTL</p>

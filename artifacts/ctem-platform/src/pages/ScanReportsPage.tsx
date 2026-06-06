@@ -62,6 +62,9 @@ export default function ScanReportsPage() {
   const { data: pipelineData } = useGetToolPipeline({ query: { queryKey: getGetToolPipelineQueryKey() } });
   const { data: assetsData } = useListAssets();
 
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(1);
+
   const allScans = (scansRaw as any[]) ?? [];
   const pipeline = (pipelineData as any[]) ?? [];
   const allAssets = (assetsData as any[]) ?? [];
@@ -75,6 +78,9 @@ export default function ScanReportsPage() {
     const matchStatus = statusFilter === "all" || s.status === statusFilter;
     return matchSearch && matchStatus;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const totalCompleted = allScans.filter((s: any) => s.status === "completed").length;
   const totalRunning   = allScans.filter((s: any) => s.status === "running").length;
@@ -138,12 +144,12 @@ export default function ScanReportsPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setPage(1); }}
             placeholder="Search scans…"
             className="pl-8 h-8 text-sm"
           />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter} onValueChange={v => { setStatusFilter(v); setPage(1); }}>
           <SelectTrigger className="w-36 h-8 text-sm">
             <Filter className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
             <SelectValue />
@@ -184,7 +190,7 @@ export default function ScanReportsPage() {
           </div>
         )}
 
-        {filtered.map((scan: any) => {
+        {paginated.map((scan: any) => {
           const cfg = statusConfig[scan.status] ?? statusConfig.cancelled;
           const StatusIcon = cfg.icon;
           const isRunning = scan.status === "running" || scan.status === "pending";
@@ -290,6 +296,22 @@ export default function ScanReportsPage() {
           );
         })}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-1">
+          <p className="text-xs text-muted-foreground">
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} scans
+          </p>
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</Button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+              <Button key={p} size="sm" variant={p === page ? "default" : "outline"} className="h-7 w-7 p-0 text-xs" onClick={() => setPage(p)}>{p}</Button>
+            ))}
+            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>›</Button>
+          </div>
+        </div>
+      )}
 
       {/* Run Scan Dialog */}
       <RunScanDialog
