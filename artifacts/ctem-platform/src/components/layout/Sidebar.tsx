@@ -5,20 +5,19 @@ import {
   LayoutDashboard, Server, Layers, Radar, Bug, ShieldCheck,
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, Shield, GitBranch, ScanSearch,
-  Package, UserCheck, ShieldOff, Settings,
+  Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
+import { useState } from "react";
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ElementType;
-  /** Only shown if current user role is in this list. Omit = visible to all. */
   onlyFor?: string[];
 }
 
 interface NavGroup {
   title: string;
-  /** Only shown if current user role is in this list. Omit = visible to all. */
   onlyFor?: string[];
   items: NavItem[];
 }
@@ -30,7 +29,6 @@ const navGroups: NavGroup[] = [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     ],
   },
-  // ─── Platform-only (new) ────────────────────────────────────────
   {
     title: "Platform",
     onlyFor: ["super_admin"],
@@ -53,7 +51,6 @@ const navGroups: NavGroup[] = [
       { label: "Takedown Requests", href: "/takedowns", icon: ShieldOff },
     ],
   },
-  // ─── Original CTEM modules — visible to all roles ───────────────
   {
     title: "Assets",
     items: [
@@ -85,7 +82,6 @@ const navGroups: NavGroup[] = [
       { label: "AI Copilot", href: "/ai-copilot", icon: Brain },
     ],
   },
-  // ─── Admin section ───────────────────────────────────────────────
   {
     title: "Admin",
     onlyFor: ["super_admin", "admin", "account_manager"],
@@ -95,7 +91,6 @@ const navGroups: NavGroup[] = [
       { label: "Audit Logs", href: "/audit-logs", icon: ClipboardList, onlyFor: ["super_admin", "admin", "account_manager"] },
     ],
   },
-  // ─── Account settings — visible to all ──────────────────────────
   {
     title: "Account",
     items: [
@@ -104,10 +99,19 @@ const navGroups: NavGroup[] = [
   },
 ];
 
+// Sidebar collapsed state stored in module scope so it persists across navigations
+let _collapsed = false;
+
 export function Sidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
   const role = user?.role ?? "client";
+  const [collapsed, setCollapsed] = useState(_collapsed);
+
+  const toggle = () => {
+    _collapsed = !collapsed;
+    setCollapsed(!collapsed);
+  };
 
   const visibleGroups = navGroups
     .filter(g => !g.onlyFor || g.onlyFor.includes(role))
@@ -118,52 +122,98 @@ export function Sidebar() {
     .filter(g => g.items.length > 0);
 
   return (
-    <aside className="flex flex-col w-60 shrink-0 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 overflow-y-auto">
-      {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 py-4 border-b border-sidebar-border">
-        <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/20 border border-primary/30">
-          <Shield className="w-4 h-4 text-primary" />
-        </div>
-        <div className="leading-none">
-          <p className="text-sm font-semibold text-foreground tracking-tight">CTEM</p>
-          <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Platform</p>
-        </div>
+    <aside
+      className={cn(
+        "flex flex-col shrink-0 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 overflow-y-auto transition-all duration-200",
+        collapsed ? "w-14" : "w-60",
+      )}
+    >
+      {/* Logo + toggle */}
+      <div className={cn(
+        "flex items-center border-b border-sidebar-border",
+        collapsed ? "justify-center px-0 py-4" : "gap-2.5 px-4 py-4 justify-between",
+      )}>
+        {!collapsed && (
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/20 border border-primary/30 shrink-0">
+              <Shield className="w-4 h-4 text-primary" />
+            </div>
+            <div className="leading-none min-w-0">
+              <p className="text-sm font-semibold text-foreground tracking-tight">CTEM</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Platform</p>
+            </div>
+          </div>
+        )}
+        {collapsed && (
+          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/20 border border-primary/30">
+            <Shield className="w-4 h-4 text-primary" />
+          </div>
+        )}
+        <button
+          onClick={toggle}
+          className={cn(
+            "flex items-center justify-center w-6 h-6 rounded hover:bg-sidebar-accent/60 text-muted-foreground hover:text-foreground transition-colors shrink-0",
+            collapsed && "hidden",
+          )}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          <PanelLeftClose className="w-4 h-4" />
+        </button>
       </div>
+
+      {/* Expand button when collapsed */}
+      {collapsed && (
+        <button
+          onClick={toggle}
+          className="flex items-center justify-center py-2 hover:bg-sidebar-accent/60 text-muted-foreground hover:text-foreground transition-colors"
+          title="Expand sidebar"
+        >
+          <PanelLeftOpen className="w-4 h-4" />
+        </button>
+      )}
 
       {/* Role badge */}
-      <div className="px-5 py-2 border-b border-sidebar-border">
-        <span className={cn(
-          "text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider",
-          role === "super_admin"     ? "bg-purple-500/20 text-purple-400 border border-purple-500/30" :
-          role === "account_manager" ? "bg-blue-500/20   text-blue-400   border border-blue-500/30"   :
-          role === "admin"           ? "bg-green-500/20  text-green-400  border border-green-500/30"   :
-                                       "bg-muted text-muted-foreground border border-border"
-        )}>
-          {role.replace(/_/g, " ")}
-        </span>
-      </div>
+      {!collapsed && (
+        <div className="px-4 py-2 border-b border-sidebar-border">
+          <span className={cn(
+            "text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider",
+            role === "super_admin"     ? "bg-purple-500/20 text-purple-400 border border-purple-500/30" :
+            role === "account_manager" ? "bg-blue-500/20   text-blue-400   border border-blue-500/30"   :
+            role === "admin"           ? "bg-green-500/20  text-green-400  border border-green-500/30"   :
+                                         "bg-muted text-muted-foreground border border-border"
+          )}>
+            {role.replace(/_/g, " ")}
+          </span>
+        </div>
+      )}
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-3 space-y-4">
+      <nav className={cn("flex-1 py-3 space-y-4", collapsed ? "px-1.5" : "px-3")}>
         {visibleGroups.map((group) => (
           <div key={group.title}>
-            <p className="px-2 mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
-              {group.title}
-            </p>
+            {!collapsed && (
+              <p className="px-2 mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                {group.title}
+              </p>
+            )}
             <div className="space-y-0.5">
               {group.items.map((item) => {
                 const isActive = location === item.href || location.startsWith(item.href + "/");
                 return (
                   <Link key={item.href} href={item.href}>
-                    <div className={cn(
-                      "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm cursor-pointer transition-all",
-                      isActive
-                        ? "bg-sidebar-accent text-foreground font-medium"
-                        : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
-                    )}>
+                    <div
+                      title={collapsed ? item.label : undefined}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md text-sm cursor-pointer transition-all",
+                        collapsed ? "justify-center px-0 py-2.5" : "px-2.5 py-2",
+                        isActive
+                          ? "bg-sidebar-accent text-foreground font-medium"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                      )}
+                    >
                       <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
-                      <span className="flex-1 truncate">{item.label}</span>
-                      {isActive && <ChevronRight className="w-3 h-3 text-primary opacity-70" />}
+                      {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+                      {!collapsed && isActive && <ChevronRight className="w-3 h-3 text-primary opacity-70" />}
                     </div>
                   </Link>
                 );
@@ -174,9 +224,11 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-3 border-t border-sidebar-border">
-        <p className="px-2 text-[10px] text-muted-foreground/40">v1.0.0 — Enterprise Edition</p>
-      </div>
+      {!collapsed && (
+        <div className="px-3 py-3 border-t border-sidebar-border">
+          <p className="px-2 text-[10px] text-muted-foreground/40">v1.0.0 — Enterprise Edition</p>
+        </div>
+      )}
     </aside>
   );
 }

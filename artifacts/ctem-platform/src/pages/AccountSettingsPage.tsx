@@ -67,7 +67,7 @@ export default function AccountSettingsPage() {
   const { user, setUser } = useAuth();
 
   return (
-    <div className="max-w-3xl space-y-5">
+    <div className="space-y-5">
       <div>
         <h1 className="text-lg font-semibold">Account Settings</h1>
         <p className="text-sm text-muted-foreground">Manage your profile, security, and team</p>
@@ -153,46 +153,66 @@ function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void })
   };
 
   return (
-    <div className="space-y-4">
-      {/* Identity card */}
-      <div className="bg-card border border-border rounded-xl p-6">
-        <div className="flex items-start gap-5">
-          {/* Avatar */}
-          <div className="relative shrink-0">
-            <div className="w-20 h-20 rounded-2xl bg-primary/15 border-2 border-primary/25 flex items-center justify-center text-2xl font-bold text-primary select-none">
-              {initials || "?"}
+    <div className="space-y-5">
+      {/* Hero identity card — full width, side-by-side layout */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        {/* Top accent strip */}
+        <div className="h-1.5 w-full bg-gradient-to-r from-primary/80 via-primary/40 to-transparent" />
+
+        <div className="p-6 flex flex-col sm:flex-row gap-8">
+          {/* Left: avatar + name block */}
+          <div className="flex items-center gap-5 shrink-0">
+            <div className="relative">
+              <div className="w-24 h-24 rounded-2xl bg-primary/15 border-2 border-primary/25 flex items-center justify-center text-3xl font-bold text-primary select-none shadow-inner">
+                {initials || "?"}
+              </div>
+              <span className={cn(
+                "absolute -bottom-2.5 left-1/2 -translate-x-1/2 text-[9px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border whitespace-nowrap shadow",
+                roleCls,
+              )}>
+                {user?.role?.replace(/_/g, " ")}
+              </span>
             </div>
-            <span className={cn(
-              "absolute -bottom-2 left-1/2 -translate-x-1/2 text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border whitespace-nowrap",
-              roleCls
-            )}>
-              {user?.role?.replace(/_/g, " ")}
-            </span>
+
+            <div className="space-y-0.5">
+              {editMode ? null : (
+                <>
+                  <h2 className="text-2xl font-bold leading-tight">{fullName || "—"}</h2>
+                  <p className="text-sm text-muted-foreground">{user?.email}</p>
+                </>
+              )}
+            </div>
           </div>
 
-          {/* Info block */}
-          <div className="flex-1 min-w-0 pt-1">
+          {/* Divider */}
+          <div className="hidden sm:block w-px bg-border self-stretch mx-2" />
+
+          {/* Right: edit form or info grid — takes remaining width */}
+          <div className="flex-1 min-w-0">
             {editMode ? (
-              <form onSubmit={handleSave} className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">First Name</Label>
-                    <Input
-                      value={form.firstName}
-                      onChange={e => setForm(p => ({ ...p, firstName: e.target.value }))}
-                      placeholder="First name"
-                      autoFocus
-                      className="h-9"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Last Name</Label>
-                    <Input
-                      value={form.lastName}
-                      onChange={e => setForm(p => ({ ...p, lastName: e.target.value }))}
-                      placeholder="Last name"
-                      className="h-9"
-                    />
+              <form onSubmit={handleSave} className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-semibold mb-3">Edit Profile</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">First Name</Label>
+                      <Input
+                        value={form.firstName}
+                        onChange={e => setForm(p => ({ ...p, firstName: e.target.value }))}
+                        placeholder="First name"
+                        autoFocus
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Last Name</Label>
+                      <Input
+                        value={form.lastName}
+                        onChange={e => setForm(p => ({ ...p, lastName: e.target.value }))}
+                        placeholder="Last name"
+                        className="h-9"
+                      />
+                    </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -204,44 +224,61 @@ function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void })
                 </div>
               </form>
             ) : (
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-xl font-bold leading-tight">{fullName || "—"}</h2>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Account Details</h3>
                   <button
                     onClick={() => setEditMode(true)}
-                    className="text-xs text-muted-foreground hover:text-foreground border border-border hover:border-primary/40 rounded-md px-2.5 py-1 transition-colors"
+                    className="text-xs text-muted-foreground hover:text-foreground border border-border hover:border-primary/40 rounded-md px-3 py-1.5 transition-colors"
                   >
-                    Edit
+                    Edit Profile
                   </button>
                 </div>
-                <p className="text-sm text-muted-foreground">{user?.email}</p>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-0.5">Email Address</p>
+                    <p className="text-sm font-medium truncate">{user?.email ?? "—"}</p>
+                    <p className="text-[10px] text-muted-foreground/70 mt-0.5">Contact support to change</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-0.5">Role</p>
+                    <span className={cn("inline-block text-xs px-2 py-0.5 rounded-md font-semibold border", roleCls)}>
+                      {user?.role?.replace(/_/g, " ") ?? "—"}
+                    </span>
+                    <p className="text-[10px] text-muted-foreground/70 mt-1">Assigned by administrator</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-0.5">Member Since</p>
+                    <p className="text-sm font-medium">
+                      {user?.createdAt
+                        ? new Date(user.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+                        : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-0.5">Workspace ID</p>
+                    <p className="text-sm font-mono font-medium text-primary">tenant-{user?.tenantId ?? "?"}</p>
+                  </div>
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Account details grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Email</p>
-          <p className="text-sm font-medium truncate">{user?.email ?? "—"}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Cannot be changed · contact support</p>
+      {/* Quick stats row */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-card border border-border rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold text-primary">—</p>
+          <p className="text-xs text-muted-foreground mt-1">Assets Assigned</p>
         </div>
-        <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Role</p>
-          <p className="text-sm font-medium capitalize">{user?.role?.replace(/_/g, " ") ?? "—"}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Assigned by your administrator</p>
+        <div className="bg-card border border-border rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold text-orange-400">—</p>
+          <p className="text-xs text-muted-foreground mt-1">Open Findings</p>
         </div>
-        <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Member Since</p>
-          <p className="text-sm font-medium">
-            {user?.createdAt ? new Date(user.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "—"}
-          </p>
-        </div>
-        <div className="bg-card border border-border rounded-xl p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-1">Workspace ID</p>
-          <p className="text-sm font-mono font-medium">tenant-{user?.tenantId ?? "?"}</p>
+        <div className="bg-card border border-border rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold text-green-400">—</p>
+          <p className="text-xs text-muted-foreground mt-1">Scans Completed</p>
         </div>
       </div>
     </div>
