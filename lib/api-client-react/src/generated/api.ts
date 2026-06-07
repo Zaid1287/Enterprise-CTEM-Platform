@@ -72,6 +72,7 @@ import type {
   Report,
   ReportInput,
   RiskScore,
+  RunTechScan200,
   RunToolBody,
   Scan,
   ScanInput,
@@ -84,6 +85,7 @@ import type {
   SecurityToolUpdate,
   SetPipelineBody,
   SeverityCount,
+  TechnologyDetection,
   Tenant,
   TenantInput,
   TenantUpdate,
@@ -1796,6 +1798,153 @@ export const useCheckAssetVerification = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCheckAssetVerificationMutationOptions(options));
+    }
+
+export const getListAssetTechnologiesUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/assets/${assetId}/technologies`
+}
+
+/**
+ * @summary List detected technologies for an asset
+ */
+export const listAssetTechnologies = async (assetId: number, options?: RequestInit): Promise<TechnologyDetection[]> => {
+
+  return customFetch<TechnologyDetection[]>(getListAssetTechnologiesUrl(assetId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAssetTechnologiesQueryKey = (assetId: number,) => {
+    return [
+    `/api/assets/${assetId}/technologies`
+    ] as const;
+    }
+
+
+export const getListAssetTechnologiesQueryOptions = <TData = Awaited<ReturnType<typeof listAssetTechnologies>>, TError = ErrorType<unknown>>(assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAssetTechnologies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAssetTechnologiesQueryKey(assetId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAssetTechnologies>>> = ({ signal }) => listAssetTechnologies(assetId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(assetId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAssetTechnologies>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAssetTechnologiesQueryResult = NonNullable<Awaited<ReturnType<typeof listAssetTechnologies>>>
+export type ListAssetTechnologiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List detected technologies for an asset
+ */
+
+export function useListAssetTechnologies<TData = Awaited<ReturnType<typeof listAssetTechnologies>>, TError = ErrorType<unknown>>(
+ assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAssetTechnologies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAssetTechnologiesQueryOptions(assetId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getRunTechScanUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/assets/${assetId}/tech-scan`
+}
+
+/**
+ * @summary Run real HTTP technology fingerprinting on an asset
+ */
+export const runTechScan = async (assetId: number, options?: RequestInit): Promise<RunTechScan200> => {
+
+  return customFetch<RunTechScan200>(getRunTechScanUrl(assetId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRunTechScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runTechScan>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runTechScan>>, TError,{assetId: number}, TContext> => {
+
+const mutationKey = ['runTechScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runTechScan>>, {assetId: number}> = (props) => {
+          const {assetId} = props ?? {};
+
+          return  runTechScan(assetId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunTechScanMutationResult = NonNullable<Awaited<ReturnType<typeof runTechScan>>>
+
+    export type RunTechScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Run real HTTP technology fingerprinting on an asset
+ */
+export const useRunTechScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runTechScan>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runTechScan>>,
+        TError,
+        {assetId: number},
+        TContext
+      > => {
+      return useMutation(getRunTechScanMutationOptions(options));
     }
 
 export const getListAssetGroupsUrl = () => {

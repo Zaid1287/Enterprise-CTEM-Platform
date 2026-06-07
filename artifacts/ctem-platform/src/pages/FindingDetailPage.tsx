@@ -3,8 +3,9 @@ import { Link, useParams } from "wouter";
 import {
   useGetFinding, useGetFindingScanData, useListFindings, useUpdateFinding,
   useListFindingComments, useCreateFindingComment,
+  useListAssetTechnologies, useRunTechScan,
   getGetFindingQueryKey, getGetFindingScanDataQueryKey, getListFindingsQueryKey,
-  getListFindingCommentsQueryKey,
+  getListFindingCommentsQueryKey, getListAssetTechnologiesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,6 +20,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, capitalize, formatDate, formatDateTime } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2, RefreshCw } from "lucide-react";
 
 // ── Style maps ─────────────────────────────────────────────────────────────
 
@@ -263,10 +266,29 @@ function CommentsSection({ findingId }: { findingId: number }) {
 
 // ── Main Page ──────────────────────────────────────────────────────────────
 
+const TECH_CATEGORY_COLOR: Record<string, string> = {
+  "Web Server":           "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  "CMS":                  "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  "E-commerce":           "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  "JavaScript Framework": "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
+  "JavaScript Library":   "bg-sky-500/10 text-sky-400 border-sky-500/20",
+  "UI Framework":         "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+  "CSS Framework":        "bg-violet-500/10 text-violet-400 border-violet-500/20",
+  "Programming Language": "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  "Web Framework":        "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  "CDN":                  "bg-slate-500/10 text-slate-400 border-slate-500/20",
+  "Analytics":            "bg-rose-500/10 text-rose-400 border-rose-500/20",
+  "Security":             "bg-red-500/10 text-red-400 border-red-500/20",
+  "Payment":              "bg-green-500/10 text-green-400 border-green-500/20",
+  "PaaS":                 "bg-teal-500/10 text-teal-400 border-teal-500/20",
+};
+
 export default function FindingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const findingId = parseInt(id ?? "0", 10);
   const qc = useQueryClient();
+  const { toast } = useToast();
+  const [techScanning, setTechScanning] = useState(false);
 
   const { data: finding, isLoading: loadingF } = useGetFinding(
     findingId,
@@ -290,12 +312,38 @@ export default function FindingDetailPage() {
     },
   );
 
+  const { data: assetTechs, refetch: refetchTechs } = useListAssetTechnologies(
+    f?.assetId ?? 0,
+    {
+      query: {
+        queryKey: getListAssetTechnologiesQueryKey(f?.assetId ?? 0),
+        enabled: !!f?.assetId,
+      },
+    },
+  );
+  const runTechScan = useRunTechScan();
+
   const updateFinding = useUpdateFinding();
   const otherFindings = ((siblings as any[]) ?? []).filter((s: any) => s.id !== findingId);
 
   async function handleStatusChange(status: string) {
     await updateFinding.mutateAsync({ findingId, data: { status } });
     qc.invalidateQueries({ queryKey: getGetFindingQueryKey(findingId) });
+  }
+
+  async function handleTechScan() {
+    if (!f?.assetId) return;
+    setTechScanning(true);
+    try {
+      const res = await runTechScan.mutateAsync({ assetId: f.assetId });
+      await refetchTechs();
+      const count = (res as any)?.technologies?.length ?? 0;
+      toast({ title: "Tech scan complete", description: `${count} technolog${count === 1 ? "y" : "ies"} detected.` });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Tech scan failed", variant: "destructive" });
+    } finally {
+      setTechScanning(false);
+    }
   }
 
   if (loadingF) {
@@ -344,8 +392,14 @@ export default function FindingDetailPage() {
       ? [{ port: f.assetPort, protocol: "tcp", service: "—", version: "—", state: "open" }]
       : [];
 
-  // Technologies from httpInfo
-  const techs: string[] = scan?.httpInfo?.tech ?? [];
+  // Technologies from httpInfo (legacy) + DB detections
+  const httpTechs: string[] = scan?.httpInfo?.tech ?? [];
+  const detectedTechs = (assetTechs as any[]) ?? [];
+  const techGrouped: Record<string, any[]> = {};
+  for (const t of detectedTechs) {
+    if (!techGrouped[t.category]) techGrouped[t.category] = [];
+    techGrouped[t.category].push(t);
+  }
 
   // Scan CVEs (excluding internal codes)
   const scanCves: any[] = (scan?.vulnerabilities ?? [])
@@ -470,13 +524,13 @@ export default function FindingDetailPage() {
             </KV>}
             {scan?.httpInfo?.server && <KV label="Server"><span className="font-mono">{scan.httpInfo.server}</span></KV>}
 
-            {techs.length > 0 && (
+            {httpTechs.length > 0 && detectedTechs.length === 0 && (
               <div className="flex items-start justify-between gap-4 py-2 border-b border-border/40">
                 <span className="text-xs text-muted-foreground shrink-0 w-32 flex items-center gap-1.5">
                   <Layers className="w-3 h-3" /> Technologies
                 </span>
                 <div className="flex flex-wrap gap-1 justify-end">
-                  {techs.map((t: string) => (
+                  {httpTechs.map((t: string) => (
                     <span key={t} className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium">{t}</span>
                   ))}
                 </div>
@@ -718,6 +772,83 @@ export default function FindingDetailPage() {
                     </div>
                   );
                 })}
+              </div>
+            </Section>
+          )}
+
+          {/* Detected Technologies */}
+          {f?.assetId && (
+            <Section
+              title={`Detected Technologies${detectedTechs.length > 0 ? ` (${detectedTechs.length})` : ""}`}
+              icon={Cpu}
+            >
+              <div className="space-y-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full h-7 text-xs gap-1.5"
+                  disabled={techScanning}
+                  onClick={handleTechScan}
+                >
+                  {techScanning
+                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</>
+                    : <><RefreshCw className="w-3 h-3" /> {detectedTechs.length > 0 ? "Re-scan" : "Detect Technologies"}</>}
+                </Button>
+
+                {techScanning && (
+                  <div className="py-3 flex flex-col items-center gap-1.5 text-muted-foreground">
+                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                    <p className="text-[10px]">Fingerprinting asset…</p>
+                  </div>
+                )}
+
+                {!techScanning && detectedTechs.length === 0 && (
+                  <p className="text-[10px] text-muted-foreground/60 text-center py-2">
+                    No technologies detected yet. Run a scan to fingerprint this asset.
+                  </p>
+                )}
+
+                {!techScanning && detectedTechs.length > 0 && (
+                  <div className="space-y-3">
+                    {Object.entries(techGrouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => (
+                      <div key={category}>
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">{category}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {items.map((t: any) => (
+                            <div
+                              key={t.id}
+                              className={cn(
+                                "flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-medium",
+                                TECH_CATEGORY_COLOR[t.category] ?? "bg-muted text-muted-foreground border-border"
+                              )}
+                            >
+                              {t.icon && <span>{t.icon}</span>}
+                              <span>{t.technology}</span>
+                              {t.version && (
+                                <span className="opacity-60 font-mono bg-black/10 px-1 rounded text-[9px]">{t.version}</span>
+                              )}
+                              {t.confidence < 100 && (
+                                <span className="opacity-40 text-[9px]">{t.confidence}%</span>
+                              )}
+                              {t.website && (
+                                <a href={t.website} target="_blank" rel="noopener noreferrer"
+                                   className="opacity-40 hover:opacity-80 transition-opacity"
+                                   onClick={e => e.stopPropagation()}>
+                                  <ExternalLink className="w-2 h-2" />
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {detectedTechs[0]?.detectedAt && (
+                      <p className="text-[9px] text-muted-foreground/40 pt-1">
+                        Last scanned {formatDate(detectedTechs[0].detectedAt)}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </Section>
           )}

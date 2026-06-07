@@ -5,6 +5,21 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+export interface TechnologyDetection {
+  id: number;
+  assetId: number;
+  scanId?: number | null;
+  technology: string;
+  slug: string;
+  category: string;
+  version?: string | null;
+  confidence: number;
+  website?: string | null;
+  cpe?: string | null;
+  icon?: string | null;
+  detectedAt: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -738,6 +753,11 @@ type?: string;
 tag?: string;
 search?: string;
 verificationStatus?: string;
+};
+
+export type RunTechScan200 = {
+  technologies: TechnologyDetection[];
+  scannedAt: string;
 };
 
 export type ListScansParams = {

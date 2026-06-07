@@ -2,21 +2,49 @@ import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import {
   useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
+  useListAssetTechnologies, useRunTechScan,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
+  getListAssetTechnologiesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
 import { cn, severityBgColor, statusBadgeClass, riskLevelBg, capitalize, formatDate } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+
+const CATEGORY_COLOR: Record<string, string> = {
+  "Web Server":           "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  "CMS":                  "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  "E-commerce":           "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  "JavaScript Framework": "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
+  "JavaScript Library":   "bg-sky-500/10 text-sky-400 border-sky-500/20",
+  "UI Framework":         "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+  "CSS Framework":        "bg-violet-500/10 text-violet-400 border-violet-500/20",
+  "Programming Language": "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  "Web Framework":        "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  "CDN":                  "bg-slate-500/10 text-slate-400 border-slate-500/20",
+  "Analytics":            "bg-rose-500/10 text-rose-400 border-rose-500/20",
+  "Tag Manager":          "bg-pink-500/10 text-pink-400 border-pink-500/20",
+  "Security":             "bg-red-500/10 text-red-400 border-red-500/20",
+  "Payment":              "bg-green-500/10 text-green-400 border-green-500/20",
+  "PaaS":                 "bg-teal-500/10 text-teal-400 border-teal-500/20",
+  "Caching":              "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+};
+
+function categoryColor(cat: string) {
+  return CATEGORY_COLOR[cat] ?? "bg-muted text-muted-foreground border-border";
+}
 
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const id = parseInt(params.id ?? "0", 10);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [verifying, setVerifying] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   const { data: asset, isLoading } = useGetAsset(id, {
     query: { enabled: !!id, queryKey: getGetAssetQueryKey(id) },
@@ -27,7 +55,11 @@ export default function AssetDetailPage() {
   const { data: riskScore } = useGetAssetRiskScore(id, {
     query: { enabled: !!id, queryKey: getGetAssetRiskScoreQueryKey(id) },
   });
+  const { data: technologies, refetch: refetchTechs } = useListAssetTechnologies(id, {
+    query: { enabled: !!id, queryKey: getListAssetTechnologiesQueryKey(id) },
+  });
   const verifyAsset = useCheckAssetVerification();
+  const runTechScan = useRunTechScan();
 
   const handleVerify = async () => {
     setVerifying(true);
@@ -39,8 +71,33 @@ export default function AssetDetailPage() {
     }
   };
 
+  const handleTechScan = async () => {
+    setScanning(true);
+    try {
+      const res = await runTechScan.mutateAsync({ assetId: id });
+      await refetchTechs();
+      const count = (res as any)?.technologies?.length ?? 0;
+      toast({ title: `Technology scan complete`, description: `${count} technolog${count === 1 ? "y" : "ies"} detected.` });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Tech scan failed", variant: "destructive" });
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const a = asset as any;
   const rs = riskScore as any;
+  const techs = (technologies as any[]) ?? [];
+
+  // Group by category
+  const grouped: Record<string, any[]> = {};
+  for (const t of techs) {
+    if (!grouped[t.category]) grouped[t.category] = [];
+    grouped[t.category].push(t);
+  }
+
+  const webTypes = ["domain", "subdomain", "url", "ip"];
+  const canScan = a && webTypes.includes(a.type);
 
   if (isLoading) return <div className="space-y-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}</div>;
   if (!a) return <div className="text-muted-foreground">Asset not found</div>;
@@ -146,6 +203,81 @@ export default function AssetDetailPage() {
             <p className="text-sm text-muted-foreground">No findings for this asset.</p>
           )}
         </div>
+      </div>
+
+      {/* Technology Detection */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-sm font-medium">Detected Technologies</h3>
+            {techs.length > 0 && (
+              <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium">{techs.length}</span>
+            )}
+          </div>
+          {canScan && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-3 text-xs gap-1.5"
+              disabled={scanning}
+              onClick={handleTechScan}
+            >
+              {scanning
+                ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</>
+                : <><RefreshCw className="w-3 h-3" /> {techs.length > 0 ? "Re-scan" : "Detect Technologies"}</>}
+            </Button>
+          )}
+        </div>
+
+        {scanning && (
+          <div className="py-6 flex flex-col items-center gap-2 text-muted-foreground">
+            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            <p className="text-xs">Fingerprinting {a.value}…</p>
+            <p className="text-[10px] text-muted-foreground/60">Fetching HTTP headers, HTML patterns, and scripts</p>
+          </div>
+        )}
+
+        {!scanning && techs.length === 0 && (
+          <div className="py-6 text-center text-sm text-muted-foreground">
+            {canScan
+              ? "No technologies detected yet. Click \"Detect Technologies\" to run a real-time fingerprint scan."
+              : "Technology detection is only available for domain, subdomain, URL, and IP assets."}
+          </div>
+        )}
+
+        {!scanning && techs.length > 0 && (
+          <div className="space-y-4">
+            {Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => (
+              <div key={category}>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">{category}</p>
+                <div className="flex flex-wrap gap-2">
+                  {items.map((t: any) => (
+                    <div key={t.id} className={cn("flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium", categoryColor(t.category))}>
+                      {t.icon && <span>{t.icon}</span>}
+                      <span>{t.technology}</span>
+                      {t.version && (
+                        <span className="text-[10px] opacity-70 font-mono bg-black/10 px-1 rounded">{t.version}</span>
+                      )}
+                      {t.confidence < 100 && (
+                        <span className="text-[10px] opacity-50">{t.confidence}%</span>
+                      )}
+                      {t.website && (
+                        <a href={t.website} target="_blank" rel="noopener noreferrer" className="opacity-50 hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <p className="text-[10px] text-muted-foreground/50 mt-2">
+              Last scanned: {formatDate(techs[0]?.detectedAt)}
+              {techs[0]?.cpe && <span className="ml-2 font-mono">{techs[0].cpe}</span>}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

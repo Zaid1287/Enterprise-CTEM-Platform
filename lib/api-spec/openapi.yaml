@@ -471,6 +471,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/VerificationResult"
 
+  /assets/{assetId}/technologies:
+    get:
+      operationId: listAssetTechnologies
+      tags: [assets]
+      summary: List detected technologies for an asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of technology detections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TechnologyDetection"
+
+  /assets/{assetId}/tech-scan:
+    post:
+      operationId: runTechScan
+      tags: [assets]
+      summary: Run real HTTP technology fingerprinting on an asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Tech scan results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [technologies, scannedAt]
+                properties:
+                  technologies:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TechnologyDetection"
+                  scannedAt:
+                    type: string
+
   # ──────────────────────────────────────────────────────────
   # ASSET GROUPS
   # ──────────────────────────────────────────────────────────
@@ -1738,6 +1786,40 @@ paths:
 
 components:
   schemas:
+    TechnologyDetection:
+      type: object
+      required: [id, assetId, technology, slug, category, confidence, detectedAt]
+      properties:
+        id:
+          type: integer
+        assetId:
+          type: integer
+        scanId:
+          type: integer
+          nullable: true
+        technology:
+          type: string
+        slug:
+          type: string
+        category:
+          type: string
+        version:
+          type: string
+          nullable: true
+        confidence:
+          type: integer
+        website:
+          type: string
+          nullable: true
+        cpe:
+          type: string
+          nullable: true
+        icon:
+          type: string
+          nullable: true
+        detectedAt:
+          type: string
+
     HealthStatus:
       type: object
       required: [status]

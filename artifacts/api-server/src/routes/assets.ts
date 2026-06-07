@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, and, ilike, sql, inArray } from "drizzle-orm";
-import { db, assetsTable, usersTable, findingsTable, riskScoresTable } from "@workspace/db";
+import { eq, and, ilike, sql, inArray, desc } from "drizzle-orm";
+import { db, assetsTable, usersTable, findingsTable, riskScoresTable, technologyDetectionsTable } from "@workspace/db";
 import {
   CreateAssetBody, GetAssetParams, UpdateAssetParams, UpdateAssetBody,
   DeleteAssetParams, VerifyAssetParams, VerifyAssetBody, CheckAssetVerificationParams,
@@ -8,6 +8,7 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
+import { detectTechnologies } from "../lib/techDetector";
 import crypto from "crypto";
 import dns from "dns/promises";
 import multer from "multer";
@@ -295,6 +296,90 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
     .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
   await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
   res.json({ verified: true, message: "Asset ownership successfully verified" });
+});
+
+// ── Technology Detection ─────────────────────────────────────────────────
+
+// List stored technology detections for an asset
+router.get("/assets/:assetId/technologies", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const assetId = parseInt(req.params.assetId, 10);
+  if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
+
+  const rows = await db.select().from(technologyDetectionsTable)
+    .where(and(
+      eq(technologyDetectionsTable.assetId, assetId),
+      eq(technologyDetectionsTable.tenantId, req.user!.tenantId),
+    ))
+    .orderBy(desc(technologyDetectionsTable.detectedAt));
+
+  res.json(rows.map(r => ({
+    id: r.id, assetId: r.assetId, scanId: r.scanId,
+    technology: r.technology, slug: r.slug, category: r.category,
+    version: r.version, confidence: r.confidence,
+    website: r.website, cpe: r.cpe, icon: r.icon,
+    detectedAt: r.detectedAt.toISOString(),
+  })));
+});
+
+// Run real HTTP technology fingerprinting and store results
+router.post("/assets/:assetId/tech-scan", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const assetId = parseInt(req.params.assetId, 10);
+  if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
+
+  const [asset] = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  // Only web-addressable assets can be fingerprinted
+  const webTypes = ["domain", "subdomain", "url", "ip"];
+  if (!webTypes.includes(asset.type)) {
+    res.status(422).json({ error: `Tech scanning is only supported for domain, subdomain, url, and ip assets (got: ${asset.type})` });
+    return;
+  }
+
+  const targetUrl = asset.value;
+  const techs = await detectTechnologies(targetUrl);
+
+  const scannedAt = new Date();
+
+  // Remove any previous detections for this asset, then insert fresh results
+  await db.delete(technologyDetectionsTable)
+    .where(and(
+      eq(technologyDetectionsTable.assetId, assetId),
+      eq(technologyDetectionsTable.tenantId, req.user!.tenantId),
+    ));
+
+  let inserted: (typeof technologyDetectionsTable.$inferSelect)[] = [];
+  if (techs.length > 0) {
+    inserted = await db.insert(technologyDetectionsTable).values(
+      techs.map(t => ({
+        tenantId: req.user!.tenantId,
+        assetId,
+        technology: t.name,
+        slug: t.slug,
+        category: t.category,
+        version: t.version ?? null,
+        confidence: t.confidence,
+        website: t.website ?? null,
+        cpe: t.cpe ?? null,
+        icon: t.icon ?? null,
+        detectedAt: scannedAt,
+      }))
+    ).returning();
+  }
+
+  await logAudit(req.user!, "tech_scan", "asset", assetId);
+
+  res.json({
+    technologies: inserted.map(r => ({
+      id: r.id, assetId: r.assetId, scanId: r.scanId,
+      technology: r.technology, slug: r.slug, category: r.category,
+      version: r.version, confidence: r.confidence,
+      website: r.website, cpe: r.cpe, icon: r.icon,
+      detectedAt: r.detectedAt.toISOString(),
+    })),
+    scannedAt: scannedAt.toISOString(),
+  });
 });
 
 // Upload evidence files for an asset

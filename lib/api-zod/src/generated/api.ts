@@ -418,6 +418,56 @@ export const CheckAssetVerificationResponse = zod.object({
 
 
 /**
+ * @summary List detected technologies for an asset
+ */
+export const ListAssetTechnologiesParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const ListAssetTechnologiesResponseItem = zod.object({
+  "id": zod.number(),
+  "assetId": zod.number(),
+  "scanId": zod.number().nullish(),
+  "technology": zod.string(),
+  "slug": zod.string(),
+  "category": zod.string(),
+  "version": zod.string().nullish(),
+  "confidence": zod.number(),
+  "website": zod.string().nullish(),
+  "cpe": zod.string().nullish(),
+  "icon": zod.string().nullish(),
+  "detectedAt": zod.string()
+})
+export const ListAssetTechnologiesResponse = zod.array(ListAssetTechnologiesResponseItem)
+
+
+/**
+ * @summary Run real HTTP technology fingerprinting on an asset
+ */
+export const RunTechScanParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const RunTechScanResponse = zod.object({
+  "technologies": zod.array(zod.object({
+  "id": zod.number(),
+  "assetId": zod.number(),
+  "scanId": zod.number().nullish(),
+  "technology": zod.string(),
+  "slug": zod.string(),
+  "category": zod.string(),
+  "version": zod.string().nullish(),
+  "confidence": zod.number(),
+  "website": zod.string().nullish(),
+  "cpe": zod.string().nullish(),
+  "icon": zod.string().nullish(),
+  "detectedAt": zod.string()
+})),
+  "scannedAt": zod.string()
+})
+
+
+/**
  * @summary List asset groups
  */
 export const ListAssetGroupsResponseItem = zod.object({
