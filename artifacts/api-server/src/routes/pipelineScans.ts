@@ -4,7 +4,8 @@ import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray } from "drizzle-orm";
-import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable } from "@workspace/db";
+import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable } from "@workspace/db";
+import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
@@ -44,7 +45,7 @@ const TOOL_PHASE: Record<string, number> = {
   theHarvester: 1, aix: 1, maltego: 1,
   naabu: 2, masscan: 2, rustscan: 2,
   httpx: 3, katana: 3, feroxbuster: 3, gobuster: 3, ffuf: 3,
-  whatweb: 3, wafw00f: 3, useragent: 3,
+  whatweb: 3, wafw00f: 3, useragent: 3, wappalyzer: 3, webcheck: 3,
   nuclei: 4, nikto: 4, wpscan: 4, trufflehog: 4, wapiti: 4, vulnx: 4, goleak: 4,
   testssl: 5, sslscan: 5,
 };
@@ -658,7 +659,7 @@ function buildRawOutput(toolName: string, target: string, phase: string, data: {
   ports?: PortFinding[] | null; nmapRaw?: string; subdomains?: SubdomainFinding[] | null;
   dnsRecords?: DnsRecord[] | null; httpInfo?: HttpInfo | null; endpoints?: EndpointFinding[] | null;
   vulnerabilities?: VulnFinding[] | null; intelligence?: IntelItem[] | null;
-  secretsFound?: VulnFinding[] | null;
+  secretsFound?: VulnFinding[] | null; technologies?: DetectedTechnology[] | null;
 }): string {
   const ts = new Date().toISOString();
   const lines = [`[${toolName}] Target: ${target}`, `[${toolName}] Phase: ${phase}`, `[${toolName}] Started: ${ts}`, ""];
@@ -713,6 +714,21 @@ function buildRawOutput(toolName: string, target: string, phase: string, data: {
     }
     lines.push("");
   }
+  if (data.technologies?.length) {
+    lines.push("=== TECHNOLOGIES DETECTED ===");
+    lines.push("  TECHNOLOGY                    CATEGORY              VERSION     CONFIDENCE");
+    for (const t of data.technologies) {
+      const name = t.name.padEnd(29);
+      const cat  = t.category.padEnd(21);
+      const ver  = (t.version ?? "—").padEnd(11);
+      lines.push(`  ${name} ${cat} ${ver} ${t.confidence}%`);
+    }
+    const categories = [...new Set(data.technologies.map(t => t.category))];
+    lines.push("");
+    lines.push(`  Summary: ${data.technologies.length} technologies detected across ${categories.length} categories`);
+    lines.push(`  Categories: ${categories.join(", ")}`);
+    lines.push("");
+  }
   if (data.vulnerabilities?.length) {
     lines.push("=== VULNERABILITIES IDENTIFIED ===");
     for (const v of data.vulnerabilities) {
@@ -743,6 +759,26 @@ async function executePipeline(
   const assetIds = assetConfigs.map(c => c.assetId);
   const assets = await db.select().from(assetsTable)
     .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
+
+  // ── Auto-ensure wappalyzer & webcheck exist for this tenant ───────────────
+  const techToolDefs = [
+    { name: "wappalyzer", description: "Technology fingerprinting engine — identifies CMS, JS frameworks, CDN, analytics, security products, and 60+ tech categories via HTTP headers, HTML patterns, cookies, and script signatures", category: "web_recon" },
+    { name: "webcheck",   description: "Comprehensive web security checker — audits HTTP security headers (HSTS, CSP, X-Frame-Options, CORP, COEP), cookie flags, TLS configuration, and security policy compliance",          category: "web_recon" },
+  ];
+  for (const def of techToolDefs) {
+    const exists = await db.select({ id: securityToolsTable.id })
+      .from(securityToolsTable)
+      .where(and(eq(securityToolsTable.tenantId, tenantId), eq(securityToolsTable.name, def.name)))
+      .then(r => r.length > 0);
+    if (!exists) {
+      await db.insert(securityToolsTable).values({
+        tenantId, name: def.name, description: def.description, category: def.category,
+        githubUrl: def.name === "wappalyzer" ? "https://github.com/enthec/webappanalyzer" : "https://github.com/lissy93/web-check",
+        installCommand: "built-in (no install required)", updateCommand: "built-in",
+        runCommand: `${def.name} {target}`, outputFormat: "json", isActive: true,
+      });
+    }
+  }
 
   let totalFindings = 0;
   scanProgressMap.set(scanId, []);
@@ -858,6 +894,7 @@ async function executePipeline(
     // ── PHASE 3: Web Recon ────────────────────────────────────────────────────
     let httpInfo: HttpInfo | null = null;
     let endpoints: EndpointFinding[] = [];
+    let detectedTechs: DetectedTechnology[] = [];
     if (needsHttp || toolsForAsset.some(t => t.category === "web_recon")) {
       const p3Start = Date.now();
       for (const t of p3) startTool(t.name, `Probing web application at ${domain}…`);
@@ -865,17 +902,51 @@ async function executePipeline(
       await Promise.allSettled([
         (async () => { httpInfo  = await runHttpProbe(target); })(),
         (async () => { endpoints = await runEndpointProbe(target); })(),
+        (async () => { detectedTechs = await detectTechnologies(target); })(),
       ]);
+
+      // ── Auto-store technology detections for this asset ──────────────────
+      if (detectedTechs.length > 0) {
+        await db.delete(technologyDetectionsTable)
+          .where(and(eq(technologyDetectionsTable.tenantId, tenantId), eq(technologyDetectionsTable.assetId, asset.id)));
+        await db.insert(technologyDetectionsTable).values(
+          detectedTechs.map(t => ({
+            tenantId,
+            assetId: asset.id,
+            scanId,
+            technology: t.name,
+            slug: t.slug,
+            category: t.category,
+            version: t.version ?? null,
+            confidence: t.confidence,
+            website: t.website ?? null,
+            cpe: t.cpe ?? null,
+            icon: t.icon ?? null,
+          }))
+        );
+      }
 
       const headerVulns = analyzeSecurityHeaders(httpInfo);
       const techList = httpInfo?.tech ?? [];
 
       for (const t of p3) {
         let detail = "";
-        if (["httpx", "whatweb", "wafw00f"].includes(t.name)) detail = `${techList.join(", ") || "no tech"} | WAF: ${httpInfo?.waf ?? "none"}`;
-        else if (["feroxbuster", "gobuster", "ffuf", "katana"].includes(t.name)) detail = `${endpoints.length} endpoints discovered`;
-        else detail = `${endpoints.length} endpoints, ${headerVulns.length} header issues`;
-        doneTool(t.name, endpoints.length + headerVulns.length, detail, p3Start);
+        if (t.name === "wappalyzer") {
+          detail = `${detectedTechs.length} technologies detected: ${[...new Set(detectedTechs.map(t => t.category))].join(", ")}`;
+          doneTool(t.name, detectedTechs.length, detail, p3Start);
+        } else if (t.name === "webcheck") {
+          detail = `${headerVulns.length} security header issues | WAF: ${httpInfo?.waf ?? "none"} | CDN: ${httpInfo?.cdn ?? "none"}`;
+          doneTool(t.name, headerVulns.length, detail, p3Start);
+        } else if (["httpx", "whatweb", "wafw00f"].includes(t.name)) {
+          detail = `${techList.join(", ") || "no tech"} | WAF: ${httpInfo?.waf ?? "none"}`;
+          doneTool(t.name, endpoints.length + headerVulns.length, detail, p3Start);
+        } else if (["feroxbuster", "gobuster", "ffuf", "katana"].includes(t.name)) {
+          detail = `${endpoints.length} endpoints discovered`;
+          doneTool(t.name, endpoints.length, detail, p3Start);
+        } else {
+          detail = `${endpoints.length} endpoints, ${headerVulns.length} header issues`;
+          doneTool(t.name, endpoints.length + headerVulns.length, detail, p3Start);
+        }
       }
     }
 
@@ -915,6 +986,23 @@ async function executePipeline(
       for (const t of p5) doneTool(t.name, sslVulns.length, `${sslIntel.length} cert details, ${sslVulns.length} issues`, p5Start);
     }
 
+    // ── Fallback tech detection (runs when no web_recon phase 3 tools ran) ────
+    if (detectedTechs.length === 0 && ["domain", "subdomain", "url"].includes(asset.type ?? "")) {
+      detectedTechs = await detectTechnologies(target);
+      if (detectedTechs.length > 0) {
+        await db.delete(technologyDetectionsTable)
+          .where(and(eq(technologyDetectionsTable.tenantId, tenantId), eq(technologyDetectionsTable.assetId, asset.id)));
+        await db.insert(technologyDetectionsTable).values(
+          detectedTechs.map(t => ({
+            tenantId, assetId: asset.id, scanId,
+            technology: t.name, slug: t.slug, category: t.category,
+            version: t.version ?? null, confidence: t.confidence,
+            website: t.website ?? null, cpe: t.cpe ?? null, icon: t.icon ?? null,
+          }))
+        );
+      }
+    }
+
     // ── Compile all data and store per-tool results ────────────────────────────
     const allIntel    = [...sslIntel, ...geoIntel, ...whoisIntel, ...cloudIntel];
     const allVulns    = [...cveFindings, ...sslVulns, ...headerVulnFindings, ...secretFindings];
@@ -943,14 +1031,15 @@ async function executePipeline(
       const phase = TOOL_PHASE[tool.name] ?? 1;
       const name  = tool.name;
 
-      let toolPorts:    PortFinding[]      | null = null;
-      let toolSubs:     SubdomainFinding[] | null = null;
-      let toolEndpts:   EndpointFinding[]  | null = null;
-      let toolHttp:     HttpInfo           | null = null;
-      let toolDns:      DnsRecord[]        | null = null;
-      let toolIntel:    IntelItem[]        | null = null;
-      let toolVulns:    VulnFinding[]      | null = null;
-      let toolSecrets:  VulnFinding[]      | null = null;
+      let toolPorts:    PortFinding[]        | null = null;
+      let toolSubs:     SubdomainFinding[]   | null = null;
+      let toolEndpts:   EndpointFinding[]    | null = null;
+      let toolHttp:     HttpInfo             | null = null;
+      let toolDns:      DnsRecord[]          | null = null;
+      let toolIntel:    IntelItem[]          | null = null;
+      let toolVulns:    VulnFinding[]        | null = null;
+      let toolSecrets:  VulnFinding[]        | null = null;
+      let toolTech:     DetectedTechnology[] | null = null;
 
       if (phase === 1) {
         // ── Subdomain discovery tools ──────────────────────────────────────────
@@ -993,10 +1082,19 @@ async function executePipeline(
         // All port scanners get port data
         toolPorts = realPorts.length ? realPorts : null;
       } else if (phase === 3) {
-        // ── HTTP probing / web fingerprinting ──────────────────────────────────
-        if (["httpx", "whatweb", "wafw00f", "useragent"].includes(name)) {
+        // ── Wappalyzer: technology fingerprinting ─────────────────────────────
+        if (name === "wappalyzer") {
+          toolTech  = detectedTechs.length ? detectedTechs : null;
           toolHttp  = httpInfo;
-          // httpx also catches header-based security misconfigurations
+        }
+        // ── Webcheck: security headers & policy audit ─────────────────────────
+        else if (name === "webcheck") {
+          toolHttp  = httpInfo;
+          toolVulns = headerVulnFindings.length ? headerVulnFindings : null;
+        }
+        // ── HTTP probing / web fingerprinting ──────────────────────────────────
+        else if (["httpx", "whatweb", "wafw00f", "useragent"].includes(name)) {
+          toolHttp  = httpInfo;
           if (name === "httpx") toolVulns = headerVulnFindings.length ? headerVulnFindings : null;
         }
         // ── Web crawlers / directory fuzzers (endpoints only) ─────────────────
@@ -1039,7 +1137,7 @@ async function executePipeline(
           subdomains: toolSubs, dnsRecords: toolDns,
           httpInfo: toolHttp, endpoints: toolEndpts,
           vulnerabilities: toolVulns, intelligence: toolIntel,
-          secretsFound: toolSecrets,
+          secretsFound: toolSecrets, technologies: toolTech,
         }),
         ports:           toolPorts   as any,
         subdomains:      toolSubs    as any,
