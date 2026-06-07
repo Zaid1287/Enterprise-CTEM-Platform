@@ -300,7 +300,7 @@ export default function FindingDetailPage() {
 
   if (loadingF) {
     return (
-      <div className="space-y-4 max-w-5xl">
+      <div className="space-y-4">
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-40 w-full" />
         <div className="grid grid-cols-3 gap-4"><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /></div>
@@ -352,7 +352,7 @@ export default function FindingDetailPage() {
     .filter((v: any) => v.cve && !v.cve.startsWith("SEC-") && !v.cve.startsWith("HDR-") && !v.cve.startsWith("CWE-") && !v.cve.startsWith("CRED-"));
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="space-y-5">
 
       {/* Breadcrumb */}
       <div className="flex items-center justify-between">

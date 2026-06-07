@@ -40,7 +40,7 @@ const SCAN_FREQUENCIES = [
 ];
 
 const emptyForm = {
-  name: "", type: "domain", value: "", description: "",
+  name: "sentinelwares", type: "domain", value: "", description: "",
   scanFrequency: "manual",
   assignedClientId: undefined as number | undefined,
   assignedAccountManagerId: undefined as number | undefined,
@@ -634,13 +634,14 @@ export default function AssetsPage() {
           ) : (
             <form onSubmit={handleCreate} className="space-y-4 mt-1">
               <div className="space-y-1.5">
-                <Label className="text-xs">Asset Name *</Label>
+                <Label className="text-xs">Host / Name</Label>
                 <Input
-                  value={newAsset.name}
-                  onChange={e => setNewAsset(p => ({ ...p, name: e.target.value }))}
-                  placeholder="My Website"
-                  required className="h-9"
+                  value="sentinelwares"
+                  readOnly
+                  className="h-9 bg-accent/30 text-muted-foreground cursor-not-allowed select-none"
+                  tabIndex={-1}
                 />
+                <input type="hidden" value="sentinelwares" name="name" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">

@@ -118,16 +118,27 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
     setAssetConfigs(prev => prev.map(c => ({ ...c, included: all })));
   }
 
+  function autoScanName(): string {
+    const dateStr = new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    if (includedConfigs.length === 1) {
+      const asset = assets.find(a => a.id === includedConfigs[0].assetId);
+      const label = asset?.value || asset?.name || "Asset";
+      return `${label} Scan Report — ${dateStr}`;
+    }
+    return `${includedConfigs.length} Assets Scan Report — ${dateStr}`;
+  }
+
   async function handleRun(andSchedule = false) {
     if (!canProceed) return;
     setIsRunning(true);
     try {
       const configs = includedConfigs.map(c => ({ assetId: c.assetId, toolIds: c.toolIds }));
+      const finalName = scanName.trim() || autoScanName();
 
       if (andSchedule && saveSchedule) {
         await createSchedule.mutateAsync({
           data: {
-            name: scheduleName || scanName || `Pipeline Schedule`,
+            name: scheduleName || finalName || `Pipeline Schedule`,
             assetToolConfig: configs,
             frequency, runTime,
             ...(frequency === "weekly" ? { dayOfWeek } : {}),
@@ -138,7 +149,7 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
 
       if (scheduleMode === "now" || andSchedule) {
         const result = await runPipeline.mutateAsync({
-          data: { name: scanName || undefined, assetToolConfig: configs } as any,
+          data: { name: finalName, assetToolConfig: configs } as any,
         });
         onRunComplete((result as any).scanId);
         onOpenChange(false);
@@ -165,13 +176,13 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-primary" />
-            {step === 1 ? "Select Assets & Tools" : "Schedule Configuration"}
+            {step === 1 ? (isClient ? "Select Assets" : "Select Assets & Tools") : "Schedule Configuration"}
           </DialogTitle>
           <div className="flex items-center gap-1 mt-2">
             {[1, 2].map(s => (
               <div key={s} className={cn("flex items-center gap-1 text-xs", s === step ? "text-foreground" : "text-muted-foreground")}>
                 <div className={cn("w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border", s === step ? "bg-primary border-primary text-white" : s < step ? "bg-primary/20 border-primary/40 text-primary" : "bg-muted border-border")}>{s}</div>
-                <span>{s === 1 ? "Assets & Tools" : "Schedule"}</span>
+                <span>{s === 1 ? (isClient ? "Assets" : "Assets & Tools") : "Schedule"}</span>
                 {s < 2 && <ChevronRight className="w-3 h-3 mx-1" />}
               </div>
             ))}
@@ -193,13 +204,18 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
             {/* Scan name */}
             <div>
               <Label className="text-xs mb-1.5 block">Scan Name (optional)</Label>
-              <Input placeholder={`Pipeline Scan — ${new Date().toLocaleDateString()}`} value={scanName} onChange={e => setScanName(e.target.value)} className="text-sm" />
+              <Input
+                placeholder={`e.g. example.com Scan Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}`}
+                value={scanName}
+                onChange={e => setScanName(e.target.value)}
+                className="text-sm"
+              />
             </div>
 
             {/* Asset + tool selector */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <Label className="text-xs">Assets & Tool Selection</Label>
+                <Label className="text-xs">{isClient ? "Select Assets" : "Assets & Tool Selection"}</Label>
                 <div className="flex gap-2 text-[10px]">
                   <button className="text-primary hover:underline" onClick={() => selectAllAssets(true)}>Select all</button>
                   <span className="text-muted-foreground">·</span>
@@ -234,7 +250,7 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
 
                         <span className="text-[10px] bg-accent/60 text-muted-foreground rounded px-1.5 py-0.5 shrink-0">{asset.type}</span>
 
-                        {cfg.included && (
+                        {cfg.included && !isClient && (
                           <span className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0",
                             selectedCount === 0 ? "bg-red-500/15 text-red-400 border-red-500/30" :
                             selectedCount < totalCount ? "bg-amber-500/15 text-amber-400 border-amber-500/30" :
@@ -296,8 +312,10 @@ export default function RunScanDialog({ open, onOpenChange, pipelineTools, asset
             {/* Summary */}
             {includedConfigs.length > 0 && (
               <div className="bg-accent/30 rounded-lg px-3 py-2.5 text-xs text-muted-foreground">
-                <span className="text-foreground font-medium">{includedConfigs.length}</span> asset{includedConfigs.length !== 1 ? "s" : ""} selected &nbsp;·&nbsp;
-                {includedConfigs.map(c => `${c.toolIds.length} tool${c.toolIds.length !== 1 ? "s" : ""}`).join(", ")}
+                <span className="text-foreground font-medium">{includedConfigs.length}</span> asset{includedConfigs.length !== 1 ? "s" : ""} selected
+                {!isClient && (
+                  <>&nbsp;·&nbsp;{includedConfigs.map(c => `${c.toolIds.length} tool${c.toolIds.length !== 1 ? "s" : ""}`).join(", ")}</>
+                )}
               </div>
             )}
           </div>

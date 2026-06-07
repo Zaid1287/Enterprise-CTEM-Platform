@@ -213,7 +213,7 @@ export default function ScanReportsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-semibold truncate">
-                      {scan.name ?? `Pipeline Scan #${scan.id}`}
+                      {scan.name ?? `Scan Report — ${new Date(scan.createdAt ?? scan.startedAt).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}`}
                     </p>
                     <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium shrink-0", cfg.cls)}>
                       {cfg.label}

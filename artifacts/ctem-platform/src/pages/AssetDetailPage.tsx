@@ -46,7 +46,7 @@ export default function AssetDetailPage() {
   if (!a) return <div className="text-muted-foreground">Asset not found</div>;
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => navigate("/assets")}>
           <ArrowLeft className="w-4 h-4 mr-1" /> Assets
