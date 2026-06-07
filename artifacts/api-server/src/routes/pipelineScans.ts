@@ -924,9 +924,24 @@ async function executePipeline(
     const results: Array<typeof scanAssetResultsTable.$inferInsert> = [];
     const findingInserts: Array<typeof findingsTable.$inferInsert>   = [];
 
+    // Insert findings once (not per-tool, to avoid duplicates)
+    for (const v of cveFindings) {
+      if (!v.cve.startsWith("HDR-") && !v.cve.startsWith("SEC-")) {
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: v.title, cve: v.cve,
+          severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
+          cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+          description: `${v.title} (${v.cve}) — CVSS ${v.cvss}. Detected on ${asset.name} (${asset.value}).`,
+          remediation: v.remediation,
+        });
+      }
+    }
+
     for (const tool of toolsForAsset) {
       const cat   = tool.category ?? "recon";
       const phase = TOOL_PHASE[tool.name] ?? 1;
+      const name  = tool.name;
 
       let toolPorts:    PortFinding[]      | null = null;
       let toolSubs:     SubdomainFinding[] | null = null;
@@ -938,47 +953,88 @@ async function executePipeline(
       let toolSecrets:  VulnFinding[]      | null = null;
 
       if (phase === 1) {
-        toolSubs  = allSubdomains;
-        toolDns   = allDns;
-        toolIntel = cat === "osint" ? allIntel : geoIntel.length + whoisIntel.length > 0 ? [...geoIntel, ...whoisIntel] : null;
-        if (["s3scanner", "cloud_enum"].includes(tool.name)) toolIntel = cloudIntel;
+        // ── Subdomain discovery tools ──────────────────────────────────────────
+        if (["subfinder", "shuffledns", "tldfinder"].includes(name)) {
+          toolSubs = allSubdomains.length ? allSubdomains : null;
+        }
+        // ── DNS resolution / enumeration ───────────────────────────────────────
+        else if (name === "dnsx") {
+          toolDns  = allDns.length ? allDns : null;
+          toolSubs = allSubdomains.length ? allSubdomains : null;
+        }
+        // ── Full passive recon (amass covers subs + DNS + OSINT) ───────────────
+        else if (name === "amass") {
+          toolSubs  = allSubdomains.length ? allSubdomains : null;
+          toolDns   = allDns.length ? allDns : null;
+          toolIntel = geoIntel.length + whoisIntel.length > 0 ? [...geoIntel, ...whoisIntel] : null;
+        }
+        // ── Historical URL / passive URL collection ────────────────────────────
+        else if (name === "gau" || name === "uncover") {
+          toolEndpts = endpoints.length ? endpoints : null;
+          toolSubs   = allSubdomains.length ? allSubdomains : null;
+        }
+        // ── ASN / CIDR / IP intel ──────────────────────────────────────────────
+        else if (["asnmap", "mapcidr", "cdncheck"].includes(name)) {
+          toolIntel = [...geoIntel, ...whoisIntel].length ? [...geoIntel, ...whoisIntel] : null;
+        }
+        // ── OSINT / email / breach harvesting ─────────────────────────────────
+        else if (["theHarvester", "aix", "maltego"].includes(name) || cat === "osint") {
+          toolIntel = allIntel.length ? allIntel : null;
+        }
+        // ── Cloud / bucket enumeration ─────────────────────────────────────────
+        else if (["cloud_enum", "s3scanner"].includes(name)) {
+          toolIntel = cloudIntel.length ? cloudIntel : null;
+        }
+        // ── Default: generic phase-1 tool gets subdomain results ───────────────
+        else {
+          toolSubs = allSubdomains.length ? allSubdomains : null;
+        }
       } else if (phase === 2) {
-        toolPorts = realPorts;
+        // All port scanners get port data
+        toolPorts = realPorts.length ? realPorts : null;
       } else if (phase === 3) {
-        toolHttp  = httpInfo;
-        toolEndpts= endpoints;
-        toolVulns = headerVulnFindings;
-      } else if (phase === 4) {
-        if (tool.name === "trufflehog") {
-          toolSecrets = secretFindings;
-          toolVulns   = secretFindings;
-        } else {
-          toolVulns = [...cveFindings, ...headerVulnFindings];
-          toolEndpts= endpoints;
+        // ── HTTP probing / web fingerprinting ──────────────────────────────────
+        if (["httpx", "whatweb", "wafw00f", "useragent"].includes(name)) {
           toolHttp  = httpInfo;
-          for (const v of toolVulns) {
-            if (!v.cve.startsWith("HDR-") && !v.cve.startsWith("SEC-")) {
-              findingInserts.push({
-                tenantId, assetId: asset.id, scanId,
-                title: v.title, cve: v.cve,
-                severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-                cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
-                description: `${v.title} (${v.cve}) — CVSS ${v.cvss}. Detected on ${asset.name} (${asset.value}).`,
-                remediation: v.remediation,
-              });
-            }
-          }
+          // httpx also catches header-based security misconfigurations
+          if (name === "httpx") toolVulns = headerVulnFindings.length ? headerVulnFindings : null;
+        }
+        // ── Web crawlers / directory fuzzers (endpoints only) ─────────────────
+        else if (["katana", "feroxbuster", "gobuster", "ffuf"].includes(name)) {
+          toolEndpts = endpoints.length ? endpoints : null;
+        }
+        // ── Default phase-3: HTTP + endpoints ─────────────────────────────────
+        else {
+          toolHttp   = httpInfo;
+          toolEndpts = endpoints.length ? endpoints : null;
+        }
+      } else if (phase === 4) {
+        // ── Secrets / credential scanning ─────────────────────────────────────
+        if (name === "trufflehog" || name === "goleak") {
+          toolSecrets = secretFindings.length ? secretFindings : null;
+          toolVulns   = secretFindings.length ? secretFindings : null;
+        }
+        // ── WordPress-specific scanner ─────────────────────────────────────────
+        else if (name === "wpscan") {
+          toolVulns = cveFindings.length ? cveFindings : null;
+        }
+        // ── General vuln scanners (nuclei, nikto, wapiti, vulnx) ──────────────
+        else {
+          toolVulns  = cveFindings.length ? cveFindings : null;
+          toolHttp   = httpInfo;
+          toolEndpts = endpoints.length ? endpoints : null;
         }
       } else if (phase === 5) {
-        toolIntel = sslIntel;
-        toolVulns = sslVulns;
+        // ── SSL/TLS analysis ──────────────────────────────────────────────────
+        toolIntel = sslIntel.length ? sslIntel : null;
+        toolVulns = sslVulns.length ? sslVulns : null;
         toolHttp  = httpInfo;
       }
 
       results.push({
         tenantId, scanId, assetId: asset.id,
-        toolName: tool.name, toolCategory: cat,
-        rawOutput: buildRawOutput(tool.name, target, PHASE_NAMES[phase] ?? "Recon", {
+        toolName: name, toolCategory: cat,
+        rawOutput: buildRawOutput(name, target, PHASE_NAMES[phase] ?? "Recon", {
           ports: toolPorts, nmapRaw: phase === 2 ? nmapRaw : undefined,
           subdomains: toolSubs, dnsRecords: toolDns,
           httpInfo: toolHttp, endpoints: toolEndpts,
