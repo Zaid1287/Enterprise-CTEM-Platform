@@ -468,6 +468,64 @@ export const RunTechScanResponse = zod.object({
 
 
 /**
+ * @summary List screenshots captured for an asset
+ */
+export const ListAssetScreenshotsParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const ListAssetScreenshotsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "assetId": zod.number(),
+  "scanId": zod.number().nullish(),
+  "url": zod.string(),
+  "pageType": zod.string(),
+  "screenshotData": zod.string().describe('Base64-encoded PNG screenshot'),
+  "title": zod.string().nullish(),
+  "statusCode": zod.number().nullish(),
+  "findings": zod.array(zod.object({
+  "type": zod.string(),
+  "value": zod.string(),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low']),
+  "context": zod.string().nullish()
+})).nullish(),
+  "capturedAt": zod.string()
+})
+export const ListAssetScreenshotsResponse = zod.array(ListAssetScreenshotsResponseItem)
+
+
+/**
+ * @summary Capture live screenshots of login, signup, index, admin, and sensitive pages for an asset
+ */
+export const RunScreenshotScanParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const RunScreenshotScanResponse = zod.object({
+  "screenshots": zod.array(zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "assetId": zod.number(),
+  "scanId": zod.number().nullish(),
+  "url": zod.string(),
+  "pageType": zod.string(),
+  "screenshotData": zod.string().describe('Base64-encoded PNG screenshot'),
+  "title": zod.string().nullish(),
+  "statusCode": zod.number().nullish(),
+  "findings": zod.array(zod.object({
+  "type": zod.string(),
+  "value": zod.string(),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low']),
+  "context": zod.string().nullish()
+})).nullish(),
+  "capturedAt": zod.string()
+})),
+  "capturedAt": zod.string()
+})
+
+
+/**
  * @summary List asset groups
  */
 export const ListAssetGroupsResponseItem = zod.object({

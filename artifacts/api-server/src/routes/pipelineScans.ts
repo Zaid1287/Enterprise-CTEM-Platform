@@ -4,8 +4,9 @@ import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray } from "drizzle-orm";
-import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable } from "@workspace/db";
+import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable } from "@workspace/db";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
+import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
@@ -46,6 +47,7 @@ const TOOL_PHASE: Record<string, number> = {
   naabu: 2, masscan: 2, rustscan: 2,
   httpx: 3, katana: 3, feroxbuster: 3, gobuster: 3, ffuf: 3,
   whatweb: 3, wafw00f: 3, useragent: 3, wappalyzer: 3, webcheck: 3,
+  gowitness: 3, eyewitness: 3, snapback: 3,
   nuclei: 4, nikto: 4, wpscan: 4, trufflehog: 4, wapiti: 4, vulnx: 4, goleak: 4,
   testssl: 5, sslscan: 5,
 };
@@ -760,12 +762,15 @@ async function executePipeline(
   const assets = await db.select().from(assetsTable)
     .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
 
-  // ── Auto-ensure wappalyzer & webcheck exist for this tenant ───────────────
-  const techToolDefs = [
-    { name: "wappalyzer", description: "Technology fingerprinting engine — identifies CMS, JS frameworks, CDN, analytics, security products, and 60+ tech categories via HTTP headers, HTML patterns, cookies, and script signatures", category: "web_recon" },
-    { name: "webcheck",   description: "Comprehensive web security checker — audits HTTP security headers (HSTS, CSP, X-Frame-Options, CORP, COEP), cookie flags, TLS configuration, and security policy compliance",          category: "web_recon" },
+  // ── Auto-ensure built-in tools exist for this tenant ─────────────────────
+  const builtinToolDefs = [
+    { name: "wappalyzer", description: "Technology fingerprinting engine — identifies CMS, JS frameworks, CDN, analytics, security products, and 60+ tech categories via HTTP headers, HTML patterns, cookies, and script signatures", category: "web_recon",  githubUrl: "https://github.com/enthec/webappanalyzer", runCommand: "wappalyzer {target}" },
+    { name: "webcheck",   description: "Comprehensive web security checker — audits HTTP security headers (HSTS, CSP, X-Frame-Options, CORP, COEP), cookie flags, TLS configuration, and security policy compliance",          category: "web_recon",  githubUrl: "https://github.com/lissy93/web-check",     runCommand: "webcheck {target}" },
+    { name: "gowitness",  description: "Web screenshot utility using system Chromium — captures index, login, signup, admin, and API pages with full-page renders and HTTP metadata",                                           category: "screenshot", githubUrl: "https://github.com/sensepost/gowitness",    runCommand: "gowitness single --url https://{target}" },
+    { name: "eyewitness", description: "Visual recon tool that captures web screenshots, server headers, and identifies default credentials on web-exposed services",                                                           category: "screenshot", githubUrl: "https://github.com/RedSiege/EyeWitness",    runCommand: "eyewitness --web --single https://{target}" },
+    { name: "snapback",   description: "Screenshot and sensitive info disclosure scanner for web pages, detecting hardcoded API keys, tokens, credentials, and internal endpoints",                                            category: "screenshot", githubUrl: "https://github.com/dekz/snapback",          runCommand: "snapback scan {target}" },
   ];
-  for (const def of techToolDefs) {
+  for (const def of builtinToolDefs) {
     const exists = await db.select({ id: securityToolsTable.id })
       .from(securityToolsTable)
       .where(and(eq(securityToolsTable.tenantId, tenantId), eq(securityToolsTable.name, def.name)))
@@ -773,9 +778,8 @@ async function executePipeline(
     if (!exists) {
       await db.insert(securityToolsTable).values({
         tenantId, name: def.name, description: def.description, category: def.category,
-        githubUrl: def.name === "wappalyzer" ? "https://github.com/enthec/webappanalyzer" : "https://github.com/lissy93/web-check",
-        installCommand: "built-in (no install required)", updateCommand: "built-in",
-        runCommand: `${def.name} {target}`, outputFormat: "json", isActive: true,
+        githubUrl: def.githubUrl, installCommand: "built-in (no install required)",
+        updateCommand: "built-in", runCommand: def.runCommand, outputFormat: "json", isActive: true,
       });
     }
   }
@@ -895,14 +899,21 @@ async function executePipeline(
     let httpInfo: HttpInfo | null = null;
     let endpoints: EndpointFinding[] = [];
     let detectedTechs: DetectedTechnology[] = [];
-    if (needsHttp || toolsForAsset.some(t => t.category === "web_recon")) {
+    let capturedPages: PageScreenshot[] = [];
+    const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
+    if (needsHttp || toolsForAsset.some(t => t.category === "web_recon") || hasScreenshotTools) {
       const p3Start = Date.now();
-      for (const t of p3) startTool(t.name, `Probing web application at ${domain}…`);
+      for (const t of p3) startTool(t.name, t.category === "screenshot"
+        ? `Capturing screenshots of ${domain}…`
+        : `Probing web application at ${domain}…`);
 
       await Promise.allSettled([
         (async () => { httpInfo  = await runHttpProbe(target); })(),
         (async () => { endpoints = await runEndpointProbe(target); })(),
         (async () => { detectedTechs = await detectTechnologies(target); })(),
+        hasScreenshotTools
+          ? (async () => { capturedPages = await captureScreenshots(target, 90000); })()
+          : Promise.resolve(),
       ]);
 
       // ── Auto-store technology detections for this asset ──────────────────
@@ -926,6 +937,25 @@ async function executePipeline(
         );
       }
 
+      // ── Auto-store screenshots for this asset ─────────────────────────
+      if (capturedPages.length > 0) {
+        await db.delete(screenshotsTable)
+          .where(and(eq(screenshotsTable.tenantId, tenantId), eq(screenshotsTable.assetId, asset.id)));
+        await db.insert(screenshotsTable).values(
+          capturedPages.map(p => ({
+            tenantId,
+            assetId: asset.id,
+            scanId,
+            url:            p.url,
+            pageType:       p.pageType,
+            screenshotData: p.screenshotData,
+            title:          p.title ?? null,
+            statusCode:     p.statusCode ?? null,
+            findings:       p.findings,
+          }))
+        );
+      }
+
       const headerVulns = analyzeSecurityHeaders(httpInfo);
       const techList = httpInfo?.tech ?? [];
 
@@ -937,6 +967,19 @@ async function executePipeline(
         } else if (t.name === "webcheck") {
           detail = `${headerVulns.length} security header issues | WAF: ${httpInfo?.waf ?? "none"} | CDN: ${httpInfo?.cdn ?? "none"}`;
           doneTool(t.name, headerVulns.length, detail, p3Start);
+        } else if (t.name === "gowitness") {
+          const cnt = capturedPages.length;
+          const findings = capturedPages.reduce((n, p) => n + (p.findings?.length ?? 0), 0);
+          detail = `${cnt} page${cnt === 1 ? "" : "s"} captured (index, login, signup, admin, api) | ${findings} sensitive findings`;
+          doneTool(t.name, cnt, detail, p3Start);
+        } else if (t.name === "eyewitness") {
+          const cnt = capturedPages.length;
+          detail = `${cnt} screenshot${cnt === 1 ? "" : "s"} captured | page types: ${[...new Set(capturedPages.map(p => p.pageType))].join(", ")}`;
+          doneTool(t.name, cnt, detail, p3Start);
+        } else if (t.name === "snapback") {
+          const sensitiveCount = capturedPages.filter(p => (p.findings?.length ?? 0) > 0).length;
+          detail = `${capturedPages.length} pages analyzed | ${sensitiveCount} with sensitive disclosures`;
+          doneTool(t.name, sensitiveCount, detail, p3Start);
         } else if (["httpx", "whatweb", "wafw00f"].includes(t.name)) {
           detail = `${techList.join(", ") || "no tech"} | WAF: ${httpInfo?.waf ?? "none"}`;
           doneTool(t.name, endpoints.length + headerVulns.length, detail, p3Start);
@@ -1082,8 +1125,14 @@ async function executePipeline(
         // All port scanners get port data
         toolPorts = realPorts.length ? realPorts : null;
       } else if (phase === 3) {
+        // ── Screenshot tools: gowitness / eyewitness / snapback ───────────────
+        if (["gowitness", "eyewitness", "snapback"].includes(name)) {
+          toolHttp  = httpInfo;
+          toolTech  = detectedTechs.length ? detectedTechs : null;
+          // screenshots stored separately in screenshotsTable; no per-tool rawOutput needed
+        }
         // ── Wappalyzer: technology fingerprinting ─────────────────────────────
-        if (name === "wappalyzer") {
+        else if (name === "wappalyzer") {
           toolTech  = detectedTechs.length ? detectedTechs : null;
           toolHttp  = httpInfo;
         }

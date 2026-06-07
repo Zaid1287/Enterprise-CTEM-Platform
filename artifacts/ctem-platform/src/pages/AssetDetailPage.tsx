@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import {
   useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
-  useListAssetTechnologies, useRunTechScan,
+  useListAssetTechnologies, useRunTechScan, useListAssetScreenshots, useRunScreenshotScan,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
-  getListAssetTechnologiesQueryKey,
+  getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw, Camera, AlertTriangle, X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
@@ -33,6 +35,23 @@ const CATEGORY_COLOR: Record<string, string> = {
   "Caching":              "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
 };
 
+const PAGE_TYPE_BADGE: Record<string, string> = {
+  index:     "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  login:     "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  signup:    "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  admin:     "bg-red-500/15 text-red-400 border-red-500/30",
+  api:       "bg-purple-500/15 text-purple-400 border-purple-500/30",
+  sensitive: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+  error:     "bg-slate-500/15 text-slate-400 border-slate-500/30",
+};
+
+const FINDING_SEVERITY_COLOR: Record<string, string> = {
+  critical: "text-red-400 bg-red-500/10 border-red-500/30",
+  high:     "text-orange-400 bg-orange-500/10 border-orange-500/30",
+  medium:   "text-yellow-400 bg-yellow-500/10 border-yellow-500/30",
+  low:      "text-blue-400 bg-blue-500/10 border-blue-500/30",
+};
+
 function categoryColor(cat: string) {
   return CATEGORY_COLOR[cat] ?? "bg-muted text-muted-foreground border-border";
 }
@@ -43,8 +62,10 @@ export default function AssetDetailPage() {
   const id = parseInt(params.id ?? "0", 10);
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [verifying, setVerifying] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  const [verifying, setVerifying]             = useState(false);
+  const [scanning, setScanning]               = useState(false);
+  const [screenshotting, setScreenshotting]   = useState(false);
+  const [expandedShot, setExpandedShot]       = useState<any | null>(null);
 
   const { data: asset, isLoading } = useGetAsset(id, {
     query: { enabled: !!id, queryKey: getGetAssetQueryKey(id) },
@@ -58,8 +79,13 @@ export default function AssetDetailPage() {
   const { data: technologies, refetch: refetchTechs } = useListAssetTechnologies(id, {
     query: { enabled: !!id, queryKey: getListAssetTechnologiesQueryKey(id) },
   });
-  const verifyAsset = useCheckAssetVerification();
-  const runTechScan = useRunTechScan();
+  const { data: screenshots, refetch: refetchScreenshots } = useListAssetScreenshots(id, {
+    query: { enabled: !!id, queryKey: getListAssetScreenshotsQueryKey(id) },
+  });
+
+  const verifyAsset  = useCheckAssetVerification();
+  const runTechScan  = useRunTechScan();
+  const runShotScan  = useRunScreenshotScan();
 
   const handleVerify = async () => {
     setVerifying(true);
@@ -85,11 +111,25 @@ export default function AssetDetailPage() {
     }
   };
 
-  const a = asset as any;
-  const rs = riskScore as any;
-  const techs = (technologies as any[]) ?? [];
+  const handleScreenshotScan = async () => {
+    setScreenshotting(true);
+    try {
+      const res = await runShotScan.mutateAsync({ assetId: id });
+      await refetchScreenshots();
+      const count = (res as any)?.screenshots?.length ?? 0;
+      toast({ title: `Screenshot scan complete`, description: `${count} page${count === 1 ? "" : "s"} captured.` });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Screenshot scan failed", variant: "destructive" });
+    } finally {
+      setScreenshotting(false);
+    }
+  };
 
-  // Group by category
+  const a     = asset as any;
+  const rs    = riskScore as any;
+  const techs = (technologies as any[]) ?? [];
+  const shots = (screenshots as any[]) ?? [];
+
   const grouped: Record<string, any[]> = {};
   for (const t of techs) {
     if (!grouped[t.category]) grouped[t.category] = [];
@@ -97,7 +137,9 @@ export default function AssetDetailPage() {
   }
 
   const webTypes = ["domain", "subdomain", "url", "ip"];
-  const canScan = a && webTypes.includes(a.type);
+  const canScan  = a && webTypes.includes(a.type);
+
+  const totalFindings = shots.reduce((n: number, s: any) => n + ((s.findings as any[])?.length ?? 0), 0);
 
   if (isLoading) return <div className="space-y-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}</div>;
   if (!a) return <div className="text-muted-foreground">Asset not found</div>;
@@ -146,10 +188,10 @@ export default function AssetDetailPage() {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           {[
-            { label: "IP Address", value: a.ipAddress ?? "—" },
-            { label: "Port", value: a.port ?? "—" },
+            { label: "IP Address",   value: a.ipAddress ?? "—" },
+            { label: "Port",         value: a.port ?? "—" },
             { label: "Last Scanned", value: formatDate(a.lastScannedAt) },
-            { label: "Added", value: formatDate(a.createdAt) },
+            { label: "Added",        value: formatDate(a.createdAt) },
           ].map(m => (
             <div key={m.label} className="bg-accent/40 rounded-lg p-3">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{m.label}</p>
@@ -158,7 +200,6 @@ export default function AssetDetailPage() {
           ))}
         </div>
 
-        {/* Assignment info */}
         {(a.assignedClientName || a.assignedAccountManagerName) && (
           <div className="grid grid-cols-2 gap-3 mt-3">
             {a.assignedClientName && (
@@ -279,6 +320,228 @@ export default function AssetDetailPage() {
           </div>
         )}
       </div>
+
+      {/* ── Screenshot Gallery ──────────────────────────────────────────────── */}
+      {canScan && (
+        <div className="bg-card border border-border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Camera className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium">Visual Screenshot Gallery</h3>
+              {shots.length > 0 && (
+                <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium">{shots.length}</span>
+              )}
+              {totalFindings > 0 && (
+                <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-2.5 h-2.5" />{totalFindings} sensitive
+                </span>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-3 text-xs gap-1.5"
+              disabled={screenshotting}
+              onClick={handleScreenshotScan}
+            >
+              {screenshotting
+                ? <><Loader2 className="w-3 h-3 animate-spin" /> Capturing…</>
+                : <><Camera className="w-3 h-3" /> {shots.length > 0 ? "Re-capture" : "Capture Screenshots"}</>}
+            </Button>
+          </div>
+
+          {screenshotting && (
+            <div className="py-10 flex flex-col items-center gap-3 text-muted-foreground">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <p className="text-sm font-medium">Capturing pages on {a.value}…</p>
+              <p className="text-xs text-muted-foreground/60">Visiting index, login, signup, admin, and API paths via headless Chromium</p>
+            </div>
+          )}
+
+          {!screenshotting && shots.length === 0 && (
+            <div className="py-8 text-center">
+              <Camera className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">No screenshots captured yet.</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">Click "Capture Screenshots" to visit and photograph pages via headless Chromium.</p>
+            </div>
+          )}
+
+          {!screenshotting && shots.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {shots.map((shot: any) => {
+                const shotFindings: any[] = shot.findings ?? [];
+                const criticalOrHigh = shotFindings.filter((f: any) => f.severity === "critical" || f.severity === "high");
+                return (
+                  <div
+                    key={shot.id}
+                    className="group border border-border rounded-lg overflow-hidden cursor-pointer hover:border-primary/50 transition-colors bg-accent/20"
+                    onClick={() => setExpandedShot(shot)}
+                  >
+                    {/* Screenshot image */}
+                    <div className="relative w-full aspect-video bg-background overflow-hidden">
+                      {shot.screenshotData && shot.screenshotData.startsWith("data:image") ? (
+                        <img
+                          src={shot.screenshotData}
+                          alt={`${shot.pageType} screenshot`}
+                          className="w-full h-full object-cover object-top group-hover:scale-[1.02] transition-transform duration-300"
+                        />
+                      ) : shot.screenshotData && shot.screenshotData.length > 100 ? (
+                        <img
+                          src={`data:image/png;base64,${shot.screenshotData}`}
+                          alt={`${shot.pageType} screenshot`}
+                          className="w-full h-full object-cover object-top group-hover:scale-[1.02] transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-muted-foreground/30">
+                          <Camera className="w-8 h-8" />
+                        </div>
+                      )}
+                      {/* Page type badge overlay */}
+                      <span className={cn(
+                        "absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider",
+                        PAGE_TYPE_BADGE[shot.pageType] ?? "bg-muted text-muted-foreground border-border"
+                      )}>
+                        {shot.pageType}
+                      </span>
+                      {/* Status code */}
+                      {shot.statusCode && (
+                        <span className={cn(
+                          "absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold",
+                          shot.statusCode < 300 ? "bg-green-500/20 text-green-400" :
+                          shot.statusCode < 400 ? "bg-blue-500/20 text-blue-400" :
+                          shot.statusCode < 500 ? "bg-yellow-500/20 text-yellow-400" :
+                          "bg-red-500/20 text-red-400"
+                        )}>
+                          {shot.statusCode}
+                        </span>
+                      )}
+                      {/* Sensitive findings badge */}
+                      {criticalOrHigh.length > 0 && (
+                        <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-red-500/90 text-white text-[10px] px-1.5 py-0.5 rounded font-semibold">
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          {criticalOrHigh.length} critical
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card footer */}
+                    <div className="p-2.5">
+                      <p className="text-xs font-medium line-clamp-1 mb-0.5">{shot.title || shot.url}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono line-clamp-1">{shot.url}</p>
+                      {shotFindings.length > 0 && (
+                        <div className="flex gap-1 flex-wrap mt-1.5">
+                          {shotFindings.slice(0, 3).map((f: any, i: number) => (
+                            <span key={i} className={cn("text-[9px] px-1.5 py-0.5 rounded border font-medium", FINDING_SEVERITY_COLOR[f.severity])}>
+                              {f.type}
+                            </span>
+                          ))}
+                          {shotFindings.length > 3 && (
+                            <span className="text-[9px] text-muted-foreground px-1 py-0.5">+{shotFindings.length - 3} more</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {!screenshotting && shots.length > 0 && (
+            <p className="text-[10px] text-muted-foreground/50 mt-3">
+              Last captured: {formatDate(shots[0]?.capturedAt)} · {shots.length} page{shots.length === 1 ? "" : "s"} · Chromium headless
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Expanded Screenshot Lightbox ───────────────────────────────────── */}
+      {expandedShot && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setExpandedShot(null)}
+        >
+          <div
+            className="bg-card border border-border rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <span className={cn(
+                  "text-xs px-2 py-0.5 rounded border font-semibold uppercase tracking-wider",
+                  PAGE_TYPE_BADGE[expandedShot.pageType] ?? "bg-muted text-muted-foreground border-border"
+                )}>
+                  {expandedShot.pageType}
+                </span>
+                <span className="text-sm font-medium line-clamp-1">{expandedShot.title || expandedShot.url}</span>
+                {expandedShot.statusCode && (
+                  <span className={cn(
+                    "text-xs px-1.5 py-0.5 rounded font-mono",
+                    expandedShot.statusCode < 300 ? "text-green-400" :
+                    expandedShot.statusCode < 400 ? "text-blue-400" :
+                    expandedShot.statusCode < 500 ? "text-yellow-400" : "text-red-400"
+                  )}>
+                    {expandedShot.statusCode}
+                  </span>
+                )}
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setExpandedShot(null)}><X className="w-4 h-4" /></Button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* Full screenshot */}
+              <div className="rounded-lg overflow-hidden border border-border bg-background">
+                {expandedShot.screenshotData && (
+                  <img
+                    src={expandedShot.screenshotData.startsWith("data:") ? expandedShot.screenshotData : `data:image/png;base64,${expandedShot.screenshotData}`}
+                    alt="Full page screenshot"
+                    className="w-full object-contain"
+                  />
+                )}
+              </div>
+
+              {/* URL */}
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">URL</p>
+                <a href={expandedShot.url} target="_blank" rel="noopener noreferrer"
+                   className="text-sm font-mono text-primary hover:underline flex items-center gap-1">
+                  {expandedShot.url} <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              {/* Sensitive findings */}
+              {(expandedShot.findings?.length ?? 0) > 0 && (
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+                    Sensitive Disclosures ({expandedShot.findings.length})
+                  </p>
+                  <div className="space-y-2">
+                    {expandedShot.findings.map((f: any, i: number) => (
+                      <div key={i} className={cn("rounded-lg border p-3", FINDING_SEVERITY_COLOR[f.severity])}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider">{f.severity}</span>
+                          <span className="text-xs font-medium">{f.type}</span>
+                        </div>
+                        <p className="text-xs font-mono break-all opacity-80">{f.value}</p>
+                        {f.context && (
+                          <p className="text-[10px] opacity-60 mt-1 break-all">{f.context}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(expandedShot.findings?.length ?? 0) === 0 && (
+                <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                  <ShieldCheck className="w-4 h-4" />
+                  No sensitive disclosures detected on this page.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

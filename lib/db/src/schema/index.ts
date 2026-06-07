@@ -17,3 +17,4 @@ export * from "./takedownRequests";
 export * from "./userAiSettings";
 export * from "./invitations";
 export * from "./technologyDetections";
+export * from "./screenshots";

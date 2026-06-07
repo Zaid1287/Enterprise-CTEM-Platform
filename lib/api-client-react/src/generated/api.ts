@@ -72,6 +72,7 @@ import type {
   Report,
   ReportInput,
   RiskScore,
+  RunScreenshotScan200,
   RunTechScan200,
   RunToolBody,
   Scan,
@@ -80,6 +81,7 @@ import type {
   ScanSchedule,
   ScanScheduleInput,
   ScanScheduleUpdate,
+  Screenshot,
   SecurityTool,
   SecurityToolInput,
   SecurityToolUpdate,
@@ -1945,6 +1947,153 @@ export const useRunTechScan = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getRunTechScanMutationOptions(options));
+    }
+
+export const getListAssetScreenshotsUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/assets/${assetId}/screenshots`
+}
+
+/**
+ * @summary List screenshots captured for an asset
+ */
+export const listAssetScreenshots = async (assetId: number, options?: RequestInit): Promise<Screenshot[]> => {
+
+  return customFetch<Screenshot[]>(getListAssetScreenshotsUrl(assetId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAssetScreenshotsQueryKey = (assetId: number,) => {
+    return [
+    `/api/assets/${assetId}/screenshots`
+    ] as const;
+    }
+
+
+export const getListAssetScreenshotsQueryOptions = <TData = Awaited<ReturnType<typeof listAssetScreenshots>>, TError = ErrorType<unknown>>(assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAssetScreenshots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAssetScreenshotsQueryKey(assetId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAssetScreenshots>>> = ({ signal }) => listAssetScreenshots(assetId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(assetId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAssetScreenshots>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAssetScreenshotsQueryResult = NonNullable<Awaited<ReturnType<typeof listAssetScreenshots>>>
+export type ListAssetScreenshotsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List screenshots captured for an asset
+ */
+
+export function useListAssetScreenshots<TData = Awaited<ReturnType<typeof listAssetScreenshots>>, TError = ErrorType<unknown>>(
+ assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAssetScreenshots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAssetScreenshotsQueryOptions(assetId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getRunScreenshotScanUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/assets/${assetId}/screenshot-scan`
+}
+
+/**
+ * @summary Capture live screenshots of login, signup, index, admin, and sensitive pages for an asset
+ */
+export const runScreenshotScan = async (assetId: number, options?: RequestInit): Promise<RunScreenshotScan200> => {
+
+  return customFetch<RunScreenshotScan200>(getRunScreenshotScanUrl(assetId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRunScreenshotScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runScreenshotScan>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runScreenshotScan>>, TError,{assetId: number}, TContext> => {
+
+const mutationKey = ['runScreenshotScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runScreenshotScan>>, {assetId: number}> = (props) => {
+          const {assetId} = props ?? {};
+
+          return  runScreenshotScan(assetId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunScreenshotScanMutationResult = NonNullable<Awaited<ReturnType<typeof runScreenshotScan>>>
+
+    export type RunScreenshotScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Capture live screenshots of login, signup, index, admin, and sensitive pages for an asset
+ */
+export const useRunScreenshotScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runScreenshotScan>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runScreenshotScan>>,
+        TError,
+        {assetId: number},
+        TContext
+      > => {
+      return useMutation(getRunScreenshotScanMutationOptions(options));
     }
 
 export const getListAssetGroupsUrl = () => {

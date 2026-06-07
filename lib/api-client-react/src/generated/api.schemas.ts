@@ -5,6 +5,38 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+export type ScreenshotFindingSeverity = typeof ScreenshotFindingSeverity[keyof typeof ScreenshotFindingSeverity];
+
+
+export const ScreenshotFindingSeverity = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+} as const;
+
+export interface ScreenshotFinding {
+  type: string;
+  value: string;
+  severity: ScreenshotFindingSeverity;
+  context?: string | null;
+}
+
+export interface Screenshot {
+  id: number;
+  tenantId: number;
+  assetId: number;
+  scanId?: number | null;
+  url: string;
+  pageType: string;
+  /** Base64-encoded PNG screenshot */
+  screenshotData: string;
+  title?: string | null;
+  statusCode?: number | null;
+  findings?: ScreenshotFinding[] | null;
+  capturedAt: string;
+}
+
 export interface TechnologyDetection {
   id: number;
   assetId: number;
@@ -758,6 +790,11 @@ verificationStatus?: string;
 export type RunTechScan200 = {
   technologies: TechnologyDetection[];
   scannedAt: string;
+};
+
+export type RunScreenshotScan200 = {
+  screenshots: Screenshot[];
+  capturedAt: string;
 };
 
 export type ListScansParams = {

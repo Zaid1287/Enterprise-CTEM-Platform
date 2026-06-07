@@ -21,6 +21,7 @@ import accountManagerRouter from "./accountManager";
 import takedownsRouter from "./takedowns";
 import userAiSettingsRouter from "./userAiSettings";
 import invitationsRouter from "./invitations";
+import screenshotsRouter from "./screenshots";
 
 const router: IRouter = Router();
 
@@ -46,5 +47,6 @@ router.use(accountManagerRouter);
 router.use(takedownsRouter);
 router.use(userAiSettingsRouter);
 router.use(invitationsRouter);
+router.use(screenshotsRouter);
 
 export default router;

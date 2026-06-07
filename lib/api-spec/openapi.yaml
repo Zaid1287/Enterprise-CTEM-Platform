@@ -520,6 +520,57 @@ paths:
                     type: string
 
   # ──────────────────────────────────────────────────────────
+  # SCREENSHOTS
+  # ──────────────────────────────────────────────────────────
+  /assets/{assetId}/screenshots:
+    get:
+      operationId: listAssetScreenshots
+      tags: [assets]
+      summary: List screenshots captured for an asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of screenshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Screenshot"
+
+  /assets/{assetId}/screenshot-scan:
+    post:
+      operationId: runScreenshotScan
+      tags: [assets]
+      summary: Capture live screenshots of login, signup, index, admin, and sensitive pages for an asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Screenshot scan results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [screenshots, capturedAt]
+                properties:
+                  screenshots:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Screenshot"
+                  capturedAt:
+                    type: string
+
+  # ──────────────────────────────────────────────────────────
   # ASSET GROUPS
   # ──────────────────────────────────────────────────────────
   /asset-groups:
@@ -1786,6 +1837,55 @@ paths:
 
 components:
   schemas:
+    ScreenshotFinding:
+      type: object
+      required: [type, value, severity]
+      properties:
+        type:
+          type: string
+        value:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        context:
+          type: string
+          nullable: true
+
+    Screenshot:
+      type: object
+      required: [id, tenantId, assetId, url, pageType, screenshotData, capturedAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        assetId:
+          type: integer
+        scanId:
+          type: integer
+          nullable: true
+        url:
+          type: string
+        pageType:
+          type: string
+        screenshotData:
+          type: string
+          description: Base64-encoded PNG screenshot
+        title:
+          type: string
+          nullable: true
+        statusCode:
+          type: integer
+          nullable: true
+        findings:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ScreenshotFinding"
+        capturedAt:
+          type: string
+
     TechnologyDetection:
       type: object
       required: [id, assetId, technology, slug, category, confidence, detectedAt]
