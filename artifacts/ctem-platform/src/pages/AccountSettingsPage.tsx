@@ -594,10 +594,22 @@ function TwoFactorSection({ user, setUser }: { user: any; setUser: (u: any) => v
 // ── Team Tab ────────────────────────────────────────────────────────
 
 const INVITE_ROLES = [
-  { value: "vendor",      label: "Vendor",      color: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
-  { value: "employee",    label: "Employee",    color: "bg-sky-500/20 text-sky-400 border-sky-500/30" },
-  { value: "third_party", label: "Third Party", color: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
+  { value: "vendor",      label: "Vendor",                    color: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
+  { value: "employee",    label: "Employee",                  color: "bg-sky-500/20 text-sky-400 border-sky-500/30" },
+  { value: "third_party", label: "Third Party Management",   color: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
 ];
+
+const PERSONAL_EMAIL_DOMAINS = [
+  "gmail.com","yahoo.com","hotmail.com","outlook.com","icloud.com",
+  "live.com","aol.com","protonmail.com","ymail.com","mail.com",
+  "googlemail.com","msn.com","me.com","mac.com",
+];
+
+function isBusinessEmail(email: string): boolean {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain) return false;
+  return !PERSONAL_EMAIL_DOMAINS.includes(domain);
+}
 
 const INV_STATUS_COLOR: Record<string, string> = {
   pending:  "bg-amber-500/10 text-amber-400 border-amber-500/25",
@@ -648,6 +660,10 @@ function TeamTab() {
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isBusinessEmail(inviteForm.email)) {
+      toast({ title: "Business email required", description: "Please use a company email address, not a personal email provider.", variant: "destructive" });
+      return;
+    }
     setSending(true);
     try {
       await apiFetch(`${BASE}/api/invitations`, {
@@ -692,7 +708,7 @@ function TeamTab() {
             <form onSubmit={handleInvite} className="space-y-3 pt-4 mt-4 border-t border-border">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Full Name</Label>
+                  <Label className="text-xs">Invitee Name</Label>
                   <Input
                     value={inviteForm.name}
                     onChange={e => setInviteForm(p => ({ ...p, name: e.target.value }))}
@@ -701,14 +717,17 @@ function TeamTab() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Email Address</Label>
+                  <Label className="text-xs">Business Email ID</Label>
                   <Input
                     type="email"
                     value={inviteForm.email}
                     onChange={e => setInviteForm(p => ({ ...p, email: e.target.value }))}
-                    placeholder="jane@vendor.com"
+                    placeholder="jane@company.com"
                     required className="h-9"
                   />
+                  {inviteForm.email && !isBusinessEmail(inviteForm.email) && (
+                    <p className="text-[10px] text-destructive">Personal email providers are not allowed. Use a business email.</p>
+                  )}
                 </div>
               </div>
               <div className="space-y-1.5">
