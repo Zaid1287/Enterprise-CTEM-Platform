@@ -458,8 +458,14 @@ export default function ScanReportPage() {
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
 
-  const toolResults = selectedAsset?.toolResults ?? [];
-  const displayedTool = selectedTool ?? toolResults[0]?.toolName ?? null;
+  const toolResults: any[] = selectedAsset?.toolResults ?? [];
+  const configuredTools: any[] = selectedAsset?.configuredTools ?? [];
+  // All tool names to show = union of configured + any extra results
+  const allToolNames = Array.from(new Set([
+    ...configuredTools.map((t: any) => t.name),
+    ...toolResults.map((t: any) => t.toolName),
+  ]));
+  const displayedTool = selectedTool ?? allToolNames[0] ?? null;
 
   return (
     <div className="space-y-4">
@@ -914,34 +920,135 @@ export default function ScanReportPage() {
               )}
 
               {/* Raw Output tab */}
-              {assetTab === "raw" && (
-                <div className="space-y-3">
-                  <div className="flex gap-2 flex-wrap">
-                    {toolResults.map((tr: any) => (
-                      <button
-                        key={tr.toolName}
-                        onClick={() => setSelectedTool(tr.toolName)}
-                        className={cn(
-                          "text-xs px-2.5 py-1 rounded-lg border transition-colors",
-                          (displayedTool === tr.toolName)
-                            ? "bg-primary/20 border-primary/40 text-foreground"
-                            : "bg-accent/30 border-border text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        {tr.toolName}
-                      </button>
-                    ))}
+              {assetTab === "raw" && (() => {
+                // Build per-phase groups from all configured tools
+                const phaseGroups: Record<number, { phaseName: string; tools: string[] }> = {};
+                for (const t of configuredTools) {
+                  if (!phaseGroups[t.phase]) phaseGroups[t.phase] = { phaseName: t.phaseName, tools: [] };
+                  phaseGroups[t.phase].tools.push(t.name);
+                }
+                // Also include any tools that ran but weren't in configuredTools
+                for (const tr of toolResults) {
+                  const ph = tr.phase ?? 1;
+                  if (!phaseGroups[ph]) phaseGroups[ph] = { phaseName: tr.phaseName ?? "Recon", tools: [] };
+                  if (!phaseGroups[ph].tools.includes(tr.toolName)) phaseGroups[ph].tools.push(tr.toolName);
+                }
+                const sortedPhases = Object.entries(phaseGroups).sort(([a], [b]) => Number(a) - Number(b));
+
+                const selectedResult = toolResults.find((t: any) => t.toolName === displayedTool);
+                const toolRan = !!selectedResult;
+                // "No Results" = tool ran but rawOutput has no data sections (no === markers after header)
+                const hasData = selectedResult?.rawOutput
+                  ? selectedResult.rawOutput.includes("===")
+                  : false;
+
+                return (
+                  <div className="flex gap-4 min-h-[400px]">
+                    {/* Tool sidebar */}
+                    <div className="w-44 shrink-0 space-y-3">
+                      {sortedPhases.map(([phaseNum, group]) => (
+                        <div key={phaseNum}>
+                          <p className={cn(
+                            "text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded-md border mb-1.5 inline-block",
+                            PHASE_COLORS[Number(phaseNum)] ?? "text-muted-foreground bg-muted border-border"
+                          )}>
+                            {group.phaseName}
+                          </p>
+                          <div className="space-y-0.5">
+                            {group.tools.map(toolName => {
+                              const ran = toolResults.some((t: any) => t.toolName === toolName);
+                              const result = toolResults.find((t: any) => t.toolName === toolName);
+                              const hasOutput = result?.rawOutput?.includes("===");
+                              return (
+                                <button
+                                  key={toolName}
+                                  onClick={() => setSelectedTool(toolName)}
+                                  className={cn(
+                                    "w-full text-left text-xs px-2.5 py-1.5 rounded-lg border transition-colors flex items-center gap-2",
+                                    displayedTool === toolName
+                                      ? "bg-primary/20 border-primary/40 text-foreground"
+                                      : "bg-accent/20 border-border/50 text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                                  )}
+                                >
+                                  <span className={cn(
+                                    "w-1.5 h-1.5 rounded-full shrink-0",
+                                    !ran ? "bg-muted-foreground/30" :
+                                    !hasOutput ? "bg-yellow-500/60" :
+                                    "bg-green-500"
+                                  )} />
+                                  <span className="font-mono truncate">{toolName}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                      {sortedPhases.length === 0 && (
+                        <p className="text-[10px] text-muted-foreground/50 px-2">No tools configured</p>
+                      )}
+                    </div>
+
+                    {/* Output area */}
+                    <div className="flex-1 min-w-0">
+                      {!displayedTool && (
+                        <div className="h-full flex items-center justify-center text-muted-foreground/40">
+                          <p className="text-sm">Select a tool to view output</p>
+                        </div>
+                      )}
+                      {displayedTool && (
+                        <div className="space-y-2">
+                          {/* Tool header */}
+                          <div className="flex items-center gap-2 pb-2 border-b border-border/50">
+                            <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-xs font-mono font-semibold">{displayedTool}</span>
+                            {!toolRan && (
+                              <span className="text-[10px] bg-muted border border-border px-1.5 py-0.5 rounded text-muted-foreground">did not run</span>
+                            )}
+                            {toolRan && !hasData && (
+                              <span className="text-[10px] bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 px-1.5 py-0.5 rounded">no results</span>
+                            )}
+                            {toolRan && hasData && (
+                              <span className="text-[10px] bg-green-500/10 border border-green-500/30 text-green-400 px-1.5 py-0.5 rounded">results available</span>
+                            )}
+                            {selectedResult?.phaseName && (
+                              <span className="ml-auto text-[10px] text-muted-foreground/50">{selectedResult.phaseName}</span>
+                            )}
+                          </div>
+
+                          {/* Content */}
+                          {!toolRan && (
+                            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/40 gap-2">
+                              <XCircle className="w-8 h-8" />
+                              <p className="text-sm font-medium">Tool did not run</p>
+                              <p className="text-xs">This tool was configured but was not executed during the scan.</p>
+                            </div>
+                          )}
+                          {toolRan && !hasData && (
+                            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/40 gap-2">
+                              <AlertCircle className="w-8 h-8 text-yellow-500/40" />
+                              <p className="text-sm font-medium">No Results</p>
+                              <p className="text-xs">Tool ran successfully but found no data for this target.</p>
+                              {selectedResult?.rawOutput && (
+                                <details className="mt-3 w-full max-w-lg">
+                                  <summary className="text-[10px] text-muted-foreground/50 cursor-pointer hover:text-muted-foreground">Show execution log</summary>
+                                  <pre className="mt-2 bg-muted/20 border border-border/40 rounded-lg p-3 text-[10px] font-mono text-muted-foreground/50 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                                    {selectedResult.rawOutput}
+                                  </pre>
+                                </details>
+                              )}
+                            </div>
+                          )}
+                          {toolRan && hasData && (
+                            <pre className="bg-muted/20 border border-border/40 rounded-lg p-4 text-xs font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-[600px] overflow-y-auto">
+                              {selectedResult!.rawOutput}
+                            </pre>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  {displayedTool && (() => {
-                    const tr = toolResults.find((t: any) => t.toolName === displayedTool);
-                    return tr ? (
-                      <pre className="bg-muted/30 border border-border rounded-lg p-4 text-xs font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
-                        {tr.rawOutput ?? "No output captured."}
-                      </pre>
-                    ) : null;
-                  })()}
-                </div>
-              )}
+                );
+              })()}
             </div>
           </div>
 

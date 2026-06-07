@@ -1160,6 +1160,19 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     .where(and(eq(scansTable.id, scanId), eq(scansTable.tenantId, tenantId))).then(r => r[0]);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
 
+  // Fetch all enabled tools for this tenant so we know which tools were configured
+  const enabledToolRecords = await db
+    .select({ name: securityToolsTable.name, category: securityToolsTable.category })
+    .from(toolPipelineStepsTable)
+    .innerJoin(securityToolsTable, eq(toolPipelineStepsTable.toolId, securityToolsTable.id))
+    .where(and(eq(toolPipelineStepsTable.tenantId, tenantId), eq(toolPipelineStepsTable.isEnabled, true)));
+  const configuredTools = enabledToolRecords.map(t => ({
+    name: t.name,
+    phase: TOOL_PHASE[t.name] ?? 1,
+    phaseName: PHASE_NAMES[TOOL_PHASE[t.name] ?? 1] ?? "Recon",
+    category: t.category ?? "recon",
+  })).sort((a, b) => a.phase - b.phase);
+
   const scanResults = await db.select().from(scanAssetResultsTable)
     .where(and(eq(scanAssetResultsTable.scanId, scanId), eq(scanAssetResultsTable.tenantId, tenantId)));
   if (scanResults.length === 0) { res.json([]); return; }
@@ -1221,6 +1234,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       ports, subdomains: subs, endpoints: eps, httpInfo, dnsRecords: dns,
       intelligence: intel, vulnerabilities: vulns, secrets, cves, headerIssues,
       toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
+      configuredTools,
     };
   });
 
