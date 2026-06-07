@@ -244,7 +244,7 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
     instructions: methodInstructions[body.data.method] ?? `Use token: ${token}`,
     txtRecord: {
       type: "TXT",
-      host: "_sentinelware-challenge",
+      host: "sentinelwares",
       value: token,
       ttl: 300,
     },
@@ -266,7 +266,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   if (token && (asset.type === "domain" || asset.type === "subdomain" || asset.type === "url")) {
     const domain = asset.value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
     try {
-      const records = await dns.resolveTxt(`_sentinelware-challenge.${domain}`);
+      const records = await dns.resolveTxt(`sentinelwares.${domain}`);
       const flat = records.flat();
       const found = flat.some(r => r === token);
       if (found) {
@@ -276,11 +276,11 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
         await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
         res.json({ verified: true, message: "DNS TXT record found. Asset ownership verified." });
       } else {
-        res.json({ verified: false, message: `TXT record not found yet. Expected: ${token} on _sentinelware-challenge.${domain}` });
+        res.json({ verified: false, message: `TXT record not found yet. Expected value: ${token} at sentinelwares.${domain}` });
       }
       return;
     } catch {
-      res.json({ verified: false, message: `Could not resolve DNS for _sentinelware-challenge.${domain}. Make sure the TXT record is added and DNS has propagated (may take up to 24h).` });
+      res.json({ verified: false, message: `Could not resolve sentinelwares.${domain}. Make sure the TXT record is added and DNS has propagated (can take up to 24h).` });
       return;
     }
   }

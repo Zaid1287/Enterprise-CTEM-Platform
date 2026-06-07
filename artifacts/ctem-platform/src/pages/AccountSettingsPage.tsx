@@ -656,7 +656,7 @@ function TeamTab() {
     },
   });
 
-  const canInvite = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
+  const canInvite = !!user;
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
