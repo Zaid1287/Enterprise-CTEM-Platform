@@ -1010,34 +1010,7 @@ export default function ScanReportPage() {
 
               {/* DNS Records tab */}
               {assetTab === "dns" && (
-                <div>
-                  {(selectedAsset.dnsRecords ?? []).length === 0 ? (
-                    <EmptyState message="No DNS records collected" />
-                  ) : (
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left border-b border-border">
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Type</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Value</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">TTL</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Priority</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(selectedAsset.dnsRecords ?? []).map((r: any, i: number) => (
-                          <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
-                            <td className="py-2">
-                              <span className="font-mono text-[10px] font-bold bg-accent/60 px-1.5 py-0.5 rounded text-primary">{r.type}</span>
-                            </td>
-                            <td className="py-2 font-mono text-xs text-muted-foreground max-w-[360px] truncate">{r.value}</td>
-                            <td className="py-2 text-xs">{r.ttl}s</td>
-                            <td className="py-2 text-xs text-muted-foreground">{r.priority ?? "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                <DnsTab records={selectedAsset.dnsRecords ?? []} />
               )}
 
               {/* Endpoints tab */}
@@ -1574,6 +1547,192 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
     <div className="bg-accent/20 border border-border rounded-lg px-3 py-2.5">
       <p className="text-[10px] text-muted-foreground font-medium mb-0.5">{label}</p>
       <p className={cn("text-sm break-all", mono ? "font-mono text-xs" : "font-medium")}>{value || "—"}</p>
+    </div>
+  );
+}
+
+function DnsTypeStyle(type: string): string {
+  const map: Record<string, string> = {
+    A:       "bg-blue-500/15 text-blue-400 border-blue-500/30",
+    AAAA:    "bg-indigo-500/15 text-indigo-400 border-indigo-500/30",
+    MX:      "bg-orange-500/15 text-orange-400 border-orange-500/30",
+    NS:      "bg-violet-500/15 text-violet-400 border-violet-500/30",
+    TXT:     "bg-slate-500/15 text-slate-300 border-slate-500/30",
+    SOA:     "bg-zinc-500/15 text-zinc-300 border-zinc-500/30",
+    CNAME:   "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+    SRV:     "bg-teal-500/15 text-teal-400 border-teal-500/30",
+    PTR:     "bg-pink-500/15 text-pink-400 border-pink-500/30",
+    DMARC:   "bg-green-500/15 text-green-400 border-green-500/30",
+    "MTA-STS": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+    BIMI:    "bg-purple-500/15 text-purple-400 border-purple-500/30",
+  };
+  return map[type] ?? "bg-accent/60 text-primary border-border";
+}
+
+function DnsTab({ records }: { records: any[] }) {
+  const [filter, setFilter] = useState<string>("ALL");
+  if (records.length === 0) return <EmptyState message="No DNS records collected" icon={Database} />;
+
+  // Separate by type group
+  const dmarcRecs   = records.filter(r => r.type === "DMARC");
+  const spfRecs     = records.filter(r => r.type === "TXT" && r.value?.startsWith("v=spf1"));
+  const srvRecs     = records.filter(r => r.type === "SRV");
+  const ptrRecs     = records.filter(r => r.type === "PTR");
+  const types       = ["ALL", ...Array.from(new Set(records.map((r: any) => r.type))).sort()];
+  const filtered    = filter === "ALL" ? records : records.filter(r => r.type === filter);
+
+  return (
+    <div className="space-y-4">
+
+      {/* SPF + DMARC analysis cards */}
+      {(spfRecs.length > 0 || dmarcRecs.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* SPF card */}
+          {spfRecs.length > 0 ? (
+            <div className="bg-card border border-border rounded-lg p-3 space-y-1.5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold", DnsTypeStyle("TXT"))}>SPF</span>
+                <span className="text-xs font-semibold text-foreground">Email Sender Policy</span>
+              </div>
+              {spfRecs.map((r: any, i: number) => (
+                <div key={i} className="space-y-1">
+                  <p className="font-mono text-[10px] text-muted-foreground bg-muted/40 rounded px-2 py-1 break-all">{r.value}</p>
+                  {r.notes && <p className="text-xs text-muted-foreground leading-relaxed">{r.notes}</p>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-red-400">No SPF Record</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Anyone can send email claiming to be from this domain — high phishing risk.</p>
+              </div>
+            </div>
+          )}
+
+          {/* DMARC card */}
+          {dmarcRecs.filter((r: any) => r.value !== "(not configured)").length > 0 ? (
+            <div className="bg-card border border-border rounded-lg p-3 space-y-1.5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold", DnsTypeStyle("DMARC"))}>DMARC</span>
+                <span className="text-xs font-semibold text-foreground">Email Authentication Policy</span>
+              </div>
+              {dmarcRecs.filter((r: any) => r.value !== "(not configured)").map((r: any, i: number) => (
+                <div key={i} className="space-y-1">
+                  <p className="font-mono text-[10px] text-muted-foreground bg-muted/40 rounded px-2 py-1 break-all">{r.value}</p>
+                  {r.notes && <p className="text-xs text-muted-foreground leading-relaxed">{r.notes}</p>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-red-400">No DMARC Record</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Domain is vulnerable to email spoofing attacks — implement DMARC with at least p=quarantine.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SRV records */}
+      {srvRecs.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+            <span className={cn("border rounded px-1.5 py-0.5 font-mono font-bold", DnsTypeStyle("SRV"))}>SRV</span>
+            Service Records
+          </p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b border-border">
+                <th className="pb-2 text-xs font-medium text-muted-foreground">Service</th>
+                <th className="pb-2 text-xs font-medium text-muted-foreground">Target</th>
+                <th className="pb-2 text-xs font-medium text-muted-foreground">Port</th>
+                <th className="pb-2 text-xs font-medium text-muted-foreground">Priority</th>
+                <th className="pb-2 text-xs font-medium text-muted-foreground">Weight</th>
+              </tr>
+            </thead>
+            <tbody>
+              {srvRecs.map((r: any, i: number) => (
+                <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
+                  <td className="py-2 font-mono text-[10px] text-muted-foreground">{r.value}</td>
+                  <td className="py-2 font-mono text-xs">{r.target ?? "—"}</td>
+                  <td className="py-2 text-xs font-mono text-foreground">{r.port ?? "—"}</td>
+                  <td className="py-2 text-xs">{r.priority ?? "—"}</td>
+                  <td className="py-2 text-xs">{r.weight ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* PTR / Reverse DNS */}
+      {ptrRecs.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+            <span className={cn("border rounded px-1.5 py-0.5 font-mono font-bold", DnsTypeStyle("PTR"))}>PTR</span>
+            Reverse DNS Lookups
+          </p>
+          <div className="space-y-1">
+            {ptrRecs.map((r: any, i: number) => (
+              <div key={i} className="flex items-center gap-2 bg-accent/10 rounded-lg px-3 py-2 text-xs font-mono">
+                <span className="text-muted-foreground">{r.value}</span>
+                <ChevronRight className="w-3 h-3 text-muted-foreground/50" />
+                <span className="text-foreground">{r.target}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* All records — filterable table */}
+      <div>
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-xs font-semibold text-muted-foreground">Filter by type:</span>
+          {types.map(t => (
+            <button
+              key={t}
+              onClick={() => setFilter(t)}
+              className={cn(
+                "text-[10px] font-mono font-bold border rounded px-2 py-0.5 transition-colors",
+                filter === t ? "bg-primary/15 text-primary border-primary/30" : "bg-accent/30 text-muted-foreground border-border hover:text-foreground"
+              )}
+            >{t}</button>
+          ))}
+          <span className="ml-auto text-xs text-muted-foreground">{filtered.length} records</span>
+        </div>
+
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left border-b border-border">
+              <th className="pb-2 text-xs font-medium text-muted-foreground w-20">Type</th>
+              <th className="pb-2 text-xs font-medium text-muted-foreground">Value</th>
+              <th className="pb-2 text-xs font-medium text-muted-foreground w-16">TTL</th>
+              <th className="pb-2 text-xs font-medium text-muted-foreground w-20">Priority</th>
+              <th className="pb-2 text-xs font-medium text-muted-foreground">Analysis</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r: any, i: number) => (
+              <tr key={i} className="border-b border-border/40 hover:bg-accent/20 align-top">
+                <td className="py-2">
+                  <span className={cn("font-mono text-[10px] font-bold border rounded px-1.5 py-0.5", DnsTypeStyle(r.type))}>{r.type}</span>
+                </td>
+                <td className="py-2 font-mono text-[10px] text-muted-foreground max-w-[260px] break-all pr-4">
+                  {r.type === "PTR" ? r.value : r.value}
+                  {r.type === "PTR" && r.target && <span className="text-foreground"> → {r.target}</span>}
+                </td>
+                <td className="py-2 text-xs text-muted-foreground">{r.ttl > 0 ? `${r.ttl}s` : "—"}</td>
+                <td className="py-2 text-xs text-muted-foreground">{r.priority ?? "—"}</td>
+                <td className="py-2 text-xs text-muted-foreground max-w-[220px]">{r.notes ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

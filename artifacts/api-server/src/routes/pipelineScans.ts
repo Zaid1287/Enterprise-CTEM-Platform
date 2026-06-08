@@ -148,7 +148,7 @@ interface PortFinding      { port: number; service: string; version: string; pro
 interface SubdomainFinding { name: string; ip: string; cname: string | null; status: string; cdnProvider: string | null; sources?: string[]; httpStatus?: number | null; httpTitle?: string | null; redirectTo?: string | null; webServer?: string | null; }
 interface EndpointFinding  { url: string; method: string; status: number; title?: string; }
 interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; cdn: string | null; headers: Record<string, string>; }
-interface DnsRecord        { type: string; value: string; ttl: number; priority?: number; }
+interface DnsRecord        { type: string; value: string; ttl: number; priority?: number; weight?: number; port?: number; target?: string; notes?: string; }
 interface IntelItem        { type: string; key: string; value: string; severity?: string; }
 interface VulnFinding      { cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source?: string; }
 interface AssetToolConfigItem { assetId: number; toolIds: number[]; }
@@ -170,6 +170,55 @@ function maskSecret(s: string): string {
 
 // ── Phase 1: DNS + Subdomain Recon ─────────────────────────────────────────────
 
+function parseSpfPolicy(spf: string): string {
+  const parts = spf.split(/\s+/);
+  const includes = parts.filter(p => p.startsWith("include:")).map(p => p.replace("include:", ""));
+  const redirectTo = parts.find(p => p.startsWith("redirect="))?.replace("redirect=", "");
+  const allMech = parts.find(p => /^[~?+\-]?all$/.test(p));
+  const allDesc =
+    allMech === "-all" ? "❌ Reject (hard fail)" :
+    allMech === "~all" ? "⚠️ Soft fail (mark as spam)" :
+    allMech === "?all" ? "❓ Neutral" :
+    allMech === "+all" ? "🚨 Pass all — dangerous!" :
+    "⚠️ No all policy";
+  const parts2: string[] = [`Policy: ${allDesc}`];
+  if (includes.length) parts2.push(`Includes: ${includes.join(", ")}`);
+  if (redirectTo) parts2.push(`Redirect: ${redirectTo}`);
+  const ipMechs = parts.filter(p => p.startsWith("ip4:") || p.startsWith("ip6:"));
+  if (ipMechs.length) parts2.push(`Authorized IPs: ${ipMechs.join(", ")}`);
+  return parts2.join(" | ");
+}
+
+function parseDmarcPolicy(dmarc: string): string {
+  const get = (k: string) => dmarc.match(new RegExp(`${k}=([^;\\s]+)`))?.[1] ?? null;
+  const p    = get("p")    ?? "none";
+  const sp   = get("sp");
+  const adkim = get("adkim") === "s" ? "strict" : "relaxed";
+  const aspf  = get("aspf")  === "s" ? "strict" : "relaxed";
+  const pct   = get("pct")  ?? "100";
+  const rua   = get("rua");
+  const ruf   = get("ruf");
+  const policyIcon = p === "reject" ? "✅" : p === "quarantine" ? "⚠️" : "❌";
+  const parts: string[] = [`${policyIcon} Policy: ${p}`];
+  if (sp) parts.push(`Subdomain: ${sp}`);
+  parts.push(`DKIM align: ${adkim}`, `SPF align: ${aspf}`, `Coverage: ${pct}%`);
+  if (rua) parts.push(`Aggregate reports: ${rua}`);
+  if (ruf) parts.push(`Forensic reports: ${ruf}`);
+  return parts.join(" | ");
+}
+
+// Common SRV service prefixes to probe
+const SRV_PREFIXES = [
+  "_http._tcp", "_https._tcp",
+  "_sip._tcp", "_sip._udp", "_sips._tcp",
+  "_ldap._tcp", "_kerberos._tcp", "_kerberos._udp",
+  "_xmpp-client._tcp", "_xmpp-server._tcp",
+  "_smtp._tcp", "_imap._tcp", "_imaps._tcp", "_pop3._tcp", "_pop3s._tcp",
+  "_autodiscover._tcp", "_ftp._tcp",
+  "_caldav._tcp", "_caldavs._tcp", "_carddav._tcp", "_carddavs._tcp",
+  "_minecraft._tcp", "_teamspeak._tcp",
+];
+
 async function runDnsRecon(target: string): Promise<{ subdomains: SubdomainFinding[]; dnsRecords: DnsRecord[] }> {
   const domain = extractDomain(target);
   if (!domain || isIp(domain)) return { subdomains: [], dnsRecords: [] };
@@ -177,7 +226,8 @@ async function runDnsRecon(target: string): Promise<{ subdomains: SubdomainFindi
   const dnsRecords: DnsRecord[] = [];
   const subdomains: SubdomainFinding[] = [];
 
-  const [a, aaaa, mx, ns, txt, soa, cname] = await Promise.allSettled([
+  // All standard + special lookups fire in parallel
+  const [a, aaaa, mx, ns, txt, soa, cname, dmarcTxt, mtaSts, bimi, srvBatch] = await Promise.allSettled([
     dns.resolve4(domain, { ttl: true }),
     dns.resolve6(domain, { ttl: true }),
     dns.resolveMx(domain),
@@ -185,15 +235,126 @@ async function runDnsRecon(target: string): Promise<{ subdomains: SubdomainFindi
     dns.resolveTxt(domain),
     dns.resolveSoa(domain),
     dns.resolveCname(domain).catch(() => [] as string[]),
+    // DMARC lives at _dmarc.domain — always query explicitly
+    dns.resolveTxt(`_dmarc.${domain}`).catch(() => [] as string[][]),
+    // MTA-STS policy indicator
+    dns.resolveTxt(`_mta-sts.${domain}`).catch(() => [] as string[][]),
+    // BIMI (Brand Indicators for Message Identification)
+    dns.resolveTxt(`default._bimi.${domain}`).catch(() => [] as string[][]),
+    // All SRV prefixes in one batch
+    Promise.allSettled(
+      SRV_PREFIXES.map(async (svc) => {
+        const records = await dns.resolveSrv(`${svc}.${domain}`);
+        return { svc, records };
+      })
+    ),
   ]);
 
-  if (a.status === "fulfilled")    for (const r of a.value)    dnsRecords.push({ type: "A",     value: r.address,                              ttl: r.ttl });
-  if (aaaa.status === "fulfilled") for (const r of aaaa.value) dnsRecords.push({ type: "AAAA",  value: r.address,                              ttl: r.ttl });
-  if (mx.status === "fulfilled")   for (const r of mx.value)   dnsRecords.push({ type: "MX",    value: r.exchange,                             ttl: 300, priority: r.priority });
-  if (ns.status === "fulfilled")   for (const r of ns.value)   dnsRecords.push({ type: "NS",    value: r,                                      ttl: 3600 });
-  if (txt.status === "fulfilled")  for (const r of txt.value)  dnsRecords.push({ type: "TXT",   value: r.join(" "),                            ttl: 300 });
-  if (soa.status === "fulfilled")  dnsRecords.push({ type: "SOA",  value: `${soa.value.nsname} ${soa.value.hostmaster}`, ttl: soa.value.minttl });
-  if (cname.status === "fulfilled" && Array.isArray(cname.value)) for (const r of cname.value) dnsRecords.push({ type: "CNAME", value: r, ttl: 300 });
+  // A records — collect IPs for PTR lookups
+  const resolvedIps: string[] = [];
+  if (a.status === "fulfilled") {
+    for (const r of a.value) {
+      dnsRecords.push({ type: "A", value: r.address, ttl: r.ttl });
+      resolvedIps.push(r.address);
+    }
+  }
+
+  if (aaaa.status === "fulfilled") {
+    for (const r of aaaa.value) {
+      dnsRecords.push({ type: "AAAA", value: r.address, ttl: r.ttl });
+      resolvedIps.push(r.address);
+    }
+  }
+
+  if (mx.status === "fulfilled")
+    for (const r of mx.value) dnsRecords.push({ type: "MX", value: r.exchange, ttl: 300, priority: r.priority });
+
+  if (ns.status === "fulfilled")
+    for (const r of ns.value) dnsRecords.push({ type: "NS", value: r, ttl: 3600 });
+
+  // TXT records — annotate SPF records with policy analysis
+  if (txt.status === "fulfilled") {
+    for (const r of txt.value) {
+      const joined = r.join(" ");
+      const notes = joined.startsWith("v=spf1") ? parseSpfPolicy(joined) : undefined;
+      dnsRecords.push({ type: "TXT", value: joined, ttl: 300, notes });
+    }
+  }
+
+  if (soa.status === "fulfilled")
+    dnsRecords.push({ type: "SOA", value: `${soa.value.nsname} ${soa.value.hostmaster} (serial: ${soa.value.serial}, refresh: ${soa.value.refresh}s, expire: ${soa.value.expire}s)`, ttl: soa.value.minttl });
+
+  if (cname.status === "fulfilled" && Array.isArray(cname.value))
+    for (const r of cname.value) dnsRecords.push({ type: "CNAME", value: r, ttl: 300 });
+
+  // DMARC — explicit type with parsed analysis
+  if (dmarcTxt.status === "fulfilled") {
+    for (const r of dmarcTxt.value) {
+      const joined = r.join(" ");
+      if (joined.startsWith("v=DMARC1")) {
+        dnsRecords.push({ type: "DMARC", value: joined, ttl: 300, notes: parseDmarcPolicy(joined) });
+      }
+    }
+  }
+  // If no DMARC found, add an absent record as a warning
+  const hasDmarc = dnsRecords.some(r => r.type === "DMARC");
+  if (!hasDmarc) {
+    dnsRecords.push({ type: "DMARC", value: "(not configured)", ttl: 0, notes: "❌ No DMARC record — domain is vulnerable to email spoofing" });
+  }
+
+  // Check if SPF exists in TXT
+  const hasSpf = dnsRecords.some(r => r.type === "TXT" && r.value.startsWith("v=spf1"));
+  if (!hasSpf) {
+    dnsRecords.push({ type: "TXT", value: "(no SPF record)", ttl: 0, notes: "❌ No SPF record found — anyone can send email claiming to be from this domain" });
+  }
+
+  // MTA-STS
+  if (mtaSts.status === "fulfilled") {
+    for (const r of mtaSts.value) {
+      const joined = r.join(" ");
+      if (joined) dnsRecords.push({ type: "MTA-STS", value: joined, ttl: 300, notes: "MTA-STS policy indicator — enforces TLS for email delivery" });
+    }
+  }
+
+  // BIMI
+  if (bimi.status === "fulfilled") {
+    for (const r of bimi.value) {
+      const joined = r.join(" ");
+      if (joined) dnsRecords.push({ type: "BIMI", value: joined, ttl: 300, notes: "Brand Indicators for Message Identification — displays logo in email clients" });
+    }
+  }
+
+  // SRV records
+  if (srvBatch.status === "fulfilled") {
+    for (const result of srvBatch.value) {
+      if (result.status === "fulfilled" && result.value.records.length > 0) {
+        const { svc, records } = result.value;
+        for (const r of records) {
+          dnsRecords.push({
+            type: "SRV",
+            value: `${svc}.${domain}`,
+            ttl: 300,
+            priority: r.priority,
+            weight: r.weight,
+            port: r.port,
+            target: r.name,
+          });
+        }
+      }
+    }
+  }
+
+  // PTR (Reverse DNS) — resolve each A/AAAA IP
+  await Promise.allSettled(
+    resolvedIps.slice(0, 10).map(async (ip) => {
+      try {
+        const hostnames = await dns.reverse(ip);
+        if (hostnames.length > 0) {
+          dnsRecords.push({ type: "PTR", value: ip, ttl: 300, target: hostnames[0], notes: `Reverse DNS: ${ip} → ${hostnames[0]}` });
+        }
+      } catch {}
+    })
+  );
 
   // Subdomain brute-force — 50 common prefixes
   const wordlist = [
@@ -256,32 +417,78 @@ async function runCtLogLookup(domain: string): Promise<SubdomainFinding[]> {
 
 async function runGeoIntel(target: string): Promise<IntelItem[]> {
   const domain = extractDomain(target);
-  let ip = domain;
-  try { const ips = await dns.resolve4(domain); ip = ips[0] ?? domain; } catch {}
+  let ip = isIp(domain) ? domain : "";
+  if (!ip) { try { const ips = await dns.resolve4(domain); ip = ips[0] ?? ""; } catch {} }
   if (!ip) return [];
 
+  const intel: IntelItem[] = [];
+  intel.push({ type: "GeoIP", key: "IP Address", value: ip });
+
+  // Source 1: ip-api.com — full geo + ASN + hosting/proxy flags
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,regionName,city,org,as,hosting,proxy,isp`, { signal: ctrl.signal });
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,org,as,hosting,proxy,isp,lon,lat`, { signal: ctrl.signal });
     if (res.ok) {
       const d: any = await res.json();
       if (d.status === "success") {
-        const intel: IntelItem[] = [];
-        if (d.country)    intel.push({ type: "GeoIP", key: "Country",      value: d.country });
-        if (d.regionName) intel.push({ type: "GeoIP", key: "Region",       value: d.regionName });
-        if (d.city)       intel.push({ type: "GeoIP", key: "City",         value: d.city });
-        if (d.org)        intel.push({ type: "ASN",   key: "Organization", value: d.org });
-        if (d.as)         intel.push({ type: "ASN",   key: "AS Number",    value: d.as });
-        if (d.isp)        intel.push({ type: "ASN",   key: "ISP",          value: d.isp });
-        if (d.hosting)    intel.push({ type: "Hosting", key: "Hosting",    value: d.hosting ? "Datacenter/Hosting IP" : "Residential IP" });
-        if (d.proxy)      intel.push({ type: "Risk",    key: "Proxy/VPN",  value: d.proxy ? "YES — behind proxy/VPN" : "No proxy detected" });
-        intel.push({ type: "GeoIP", key: "IP Address", value: ip });
-        return intel;
+        if (d.country)    intel.push({ type: "GeoIP",   key: "Country",      value: `${d.country}${d.countryCode ? ` (${d.countryCode})` : ""}` });
+        if (d.regionName) intel.push({ type: "GeoIP",   key: "Region",       value: d.regionName });
+        if (d.city)       intel.push({ type: "GeoIP",   key: "City",         value: d.city });
+        if (d.lat && d.lon) intel.push({ type: "GeoIP", key: "Coordinates",  value: `${d.lat}, ${d.lon}` });
+        if (d.as)         intel.push({ type: "ASN",     key: "AS Number",    value: d.as });
+        if (d.org)        intel.push({ type: "ASN",     key: "Organization", value: d.org });
+        if (d.isp)        intel.push({ type: "ASN",     key: "ISP",          value: d.isp });
+        intel.push({ type: "Hosting", key: "IP Type", value: d.hosting ? "Datacenter / Hosting IP" : "Residential / ISP IP" });
+        if (d.proxy)      intel.push({ type: "Risk",    key: "Proxy / VPN",  value: d.proxy ? "YES — traffic behind proxy/VPN" : "No proxy detected" });
       }
     }
   } catch {}
-  return [{ type: "GeoIP", key: "IP Address", value: ip }];
+
+  // Source 2: ipinfo.io — reverse hostname + additional org/ASN confirmation
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`https://ipinfo.io/${ip}/json`, {
+      signal: ctrl.signal,
+      headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
+    });
+    if (res.ok) {
+      const d: any = await res.json();
+      if (d.hostname) intel.push({ type: "Network", key: "Reverse Hostname", value: d.hostname });
+      if (d.org && !intel.some(i => i.key === "Organization")) intel.push({ type: "ASN", key: "Organization", value: d.org });
+    }
+  } catch {}
+
+  // Source 3: ARIN RDAP (follows redirects to RIPE/APNIC/etc for non-ARIN IPs)
+  // Returns network name, handle, and IP range (start–end + CIDR prefix)
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 8000);
+    const rdapRes = await fetch(`https://rdap.arin.net/registry/ip/${ip}`, {
+      signal: ctrl.signal,
+      redirect: "follow",
+      headers: { "Accept": "application/rdap+json", "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
+    });
+    if (rdapRes.ok) {
+      const d: any = await rdapRes.json();
+      if (d.name)   intel.push({ type: "Network", key: "Network Name",   value: d.name });
+      if (d.handle) intel.push({ type: "Network", key: "Network Handle", value: d.handle });
+      if (d.startAddress && d.endAddress)
+        intel.push({ type: "Network", key: "IP Range", value: `${d.startAddress} – ${d.endAddress}` });
+      const cidr = d.cidr0_cidrs?.[0];
+      if (cidr?.v4prefix)
+        intel.push({ type: "Network", key: "IP CIDR Prefix", value: `${cidr.v4prefix}/${cidr.length}` });
+      // Extract ASN from linked entity if present
+      for (const entity of d.entities ?? []) {
+        if (entity.roles?.includes("registration") && entity.handle?.startsWith("AS")) {
+          intel.push({ type: "ASN", key: "ARIN ASN Handle", value: entity.handle });
+        }
+      }
+    }
+  } catch {}
+
+  return intel;
 }
 
 async function runWhoisIntel(target: string): Promise<IntelItem[]> {
