@@ -7,6 +7,7 @@ export interface DetectedTechnology {
   website?: string;
   cpe?: string;
   icon?: string;
+  hosts?: string[];
 }
 
 interface HeaderPattern { name: string; re: RegExp; version?: number }

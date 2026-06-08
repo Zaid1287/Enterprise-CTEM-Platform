@@ -993,6 +993,27 @@ export default function ScanReportPage() {
                       {Object.keys(selectedAsset.httpInfo.headers ?? {}).length > 0 && (
                         <div>
                           <p className="text-xs font-semibold text-muted-foreground mb-2">Response Headers</p>
+                          {/* Highlight security-relevant headers first */}
+                          {(() => {
+                            const h = selectedAsset.httpInfo.headers ?? {};
+                            const secHeaders = ["server","x-powered-by","strict-transport-security","content-security-policy","x-frame-options","x-content-type-options","referrer-policy","permissions-policy"];
+                            const highlighted = secHeaders.filter(k => h[k]);
+                            if (!highlighted.length) return null;
+                            return (
+                              <div className="mb-2 space-y-1">
+                                {highlighted.map(k => {
+                                  const isVuln = ["server","x-powered-by"].includes(k);
+                                  const isMissingSec = ["strict-transport-security","content-security-policy","x-frame-options","x-content-type-options","referrer-policy","permissions-policy"].includes(k) && h[k];
+                                  return (
+                                    <div key={k} className={cn("flex gap-2 rounded px-2 py-1.5 font-mono text-xs border", isVuln ? "bg-orange-500/5 border-orange-500/20" : "bg-green-500/5 border-green-500/20")}>
+                                      <span className={cn("shrink-0 font-semibold", isVuln ? "text-orange-400" : "text-green-400")}>{k}:</span>
+                                      <span className="text-muted-foreground break-all">{String(h[k])}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
                           <div className="bg-muted/30 rounded-lg p-3 space-y-1 font-mono text-xs">
                             {Object.entries(selectedAsset.httpInfo.headers ?? {}).map(([k, v]) => (
                               <div key={k} className="flex gap-2">
@@ -1001,6 +1022,52 @@ export default function ScanReportPage() {
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+
+                      {/* Cookie Security Analysis */}
+                      {(selectedAsset.httpInfo?.cookieFlags ?? []).length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                            <Lock className="w-3 h-3" /> Cookie Security Analysis
+                            <span className="ml-1 text-[10px] bg-accent/60 border border-border rounded px-1.5 py-0.5">{selectedAsset.httpInfo.cookieFlags.length} cookies</span>
+                          </p>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left border-b border-border">
+                                <th className="pb-2 text-xs font-medium text-muted-foreground">Cookie Name</th>
+                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-20">Secure</th>
+                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-24">HttpOnly</th>
+                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-28">SameSite</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(selectedAsset.httpInfo.cookieFlags as any[]).map((c: any, i: number) => (
+                                <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
+                                  <td className="py-2 font-mono text-xs text-foreground">{c.name || "(unnamed)"}</td>
+                                  <td className="py-2 text-center">
+                                    {c.secure
+                                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mx-auto" />
+                                      : <AlertCircle className="w-3.5 h-3.5 text-red-400 mx-auto" />}
+                                  </td>
+                                  <td className="py-2 text-center">
+                                    {c.httpOnly
+                                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mx-auto" />
+                                      : <AlertCircle className="w-3.5 h-3.5 text-red-400 mx-auto" />}
+                                  </td>
+                                  <td className="py-2 text-center">
+                                    {c.sameSite ? (
+                                      <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold",
+                                        c.sameSite.toLowerCase() === "strict" ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                                        c.sameSite.toLowerCase() === "lax"    ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                                        "bg-red-500/15 text-red-400 border-red-500/30"
+                                      )}>{c.sameSite}</span>
+                                    ) : <AlertCircle className="w-3.5 h-3.5 text-red-400 mx-auto" />}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       )}
                     </div>
@@ -1059,7 +1126,30 @@ export default function ScanReportPage() {
 
               {/* Technologies tab */}
               {assetTab === "technologies" && (
-                <TechnologiesTab assetId={selectedAsset.assetId} />
+                <div className="space-y-4">
+                  {/* Per-host fingerprint breakdown from multi-host scan */}
+                  {(selectedAsset.httpInfo?.hostFingerprints ?? []).length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <Globe className="w-3 h-3" /> Per-Host Fingerprints
+                        <span className="ml-1 text-[10px] bg-accent/60 border border-border rounded px-1.5 py-0.5">{selectedAsset.httpInfo.hostFingerprints.length} subdomains</span>
+                      </p>
+                      <div className="space-y-1.5">
+                        {(selectedAsset.httpInfo.hostFingerprints as any[]).map((fp: any, i: number) => (
+                          <div key={i} className="flex items-start gap-2 bg-accent/10 border border-border/50 rounded-lg px-3 py-2">
+                            <span className="font-mono text-xs text-primary shrink-0 mt-0.5">{fp.host}</span>
+                            <div className="flex flex-wrap gap-1">
+                              {(fp.techs as string[]).map((t: string) => (
+                                <span key={t} className="text-[10px] bg-accent/50 border border-border rounded px-1.5 py-0.5 text-muted-foreground">{t}</span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <TechnologiesTab assetId={selectedAsset.assetId} />
+                </div>
               )}
 
               {/* Intelligence tab */}

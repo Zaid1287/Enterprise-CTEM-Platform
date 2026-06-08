@@ -147,7 +147,9 @@ const CVE_POOL = [
 interface PortFinding      { port: number; service: string; version: string; protocol: string; state: string; }
 interface SubdomainFinding { name: string; ip: string; cname: string | null; status: string; cdnProvider: string | null; sources?: string[]; httpStatus?: number | null; httpTitle?: string | null; redirectTo?: string | null; webServer?: string | null; }
 interface EndpointFinding  { url: string; method: string; status: number; title?: string; }
-interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; cdn: string | null; headers: Record<string, string>; }
+interface CookieFlag       { name: string; secure: boolean; httpOnly: boolean; sameSite: string; raw: string; }
+interface HostFingerprint  { host: string; techs: string[]; }
+interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; cdn: string | null; headers: Record<string, string>; cookieFlags?: CookieFlag[]; hostFingerprints?: HostFingerprint[]; }
 interface DnsRecord        { type: string; value: string; ttl: number; priority?: number; weight?: number; port?: number; target?: string; notes?: string; }
 interface IntelItem        { type: string; key: string; value: string; severity?: string; }
 interface VulnFinding      { cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source?: string; }
@@ -550,6 +552,16 @@ async function runNmapScan(target: string, scanId: number): Promise<{ ports: Por
 
 // ── Phase 3: Web Recon ─────────────────────────────────────────────────────────
 
+function parseCookieFlags(setCookieList: string[]): CookieFlag[] {
+  return setCookieList.filter(Boolean).map(raw => ({
+    name: (raw.split(";")[0] ?? "").split("=")[0]?.trim() ?? "unknown",
+    secure:   /;\s*secure\b/i.test(raw),
+    httpOnly: /;\s*httponly\b/i.test(raw),
+    sameSite: (/;\s*samesite\s*=\s*(\w+)/i.exec(raw)?.[1] ?? "").trim(),
+    raw,
+  }));
+}
+
 async function runHttpProbe(target: string): Promise<HttpInfo | null> {
   const domain = extractDomain(target);
   const candidates = [
@@ -567,6 +579,11 @@ async function runHttpProbe(target: string): Promise<HttpInfo | null> {
 
       const headers: Record<string, string> = {};
       response.headers.forEach((v, k) => { headers[k] = v; });
+      // getSetCookie() handles multiple Set-Cookie headers correctly (Node 18+ undici)
+      const setCookieList: string[] = typeof (response.headers as any).getSetCookie === "function"
+        ? (response.headers as any).getSetCookie() as string[]
+        : (headers["set-cookie"] ? [headers["set-cookie"]] : []);
+      const cookieFlags = parseCookieFlags(setCookieList);
       const body = await response.text().catch(() => "");
 
       const titleM = body.match(/<title[^>]*>([^<]{0,200})<\/title>/i);
@@ -610,7 +627,7 @@ async function runHttpProbe(target: string): Promise<HttpInfo | null> {
       else if (/akamai/i.test(headers["server"] ?? ""))          cdn = "Akamai";
       else if (headers["x-azure-ref"])                           cdn = "Azure CDN";
 
-      return { url: response.url ?? url, status: response.status, title, server, contentLength: body.length, tech: [...new Set(tech)], waf, cdn, headers };
+      return { url: response.url ?? url, status: response.status, title, server, contentLength: body.length, tech: [...new Set(tech)], waf, cdn, headers, cookieFlags: cookieFlags.length > 0 ? cookieFlags : undefined };
     } catch {}
   }
   return null;
@@ -802,6 +819,29 @@ function analyzeSecurityHeaders(httpInfo: HttpInfo | null): VulnFinding[] {
   }
   if (h["x-powered-by"]) {
     vulns.push({ cve: "HDR-XPB", cvss: 3.7, severity: "low", title: `Technology Disclosure via X-Powered-By: ${h["x-powered-by"]}`, cwe: "CWE-200", remediation: "Remove X-Powered-By header." });
+  }
+
+  // ── Cookie security flag analysis ────────────────────────────────────────────
+  const cookies = httpInfo.cookieFlags ?? [];
+  if (cookies.length > 0) {
+    const insecure  = cookies.filter(c => !c.secure);
+    const noHO      = cookies.filter(c => !c.httpOnly);
+    const noSS      = cookies.filter(c => !c.sameSite);
+    if (insecure.length > 0)
+      vulns.push({ cve: "COOKIE-SECURE", cvss: 5.3, severity: "medium",
+        title: `${insecure.length} Cookie(s) Missing Secure Flag`,
+        cwe: "CWE-614",
+        remediation: `Add the Secure attribute to: ${insecure.map(c => `"${c.name}"`).join(", ")}. Prevents cookies from being sent over plain HTTP.` });
+    if (noHO.length > 0)
+      vulns.push({ cve: "COOKIE-HTTPONLY", cvss: 4.3, severity: "medium",
+        title: `${noHO.length} Cookie(s) Missing HttpOnly Flag`,
+        cwe: "CWE-1004",
+        remediation: `Add the HttpOnly attribute to: ${noHO.map(c => `"${c.name}"`).join(", ")}. Prevents JavaScript from reading the cookie, reducing XSS session theft.` });
+    if (noSS.length > 0)
+      vulns.push({ cve: "COOKIE-SAMESITE", cvss: 3.7, severity: "low",
+        title: `${noSS.length} Cookie(s) Missing SameSite Attribute`,
+        cwe: "CWE-352",
+        remediation: `Add SameSite=Lax or SameSite=Strict to: ${noSS.map(c => `"${c.name}"`).join(", ")}. Reduces CSRF attack surface.` });
   }
 
   return vulns;
@@ -1170,6 +1210,45 @@ async function executePipeline(
           ? (async () => { capturedPages = await captureScreenshots(target, 90000); })()
           : Promise.resolve(),
       ]);
+
+      // ── Multi-host tech fingerprinting on live subdomains ─────────────────
+      // Run detectTechnologies on up to 15 live subdomains discovered in Phase 1,
+      // then merge unique techs and attach per-host data to httpInfo.
+      {
+        const primaryDomain = extractDomain(target);
+        const liveHosts = allSubdomains.filter(s => s.status === "active" && s.ip).slice(0, 15);
+        if (liveHosts.length > 0) {
+          // Tag primary domain on all existing detections
+          for (const t of detectedTechs) t.hosts = [primaryDomain];
+
+          const subResults = await Promise.allSettled(
+            liveHosts.map(async s => ({ host: s.name, techs: await detectTechnologies(s.name, 8000) }))
+          );
+
+          const hostFpMap = new Map<string, string[]>();
+          for (const r of subResults) {
+            if (r.status !== "fulfilled" || !r.value.techs.length) continue;
+            const { host, techs } = r.value;
+            hostFpMap.set(host, techs.map(t => t.name));
+            for (const t of techs) {
+              const existing = detectedTechs.find(d => d.slug === t.slug);
+              if (existing) {
+                (existing.hosts ??= []).push(host);
+              } else {
+                detectedTechs.push({ ...t, hosts: [host] });
+              }
+            }
+          }
+
+          // Attach per-host fingerprints to httpInfo for UI display
+          if (httpInfo && hostFpMap.size > 0) {
+            httpInfo.hostFingerprints = [...hostFpMap.entries()].map(([host, techs]) => ({ host, techs }));
+          }
+        } else {
+          // Single-host scan — tag primary domain on all detections
+          for (const t of detectedTechs) t.hosts = [primaryDomain];
+        }
+      }
 
       // ── Auto-store technology detections for this asset ──────────────────
       if (detectedTechs.length > 0) {
