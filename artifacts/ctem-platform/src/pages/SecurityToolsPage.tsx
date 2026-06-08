@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, GitBranch, ChevronUp, ChevronDown, Settings2,
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
   ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
-  Zap, Cpu, Network, Globe, Shield,
+  Zap, Cpu, Network, Globe, Shield, Search, Wifi,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
