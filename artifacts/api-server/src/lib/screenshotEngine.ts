@@ -21,21 +21,43 @@ export interface SensitiveFinding {
 
 // ── Secret patterns to scan for in page source ────────────────────────────────
 const SENSITIVE_PATTERNS: Array<{ name: string; re: RegExp; severity: SensitiveFinding["severity"]; mask: boolean }> = [
-  { name: "AWS Access Key",      re: /AKIA[0-9A-Z]{16}/g,                                     severity: "critical", mask: true  },
-  { name: "AWS Secret Key",      re: /(?:aws.{0,10}secret|secret.{0,10}key)\s*[:=]\s*['"]?([A-Za-z0-9/+]{40})['"]?/gi, severity: "critical", mask: true },
-  { name: "GitHub Token",        re: /gh[pos]_[A-Za-z0-9]{36}/g,                              severity: "critical", mask: true  },
-  { name: "Stripe Secret Key",   re: /sk_(?:live|test)_[A-Za-z0-9]{24,}/g,                    severity: "critical", mask: true  },
-  { name: "Slack Token",         re: /xox[baprs]-[A-Za-z0-9-]+/g,                             severity: "high",     mask: true  },
-  { name: "Generic API Key",     re: /(?:api_key|apikey|api-key)\s*[:=]\s*['"]([A-Za-z0-9_\-]{20,})['"]?/gi, severity: "high", mask: true },
-  { name: "Bearer Token",        re: /authorization\s*[:=]\s*['"]?bearer\s+([A-Za-z0-9._\-]{20,})['"]?/gi,   severity: "high", mask: true },
-  { name: "Private Key Block",   re: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g,              severity: "critical", mask: false },
-  { name: "Basic Auth in URL",   re: /https?:\/\/[^:]+:[^@]{4,}@[a-zA-Z0-9.]+/g,             severity: "high",     mask: true  },
-  { name: "Database URL",        re: /(?:mongodb|postgres|mysql|redis):\/\/[^\s'"<>]+/gi,      severity: "high",     mask: true  },
-  { name: "Internal IP",         re: /(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d+\.\d+/g, severity: "medium", mask: false },
-  { name: "Email Address",       re: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,   severity: "low",      mask: false },
-  { name: "JWT Token",           re: /eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}/g, severity: "high", mask: true },
-  { name: "Firebase Config",     re: /firebaseConfig\s*=\s*\{[^}]+apiKey\s*:\s*['"][^'"]+['"]/g, severity: "medium", mask: false },
-  { name: "Google Analytics ID", re: /(?:UA-\d{4,10}-\d{1,4}|G-[A-Z0-9]{10})/g,              severity: "low",      mask: false },
+  // Cloud & infrastructure
+  { name: "AWS Access Key",         re: /AKIA[0-9A-Z]{16}/g,                                                   severity: "critical", mask: true  },
+  { name: "AWS Secret Key",         re: /(?:aws.{0,10}secret|secret.{0,10}key)\s*[:=]\s*['"]?([A-Za-z0-9/+]{40})['"]?/gi, severity: "critical", mask: true },
+  { name: "AWS Session Token",      re: /FwoGZXIvYXdz[A-Za-z0-9/+=]{100,}/g,                                   severity: "critical", mask: true  },
+  // Version control & CI
+  { name: "GitHub Token",           re: /gh[pos]_[A-Za-z0-9]{36}/g,                                            severity: "critical", mask: true  },
+  { name: "GitHub App Token",       re: /ghu_[A-Za-z0-9]{36}/g,                                                severity: "critical", mask: true  },
+  // Payment
+  { name: "Stripe Secret Key",      re: /sk_(?:live|test)_[A-Za-z0-9]{24,}/g,                                  severity: "critical", mask: true  },
+  { name: "Stripe Publishable Key", re: /pk_(?:live|test)_[A-Za-z0-9]{24,}/g,                                  severity: "medium",   mask: false },
+  // Communication
+  { name: "Slack Token",            re: /xox[baprs]-[A-Za-z0-9-]+/g,                                           severity: "high",     mask: true  },
+  { name: "Slack Webhook URL",      re: /https:\/\/hooks\.slack\.com\/services\/[^\s'"<>]+/g,                   severity: "medium",   mask: false },
+  { name: "Twilio Account SID",     re: /AC[0-9a-f]{32}/g,                                                     severity: "high",     mask: true  },
+  { name: "SendGrid API Key",       re: /SG\.[A-Za-z0-9_\-]{22,}\.[A-Za-z0-9_\-]{43,}/g,                      severity: "critical", mask: true  },
+  // AI / LLM
+  { name: "OpenAI API Key",         re: /sk-(?:proj-)?[A-Za-z0-9_\-]{48,}/g,                                   severity: "critical", mask: true  },
+  { name: "Anthropic API Key",      re: /sk-ant-[A-Za-z0-9_\-]{40,}/g,                                         severity: "critical", mask: true  },
+  // Google
+  { name: "Google API Key",         re: /AIza[0-9A-Za-z\-_]{35}/g,                                             severity: "critical", mask: true  },
+  { name: "Firebase Config",        re: /firebaseConfig\s*=\s*\{[^}]+apiKey\s*:\s*['"][^'"]+['"]/g,            severity: "high",     mask: false },
+  // Generic patterns
+  { name: "Generic API Key",        re: /(?:api_key|apikey|api[-_]?key)\s*[:=]\s*['"]([A-Za-z0-9_\-]{20,})['"]?/gi, severity: "high", mask: true },
+  { name: "Bearer Token",           re: /authorization\s*[:=]\s*['"]?bearer\s+([A-Za-z0-9._\-]{20,})['"]?/gi, severity: "high",     mask: true  },
+  { name: "Private Key Block",      re: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,                  severity: "critical", mask: false },
+  { name: "Basic Auth in URL",      re: /https?:\/\/[^:]+:[^@]{4,}@[a-zA-Z0-9.]+/g,                           severity: "high",     mask: true  },
+  { name: "Database URL",           re: /(?:mongodb|postgres|postgresql|mysql|redis):\/\/[^\s'"<>]+/gi,        severity: "critical", mask: true  },
+  { name: "npm Token",              re: /npm_[A-Za-z0-9]{36}/g,                                                 severity: "high",     mask: true  },
+  { name: "Mailchimp Key",          re: /[0-9a-f]{32}-us\d{1,2}/g,                                             severity: "high",     mask: true  },
+  { name: "JWT Token",              re: /eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}/g, severity: "high",     mask: true  },
+  { name: "Hardcoded Password",     re: /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"<>\s]{8,}['"]/gi,            severity: "high",     mask: true  },
+  { name: "Connection String",      re: /(?:Server|Data Source)\s*=[^;]+;[^;]*(?:Password|Pwd)\s*=[^;'"<>\s]+/gi, severity: "critical", mask: true },
+  { name: "Exposed .env Variable",  re: /^(?:SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY)\s*=\s*['"]?[^\s'"<>]{8,}['"]?/gim, severity: "high", mask: true },
+  // Info disclosure
+  { name: "Internal IP",            re: /(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d+\.\d+/g,           severity: "medium",   mask: false },
+  { name: "Email Address",          re: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,                  severity: "low",      mask: false },
+  { name: "Google Analytics ID",    re: /(?:UA-\d{4,10}-\d{1,4}|G-[A-Z0-9]{10})/g,                            severity: "low",      mask: false },
 ];
 
 // ── Page type detection ───────────────────────────────────────────────────────
@@ -160,20 +182,47 @@ async function screenshotPage(browser: Browser, url: string): Promise<{ data: st
 }
 
 // ── Build candidate URL list for a target domain ──────────────────────────────
-function buildCandidateUrls(target: string): Array<{ url: string; pageType: PageScreenshot["pageType"] }> {
+function buildCandidateUrls(target: string): Array<{ url: string; pageType: PageScreenshot["pageType"]; dedup: boolean }> {
   const base = target.startsWith("http") ? target.replace(/\/$/, "") : `https://${target}`;
-  const candidates: Array<{ url: string; pageType: PageScreenshot["pageType"] }> = [
-    { url: base,                         pageType: "index"  },
-    { url: `${base}/login`,              pageType: "login"  },
-    { url: `${base}/signin`,             pageType: "login"  },
-    { url: `${base}/sign-in`,            pageType: "login"  },
-    { url: `${base}/register`,           pageType: "signup" },
-    { url: `${base}/signup`,             pageType: "signup" },
-    { url: `${base}/admin`,              pageType: "admin"  },
-    { url: `${base}/api`,                pageType: "api"    },
-    { url: `${base}/swagger`,            pageType: "api"    },
+  return [
+    // Index / home
+    { url: base,                          pageType: "index",     dedup: true  },
+    // Login paths
+    { url: `${base}/login`,               pageType: "login",     dedup: true  },
+    { url: `${base}/signin`,              pageType: "login",     dedup: true  },
+    { url: `${base}/sign-in`,             pageType: "login",     dedup: true  },
+    { url: `${base}/auth/login`,          pageType: "login",     dedup: true  },
+    { url: `${base}/user/login`,          pageType: "login",     dedup: true  },
+    { url: `${base}/wp-login.php`,        pageType: "login",     dedup: true  },
+    { url: `${base}/admin/login`,         pageType: "login",     dedup: true  },
+    { url: `${base}/forgot-password`,     pageType: "login",     dedup: true  },
+    // Signup paths
+    { url: `${base}/register`,            pageType: "signup",    dedup: true  },
+    { url: `${base}/signup`,              pageType: "signup",    dedup: true  },
+    { url: `${base}/sign-up`,             pageType: "signup",    dedup: true  },
+    { url: `${base}/create-account`,      pageType: "signup",    dedup: true  },
+    // Admin paths
+    { url: `${base}/admin`,               pageType: "admin",     dedup: true  },
+    { url: `${base}/dashboard`,           pageType: "admin",     dedup: true  },
+    { url: `${base}/wp-admin`,            pageType: "admin",     dedup: true  },
+    { url: `${base}/administrator`,       pageType: "admin",     dedup: true  },
+    // API / docs
+    { url: `${base}/api`,                 pageType: "api",       dedup: true  },
+    { url: `${base}/swagger`,             pageType: "api",       dedup: true  },
+    { url: `${base}/graphql`,             pageType: "api",       dedup: true  },
+    { url: `${base}/openapi.json`,        pageType: "api",       dedup: true  },
+    // Sensitive file disclosures (no dedup — each is distinct)
+    { url: `${base}/.env`,               pageType: "sensitive",  dedup: false },
+    { url: `${base}/.env.local`,         pageType: "sensitive",  dedup: false },
+    { url: `${base}/.env.production`,    pageType: "sensitive",  dedup: false },
+    { url: `${base}/config.js`,          pageType: "sensitive",  dedup: false },
+    { url: `${base}/app.js`,             pageType: "sensitive",  dedup: false },
+    { url: `${base}/robots.txt`,         pageType: "sensitive",  dedup: false },
+    { url: `${base}/phpinfo.php`,        pageType: "sensitive",  dedup: false },
+    { url: `${base}/.git/config`,        pageType: "sensitive",  dedup: false },
+    { url: `${base}/wp-config.php.bak`,  pageType: "sensitive",  dedup: false },
+    { url: `${base}/.well-known/security.txt`, pageType: "sensitive", dedup: false },
   ];
-  return candidates;
 }
 
 // ── Main entry: capture screenshots of a target ───────────────────────────────
@@ -192,19 +241,25 @@ export async function captureScreenshots(target: string, timeoutMs = 60000): Pro
   const candidates = buildCandidateUrls(target);
   const seen = new Set<string>();
 
-  for (const { url, pageType } of candidates) {
+  for (const { url, pageType, dedup } of candidates) {
     if (Date.now() > deadline) break;
-    if (seen.has(pageType) && pageType !== "index") continue; // deduplicate page types
+    // For dedup-enabled types, skip if we already captured this page type
+    if (dedup && seen.has(pageType)) continue;
 
     try {
       const { data, title, statusCode, html } = await screenshotPage(browser, url);
-      if (statusCode === 0 || statusCode === 404) continue;
+      // Skip missing pages — but keep 200-range and interesting status codes
+      if (statusCode === 0) continue;
+      if (statusCode === 404 && pageType !== "sensitive") continue;
 
-      const actualType = detectPageType(url, html);
-      if (seen.has(actualType) && actualType !== "index") continue;
-      seen.add(actualType);
+      const actualType = dedup ? detectPageType(url, html) : pageType;
+      if (dedup && seen.has(actualType)) continue;
+      if (dedup) seen.add(actualType);
 
       const findings = scanForSensitiveInfo(html);
+
+      // For sensitive files: skip if no content AND no findings (blank 200 still counts)
+      if (pageType === "sensitive" && html.length < 20 && findings.length === 0) continue;
 
       results.push({
         url, statusCode, title, findings,
@@ -226,16 +281,18 @@ async function captureSourceOnly(target: string, timeoutMs: number): Promise<Pag
   const results: PageScreenshot[] = [];
   const seen = new Set<string>();
 
-  for (const { url, pageType } of buildCandidateUrls(target)) {
+  for (const { url, pageType, dedup } of buildCandidateUrls(target)) {
     if (Date.now() > deadline) break;
-    if (seen.has(pageType) && pageType !== "index") continue;
+    if (dedup && seen.has(pageType)) continue;
 
     const { html, statusCode } = await fetchSource(url);
-    if (statusCode === 0 || statusCode === 404 || !html) continue;
+    if (statusCode === 0) continue;
+    if (statusCode === 404 && pageType !== "sensitive") continue;
+    if (!html) continue;
 
-    const actualType = detectPageType(url, html);
-    if (seen.has(actualType) && actualType !== "index") continue;
-    seen.add(actualType);
+    const actualType = dedup ? detectPageType(url, html) : pageType;
+    if (dedup && seen.has(actualType)) continue;
+    if (dedup) seen.add(actualType);
 
     const findings = scanForSensitiveInfo(html);
     const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);

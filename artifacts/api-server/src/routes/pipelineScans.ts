@@ -901,7 +901,10 @@ async function executePipeline(
     let detectedTechs: DetectedTechnology[] = [];
     let capturedPages: PageScreenshot[] = [];
     const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
-    if (needsHttp || toolsForAsset.some(t => t.category === "web_recon") || hasScreenshotTools) {
+    // Screenshots + tech detection always run for web asset types regardless of tool pipeline
+    const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
+    const shouldScreenshot = isWebAsset; // always capture for web assets
+    if (needsHttp || toolsForAsset.some(t => t.category === "web_recon") || hasScreenshotTools || isWebAsset) {
       const p3Start = Date.now();
       for (const t of p3) startTool(t.name, t.category === "screenshot"
         ? `Capturing screenshots of ${domain}…`
@@ -911,7 +914,7 @@ async function executePipeline(
         (async () => { httpInfo  = await runHttpProbe(target); })(),
         (async () => { endpoints = await runEndpointProbe(target); })(),
         (async () => { detectedTechs = await detectTechnologies(target); })(),
-        hasScreenshotTools
+        shouldScreenshot
           ? (async () => { capturedPages = await captureScreenshots(target, 90000); })()
           : Promise.resolve(),
       ]);

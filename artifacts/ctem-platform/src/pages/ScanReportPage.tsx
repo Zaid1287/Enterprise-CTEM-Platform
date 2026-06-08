@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "wouter";
-import { useGetScanAssetReport, useGetScan, useStopScan, getGetScanQueryKey, getGetScanAssetReportQueryKey } from "@workspace/api-client-react";
+import {
+  useGetScanAssetReport, useGetScan, useStopScan,
+  getGetScanQueryKey, getGetScanAssetReportQueryKey,
+  useListAssetScreenshots, getListAssetScreenshotsQueryKey,
+  useListAssetTechnologies, getListAssetTechnologiesQueryKey,
+} from "@workspace/api-client-react";
 import {
   ChevronLeft, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download,
+  Lock, Fingerprint, Download, Camera, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies";
 
 function downloadScanReportPdf(scan: any, assetReports: any[]) {
   const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
@@ -447,14 +452,16 @@ export default function ScanReportPage() {
 
   const secretsCount = (selectedAsset?.secrets ?? []).length;
   const assetTabs: { key: AssetTab; label: string; icon: React.ElementType; count?: number }[] = [
-    { key: "ports",      label: "Open Ports",     icon: Network,      count: summary.openPorts },
-    { key: "vulns",      label: "CVEs",            icon: AlertTriangle, count: (selectedAsset?.cves ?? []).length },
-    { key: "secrets",    label: "Secrets",         icon: Key,           count: secretsCount },
-    { key: "subdomains", label: "Subdomains",      icon: Globe,         count: summary.subdomains },
-    { key: "http",       label: "HTTP Info",       icon: Wifi },
-    { key: "dns",        label: "DNS Records",     icon: Database,      count: summary.dnsRecords },
-    { key: "endpoints",  label: "Endpoints",       icon: Search,        count: summary.endpoints },
-    { key: "intel",      label: "Intelligence",    icon: Eye,           count: summary.intelItems },
+    { key: "ports",        label: "Open Ports",    icon: Network,       count: summary.openPorts },
+    { key: "vulns",        label: "CVEs",           icon: AlertTriangle, count: (selectedAsset?.cves ?? []).length },
+    { key: "secrets",      label: "Secrets",        icon: Key,           count: secretsCount },
+    { key: "screenshots",  label: "Screenshots",    icon: Camera },
+    { key: "technologies", label: "Technologies",   icon: Cpu },
+    { key: "subdomains",   label: "Subdomains",     icon: Globe,         count: summary.subdomains },
+    { key: "http",         label: "HTTP Info",      icon: Wifi },
+    { key: "dns",          label: "DNS Records",    icon: Database,      count: summary.dnsRecords },
+    { key: "endpoints",    label: "Endpoints",      icon: Search,        count: summary.endpoints },
+    { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
 
@@ -898,6 +905,16 @@ export default function ScanReportPage() {
                 </div>
               )}
 
+              {/* Screenshots tab */}
+              {assetTab === "screenshots" && (
+                <ScreenshotsTab assetId={selectedAsset.assetId} />
+              )}
+
+              {/* Technologies tab */}
+              {assetTab === "technologies" && (
+                <TechnologiesTab assetId={selectedAsset.assetId} />
+              )}
+
               {/* Intelligence tab */}
               {assetTab === "intel" && (
                 <div>
@@ -1054,6 +1071,270 @@ export default function ScanReportPage() {
 
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Page type badge colours ────────────────────────────────────────────────────
+const PAGE_TYPE_STYLES: Record<string, string> = {
+  index:     "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  login:     "bg-violet-500/15 text-violet-400 border-violet-500/30",
+  signup:    "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+  admin:     "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  api:       "bg-green-500/15 text-green-400 border-green-500/30",
+  sensitive: "bg-red-500/15 text-red-400 border-red-500/30",
+  error:     "bg-muted text-muted-foreground border-border",
+};
+
+const SEVERITY_DOT: Record<string, string> = {
+  critical: "bg-red-500",
+  high:     "bg-orange-500",
+  medium:   "bg-yellow-500",
+  low:      "bg-blue-400",
+};
+
+function ScreenshotsTab({ assetId }: { assetId: number }) {
+  const { data, isLoading } = useListAssetScreenshots(assetId, {
+    query: { queryKey: getListAssetScreenshotsQueryKey(assetId), enabled: !!assetId },
+  });
+  const [lightbox, setLightbox] = useState<any | null>(null);
+
+  const screens = (data as any[]) ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-44 rounded-xl" />)}
+      </div>
+    );
+  }
+
+  if (screens.length === 0) {
+    return (
+      <div className="text-center py-10 text-muted-foreground">
+        <Camera className="w-8 h-8 mx-auto mb-2 opacity-40" />
+        <p className="text-sm font-medium">No screenshots captured yet</p>
+        <p className="text-xs mt-1 opacity-70">Screenshots are captured automatically when a scan runs on this asset. Run a new scan to capture them.</p>
+      </div>
+    );
+  }
+
+  const hasCritical = screens.some((s: any) =>
+    (s.findings ?? []).some((f: any) => f.severity === "critical" || f.severity === "high")
+  );
+
+  return (
+    <div className="space-y-3">
+      {hasCritical && (
+        <div className="flex items-center gap-2 p-3 bg-red-500/5 border border-red-500/20 rounded-lg">
+          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+          <p className="text-xs text-red-300">
+            <span className="font-semibold">Sensitive data detected</span>
+            {" "}— credentials or secrets were found in page source. See findings below.
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        {screens.map((s: any, i: number) => {
+          const findings: any[] = s.findings ?? [];
+          const critFindings = findings.filter((f: any) => f.severity === "critical" || f.severity === "high");
+          return (
+            <div
+              key={i}
+              className={cn(
+                "bg-accent/20 border rounded-xl overflow-hidden cursor-pointer hover:bg-accent/30 transition-colors group",
+                critFindings.length > 0 ? "border-red-500/40" : "border-border"
+              )}
+              onClick={() => setLightbox(s)}
+            >
+              {/* Thumbnail */}
+              <div className="relative w-full h-36 bg-muted/40 overflow-hidden">
+                {s.screenshotData ? (
+                  <img
+                    src={`data:image/png;base64,${s.screenshotData}`}
+                    alt={s.title || s.url}
+                    className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-300"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-muted-foreground/40">
+                    <Camera className="w-8 h-8" />
+                  </div>
+                )}
+                {/* Status code pill */}
+                <span className={cn(
+                  "absolute top-2 right-2 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border",
+                  s.statusCode >= 200 && s.statusCode < 300 ? "bg-green-500/80 text-white border-green-500" :
+                  s.statusCode >= 300 && s.statusCode < 400 ? "bg-blue-500/80 text-white border-blue-500" :
+                  s.statusCode >= 400 ? "bg-red-500/80 text-white border-red-500" :
+                  "bg-muted text-muted-foreground border-border"
+                )}>{s.statusCode}</span>
+                {/* Page type badge */}
+                <span className={cn(
+                  "absolute top-2 left-2 text-[10px] font-semibold px-1.5 py-0.5 rounded border uppercase tracking-wide",
+                  PAGE_TYPE_STYLES[s.pageType] ?? PAGE_TYPE_STYLES.error
+                )}>{s.pageType}</span>
+              </div>
+              {/* Card footer */}
+              <div className="px-3 py-2">
+                <p className="text-xs font-medium truncate">{s.title || "Untitled"}</p>
+                <p className="text-[10px] text-muted-foreground truncate font-mono mt-0.5">{s.url}</p>
+                {findings.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {findings.slice(0, 3).map((f: any, fi: number) => (
+                      <span key={fi} className="flex items-center gap-0.5 text-[10px] bg-muted/60 border border-border rounded px-1.5 py-0.5">
+                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", SEVERITY_DOT[f.severity] ?? "bg-muted-foreground")} />
+                        {f.type}
+                      </span>
+                    ))}
+                    {findings.length > 3 && (
+                      <span className="text-[10px] text-muted-foreground">+{findings.length - 3} more</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <div
+            className="bg-card border border-border rounded-2xl overflow-hidden max-w-4xl w-full max-h-[90vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+              <div className="flex items-center gap-2">
+                <span className={cn(
+                  "text-[10px] font-semibold px-1.5 py-0.5 rounded border uppercase tracking-wide",
+                  PAGE_TYPE_STYLES[lightbox.pageType] ?? PAGE_TYPE_STYLES.error
+                )}>{lightbox.pageType}</span>
+                <span className="text-xs font-mono text-muted-foreground truncate max-w-[400px]">{lightbox.url}</span>
+              </div>
+              <button onClick={() => setLightbox(null)} className="w-7 h-7 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {/* Screenshot */}
+            <div className="overflow-y-auto flex-1">
+              {lightbox.screenshotData ? (
+                <img src={`data:image/png;base64,${lightbox.screenshotData}`} alt={lightbox.title} className="w-full" />
+              ) : (
+                <div className="h-64 flex items-center justify-center text-muted-foreground/40">
+                  <Camera className="w-10 h-10" />
+                </div>
+              )}
+            </div>
+            {/* Findings */}
+            {(lightbox.findings ?? []).length > 0 && (
+              <div className="border-t border-border px-4 py-3 shrink-0">
+                <p className="text-xs font-semibold text-muted-foreground mb-2">
+                  Sensitive Data Found ({lightbox.findings.length})
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {lightbox.findings.map((f: any, i: number) => (
+                    <div key={i} className={cn(
+                      "flex items-center gap-1.5 text-xs rounded-lg border px-2.5 py-1.5",
+                      f.severity === "critical" ? "border-red-500/40 bg-red-500/5 text-red-300" :
+                      f.severity === "high" ? "border-orange-500/40 bg-orange-500/5 text-orange-300" :
+                      "border-yellow-500/30 bg-yellow-500/5 text-yellow-300"
+                    )}>
+                      <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", SEVERITY_DOT[f.severity] ?? "bg-muted-foreground")} />
+                      <span className="font-semibold">{f.type}:</span>
+                      <span className="font-mono text-[10px] opacity-80">{f.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TECH_CATEGORY_STYLES: Record<string, string> = {
+  "CMS":               "bg-violet-500/15 text-violet-400 border-violet-500/30",
+  "JavaScript frameworks": "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  "Web servers":       "bg-green-500/15 text-green-400 border-green-500/30",
+  "Databases":         "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  "Analytics":         "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+  "Security":          "bg-red-500/15 text-red-400 border-red-500/30",
+  "CDN":               "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  "Programming languages": "bg-pink-500/15 text-pink-400 border-pink-500/30",
+};
+
+function TechnologiesTab({ assetId }: { assetId: number }) {
+  const { data, isLoading } = useListAssetTechnologies(assetId, {
+    query: { queryKey: getListAssetTechnologiesQueryKey(assetId), enabled: !!assetId },
+  });
+
+  const techs = (data as any[]) ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-3 gap-3">
+        {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
+      </div>
+    );
+  }
+
+  if (techs.length === 0) {
+    return (
+      <div className="text-center py-10 text-muted-foreground">
+        <Cpu className="w-8 h-8 mx-auto mb-2 opacity-40" />
+        <p className="text-sm font-medium">No technologies detected</p>
+        <p className="text-xs mt-1 opacity-70">Technology fingerprinting runs automatically on web assets. Run a scan to detect technologies.</p>
+      </div>
+    );
+  }
+
+  // Group by category
+  const byCategory = techs.reduce<Record<string, any[]>>((acc, t) => {
+    const cat = t.category || "Other";
+    (acc[cat] = acc[cat] ?? []).push(t);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Cpu className="w-3.5 h-3.5" />
+        <span>{techs.length} technologies detected</span>
+      </div>
+      {Object.entries(byCategory).map(([cat, items]) => (
+        <div key={cat}>
+          <p className={cn(
+            "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border inline-block mb-2",
+            TECH_CATEGORY_STYLES[cat] ?? "text-muted-foreground bg-muted border-border"
+          )}>{cat}</p>
+          <div className="grid grid-cols-3 gap-2">
+            {items.map((t: any, i: number) => (
+              <div key={i} className="bg-accent/20 border border-border rounded-lg px-3 py-2.5 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">{t.name}</p>
+                  {t.version && (
+                    <p className="text-[10px] font-mono text-muted-foreground mt-0.5">v{t.version}</p>
+                  )}
+                </div>
+                {t.confidence !== undefined && (
+                  <div className="shrink-0 text-right">
+                    <p className="text-xs font-bold text-primary">{t.confidence}%</p>
+                    <p className="text-[9px] text-muted-foreground">conf.</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
