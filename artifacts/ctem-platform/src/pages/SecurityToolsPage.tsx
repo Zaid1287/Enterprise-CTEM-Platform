@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, GitBranch, ChevronUp, ChevronDown, Settings2,
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
   ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
-  Zap,
+  Zap, Cpu, Network, Globe, Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -259,6 +259,72 @@ export default function SecurityToolsPage() {
             )}
           </button>
         ))}
+      </div>
+
+      {/* ── Built-in Scanning Engine ── */}
+      <div className="bg-card border border-primary/20 rounded-xl p-4">
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+            <Shield className="w-4 h-4 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold leading-tight">Built-in Scanning Engine</h3>
+            <p className="text-[11px] text-muted-foreground">Runs automatically on every scan — no configuration required</p>
+          </div>
+          <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/30 font-semibold tracking-wide">
+            ALWAYS ACTIVE
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          {/* Naabu */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-orange-500/15 border border-orange-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <Network className="w-3.5 h-3.5 text-orange-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">Naabu</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-orange-500/15 text-orange-400 border-orange-500/30">port_scan</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Full-port TCP discovery (1–65535), rate 3 000 pkt/s. Finds every open port before Nmap runs.</p>
+              <a href="https://github.com/projectdiscovery/naabu" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> projectdiscovery/naabu
+              </a>
+            </div>
+          </div>
+          {/* Nmap */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <Cpu className="w-3.5 h-3.5 text-blue-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">Nmap</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-blue-500/15 text-blue-400 border-blue-500/30">port_scan</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Service & version detection (intensity 6) + NSE scripts: banner, http-title, ssl-cert, ssh-hostkey, smtp-commands, ftp-anon, and more.</p>
+              <a href="https://nmap.org" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> nmap.org
+              </a>
+            </div>
+          </div>
+          {/* Shodan InternetDB */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-yellow-500/15 border border-yellow-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <Globe className="w-3.5 h-3.5 text-yellow-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">Shodan InternetDB</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-yellow-500/15 text-yellow-400 border-yellow-500/30">osint</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Passive intel per IP: known CVEs, CPEs, tags, open ports, and hostnames from Shodan's internet-wide scan data. No API key needed.</p>
+              <a href="https://internetdb.shodan.io" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> internetdb.shodan.io
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ── Tool Library ── */}
