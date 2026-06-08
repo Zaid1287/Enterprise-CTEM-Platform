@@ -4,8 +4,10 @@ import {
   useGetFinding, useGetFindingScanData, useListFindings, useUpdateFinding,
   useListFindingComments, useCreateFindingComment,
   useListAssetTechnologies, useRunTechScan,
+  useListAssetScreenshots, useRunScreenshotScan,
   getGetFindingQueryKey, getGetFindingScanDataQueryKey, getListFindingsQueryKey,
   getListFindingCommentsQueryKey, getListAssetTechnologiesQueryKey,
+  getListAssetScreenshotsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,6 +16,7 @@ import {
   Wifi, Tag, MapPin, Building2, Layers, Monitor, Hash, Lock, Unlock,
   Activity, BarChart3, Zap, Bot, ChevronDown, ChevronRight,
   Copy, CheckCheck, MessageSquare, Send, Brain, Wrench,
+  Camera, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -288,7 +291,9 @@ export default function FindingDetailPage() {
   const findingId = parseInt(id ?? "0", 10);
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [techScanning, setTechScanning] = useState(false);
+  const [techScanning, setTechScanning]     = useState(false);
+  const [screenshotting, setScreenshotting] = useState(false);
+  const [shotLightbox, setShotLightbox]     = useState<any | null>(null);
 
   const { data: finding, isLoading: loadingF } = useGetFinding(
     findingId,
@@ -321,7 +326,17 @@ export default function FindingDetailPage() {
       },
     },
   );
+  const { data: assetScreenshots, refetch: refetchScreenshots } = useListAssetScreenshots(
+    f?.assetId ?? 0,
+    {
+      query: {
+        queryKey: getListAssetScreenshotsQueryKey(f?.assetId ?? 0),
+        enabled: !!f?.assetId,
+      },
+    },
+  );
   const runTechScan = useRunTechScan();
+  const runShotScan = useRunScreenshotScan();
 
   const updateFinding = useUpdateFinding();
   const otherFindings = ((siblings as any[]) ?? []).filter((s: any) => s.id !== findingId);
@@ -343,6 +358,21 @@ export default function FindingDetailPage() {
       toast({ title: err?.message ?? "Tech scan failed", variant: "destructive" });
     } finally {
       setTechScanning(false);
+    }
+  }
+
+  async function handleScreenshotScan() {
+    if (!f?.assetId) return;
+    setScreenshotting(true);
+    try {
+      const res = await runShotScan.mutateAsync({ assetId: f.assetId });
+      await refetchScreenshots();
+      const count = (res as any)?.screenshots?.length ?? 0;
+      toast({ title: "Screenshots captured", description: `${count} page${count === 1 ? "" : "s"} captured.` });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Screenshot scan failed", variant: "destructive" });
+    } finally {
+      setScreenshotting(false);
     }
   }
 
@@ -395,6 +425,7 @@ export default function FindingDetailPage() {
   // Technologies from httpInfo (legacy) + DB detections
   const httpTechs: string[] = scan?.httpInfo?.tech ?? [];
   const detectedTechs = (assetTechs as any[]) ?? [];
+  const shots         = (assetScreenshots as any[]) ?? [];
   const techGrouped: Record<string, any[]> = {};
   for (const t of detectedTechs) {
     if (!techGrouped[t.category]) techGrouped[t.category] = [];
@@ -774,6 +805,154 @@ export default function FindingDetailPage() {
                 })}
               </div>
             </Section>
+          )}
+
+          {/* Asset Screenshots */}
+          {f?.assetId && (
+            <Section
+              title={`Screenshots${shots.length > 0 ? ` (${shots.length})` : ""}`}
+              icon={Camera}
+            >
+              <div className="space-y-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full h-7 text-xs gap-1.5"
+                  disabled={screenshotting}
+                  onClick={handleScreenshotScan}
+                >
+                  {screenshotting
+                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Capturing…</>
+                    : <><Camera className="w-3 h-3" /> {shots.length > 0 ? "Re-capture" : "Capture Screenshots"}</>}
+                </Button>
+
+                {screenshotting && (
+                  <div className="py-3 flex flex-col items-center gap-1.5 text-muted-foreground">
+                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                    <p className="text-[10px]">Capturing pages…</p>
+                  </div>
+                )}
+
+                {!screenshotting && shots.length === 0 && (
+                  <p className="text-[10px] text-muted-foreground/60 text-center py-2">
+                    No screenshots yet. Screenshots are captured automatically on each scan, or click above to run now.
+                  </p>
+                )}
+
+                {!screenshotting && shots.length > 0 && (
+                  <>
+                    {shots.some((s: any) => (s.findings ?? []).some((f: any) => f.severity === "critical" || f.severity === "high")) && (
+                      <div className="flex items-start gap-1.5 p-2 bg-red-500/5 border border-red-500/20 rounded-lg">
+                        <AlertCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-red-300 leading-snug">Sensitive data found in page source — credentials or secrets detected.</p>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      {shots.map((s: any, i: number) => {
+                        const findings: any[] = s.findings ?? [];
+                        const hasCrit = findings.some((ff: any) => ff.severity === "critical" || ff.severity === "high");
+                        const PT_CLS: Record<string, string> = {
+                          index:     "bg-blue-500/20 text-blue-400",
+                          login:     "bg-violet-500/20 text-violet-400",
+                          signup:    "bg-cyan-500/20 text-cyan-400",
+                          admin:     "bg-orange-500/20 text-orange-400",
+                          api:       "bg-green-500/20 text-green-400",
+                          sensitive: "bg-red-500/20 text-red-400",
+                        };
+                        return (
+                          <div
+                            key={i}
+                            className={cn(
+                              "border rounded-lg overflow-hidden cursor-pointer hover:bg-accent/20 transition-colors",
+                              hasCrit ? "border-red-500/30" : "border-border/50"
+                            )}
+                            onClick={() => setShotLightbox(s)}
+                          >
+                            <div className="relative w-full h-20 bg-muted/40">
+                              {s.screenshotData ? (
+                                <img
+                                  src={`data:image/png;base64,${s.screenshotData}`}
+                                  alt={s.title || s.url}
+                                  className="w-full h-full object-cover object-top"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <Camera className="w-5 h-5 text-muted-foreground/30" />
+                                </div>
+                              )}
+                              <span className={cn(
+                                "absolute top-1 left-1 text-[9px] font-bold px-1 py-0.5 rounded",
+                                PT_CLS[s.pageType] ?? "bg-muted text-muted-foreground"
+                              )}>{s.pageType}</span>
+                              <span className="absolute top-1 right-1 text-[9px] font-mono bg-black/60 text-white px-1 py-0.5 rounded">{s.statusCode}</span>
+                            </div>
+                            <div className="px-2 py-1.5">
+                              <p className="text-[10px] truncate text-muted-foreground font-mono">{s.url?.replace(/^https?:\/\//, "")}</p>
+                              {findings.length > 0 && (
+                                <p className={cn("text-[9px] mt-0.5 font-semibold", hasCrit ? "text-red-400" : "text-yellow-400")}>
+                                  {findings.length} finding{findings.length > 1 ? "s" : ""}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {shots[0]?.capturedAt && (
+                      <p className="text-[9px] text-muted-foreground/40 pt-1">
+                        Captured {formatDate(shots[0].capturedAt)}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {/* Lightbox */}
+          {shotLightbox && (
+            <div
+              className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+              onClick={() => setShotLightbox(null)}
+            >
+              <div
+                className="bg-card border border-border rounded-2xl overflow-hidden max-w-3xl w-full max-h-[90vh] flex flex-col"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] font-semibold bg-accent/60 px-1.5 py-0.5 rounded uppercase">{shotLightbox.pageType}</span>
+                    <span className="text-xs font-mono text-muted-foreground truncate">{shotLightbox.url}</span>
+                  </div>
+                  <button onClick={() => setShotLightbox(null)} className="w-7 h-7 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center shrink-0 ml-2">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="overflow-y-auto flex-1">
+                  {shotLightbox.screenshotData
+                    ? <img src={`data:image/png;base64,${shotLightbox.screenshotData}`} alt={shotLightbox.title} className="w-full" />
+                    : <div className="h-48 flex items-center justify-center text-muted-foreground/30"><Camera className="w-10 h-10" /></div>}
+                </div>
+                {(shotLightbox.findings ?? []).length > 0 && (
+                  <div className="border-t border-border px-4 py-3 shrink-0">
+                    <p className="text-[10px] font-semibold text-muted-foreground mb-2">Sensitive Findings ({shotLightbox.findings.length})</p>
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                      {shotLightbox.findings.map((ff: any, i: number) => (
+                        <div key={i} className={cn(
+                          "flex items-start gap-2 text-xs rounded px-2.5 py-1.5 border",
+                          ff.severity === "critical" ? "border-red-500/30 bg-red-500/5 text-red-300" :
+                          ff.severity === "high" ? "border-orange-500/30 bg-orange-500/5 text-orange-300" :
+                          "border-yellow-500/20 bg-yellow-500/5 text-yellow-300"
+                        )}>
+                          <span className="font-semibold shrink-0">{ff.type}:</span>
+                          <span className="font-mono text-[10px] opacity-80 break-all">{ff.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {/* Detected Technologies */}
