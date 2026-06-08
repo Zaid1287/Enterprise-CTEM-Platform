@@ -814,9 +814,15 @@ async function executePipeline(
     const ms = (start: number) => Date.now() - start;
 
     // ── Start subdomain scan early (runs in parallel with all phases) ────────
+    // Hard 3-minute outer timeout — binary downloads + passive queries must finish
+    // within this window or the scan proceeds without subdomain enrichment.
+    const SUBDOMAIN_TIMEOUT_MS = 3 * 60 * 1000;
     const subdomainScanPromise: Promise<SubdomainScanReport | null> =
       domain && !isIp(domain)
-        ? scanSubdomains(domain).catch(() => null)
+        ? Promise.race([
+            scanSubdomains(domain).catch(() => null),
+            new Promise<null>(resolve => setTimeout(() => resolve(null), SUBDOMAIN_TIMEOUT_MS)),
+          ])
         : Promise.resolve(null);
 
     // ── Init progress for this asset ────────────────────────────────────────

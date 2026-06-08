@@ -406,7 +406,7 @@ async function runDnsx(candidates: string[], bin: string): Promise<Map<string, s
     fs.writeFileSync(inputFile, candidates.join("\n"));
     const { stdout } = await execAsync(
       `"${bin}" -l "${inputFile}" -silent -a -resp-only -retry 1 -t 150`,
-      { timeout: 300_000, maxBuffer: 50 * 1024 * 1024 },
+      { timeout: 90_000, maxBuffer: 50 * 1024 * 1024 },
     );
     try { fs.unlinkSync(inputFile); } catch {}
 
@@ -482,8 +482,8 @@ async function runHttpx(
     const inputFile = path.join(BIN_DIR, `httpx-input-${Date.now()}.txt`);
     fs.writeFileSync(inputFile, hosts.join("\n"));
     const { stdout } = await execAsync(
-      `"${bin}" -l "${inputFile}" -silent -status-code -title -web-server -location -tech-detect -threads 50 -timeout 10 -no-color -json`,
-      { timeout: 300_000, maxBuffer: 100 * 1024 * 1024 },
+      `"${bin}" -l "${inputFile}" -silent -status-code -title -web-server -location -tech-detect -threads 50 -timeout 8 -no-color -json`,
+      { timeout: 90_000, maxBuffer: 100 * 1024 * 1024 },
     );
     try { fs.unlinkSync(inputFile); } catch {}
 
@@ -567,11 +567,12 @@ export async function scanSubdomains(domain: string): Promise<SubdomainScanRepor
     subfinderBin, findomainBin, alterxBin, dnsxBin, httpxBin,
     crtShSubs, alienVaultSubs, waybackSubs, urlscanSubs, rapidDnsSubs, commonCrawlSubs,
   ] = await Promise.all([
-    withTimeout(ensureBinary("subfinder"), 120_000, null),
-    withTimeout(ensureBinary("findomain"), 120_000, null),
-    withTimeout(ensureBinary("alterx"), 120_000, null),
-    withTimeout(ensureBinary("dnsx"), 120_000, null),
-    withTimeout(ensureBinary("httpx"), 120_000, null),
+    // Binary downloads: 30s each (parallel, so wall-clock is max of all 5 = 30s)
+    withTimeout(ensureBinary("subfinder"), 30_000, null),
+    withTimeout(ensureBinary("findomain"), 30_000, null),
+    withTimeout(ensureBinary("alterx"), 30_000, null),
+    withTimeout(ensureBinary("dnsx"), 30_000, null),
+    withTimeout(ensureBinary("httpx"), 30_000, null),
     withTimeout(queryCrtSh(domain), 16_000, [] as string[]),
     withTimeout(queryAlienVault(domain), 16_000, [] as string[]),
     withTimeout(queryWayback(domain), 16_000, [] as string[]),
@@ -604,8 +605,8 @@ export async function scanSubdomains(domain: string): Promise<SubdomainScanRepor
   rawLines.push("\n--- Phase B: Binary tool enumeration ---");
 
   const [subfinderSubs, findomainSubs] = await Promise.all([
-    subfinderBin ? withTimeout(runSubfinder(domain, subfinderBin), 90_000, [] as string[]) : Promise.resolve([] as string[]),
-    findomainBin ? withTimeout(runFindomain(domain, findomainBin), 90_000, [] as string[]) : Promise.resolve([] as string[]),
+    subfinderBin ? withTimeout(runSubfinder(domain, subfinderBin), 45_000, [] as string[]) : Promise.resolve([] as string[]),
+    findomainBin ? withTimeout(runFindomain(domain, findomainBin), 45_000, [] as string[]) : Promise.resolve([] as string[]),
   ]);
 
   sourceCounts["Subfinder"] = subfinderSubs.length;
