@@ -327,6 +327,113 @@ export default function SecurityToolsPage() {
         </div>
       </div>
 
+      {/* ── Built-in Subdomain Engine ── */}
+      <div className="bg-card border border-purple-500/20 rounded-xl p-4">
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center shrink-0">
+            <Globe className="w-4 h-4 text-purple-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold leading-tight">Built-in Subdomain Engine</h3>
+            <p className="text-[11px] text-muted-foreground">Auto-runs on every domain asset scan — 10 passive sources + 5 tools + HTTP probing</p>
+          </div>
+          <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/30 font-semibold tracking-wide">
+            ALWAYS ACTIVE
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-2.5">
+          {/* Subfinder */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <Search className="w-3.5 h-3.5 text-purple-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">Subfinder</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-purple-500/15 text-purple-400 border-purple-500/30">passive</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">40+ passive data sources: VirusTotal, Chaos, DNSdb, Shodan, Censys, BeVigil, and more. Rapidly discovers known subdomains without active probing.</p>
+              <a href="https://github.com/projectdiscovery/subfinder" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> projectdiscovery/subfinder
+              </a>
+            </div>
+          </div>
+          {/* Findomain */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-indigo-500/15 border border-indigo-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">Findomain</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-indigo-500/15 text-indigo-400 border-indigo-500/30">ct-logs</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Certificate Transparency log enumeration via crt.sh, AlienVault OTX, Wayback CDX, URLScan, RapidDNS, and CommonCrawl passive APIs.</p>
+              <a href="https://github.com/Findomain/Findomain" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> Findomain/Findomain
+              </a>
+            </div>
+          </div>
+          {/* AlterX */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-pink-500/15 border border-pink-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <Cpu className="w-3.5 h-3.5 text-pink-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">AlterX</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-pink-500/15 text-pink-400 border-pink-500/30">permutations</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Smart subdomain permutation generator — creates up to 10 000 variations from discovered subdomains using dev/staging/prod/cdn patterns.</p>
+              <a href="https://github.com/projectdiscovery/alterx" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> projectdiscovery/alterx
+              </a>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {/* DNSX */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-cyan-500/15 border border-cyan-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <Network className="w-3.5 h-3.5 text-cyan-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">DNSx</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-cyan-500/15 text-cyan-400 border-cyan-500/30">dns-resolve</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Bulk DNS resolver + 800-word brute-force with wildcard detection. Resolves all candidate subdomains and filters unresolvable noise before HTTP probing.</p>
+              <a href="https://github.com/projectdiscovery/dnsx" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> projectdiscovery/dnsx
+              </a>
+            </div>
+          </div>
+          {/* HTTPX */}
+          <div className="bg-accent/30 border border-border rounded-lg p-3 flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-teal-500/15 border border-teal-500/25 flex items-center justify-center shrink-0 mt-0.5">
+              <Wifi className="w-3.5 h-3.5 text-teal-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium">HTTPX</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-teal-500/15 text-teal-400 border-teal-500/30">http-probe</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Fast concurrent HTTP/S probing for all resolved subdomains — extracts status codes, page titles, web server headers, redirect chains, and CDN fingerprints.</p>
+              <a href="https://github.com/projectdiscovery/httpx" target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5 mt-1">
+                <ExternalLink className="w-2.5 h-2.5" /> projectdiscovery/httpx
+              </a>
+            </div>
+          </div>
+        </div>
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {["crt.sh", "AlienVault OTX", "Wayback CDX", "URLScan.io", "RapidDNS", "CommonCrawl", "subfinder", "findomain", "AlterX", "DNSx"].map(src => (
+            <span key={src} className="text-[10px] px-2 py-0.5 rounded-full bg-accent/60 border border-purple-500/20 text-muted-foreground">
+              {src}
+            </span>
+          ))}
+        </div>
+      </div>
+
       {/* ── Tool Library ── */}
       {tab === "tools" && (
         <div className="space-y-2">

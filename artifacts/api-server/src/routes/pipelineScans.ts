@@ -8,6 +8,7 @@ import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, secu
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
+import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
@@ -144,7 +145,7 @@ const CVE_POOL = [
 
 // ── Type interfaces ─────────────────────────────────────────────────────────────
 interface PortFinding      { port: number; service: string; version: string; protocol: string; state: string; }
-interface SubdomainFinding { name: string; ip: string; cname: string | null; status: string; cdnProvider: string | null; }
+interface SubdomainFinding { name: string; ip: string; cname: string | null; status: string; cdnProvider: string | null; sources?: string[]; httpStatus?: number | null; httpTitle?: string | null; redirectTo?: string | null; webServer?: string | null; }
 interface EndpointFinding  { url: string; method: string; status: number; title?: string; }
 interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; cdn: string | null; headers: Record<string, string>; }
 interface DnsRecord        { type: string; value: string; ttl: number; priority?: number; }
@@ -770,6 +771,12 @@ async function executePipeline(
     { name: "gowitness",  description: "Web screenshot utility using system Chromium — captures index, login, signup, admin, and API pages with full-page renders and HTTP metadata",                                           category: "screenshot", githubUrl: "https://github.com/sensepost/gowitness",    runCommand: "gowitness single --url https://{target}" },
     { name: "eyewitness", description: "Visual recon tool that captures web screenshots, server headers, and identifies default credentials on web-exposed services",                                                           category: "screenshot", githubUrl: "https://github.com/RedSiege/EyeWitness",    runCommand: "eyewitness --web --single https://{target}" },
     { name: "snapback",   description: "Screenshot and sensitive info disclosure scanner for web pages, detecting hardcoded API keys, tokens, credentials, and internal endpoints",                                            category: "screenshot", githubUrl: "https://github.com/dekz/snapback",          runCommand: "snapback scan {target}" },
+    // ── Subdomain enumeration engine tools (auto-run for every domain asset) ─
+    { name: "subfinder",  description: "Fast passive subdomain discovery with 40+ data sources (VirusTotal, Chaos, DNSdb, Shodan, etc.) — auto-runs on every domain asset scan",                                             category: "recon",      githubUrl: "https://github.com/projectdiscovery/subfinder", runCommand: "subfinder -d {target} -all -silent" },
+    { name: "findomain",  description: "CT-log-based subdomain finder using Certificate Transparency + multiple passive sources — auto-runs on every domain asset scan",                                                      category: "recon",      githubUrl: "https://github.com/Findomain/Findomain",       runCommand: "findomain -t {target} -q" },
+    { name: "httpx",      description: "Fast multi-purpose HTTP probing — status codes, tech detection, web server, page titles, redirect chains — probes all discovered subdomains",                                        category: "web_recon",  githubUrl: "https://github.com/projectdiscovery/httpx",    runCommand: "httpx -u {target} -json -status-code -title -tech-detect" },
+    { name: "dnsx",       description: "Fast bulk DNS resolver and brute-forcer — resolves all subdomain candidates and active DNS brute-force with built-in wordlist",                                                       category: "recon",      githubUrl: "https://github.com/projectdiscovery/dnsx",     runCommand: "dnsx -d {target} -silent -a" },
+    { name: "alterx",     description: "Smart subdomain permutation wordlist generator — creates variations from existing subdomains using customisable patterns for active discovery",                                        category: "recon",      githubUrl: "https://github.com/projectdiscovery/alterx",   runCommand: "alterx -d {target} -silent" },
   ];
   for (const def of builtinToolDefs) {
     const exists = await db.select({ id: securityToolsTable.id })
@@ -805,6 +812,12 @@ async function executePipeline(
     const domain = extractDomain(target);
     const now = () => new Date().toISOString();
     const ms = (start: number) => Date.now() - start;
+
+    // ── Start subdomain scan early (runs in parallel with all phases) ────────
+    const subdomainScanPromise: Promise<SubdomainScanReport | null> =
+      domain && !isIp(domain)
+        ? scanSubdomains(domain).catch(() => null)
+        : Promise.resolve(null);
 
     // ── Init progress for this asset ────────────────────────────────────────
     const toolProgress: ToolProgress[] = toolsForAsset.map(t => ({
@@ -1072,6 +1085,35 @@ async function executePipeline(
             website: t.website ?? null, cpe: t.cpe ?? null, icon: t.icon ?? null,
           }))
         );
+      }
+    }
+
+    // ── Await subdomain scan (was running in parallel with all phases) ─────────
+    const subdomainScanReport = await subdomainScanPromise;
+    if (subdomainScanReport) {
+      const seenSubs = new Set(dnsResult.subdomains.map(s => s.name));
+      for (const s of subdomainScanReport.all) {
+        if (!seenSubs.has(s.name)) {
+          dnsResult.subdomains.push({
+            name: s.name, ip: s.ip, cname: s.cname,
+            status: s.ip ? "active" : "unresolved",
+            cdnProvider: s.cdnProvider,
+            sources: s.sources, httpStatus: s.httpStatus,
+            httpTitle: s.httpTitle, redirectTo: s.redirectTo, webServer: s.webServer,
+          });
+          seenSubs.add(s.name);
+        } else {
+          const existing = dnsResult.subdomains.find(x => x.name === s.name);
+          if (existing) {
+            existing.sources    = s.sources;
+            existing.httpStatus = s.httpStatus;
+            existing.httpTitle  = s.httpTitle;
+            existing.redirectTo = s.redirectTo;
+            existing.webServer  = s.webServer;
+            if (s.ip && !existing.ip) existing.ip = s.ip;
+            if (s.cdnProvider && !existing.cdnProvider) existing.cdnProvider = s.cdnProvider;
+          }
+        }
       }
     }
 

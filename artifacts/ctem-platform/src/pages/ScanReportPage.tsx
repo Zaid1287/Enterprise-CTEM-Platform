@@ -368,6 +368,7 @@ export default function ScanReportPage() {
   const scanId = Number(params.id);
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(0);
   const [assetTab, setAssetTab] = useState<AssetTab>("ports");
+  const [subdomainFilter, setSubdomainFilter] = useState<"all" | "200" | "auth" | "redirect" | "dead">("all");
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const { user } = useAuth();
@@ -826,40 +827,152 @@ export default function ScanReportPage() {
               )}
 
               {/* Subdomains tab */}
-              {assetTab === "subdomains" && (
-                <div>
-                  {(selectedAsset.subdomains ?? []).length === 0 ? (
-                    <EmptyState message="No subdomains discovered" />
-                  ) : (
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left border-b border-border">
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Subdomain</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">IP Address</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">CNAME</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">CDN</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(selectedAsset.subdomains ?? []).map((s: any, i: number) => (
-                          <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
-                            <td className="py-2 font-mono text-xs text-primary">{s.name}</td>
-                            <td className="py-2 font-mono text-xs">{s.ip}</td>
-                            <td className="py-2 text-xs text-muted-foreground truncate max-w-[180px]">{s.cname ?? "—"}</td>
-                            <td className="py-2 text-xs">{s.cdnProvider ? <span className="text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded">{s.cdnProvider}</span> : <span className="text-muted-foreground">—</span>}</td>
-                            <td className="py-2">
-                              <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", s.status === "active" ? "bg-green-500/15 text-green-400 border-green-500/30" : "bg-muted text-muted-foreground border-border")}>
-                                {s.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )}
+              {assetTab === "subdomains" && (() => {
+                const allSubs: any[] = selectedAsset.subdomains ?? [];
+                const live200     = allSubs.filter((s: any) => s.httpStatus === 200);
+                const liveAuth    = allSubs.filter((s: any) => s.httpStatus === 401 || s.httpStatus === 403);
+                const liveRedir   = allSubs.filter((s: any) => s.httpStatus && [301,302,307,308].includes(s.httpStatus));
+                const deadSubs    = allSubs.filter((s: any) => !s.ip);
+                const filtered    =
+                  subdomainFilter === "200"      ? live200 :
+                  subdomainFilter === "auth"     ? liveAuth :
+                  subdomainFilter === "redirect" ? liveRedir :
+                  subdomainFilter === "dead"     ? deadSubs :
+                  allSubs;
+
+                const httpStatusBadge = (s: any) => {
+                  const code = s.httpStatus;
+                  if (!code) return null;
+                  let cls = "bg-muted text-muted-foreground border-border";
+                  if (code === 200) cls = "bg-green-500/15 text-green-400 border-green-500/30";
+                  else if (code === 401 || code === 403) cls = "bg-yellow-500/15 text-yellow-400 border-yellow-500/30";
+                  else if ([301,302,307,308].includes(code)) cls = "bg-blue-500/15 text-blue-400 border-blue-500/30";
+                  else if (code >= 400) cls = "bg-red-500/15 text-red-400 border-red-500/30";
+                  return <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border font-semibold", cls)}>{code}</span>;
+                };
+
+                if (allSubs.length === 0) return <EmptyState message="No subdomains discovered" />;
+
+                return (
+                  <div className="space-y-4">
+                    {/* Summary cards */}
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                      {[
+                        { label: "Total",       count: allSubs.length,   cls: "border-border",            active: subdomainFilter === "all" },
+                        { label: "200 OK",      count: live200.length,   cls: "border-green-500/30",      active: subdomainFilter === "200", f: "200" },
+                        { label: "401 / 403",   count: liveAuth.length,  cls: "border-yellow-500/30",     active: subdomainFilter === "auth", f: "auth" },
+                        { label: "Redirects",   count: liveRedir.length, cls: "border-blue-500/30",       active: subdomainFilter === "redirect", f: "redirect" },
+                        { label: "Dead / Unresolved", count: deadSubs.length, cls: "border-red-500/30",  active: subdomainFilter === "dead", f: "dead" },
+                      ].map(({ label, count, cls, active, f }) => (
+                        <button
+                          key={label}
+                          onClick={() => setSubdomainFilter((f ?? "all") as any)}
+                          className={cn(
+                            "bg-card border rounded-xl p-3 text-left transition-all hover:bg-accent/30",
+                            cls, active && "ring-1 ring-primary bg-primary/5",
+                          )}
+                        >
+                          <p className="text-lg font-bold leading-tight">{count}</p>
+                          <p className="text-[10px] text-muted-foreground">{label}</p>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Source legend (compact) */}
+                    {(() => {
+                      const srcMap: Record<string, number> = {};
+                      for (const s of allSubs) for (const src of (s.sources ?? [])) srcMap[src] = (srcMap[src] ?? 0) + 1;
+                      const entries = Object.entries(srcMap).sort((a, b) => b[1] - a[1]);
+                      if (entries.length === 0) return null;
+                      return (
+                        <div className="flex flex-wrap gap-1.5">
+                          {entries.map(([src, cnt]) => (
+                            <span key={src} className="text-[10px] px-2 py-0.5 rounded-full bg-accent/50 border border-border text-muted-foreground">
+                              {src} <span className="font-semibold text-foreground/70">{cnt}</span>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Table */}
+                    {filtered.length === 0 ? (
+                      <EmptyState message={`No subdomains match filter "${subdomainFilter}"`} />
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left border-b border-border">
+                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">Subdomain</th>
+                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">IP</th>
+                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-3">HTTP</th>
+                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">Title</th>
+                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">CDN / Server</th>
+                              <th className="pb-2 text-xs font-medium text-muted-foreground">Sources</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filtered.map((s: any, i: number) => (
+                              <tr key={i} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
+                                <td className="py-2 pr-4">
+                                  <a
+                                    href={`https://${s.name}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-mono text-xs text-primary hover:underline flex items-center gap-1 group"
+                                  >
+                                    {s.name}
+                                    <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 shrink-0" />
+                                  </a>
+                                  {s.redirectTo && (
+                                    <p className="text-[10px] text-blue-400 font-mono truncate max-w-[200px]" title={s.redirectTo}>
+                                      → {s.redirectTo}
+                                    </p>
+                                  )}
+                                </td>
+                                <td className="py-2 pr-4 font-mono text-xs text-muted-foreground whitespace-nowrap">
+                                  {s.ip || "—"}
+                                </td>
+                                <td className="py-2 pr-3 whitespace-nowrap">
+                                  {httpStatusBadge(s) ?? <span className="text-muted-foreground text-xs">—</span>}
+                                </td>
+                                <td className="py-2 pr-4 text-xs text-muted-foreground max-w-[180px] truncate" title={s.httpTitle ?? ""}>
+                                  {s.httpTitle || "—"}
+                                </td>
+                                <td className="py-2 pr-4">
+                                  <div className="flex flex-col gap-0.5">
+                                    {s.cdnProvider && (
+                                      <span className="text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded w-fit">
+                                        {s.cdnProvider}
+                                      </span>
+                                    )}
+                                    {s.webServer && (
+                                      <span className="text-[10px] text-muted-foreground font-mono">{s.webServer}</span>
+                                    )}
+                                    {!s.cdnProvider && !s.webServer && <span className="text-muted-foreground text-xs">—</span>}
+                                  </div>
+                                </td>
+                                <td className="py-2">
+                                  <div className="flex flex-wrap gap-1">
+                                    {(s.sources ?? []).slice(0, 3).map((src: string) => (
+                                      <span key={src} className="text-[9px] px-1.5 py-0.5 rounded bg-accent/60 border border-border text-muted-foreground whitespace-nowrap">
+                                        {src}
+                                      </span>
+                                    ))}
+                                    {(s.sources ?? []).length > 3 && (
+                                      <span className="text-[9px] px-1 py-0.5 text-muted-foreground">+{s.sources.length - 3}</span>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* HTTP Info tab */}
               {assetTab === "http" && (
