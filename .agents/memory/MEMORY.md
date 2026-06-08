@@ -8,3 +8,4 @@
 - [Real scan implementation](real-scan-impl.md) — pipelineScans.ts uses nmap(-sT), Node dns/promises, fetch, tls.connect, whois, ip-api.com; async background via setImmediate; field is assetToolConfig (no s).
 - [apiFetch FormData handling](apiFetch-formdata.md) — apiFetch must detect FormData body and skip Content-Type header so browser sets multipart boundary automatically.
 - [Wouter Link nesting](wouter-link-nesting.md) — Never nest `<Link>` inside `<Link>` (renders nested `<a>` which breaks JSX). Use onClick+navigate on the outer div instead.
+- [Port Scanner Engine](port-scanner-engine.md) — Naabu+Nmap+Shodan engine in portScanner.ts; naabu zip at artifacts/api-server/binaries/naabu.zip; auto-extracts to /tmp/naabu; always runs for every scan.

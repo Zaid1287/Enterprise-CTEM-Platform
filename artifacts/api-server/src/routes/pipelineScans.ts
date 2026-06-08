@@ -7,6 +7,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable } from "@workspace/db";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
+import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
@@ -836,7 +837,7 @@ async function executePipeline(
     const needsWhois  = p1.some(t => t.category === "osint" || ["theHarvester", "maltego"].includes(t.name));
     const needsCt     = p1.some(t => ["amass", "subfinder", "shuffledns"].includes(t.name));
     const needsCloud  = p1.some(t => ["s3scanner", "cloud_enum"].includes(t.name));
-    const needsNmap   = p2.length > 0 || toolsForAsset.some(t => t.category === "vuln_scan");
+    const needsNmap   = p2.length > 0 || toolsForAsset.some(t => t.category === "vuln_scan"); // kept for legacy; port scan now always runs
     const needsHttp   = p3.length > 0;
     const needsSecrets= p4.some(t => t.name === "trufflehog");
     const needsSsl    = p5.length > 0 || toolsForAsset.some(t => t.category === "ssl_check");
@@ -878,20 +879,45 @@ async function executePipeline(
       doneTool(t.name, subs + recs, detail, p1Start);
     }
 
-    // ── PHASE 2: Port Scanning ────────────────────────────────────────────────
+    // ── PHASE 2: Port Scanning — always runs (Naabu + Nmap + Shodan) ──────────
     let realPorts: PortFinding[] = [];
     let nmapRaw = "";
-    if (needsNmap) {
+    let portScanReport: PortScanReport | null = null;
+    {
       const p2Start = Date.now();
-      for (const t of p2) startTool(t.name, `Scanning top 1000 ports on ${domain}…`);
-      if (p2.length === 0) {
-        // vuln scan needs port data — run nmap without display tool
-        const r = await runNmapScan(target, scanId);
-        realPorts = r.ports; nmapRaw = r.raw;
-      } else {
-        const r = await runNmapScan(target, scanId);
-        realPorts = r.ports; nmapRaw = r.raw;
-        for (const t of p2) doneTool(t.name, realPorts.length, `${realPorts.length} open ports found`, p2Start);
+      for (const t of p2) startTool(t.name, `Full-port discovery on ${domain} (Naabu + Nmap + Shodan)…`);
+
+      portScanReport = await scanPorts(target);
+      realPorts = portScanReport.ports as PortFinding[];
+      nmapRaw = [
+        `=== NAABU — Full Port Discovery (${portScanReport.naabuPorts.length} ports found, 1–65535) ===`,
+        portScanReport.naabuRaw.slice(0, 3000) || "(no output)",
+        "",
+        `=== NMAP — Service Detection + NSE Scripts (${portScanReport.scanMethod}) ===`,
+        portScanReport.nmapRaw.slice(0, 8000) || "(no output)",
+        "",
+        portScanReport.shodan
+          ? `=== SHODAN InternetDB — ${portScanReport.targetIp ?? "?"} ===\nPorts: ${portScanReport.shodan.ports.join(", ") || "none"}\nTags: ${portScanReport.shodan.tags.join(", ") || "none"}\nCPEs: ${portScanReport.shodan.cpes.slice(0, 5).join(", ") || "none"}\nCVEs: ${portScanReport.shodan.vulns.join(", ") || "none"}\nHostnames: ${portScanReport.shodan.hostnames.join(", ") || "none"}`
+          : "=== SHODAN InternetDB — no data available ===",
+      ].join("\n");
+
+      // Merge Shodan intelligence into geoIntel for display in Intel tab
+      if (portScanReport.shodan) {
+        const sh = portScanReport.shodan;
+        if (sh.tags.length > 0)      geoIntel.push({ type: "Shodan", key: "Tags",         value: sh.tags.join(", ") });
+        if (sh.hostnames.length > 0) geoIntel.push({ type: "Shodan", key: "Hostnames",    value: sh.hostnames.join(", ") });
+        if (sh.cpes.length > 0)      geoIntel.push({ type: "Shodan", key: "CPEs",         value: sh.cpes.slice(0, 10).join(", ") });
+        if (sh.vulns.length > 0)     geoIntel.push({ type: "Shodan", key: "Known CVEs",   value: sh.vulns.join(", ") });
+        if (sh.ports.length > 0)     geoIntel.push({ type: "Shodan", key: "Shodan Ports", value: sh.ports.join(", ") });
+        geoIntel.push({ type: "Shodan", key: "Scan Method",  value: portScanReport.scanMethod });
+        if (portScanReport.targetIp) geoIntel.push({ type: "Shodan", key: "Resolved IP",  value: portScanReport.targetIp });
+      }
+
+      if (p2.length > 0) {
+        const shodanSummary = portScanReport.shodan
+          ? `Shodan: ${portScanReport.shodan.vulns.length} CVEs, ${portScanReport.shodan.tags.length} tags`
+          : "Shodan: no data";
+        for (const t of p2) doneTool(t.name, realPorts.length, `${realPorts.length} open ports | ${portScanReport.scanMethod} | ${shodanSummary}`, p2Start);
       }
     }
 

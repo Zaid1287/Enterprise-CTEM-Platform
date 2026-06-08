@@ -7,10 +7,10 @@ import {
   useListAssetTechnologies, getListAssetTechnologiesQueryKey,
 } from "@workspace/api-client-react";
 import {
-  ChevronLeft, Shield, Globe, Network, AlertTriangle, Server,
+  ChevronLeft, ChevronDown, ChevronRight, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download, Camera, X,
+  Lock, Fingerprint, Download, Camera, X, Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -652,38 +652,99 @@ export default function ScanReportPage() {
 
             <div className="p-4">
               {/* Ports tab */}
-              {assetTab === "ports" && (
-                <div>
-                  {(selectedAsset.ports ?? []).length === 0 ? (
-                    <EmptyState message="No open ports found" />
-                  ) : (
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left border-b border-border">
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Port</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Protocol</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Service</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Version / Banner</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">State</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(selectedAsset.ports ?? []).map((p: any, i: number) => (
-                          <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
-                            <td className="py-2 font-mono font-bold text-primary">{p.port}</td>
-                            <td className="py-2 text-xs text-muted-foreground uppercase">{p.protocol}</td>
-                            <td className="py-2 font-medium">{p.service}</td>
-                            <td className="py-2 text-xs text-muted-foreground font-mono">{p.version}</td>
-                            <td className="py-2">
-                              <span className="text-[10px] bg-green-500/15 text-green-400 border border-green-500/30 px-1.5 py-0.5 rounded">{p.state}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )}
+              {assetTab === "ports" && (() => {
+                const ports = selectedAsset.ports ?? [];
+                const intel: any[] = selectedAsset.intelligence ?? [];
+                const shodanItems = intel.filter((i: any) => i.type === "Shodan");
+                const shodanTags   = shodanItems.find((i: any) => i.key === "Tags")?.value;
+                const shodanVulns  = shodanItems.find((i: any) => i.key === "Known CVEs")?.value;
+                const shodanCpes   = shodanItems.find((i: any) => i.key === "CPEs")?.value;
+                const scanMethod   = shodanItems.find((i: any) => i.key === "Scan Method")?.value;
+                const resolvedIp   = shodanItems.find((i: any) => i.key === "Resolved IP")?.value;
+                const hasShodan    = shodanItems.length > 0;
+                const vulnList     = shodanVulns ? shodanVulns.split(", ").filter(Boolean) : [];
+
+                return (
+                  <div className="space-y-4">
+                    {/* Shodan InternetDB panel */}
+                    {hasShodan && (
+                      <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Database className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <p className="text-xs font-semibold text-blue-300">Shodan InternetDB</p>
+                          {resolvedIp && (
+                            <span className="font-mono text-[10px] bg-muted/60 px-1.5 py-0.5 rounded text-muted-foreground">{resolvedIp}</span>
+                          )}
+                          {scanMethod && (
+                            <span className="ml-auto text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium uppercase tracking-wide">
+                              {scanMethod}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          {shodanTags && (
+                            <div>
+                              <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                                <Tag className="w-2.5 h-2.5" /> Tags
+                              </p>
+                              <div className="flex flex-wrap gap-1">
+                                {shodanTags.split(", ").filter(Boolean).map((t: string) => (
+                                  <span key={t} className="bg-blue-500/10 border border-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded text-[10px] font-medium">{t}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {vulnList.length > 0 && (
+                            <div>
+                              <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                                <AlertTriangle className="w-2.5 h-2.5 text-red-400" />
+                                <span className="text-red-400">Known CVEs ({vulnList.length})</span>
+                              </p>
+                              <div className="flex flex-wrap gap-1">
+                                {vulnList.slice(0, 10).map((v: string) => (
+                                  <a key={v} href={`https://nvd.nist.gov/vuln/detail/${v}`} target="_blank" rel="noopener noreferrer"
+                                     className="text-[10px] font-mono bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded hover:bg-red-500/20 transition-colors">
+                                    {v}
+                                  </a>
+                                ))}
+                                {vulnList.length > 10 && (
+                                  <span className="text-[10px] text-muted-foreground self-center">+{vulnList.length - 10} more</span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          {shodanCpes && (
+                            <div className="col-span-2">
+                              <p className="text-[10px] text-muted-foreground mb-1">CPEs</p>
+                              <p className="text-[10px] font-mono text-muted-foreground/70 break-all leading-relaxed">{shodanCpes}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Header row */}
+                    {ports.length > 0 && (
+                      <div className="flex items-center gap-2 px-3 pb-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                        <span className="w-3 shrink-0" />
+                        <span className="w-14 shrink-0">Port</span>
+                        <span className="w-8 shrink-0">Proto</span>
+                        <span className="w-24 shrink-0">Service</span>
+                        <span className="flex-1">Version / Banner</span>
+                        <span>State</span>
+                      </div>
+                    )}
+
+                    {ports.length === 0 ? (
+                      <EmptyState message="No open ports found" />
+                    ) : (
+                      <div className="space-y-0.5">
+                        {ports.map((p: any, i: number) => <PortRow key={i} port={p} />)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* CVEs tab */}
               {assetTab === "vulns" && (
@@ -1092,6 +1153,62 @@ const SEVERITY_DOT: Record<string, string> = {
   medium:   "bg-yellow-500",
   low:      "bg-blue-400",
 };
+
+function PortRow({ port }: { port: any }) {
+  const [open, setOpen] = useState(false);
+  const hasScripts = port.scripts && Object.keys(port.scripts).length > 0;
+  const hasBanner  = !!port.banner;
+  const hasCpes    = (port.cpes ?? []).length > 0;
+  const expandable = hasScripts || hasBanner || hasCpes;
+
+  return (
+    <>
+      <div
+        className={cn(
+          "flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-sm",
+          expandable ? "cursor-pointer hover:bg-accent/20" : "",
+          open ? "bg-accent/20 border-border" : "border-border/50 bg-card/50"
+        )}
+        onClick={() => expandable && setOpen(o => !o)}
+      >
+        {expandable
+          ? (open ? <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" /> : <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />)
+          : <span className="w-3 shrink-0" />}
+        <span className="font-mono font-bold text-primary w-14 shrink-0">{port.port}</span>
+        <span className="text-[10px] text-muted-foreground uppercase w-8 shrink-0">{port.protocol ?? "tcp"}</span>
+        <span className="font-medium text-xs w-24 shrink-0">{port.service ?? "unknown"}</span>
+        <span className="text-xs text-muted-foreground font-mono flex-1 truncate">{port.version || (hasBanner ? port.banner : "—")}</span>
+        <span className="text-[10px] bg-green-500/15 text-green-400 border border-green-500/30 px-1.5 py-0.5 rounded shrink-0">
+          {port.state ?? "open"}
+        </span>
+      </div>
+      {open && (
+        <div className="ml-5 mb-1 rounded-lg border border-border/50 bg-muted/20 text-xs overflow-hidden">
+          {hasBanner && (
+            <div className="px-3 py-2 border-b border-border/30">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-2">Banner</span>
+              <span className="font-mono text-foreground/80">{port.banner}</span>
+            </div>
+          )}
+          {hasScripts && Object.entries(port.scripts as Record<string, string>).map(([k, v]) => (
+            <div key={k} className="px-3 py-2 border-b border-border/30 last:border-0">
+              <span className="text-[10px] font-semibold text-primary/70 mr-2">{k}</span>
+              <span className="font-mono text-muted-foreground whitespace-pre-wrap break-all">{String(v).trim()}</span>
+            </div>
+          ))}
+          {hasCpes && (
+            <div className="px-3 py-2 flex flex-wrap gap-1 items-center">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-1">CPEs</span>
+              {(port.cpes as string[]).map((c, i) => (
+                <span key={i} className="font-mono text-[10px] bg-accent/50 px-1.5 py-0.5 rounded text-muted-foreground">{c}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
 
 function ScreenshotsTab({ assetId }: { assetId: number }) {
   const { data, isLoading } = useListAssetScreenshots(assetId, {
