@@ -9,6 +9,7 @@ import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
 import { runEndpointDiscovery } from "../lib/endpointDiscovery";
 import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
+import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -1391,6 +1392,7 @@ async function executePipeline(
     let detectedTechs: DetectedTechnology[] = [];
     let capturedPages: PageScreenshot[] = [];
     let jsAnalysis: JsAnalysisResult | null = null;
+    let paramDiscovery: ParamDiscoveryResult | null = null;
     const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
     // Screenshots + tech detection always run for web asset types regardless of tool pipeline
     const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
@@ -1427,6 +1429,9 @@ async function executePipeline(
           : Promise.resolve(),
         isWebAsset
           ? (async () => { jsAnalysis = await runJsAnalysis(target); })()
+          : Promise.resolve(),
+        isWebAsset
+          ? (async () => { paramDiscovery = await runParamDiscovery(target); })()
           : Promise.resolve(),
       ]);
 
@@ -1865,6 +1870,40 @@ async function executePipeline(
       }
     }
 
+    // ── Parameter Discovery: store result ──────────────────────────────────────
+    if (isWebAsset && paramDiscovery && paramDiscovery.stats.total > 0) {
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id,
+        toolName: "paramspider", toolCategory: "web_recon",
+        rawOutput: [
+          `[ParamSpider + Arjun] Parameter Discovery — ${target}`,
+          `Total params found: ${paramDiscovery.stats.total}  |  Unique param names: ${paramDiscovery.stats.unique}`,
+          `From archive (Wayback): ${paramDiscovery.stats.fromArchive}  |  From crawl: ${paramDiscovery.stats.fromCrawl}  |  From forms: ${paramDiscovery.stats.fromForm}  |  From brute-force: ${paramDiscovery.stats.fromBrute}`,
+          "",
+          "=== BY CATEGORY ===",
+          `  SSRF/Redirect:  ${paramDiscovery.stats.ssrf}`,
+          `  IDOR:           ${paramDiscovery.stats.idor}`,
+          `  XSS/SQLi:       ${paramDiscovery.stats.xss_sqli}`,
+          `  Auth/Token:     ${paramDiscovery.stats.auth}`,
+          `  File/Path:      ${paramDiscovery.stats.file_path}`,
+          `  Other:          ${paramDiscovery.stats.other}`,
+          "",
+          "=== UNIQUE PARAMETER NAMES ===",
+          paramDiscovery.uniqueNames.join(", "),
+          "",
+          "=== PARAMETER DETAILS (top 200) ===",
+          ...paramDiscovery.params.slice(0, 200).map(p =>
+            `  [${p.category.toUpperCase()}][${p.confidence}] ${p.name} (${p.method}) — ${p.url} [${p.source}]${p.example ? ` example: ${p.example}` : ""}`
+          ),
+          paramDiscovery.params.length > 200 ? `  ... and ${paramDiscovery.params.length - 200} more parameters` : "",
+        ].join("\n"),
+        paramDiscovery: paramDiscovery as any,
+        ports: null as any, subdomains: null as any, endpoints: null as any,
+        httpInfo: null as any, dnsRecords: null as any, intelligence: null as any,
+        vulnerabilities: null as any,
+      });
+    }
+
     // Deduplicate and insert findings
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
@@ -2054,6 +2093,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     const allVulns: unknown[] = [], allDns: unknown[] = [], allIntel: unknown[] = [];
     let httpInfo: unknown = null;
     let jsAnalysis: unknown = null;
+    let paramDiscovery: unknown = null;
 
     const toolResults = assetResults.map(r => {
       const tr: Record<string, unknown> = {
@@ -2068,6 +2108,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       if (r.intelligence)    { tr.intelligence     = r.intelligence;    allIntel.push(...(r.intelligence as unknown[])); }
       if (r.vulnerabilities) { tr.vulnerabilities  = r.vulnerabilities; allVulns.push(...(r.vulnerabilities as unknown[])); }
       if (r.jsAnalysis)      { tr.jsAnalysis       = r.jsAnalysis;      jsAnalysis = r.jsAnalysis; }
+      if (r.paramDiscovery)  { tr.paramDiscovery   = r.paramDiscovery;  paramDiscovery = r.paramDiscovery; }
       return tr;
     });
 
@@ -2101,6 +2142,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       ports, subdomains: subs, endpoints: eps, httpInfo, dnsRecords: dns,
       intelligence: intel, vulnerabilities: vulns, secrets, cves, headerIssues,
       jsAnalysis,
+      paramDiscovery,
       toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
       configuredTools,
     };

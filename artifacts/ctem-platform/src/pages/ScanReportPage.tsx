@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params";
 
 function downloadScanReportPdf(scan: any, assetReports: any[]) {
   const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
@@ -463,6 +463,7 @@ export default function ScanReportPage() {
     { key: "dns",          label: "DNS Records",    icon: Database,      count: summary.dnsRecords },
     { key: "endpoints",    label: "Endpoints",      icon: Search,        count: summary.endpoints },
     { key: "js",           label: "JavaScript",     icon: Code,          count: selectedAsset?.jsAnalysis?.stats?.totalSecrets ?? undefined },
+    { key: "params",       label: "Parameters",     icon: FileCode,      count: selectedAsset?.paramDiscovery?.stats?.unique ?? undefined },
     { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
@@ -1167,6 +1168,11 @@ export default function ScanReportPage() {
               {/* JavaScript Analysis tab */}
               {assetTab === "js" && (
                 <JsAnalysisTab jsAnalysis={selectedAsset.jsAnalysis ?? null} />
+              )}
+
+              {/* Parameter Discovery tab */}
+              {assetTab === "params" && (
+                <ParamDiscoveryTab paramDiscovery={selectedAsset.paramDiscovery ?? null} />
               )}
 
               {/* Screenshots tab */}
@@ -2043,6 +2049,172 @@ function DnsTab({ records }: { records: any[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Parameter Discovery Tab ───────────────────────────────────────────────────
+
+const PARAM_CAT_META: Record<string, { label: string; color: string; desc: string }> = {
+  ssrf_redirect: { label: "SSRF / Redirect",  color: "bg-red-500/15 text-red-400 border-red-500/30",     desc: "Open redirect & SSRF vectors — can be used to forge server-side requests or redirect users to attacker-controlled pages" },
+  idor:          { label: "IDOR",              color: "bg-orange-500/15 text-orange-400 border-orange-500/30", desc: "Insecure Direct Object Reference — numeric/UUID identifiers that may expose other users' resources" },
+  auth:          { label: "Auth / Token",      color: "bg-purple-500/15 text-purple-400 border-purple-500/30", desc: "Authentication & authorization parameters — leaked or predictable values can lead to account takeover" },
+  file_path:     { label: "File / Path",       color: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30", desc: "File inclusion & path traversal risk — values passed to file I/O operations without sanitization" },
+  xss_sqli:      { label: "XSS / SQLi",        color: "bg-blue-500/15 text-blue-400 border-blue-500/30",   desc: "Reflected XSS & SQL injection vectors — user input reflected in HTML or passed into database queries" },
+  other:         { label: "Other",             color: "bg-accent/60 text-muted-foreground border-border",   desc: "General parameters — worth testing but not classified into a high-risk category" },
+};
+
+const SOURCE_META: Record<string, { label: string; color: string }> = {
+  archive: { label: "Wayback",  color: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10" },
+  crawl:   { label: "Crawled",  color: "text-green-400 border-green-500/30 bg-green-500/10" },
+  form:    { label: "Form",     color: "text-yellow-400 border-yellow-500/30 bg-yellow-500/10" },
+  brute:   { label: "Arjun",    color: "text-orange-400 border-orange-500/30 bg-orange-500/10" },
+};
+
+const CONF_COLORS: Record<string, string> = {
+  high:   "text-red-400",
+  medium: "text-yellow-400",
+  low:    "text-muted-foreground",
+};
+
+function ParamDiscoveryTab({ paramDiscovery }: { paramDiscovery: any }) {
+  const [activeCategory, setActiveCategory] = useState<string>("all");
+  const [search, setSearch] = useState("");
+
+  if (!paramDiscovery || paramDiscovery.stats?.total === 0) {
+    return (
+      <div className="text-center py-10 text-muted-foreground space-y-2">
+        <FileCode className="w-8 h-8 mx-auto opacity-30" />
+        <p className="text-sm">No parameters discovered</p>
+        <p className="text-xs text-muted-foreground/70">Run a new scan — Parameter Discovery runs automatically on web assets.</p>
+      </div>
+    );
+  }
+
+  const stats = paramDiscovery.stats ?? {};
+  const params: any[] = paramDiscovery.params ?? [];
+
+  const categories = ["all", "ssrf_redirect", "idor", "auth", "file_path", "xss_sqli", "other"];
+  const catCount = (cat: string) => cat === "all" ? stats.total : stats[cat === "ssrf_redirect" ? "ssrf" : cat === "xss_sqli" ? "xss_sqli" : cat] ?? 0;
+
+  const filtered = params.filter(p => {
+    if (activeCategory !== "all" && p.category !== activeCategory) return false;
+    if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.url?.includes(search)) return false;
+    return true;
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "Total Params",    value: stats.total,       sub: `${stats.unique} unique names`,  color: "text-primary" },
+          { label: "From Archive",    value: stats.fromArchive, sub: "Wayback Machine URLs",           color: "text-cyan-400" },
+          { label: "From Brute-force",value: stats.fromBrute,   sub: "Arjun detection",               color: "text-orange-400" },
+          { label: "High-risk",       value: (stats.ssrf ?? 0) + (stats.idor ?? 0) + (stats.auth ?? 0), sub: "SSRF + IDOR + Auth", color: "text-red-400" },
+        ].map(s => (
+          <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
+            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide block mb-1">{s.label}</span>
+            <p className={cn("text-xl font-bold", s.color)}>{s.value}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Category breakdown */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        {categories.filter(c => c !== "all").map(cat => {
+          const meta = PARAM_CAT_META[cat];
+          const count = cat === "ssrf_redirect" ? (stats.ssrf ?? 0) : stats[cat] ?? 0;
+          return (
+            <div key={cat} className={cn("border rounded-lg p-2 cursor-pointer transition-colors", activeCategory === cat ? meta.color : "bg-accent/10 border-border hover:border-muted-foreground/30")}
+              onClick={() => setActiveCategory(activeCategory === cat ? "all" : cat)}>
+              <p className="text-[10px] font-semibold leading-tight">{meta.label}</p>
+              <p className="text-lg font-bold mt-0.5">{count}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={() => setActiveCategory("all")}
+          className={cn("px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors", activeCategory === "all" ? "bg-primary/15 text-primary border-primary/30" : "bg-accent/30 text-muted-foreground border-border hover:text-foreground")}
+        >All ({stats.total})</button>
+        <div className="ml-auto flex items-center gap-1.5 bg-accent/30 border border-border rounded-lg px-2.5 py-1.5">
+          <Search className="w-3 h-3 text-muted-foreground" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by name or URL…"
+            className="bg-transparent text-xs outline-none placeholder:text-muted-foreground/60 w-44" />
+          {search && <button onClick={() => setSearch("")} className="text-muted-foreground hover:text-foreground"><X className="w-3 h-3" /></button>}
+        </div>
+        <span className="text-xs text-muted-foreground">{filtered.length} results</span>
+      </div>
+
+      {/* Parameter list */}
+      {filtered.length === 0
+        ? <EmptyState message="No parameters match the current filter" icon={FileCode} />
+        : (
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="grid grid-cols-[1fr_auto_auto_auto_2fr] gap-0 border-b border-border bg-accent/20 px-3 py-2">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Parameter</span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">Source</span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">Method</span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">Confidence</span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">URL / Context</span>
+            </div>
+            <div className="divide-y divide-border/40 max-h-[520px] overflow-y-auto">
+              {filtered.slice(0, 1000).map((p: any, i: number) => {
+                const catMeta = PARAM_CAT_META[p.category] ?? PARAM_CAT_META.other;
+                const srcMeta = SOURCE_META[p.source] ?? { label: p.source, color: "text-muted-foreground border-border" };
+                return (
+                  <div key={i} className="grid grid-cols-[1fr_auto_auto_auto_2fr] gap-0 px-3 py-2 text-xs hover:bg-accent/20 transition-colors items-center">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={cn("text-[9px] font-bold border rounded px-1 py-0.5 uppercase tracking-wide whitespace-nowrap shrink-0", catMeta.color)}>
+                        {catMeta.label}
+                      </span>
+                      <span className="font-mono font-semibold text-foreground truncate">{p.name}</span>
+                    </div>
+                    <div className="px-2">
+                      <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5", srcMeta.color)}>{srcMeta.label}</span>
+                    </div>
+                    <div className="px-2">
+                      <span className={cn("text-[10px] font-mono", p.method === "POST" ? "text-orange-400" : "text-muted-foreground")}>{p.method}</span>
+                    </div>
+                    <div className="px-2">
+                      <span className={cn("text-[10px] font-semibold", CONF_COLORS[p.confidence])}>{p.confidence}</span>
+                    </div>
+                    <div className="px-2 flex items-center gap-2 min-w-0">
+                      <span className="font-mono text-[10px] text-muted-foreground/70 truncate flex-1">{p.url}</span>
+                      {p.example && (
+                        <span className="font-mono text-[10px] bg-accent/60 border border-border rounded px-1.5 py-0.5 text-muted-foreground shrink-0 max-w-[120px] truncate" title={p.example}>
+                          ex: {p.example}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {filtered.length > 1000 && (
+                <div className="px-3 py-2 text-center text-xs text-muted-foreground">
+                  … and {filtered.length - 1000} more parameters
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      }
+
+      {/* Category descriptions */}
+      {activeCategory !== "all" && PARAM_CAT_META[activeCategory] && (
+        <div className={cn("border rounded-lg p-3 flex items-start gap-2", PARAM_CAT_META[activeCategory].color)}>
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold">{PARAM_CAT_META[activeCategory].label} Parameters</p>
+            <p className="text-xs mt-0.5 opacity-80">{PARAM_CAT_META[activeCategory].desc}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
