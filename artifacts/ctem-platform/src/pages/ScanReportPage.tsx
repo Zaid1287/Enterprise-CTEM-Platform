@@ -1737,7 +1737,7 @@ const SRC_LABEL: Record<string, string> = {
   otx:          "OTX",
   crawl:        "Hakrawler",
   "js-crawl":   "Katana",
-  probe:        "Probe",
+  probe:        "Feroxbuster",
 };
 
 function EndpointsTab({ endpoints }: { endpoints: any[] }) {

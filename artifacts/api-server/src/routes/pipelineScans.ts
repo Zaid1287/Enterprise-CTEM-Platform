@@ -13,6 +13,7 @@ import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanne
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
+import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -1220,27 +1221,8 @@ async function executePipeline(
   const assets = await db.select().from(assetsTable)
     .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
 
-  // ── Auto-ensure built-in tools exist for this tenant ─────────────────────
-  const builtinToolDefs = [
-    { name: "wappalyzer", description: "Technology fingerprinting engine — identifies CMS, JS frameworks, CDN, analytics, security products, and 60+ tech categories via HTTP headers, HTML patterns, cookies, and script signatures", category: "web_recon",  githubUrl: "https://github.com/enthec/webappanalyzer", runCommand: "wappalyzer {target}" },
-    { name: "webcheck",   description: "Comprehensive web security checker — audits HTTP security headers (HSTS, CSP, X-Frame-Options, CORP, COEP), cookie flags, TLS configuration, and security policy compliance",          category: "web_recon",  githubUrl: "https://github.com/lissy93/web-check",     runCommand: "webcheck {target}" },
-    { name: "gowitness",  description: "Web screenshot utility using system Chromium — captures index, login, signup, admin, and API pages with full-page renders and HTTP metadata",                                           category: "screenshot", githubUrl: "https://github.com/sensepost/gowitness",    runCommand: "gowitness single --url https://{target}" },
-    { name: "eyewitness", description: "Visual recon tool that captures web screenshots, server headers, and identifies default credentials on web-exposed services",                                                           category: "screenshot", githubUrl: "https://github.com/RedSiege/EyeWitness",    runCommand: "eyewitness --web --single https://{target}" },
-    { name: "snapback",   description: "Screenshot and sensitive info disclosure scanner for web pages, detecting hardcoded API keys, tokens, credentials, and internal endpoints",                                            category: "screenshot", githubUrl: "https://github.com/dekz/snapback",          runCommand: "snapback scan {target}" },
-    // ── Subdomain enumeration engine tools (auto-run for every domain asset) ─
-    { name: "subfinder",  description: "Fast passive subdomain discovery with 40+ data sources (VirusTotal, Chaos, DNSdb, Shodan, etc.) — auto-runs on every domain asset scan",                                             category: "recon",      githubUrl: "https://github.com/projectdiscovery/subfinder", runCommand: "subfinder -d {target} -all -silent" },
-    { name: "findomain",  description: "CT-log-based subdomain finder using Certificate Transparency + multiple passive sources — auto-runs on every domain asset scan",                                                      category: "recon",      githubUrl: "https://github.com/Findomain/Findomain",       runCommand: "findomain -t {target} -q" },
-    { name: "httpx",      description: "Fast multi-purpose HTTP probing — status codes, tech detection, web server, page titles, redirect chains — probes all discovered subdomains",                                        category: "web_recon",  githubUrl: "https://github.com/projectdiscovery/httpx",    runCommand: "httpx -u {target} -json -status-code -title -tech-detect" },
-    { name: "dnsx",       description: "Fast bulk DNS resolver and brute-forcer — resolves all subdomain candidates and active DNS brute-force with built-in wordlist",                                                       category: "recon",      githubUrl: "https://github.com/projectdiscovery/dnsx",     runCommand: "dnsx -d {target} -silent -a" },
-    { name: "alterx",     description: "Smart subdomain permutation wordlist generator — creates variations from existing subdomains using customisable patterns for active discovery",                                        category: "recon",      githubUrl: "https://github.com/projectdiscovery/alterx",   runCommand: "alterx -d {target} -silent" },
-    // ── Endpoint discovery engine tools ──────────────────────────────────────────
-    { name: "gau",        description: "GetAllURLs — aggregates historical URLs from Wayback Machine, Common Crawl, URLScan.io, and OTX AlienVault for passive URL harvesting; auto-runs on every domain scan",                       category: "web_recon",  githubUrl: "https://github.com/lc/gau",                                  runCommand: "gau {target}" },
-    { name: "waybackurls", description: "Wayback Machine CDX API client — queries the Internet Archive CDX index for all historically crawled URLs for a domain, revealing endpoints that are no longer publicly linked",              category: "web_recon",  githubUrl: "https://github.com/tomnomnom/waybackurls",                   runCommand: "waybackurls {target}" },
-    { name: "katana",     description: "JS-aware web crawler (ProjectDiscovery) — crawls single-page applications with Puppeteer, captures all XHR/fetch requests, parses JS bundles for embedded API endpoints and routes",           category: "web_recon",  githubUrl: "https://github.com/projectdiscovery/katana",                 runCommand: "katana -u https://{target} -js-crawl -silent" },
-    { name: "hakrawler",  description: "Fast web crawler — extracts URLs from HTML anchor/form tags, JS src references, sitemaps, and robots.txt; runs against all live discovered hosts",                                              category: "web_recon",  githubUrl: "https://github.com/hakluke/hakrawler",                       runCommand: "hakrawler -url https://{target} -depth 3 -scope subs" },
-    { name: "uro",        description: "URL deduplication & normalization — collapses parameterized URLs with identical structure, removes duplicate paths, and merges output from all harvesting sources (GAU, Wayback, Katana, Hakrawler)", category: "web_recon", githubUrl: "https://github.com/s0md3v/uro",                             runCommand: "uro" },
-  ];
-  for (const def of builtinToolDefs) {
+  // ── Auto-ensure built-in tools exist for this tenant (fallback — startup seed is primary) ──
+  for (const def of BUILTIN_TOOL_DEFS) {
     const exists = await db.select({ id: securityToolsTable.id })
       .from(securityToolsTable)
       .where(and(eq(securityToolsTable.tenantId, tenantId), eq(securityToolsTable.name, def.name)))
