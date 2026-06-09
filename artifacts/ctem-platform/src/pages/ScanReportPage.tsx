@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud" | "secretshunt" | "dirfuzz";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud" | "secretshunt" | "dirfuzz" | "nuclei";
 
 function downloadScanReportPdf(scan: any, assetReports: any[]) {
   const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
@@ -467,6 +467,7 @@ export default function ScanReportPage() {
     { key: "cloud",        label: "Cloud Assets",   icon: Cloud,         count: selectedAsset?.cloudRecon?.stats?.existingBuckets ?? undefined },
     { key: "secretshunt",  label: "Secrets Hunt",   icon: Github,        count: (selectedAsset?.secretsHunt?.stats?.secretsFound ?? 0) + (selectedAsset?.secretsHunt?.stats?.gitDirsExposed ?? 0) || undefined },
     { key: "dirfuzz",      label: "Dir Fuzz",       icon: FolderOpen,    count: selectedAsset?.dirFuzz?.stats?.totalUnique ?? undefined },
+    { key: "nuclei",       label: "Nuclei",         icon: ShieldAlert,   count: ((selectedAsset?.vulnScan?.stats?.critical ?? 0) + (selectedAsset?.vulnScan?.stats?.high ?? 0)) || undefined },
     { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
@@ -1191,6 +1192,11 @@ export default function ScanReportPage() {
               {/* Directory Fuzz tab */}
               {assetTab === "dirfuzz" && (
                 <DirFuzzTab dirFuzz={selectedAsset.dirFuzz ?? null} />
+              )}
+
+              {/* Nuclei Vuln Scan tab */}
+              {assetTab === "nuclei" && (
+                <NucleiTab vulnScan={selectedAsset.vulnScan ?? null} />
               )}
 
               {/* Screenshots tab */}
@@ -2067,6 +2073,352 @@ function DnsTab({ records }: { records: any[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Nuclei Vulnerability Scanner Tab ─────────────────────────────────────────
+
+const SEVERITY_STYLE: Record<string, string> = {
+  critical: "bg-red-500/15 text-red-400 border-red-500/30",
+  high:     "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  medium:   "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  low:      "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  info:     "bg-accent/30 text-muted-foreground border-border",
+};
+
+const CATEGORY_STYLE: Record<string, string> = {
+  "exposed-panel":    "bg-purple-500/10 text-purple-400 border-purple-500/25",
+  "sensitive-file":   "bg-red-500/10 text-red-400 border-red-500/25",
+  "misconfiguration": "bg-orange-500/10 text-orange-400 border-orange-500/25",
+  "cve":              "bg-pink-500/10 text-pink-400 border-pink-500/25",
+  "cors":             "bg-teal-500/10 text-teal-400 border-teal-500/25",
+  "header":           "bg-blue-500/10 text-blue-400 border-blue-500/25",
+};
+
+const GRADE_STYLE: Record<string, string> = {
+  "A+": "text-green-400 bg-green-500/15 border-green-500/30",
+  "A":  "text-green-400 bg-green-500/15 border-green-500/30",
+  "B":  "text-lime-400 bg-lime-500/15 border-lime-500/30",
+  "C":  "text-yellow-400 bg-yellow-500/15 border-yellow-500/30",
+  "D":  "text-orange-400 bg-orange-500/15 border-orange-500/30",
+  "F":  "text-red-400 bg-red-500/15 border-red-500/30",
+};
+
+function SevBadge({ sev }: { sev: string }) {
+  return (
+    <span className={cn("text-[10px] font-bold uppercase border rounded px-1.5 py-0.5 shrink-0 w-16 text-center", SEVERITY_STYLE[sev] ?? SEVERITY_STYLE.info)}>
+      {sev}
+    </span>
+  );
+}
+
+function CatBadge({ cat }: { cat: string }) {
+  const label = cat.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return (
+    <span className={cn("text-[10px] font-medium border rounded px-1.5 py-0.5 shrink-0", CATEGORY_STYLE[cat] ?? "bg-accent/30 text-muted-foreground border-border")}>
+      {label}
+    </span>
+  );
+}
+
+function NucleiTab({ vulnScan }: { vulnScan: any }) {
+  const [section, setSection] = useState<"findings" | "cors" | "headers">("findings");
+  const [sevFilter, setSevFilter] = useState("all");
+  const [catFilter, setCatFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  if (!vulnScan) {
+    return (
+      <div className="text-center py-10 text-muted-foreground space-y-2">
+        <ShieldAlert className="w-8 h-8 mx-auto opacity-30" />
+        <p className="text-sm">No vulnerability scan data available</p>
+        <p className="text-xs opacity-70">Nuclei runs automatically on all web assets during scan.</p>
+      </div>
+    );
+  }
+
+  const stats: any = vulnScan.stats ?? {};
+  const findings: any[] = vulnScan.findings ?? [];
+  const cors: any[] = vulnScan.cors ?? [];
+  const headers: any[] = vulnScan.headers ?? [];
+
+  const filteredFindings = findings.filter((f: any) => {
+    if (sevFilter !== "all" && f.severity !== sevFilter) return false;
+    if (catFilter !== "all" && f.category !== catFilter) return false;
+    if (search && !f.name?.toLowerCase().includes(search.toLowerCase()) &&
+        !f.url?.toLowerCase().includes(search.toLowerCase()) &&
+        !f.templateId?.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const categories = [...new Set(findings.map((f: any) => f.category))];
+
+  const toggleExpand = (i: number) => {
+    setExpanded(prev => {
+      const n = new Set(prev);
+      if (n.has(i)) n.delete(i); else n.add(i);
+      return n;
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Stats row */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        {[
+          { label: "Critical", value: stats.critical ?? 0, style: stats.critical > 0 ? "text-red-400" : "text-muted-foreground" },
+          { label: "High",     value: stats.high ?? 0,     style: stats.high > 0 ? "text-orange-400" : "text-muted-foreground" },
+          { label: "Medium",   value: stats.medium ?? 0,   style: stats.medium > 0 ? "text-yellow-400" : "text-muted-foreground" },
+          { label: "Low",      value: stats.low ?? 0,      style: "text-blue-400" },
+          { label: "CORS",     value: stats.corsVulnerable ?? 0, style: stats.corsVulnerable > 0 ? "text-teal-400" : "text-muted-foreground" },
+        ].map(s => (
+          <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
+            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide block mb-1">{s.label}</span>
+            <p className={cn("text-xl font-bold", s.style)}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Header score band */}
+      {headers.length > 0 && (
+        <div className="flex items-center gap-3 bg-accent/10 border border-border rounded-lg px-4 py-2.5">
+          <Shield className="w-4 h-4 text-muted-foreground shrink-0" />
+          <span className="text-xs text-muted-foreground">Security header score:</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {headers.map((h: any) => (
+              <span key={h.host} className="flex items-center gap-1">
+                <span className="text-xs text-foreground/80 font-mono">{h.host}</span>
+                <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5", GRADE_STYLE[h.grade] ?? GRADE_STYLE["F"])}>
+                  {h.grade} {h.score}/100
+                </span>
+              </span>
+            ))}
+          </div>
+          <span className="text-[10px] text-muted-foreground ml-auto">{stats.headerIssues ?? 0} issues detected</span>
+        </div>
+      )}
+
+      {/* Section tabs */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          { key: "findings", label: `Template Findings (${findings.length})` },
+          { key: "cors",     label: `CORS (${cors.length})` },
+          { key: "headers",  label: `Security Headers (${headers.length} hosts)` },
+        ] as const).map(s => (
+          <button key={s.key} onClick={() => setSection(s.key)}
+            className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border",
+              section === s.key ? "bg-primary/15 text-primary border-primary/30" : "bg-accent/30 text-muted-foreground border-border hover:text-foreground"
+            )}>{s.label}</button>
+        ))}
+      </div>
+
+      {/* ── Findings section ── */}
+      {section === "findings" && (
+        <>
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={sevFilter} onChange={e => setSevFilter(e.target.value)}
+              className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+              <option value="all">All severities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="info">Info</option>
+            </select>
+            <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+              className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+              <option value="all">All categories</option>
+              {categories.map((c: any) => (
+                <option key={c} value={c}>{c.replace(/-/g, " ").replace(/\b\w/g, (x: string) => x.toUpperCase())}</option>
+              ))}
+            </select>
+            <div className="flex items-center gap-1.5 bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 ml-auto">
+              <Search className="w-3 h-3 text-muted-foreground" />
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="Search findings…"
+                className="bg-transparent text-xs outline-none placeholder:text-muted-foreground/60 w-40" />
+              {search && <button onClick={() => setSearch("")}><X className="w-3 h-3 text-muted-foreground" /></button>}
+            </div>
+          </div>
+
+          {filteredFindings.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground space-y-1">
+              <CheckCircle2 className="w-7 h-7 mx-auto text-green-400 opacity-60" />
+              <p className="text-sm">{findings.length === 0 ? "No vulnerabilities detected" : "No results match filter"}</p>
+              {findings.length === 0 && <p className="text-xs opacity-60">All 40+ Nuclei templates ran clean against this target</p>}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {filteredFindings.map((f: any, i: number) => {
+                const open = expanded.has(i);
+                return (
+                  <div key={i} className={cn("border rounded-lg overflow-hidden",
+                    f.severity === "critical" ? "border-red-500/30 bg-red-500/5" :
+                    f.severity === "high" ? "border-orange-500/25 bg-orange-500/5" :
+                    "border-border bg-accent/10"
+                  )}>
+                    {/* Summary row */}
+                    <button onClick={() => toggleExpand(i)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-white/5 transition-colors">
+                      <SevBadge sev={f.severity} />
+                      <CatBadge cat={f.category} />
+                      <span className="text-sm font-medium text-foreground flex-1 text-left">{f.name}</span>
+                      {f.cve && !f.cve.includes("-") === false && f.cve.match(/CVE-\d{4}-\d+/) && (
+                        <span className="text-[10px] font-mono text-pink-400 shrink-0">{f.cve}</span>
+                      )}
+                      <span className="font-mono text-[10px] text-muted-foreground truncate max-w-48 hidden sm:block">{f.url}</span>
+                      <ChevronRight className={cn("w-3.5 h-3.5 text-muted-foreground shrink-0 transition-transform", open && "rotate-90")} />
+                    </button>
+                    {/* Expanded detail */}
+                    {open && (
+                      <div className="border-t border-border/50 px-3 py-3 space-y-3 bg-accent/5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <span className="text-muted-foreground block mb-1 font-medium uppercase tracking-wide text-[10px]">URL</span>
+                            <a href={f.url} target="_blank" rel="noreferrer" className="font-mono text-primary hover:underline break-all">{f.url}</a>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground block mb-1 font-medium uppercase tracking-wide text-[10px]">Evidence</span>
+                            <code className="text-foreground/80 bg-accent/30 rounded px-2 py-1 block font-mono text-[10px] break-all">{f.evidence}</code>
+                          </div>
+                          {f.cve && (
+                            <div>
+                              <span className="text-muted-foreground block mb-1 font-medium uppercase tracking-wide text-[10px]">CVE / Template</span>
+                              <span className="font-mono text-pink-400">{f.cve}</span>
+                              {f.cvss && <span className="ml-2 text-muted-foreground">CVSS {f.cvss}</span>}
+                              {f.cwe && <span className="ml-2 text-blue-400">{f.cwe}</span>}
+                            </div>
+                          )}
+                          {f.tags?.length > 0 && (
+                            <div>
+                              <span className="text-muted-foreground block mb-1 font-medium uppercase tracking-wide text-[10px]">Tags</span>
+                              <div className="flex flex-wrap gap-1">
+                                {f.tags.map((t: string) => <span key={t} className="text-[10px] bg-accent/40 border border-border rounded px-1.5 py-0.5 text-muted-foreground">{t}</span>)}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block mb-1 font-medium uppercase tracking-wide text-[10px]">Description</span>
+                          <p className="text-xs text-foreground/80 leading-relaxed">{f.description}</p>
+                        </div>
+                        <div className="border border-green-500/20 bg-green-500/5 rounded-lg px-3 py-2">
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-green-400 block mb-1">Remediation</span>
+                          <p className="text-xs text-foreground/80 leading-relaxed">{f.remediation}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── CORS section ── */}
+      {section === "cors" && (
+        cors.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground space-y-1">
+            <CheckCircle2 className="w-7 h-7 mx-auto text-green-400 opacity-60" />
+            <p className="text-sm">No CORS misconfigurations detected</p>
+            <p className="text-xs opacity-60">Tested: reflected-origin, null-origin, subdomain-confusion</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {cors.map((c: any, i: number) => (
+              <div key={i} className="border rounded-lg overflow-hidden border-orange-500/25 bg-orange-500/5">
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <SevBadge sev={c.severity} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground">
+                      {c.variant.replace(/-/g, " ").replace(/\b\w/g, (x: string) => x.toUpperCase())}
+                    </p>
+                    <p className="text-[11px] font-mono text-muted-foreground">{c.host}</p>
+                  </div>
+                  <div className="text-right text-xs space-y-0.5 shrink-0">
+                    <div className="font-mono text-foreground/80">ACAO: <span className="text-yellow-400">{c.allowOrigin}</span></div>
+                    <div className={cn("text-[10px]", c.allowCredentials ? "text-red-400 font-semibold" : "text-muted-foreground")}>
+                      Credentials: {c.allowCredentials ? "✓ true (DANGEROUS)" : "false"}
+                    </div>
+                  </div>
+                </div>
+                <div className="border-t border-border/40 px-4 py-3 space-y-2 bg-accent/5">
+                  <p className="text-xs text-foreground/80">{c.description}</p>
+                  <div className="border border-green-500/20 bg-green-500/5 rounded px-3 py-2">
+                    <span className="text-[10px] font-medium text-green-400 uppercase tracking-wide block mb-0.5">Remediation</span>
+                    <p className="text-xs text-foreground/80">{c.remediation}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {/* ── Headers section ── */}
+      {section === "headers" && (
+        headers.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground space-y-1">
+            <Info className="w-7 h-7 mx-auto opacity-30" />
+            <p className="text-sm">No header analysis data available</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {headers.map((h: any, hi: number) => {
+              const checks: any[] = h.checks ?? [];
+              const issueChecks = checks.filter((c: any) => c.issue);
+              return (
+                <div key={hi} className="border border-border rounded-lg overflow-hidden">
+                  {/* Host header */}
+                  <div className="flex items-center gap-3 px-4 py-3 bg-accent/20">
+                    <span className={cn("text-base font-bold border rounded-lg px-3 py-1", GRADE_STYLE[h.grade] ?? GRADE_STYLE["F"])}>{h.grade}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-sm font-semibold text-foreground">{h.host}</p>
+                      <p className="text-[10px] text-muted-foreground">{h.score}/100 — {issueChecks.length} issue{issueChecks.length !== 1 ? "s" : ""}</p>
+                    </div>
+                    {h.serverBanner && (
+                      <span className="text-[10px] text-muted-foreground font-mono truncate max-w-36 hidden sm:block">Server: {h.serverBanner}</span>
+                    )}
+                    {h.poweredBy && (
+                      <span className="text-[10px] text-orange-400 font-mono truncate max-w-36 hidden sm:block">X-Powered-By: {h.poweredBy}</span>
+                    )}
+                  </div>
+                  {/* Score bar */}
+                  <div className="h-1.5 w-full bg-accent/30">
+                    <div className={cn("h-full transition-all", h.score >= 80 ? "bg-green-500" : h.score >= 60 ? "bg-yellow-500" : h.score >= 40 ? "bg-orange-500" : "bg-red-500")}
+                      style={{ width: `${h.score}%` }} />
+                  </div>
+                  {/* Per-header rows */}
+                  <div className="divide-y divide-border/40">
+                    {checks.map((c: any, ci: number) => (
+                      <div key={ci} className={cn("flex items-start gap-3 px-4 py-2.5 text-xs",
+                        c.issue ? "bg-accent/5" : "opacity-60")}>
+                        <div className={cn("w-3 h-3 rounded-full mt-0.5 shrink-0",
+                          !c.present || c.issue ? (
+                            c.severity === "high" ? "bg-orange-400" :
+                            c.severity === "medium" ? "bg-yellow-400" :
+                            c.severity === "low" ? "bg-blue-400" : "bg-muted-foreground/40"
+                          ) : "bg-green-400"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <span className="font-mono font-medium text-foreground/90">{c.name}</span>
+                          {c.value && <span className="ml-2 text-[10px] text-muted-foreground font-mono truncate max-w-64 inline-block align-middle">{c.value}</span>}
+                          {c.issue && <p className="text-[11px] text-orange-400/90 mt-0.5">{c.issue}</p>}
+                          {c.issue && c.recommendation && <p className="text-[10px] text-muted-foreground mt-0.5">Fix: {c.recommendation}</p>}
+                        </div>
+                        <SevBadge sev={c.severity} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
     </div>
   );
 }

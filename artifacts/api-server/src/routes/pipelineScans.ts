@@ -13,6 +13,7 @@ import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscov
 import { runCloudRecon, type CloudReconResult } from "../lib/cloudRecon";
 import { runSecretsHunt, type SecretsHuntResult } from "../lib/secretsHunter";
 import { runDirFuzz, type DirFuzzResult } from "../lib/dirFuzzer";
+import { runNucleiScan, type VulnScanResult } from "../lib/nucleiScanner";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -1399,6 +1400,7 @@ async function executePipeline(
     let cloudRecon: CloudReconResult | null = null;
     let secretsHunt: SecretsHuntResult | null = null;
     let dirFuzz: DirFuzzResult | null = null;
+    let vulnScan: VulnScanResult | null = null;
     const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
     // Screenshots + tech detection always run for web asset types regardless of tool pipeline
     const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
@@ -1447,6 +1449,9 @@ async function executePipeline(
           : Promise.resolve(),
         isWebAsset
           ? (async () => { dirFuzz = await runDirFuzz(target, dnsResult.subdomains.map(s => s.name)); })()
+          : Promise.resolve(),
+        isWebAsset
+          ? (async () => { vulnScan = await runNucleiScan(target, dnsResult.subdomains.map(s => s.name)); })()
           : Promise.resolve(),
       ]);
 
@@ -2137,6 +2142,84 @@ async function executePipeline(
       }
     }
 
+    // ── Nuclei Scan: store result + create findings ───────────────────────────
+    if (isWebAsset && vulnScan) {
+      const rawLines = [
+        `[Nuclei Scanner] Feroxbuster-style template engine — ${target}`,
+        `Hosts scanned: ${vulnScan.stats.hostsScanned} | Findings: ${vulnScan.stats.totalFindings} (${vulnScan.stats.critical} critical, ${vulnScan.stats.high} high, ${vulnScan.stats.medium} medium, ${vulnScan.stats.low} low)`,
+        `CORS vulnerable: ${vulnScan.stats.corsVulnerable} | Header issues: ${vulnScan.stats.headerIssues} | Avg header score: ${vulnScan.stats.avgHeaderScore}/100`,
+        ``,
+        "=== TEMPLATE FINDINGS ===",
+        ...vulnScan.findings.map(f => `  [${f.severity.toUpperCase().padEnd(8)}] [${f.category}] ${f.name}`),
+        `                          URL: ${vulnScan.findings.map(f => f.url).join("\n")}`,
+        ``,
+        "=== CORS MISCONFIGURATIONS ===",
+        ...vulnScan.cors.map(c => `  [${c.severity.toUpperCase()}] ${c.variant}: ACAO=${c.allowOrigin}${c.allowCredentials ? " + credentials" : ""}`),
+        vulnScan.cors.length === 0 ? "  No CORS issues found" : "",
+        ``,
+        "=== SECURITY HEADER ANALYSIS ===",
+        ...vulnScan.headers.map(h => `  ${h.host}: Grade ${h.grade} (${h.score}/100) | Issues: ${h.checks.filter(c => c.issue).map(c => c.name).join(", ") || "none"}`),
+      ];
+
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id,
+        toolName: "nuclei", toolCategory: "vuln_scan",
+        rawOutput: rawLines.join("\n"),
+        vulnScan: vulnScan as any,
+        vulnerabilities: vulnScan.findings.length ? vulnScan.findings as any : null,
+        ports: null as any, subdomains: null as any, endpoints: null as any,
+        httpInfo: null as any, dnsRecords: null as any, intelligence: null as any,
+      });
+
+      // Findings: create DB findings for critical/high/medium template hits
+      for (const f of vulnScan.findings) {
+        if (f.severity === "info") continue;
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: f.name,
+          cve: f.cve ?? f.templateId,
+          severity: f.severity,
+          cvssScore: f.cvss ? String(f.cvss) : f.severity === "critical" ? "9.0" : f.severity === "high" ? "7.5" : f.severity === "medium" ? "5.3" : "3.1",
+          cwe: f.cwe,
+          status: "open" as const,
+          description: `${f.description} URL: ${f.url}. Evidence: ${f.evidence.slice(0, 300)}`,
+          remediation: f.remediation,
+        });
+      }
+
+      // CORS findings
+      for (const c of vulnScan.cors) {
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: `CORS Misconfiguration (${c.variant}) — ${c.host}`,
+          cve: `CORS-${c.variant.toUpperCase().replace(/-/g, "_")}-${c.host.replace(/[^A-Z0-9]/gi, "_").toUpperCase().slice(0, 20)}`,
+          severity: c.severity,
+          cvssScore: c.severity === "high" ? "8.1" : "5.4",
+          cwe: "CWE-942",
+          status: "open" as const,
+          description: c.description,
+          remediation: c.remediation,
+        });
+      }
+
+      // Header grade D/F → medium finding
+      for (const h of vulnScan.headers) {
+        if (h.score < 50) {
+          findingInserts.push({
+            tenantId, assetId: asset.id, scanId,
+            title: `Weak Security Headers: ${h.host} (Grade ${h.grade}, ${h.score}/100)`,
+            cve: `SEC-HEADERS-WEAK-${h.host.replace(/[^A-Z0-9]/gi, "_").toUpperCase().slice(0, 25)}`,
+            severity: "medium" as const,
+            cvssScore: "5.3",
+            cwe: "CWE-16",
+            status: "open" as const,
+            description: `Security header analysis scored ${h.score}/100 (Grade ${h.grade}) for ${h.host}. Missing/misconfigured: ${h.checks.filter(c => c.issue).map(c => c.name).join(", ")}.`,
+            remediation: "Implement all recommended security headers. Minimum: Content-Security-Policy, Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options, Referrer-Policy.",
+          });
+        }
+      }
+    }
+
     // Deduplicate and insert findings
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
@@ -2330,6 +2413,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     let cloudRecon: unknown = null;
     let secretsHunt: unknown = null;
     let dirFuzz: unknown = null;
+    let vulnScan: unknown = null;
 
     const toolResults = assetResults.map(r => {
       const tr: Record<string, unknown> = {
@@ -2348,6 +2432,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       if (r.cloudRecon)      { tr.cloudRecon       = r.cloudRecon;      cloudRecon = r.cloudRecon; }
       if (r.secretsHunt)     { tr.secretsHunt      = r.secretsHunt;     secretsHunt = r.secretsHunt; }
       if (r.dirFuzz)         { tr.dirFuzz          = r.dirFuzz;         dirFuzz = r.dirFuzz; }
+      if (r.vulnScan)        { tr.vulnScan         = r.vulnScan;        vulnScan = r.vulnScan; }
       return tr;
     });
 
@@ -2385,6 +2470,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       cloudRecon,
       secretsHunt,
       dirFuzz,
+      vulnScan,
       toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
       configuredTools,
     };
