@@ -34,6 +34,8 @@ const TenantsPage = lazy(() => import("@/pages/TenantsPage"));
 const TakedownsPage = lazy(() => import("@/pages/TakedownsPage"));
 const AccountSettingsPage = lazy(() => import("@/pages/AccountSettingsPage"));
 const ForgotPasswordPage = lazy(() => import("@/pages/ForgotPasswordPage"));
+const AlertDetailPage = lazy(() => import("@/pages/AlertDetailPage"));
+const PlatformSettingsPage = lazy(() => import("@/pages/PlatformSettingsPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -128,6 +130,8 @@ function Router() {
       <Route path="/tenants" component={() => <ProtectedRoute component={TenantsPage} />} />
       <Route path="/takedowns" component={() => <ProtectedRoute component={TakedownsPage} />} />
       <Route path="/settings/account" component={() => <ProtectedRoute component={AccountSettingsPage} />} />
+      <Route path="/alerts/:id" component={() => <ProtectedRoute component={AlertDetailPage} />} />
+      <Route path="/settings/platform" component={() => <ProtectedRoute component={PlatformSettingsPage} />} />
 
       {/* Fallback */}
       <Route component={() => <Redirect to="/dashboard" />} />

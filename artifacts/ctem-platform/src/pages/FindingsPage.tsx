@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import { useListFindings, getListFindingsQueryKey } from "@workspace/api-client-react";
+import { useListFindings, useUpdateFinding, getListFindingsQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, ExternalLink, ChevronLeft, ChevronRight, X,
   ShieldAlert, Globe, Network, Server, Cpu, Smartphone,
@@ -297,6 +298,15 @@ export default function FindingsPage() {
   const [drawerFinding, setDrawerFinding] = useState<any>(null);
   const [drawerMode, setDrawerMode]       = useState<DrawerMode>(null);
 
+  const qc = useQueryClient();
+  const updateFinding = useUpdateFinding();
+
+  const handleStatusChange = async (findingId: number, newStatus: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await updateFinding.mutateAsync({ findingId, data: { status: newStatus } as any });
+    qc.invalidateQueries({ queryKey: getListFindingsQueryKey() });
+  };
+
   function openDrawer(finding: any, mode: DrawerMode) {
     setDrawerFinding(finding);
     setDrawerMode(mode);
@@ -482,12 +492,22 @@ export default function FindingsPage() {
                       <ScoreBadge score={impScore} label="Importance Score (derived from CVSS, EPSS, KEV)" />
                     </td>
 
-                    {/* Status */}
-                    <td className="px-3 py-2.5">
-                      <div className={cn("inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase", STATUS_COLOR[f.status] ?? "")}>
-                        <StatusIcon className="w-3 h-3" />
-                        {f.status?.replace(/_/g, " ")}
-                      </div>
+                    {/* Status — inline dropdown */}
+                    <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                      <select
+                        value={f.status ?? "open"}
+                        onChange={e => handleStatusChange(f.id, e.target.value, e as any)}
+                        className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase cursor-pointer bg-transparent outline-none",
+                          STATUS_COLOR[f.status] ?? "border-border text-muted-foreground"
+                        )}
+                      >
+                        {STATUSES.map(s => (
+                          <option key={s} value={s} className="bg-card text-foreground normal-case">
+                            {s.replace(/_/g, " ")}
+                          </option>
+                        ))}
+                      </select>
                     </td>
 
                     {/* CVE */}

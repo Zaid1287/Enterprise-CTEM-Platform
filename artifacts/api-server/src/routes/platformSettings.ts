@@ -1,0 +1,89 @@
+import { Router } from "express";
+import { eq } from "drizzle-orm";
+import { db, platformSettingsTable } from "@workspace/db";
+import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+
+const router = Router();
+
+const PLATFORM_KEYS = [
+  { key: "resend_api_key",    label: "Resend API Key",        description: "Used for sending alert emails, invitations, and notifications via Resend.com",   category: "email" },
+  { key: "slack_webhook_url", label: "Slack Webhook URL",     description: "Incoming webhook URL for posting alerts to a Slack channel",                     category: "notifications" },
+  { key: "discord_webhook_url", label: "Discord Webhook URL", description: "Discord webhook URL for posting alerts to a Discord server",                      category: "notifications" },
+  { key: "shodan_api_key",    label: "Shodan API Key",        description: "Enables full Shodan API lookups (vulnerability data, ports, CPEs, etc.)",          category: "scanning" },
+  { key: "nvd_api_key",       label: "NVD API Key",           description: "NVD (National Vulnerability Database) API key — increases rate limit from 5 req/30s to 50 req/30s", category: "scanning" },
+  { key: "virustotal_api_key", label: "VirusTotal API Key",   description: "Used for domain/IP reputation lookups during reconnaissance",                     category: "scanning" },
+  { key: "hunter_api_key",    label: "Hunter.io API Key",     description: "Used to find employee emails associated with a target domain",                    category: "osint" },
+  { key: "smtp_host",         label: "SMTP Host",             description: "Custom SMTP server host (used if Resend is not configured)",                      category: "email" },
+  { key: "smtp_port",         label: "SMTP Port",             description: "Custom SMTP server port (e.g. 587 for TLS)",                                       category: "email" },
+  { key: "smtp_user",         label: "SMTP Username",         description: "SMTP authentication username",                                                    category: "email" },
+  { key: "smtp_pass",         label: "SMTP Password",         description: "SMTP authentication password",                                                    category: "email" },
+  { key: "smtp_from",         label: "SMTP From Address",     description: "The from email address used for outgoing emails",                                  category: "email" },
+];
+
+function isSuperAdmin(req: AuthenticatedRequest): boolean {
+  return req.user?.role === "super_admin";
+}
+
+function maskValue(key: string, value: string): string {
+  if (!value) return "";
+  const sensitiveKeys = ["api_key", "webhook_url", "smtp_pass", "smtp_user"];
+  const isSensitive = sensitiveKeys.some(k => key.includes(k));
+  if (!isSensitive) return value;
+  if (value.length <= 8) return "••••••••";
+  return "••••" + value.slice(-6);
+}
+
+router.get("/platform/settings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
+
+  const stored = await db.select().from(platformSettingsTable);
+  const storedMap = new Map(stored.map(s => [s.key, s.value]));
+
+  const settings = PLATFORM_KEYS.map(def => ({
+    key: def.key,
+    label: def.label,
+    description: def.description,
+    category: def.category,
+    hasValue: !!storedMap.get(def.key),
+    maskedValue: maskValue(def.key, storedMap.get(def.key) ?? ""),
+  }));
+
+  res.json(settings);
+});
+
+router.put("/platform/settings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
+
+  const updates = req.body as Record<string, string>;
+
+  for (const [key, value] of Object.entries(updates)) {
+    const def = PLATFORM_KEYS.find(k => k.key === key);
+    if (!def) continue;
+
+    const existing = await db.select().from(platformSettingsTable).where(eq(platformSettingsTable.key, key));
+    if (existing.length > 0) {
+      if (value === "" || value === null || value === undefined) {
+        await db.delete(platformSettingsTable).where(eq(platformSettingsTable.key, key));
+      } else {
+        await db.update(platformSettingsTable).set({ value, label: def.label, description: def.description, category: def.category }).where(eq(platformSettingsTable.key, key));
+      }
+    } else if (value) {
+      await db.insert(platformSettingsTable).values({ key, value, label: def.label, description: def.description, category: def.category });
+    }
+  }
+
+  res.json({ ok: true });
+});
+
+router.get("/platform/settings/raw/:key", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
+  const [row] = await db.select().from(platformSettingsTable).where(eq(platformSettingsTable.key, req.params.key));
+  res.json({ value: row?.value ?? "" });
+});
+
+export async function getPlatformSetting(key: string): Promise<string | null> {
+  const [row] = await db.select({ value: platformSettingsTable.value }).from(platformSettingsTable).where(eq(platformSettingsTable.key, key));
+  return row?.value ?? null;
+}
+
+export default router;

@@ -37,6 +37,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "All Tenants", href: "/tenants", icon: Building2 },
       { label: "Packages", href: "/packages", icon: Package },
+      { label: "Platform Settings", href: "/settings/platform", icon: Settings, onlyFor: ["super_admin"] },
     ],
   },
   {

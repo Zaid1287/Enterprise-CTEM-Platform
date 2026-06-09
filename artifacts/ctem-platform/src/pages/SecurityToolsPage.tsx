@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, GitBranch, ChevronUp, ChevronDown, Settings2,
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
   ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
-  Zap, Cpu, Network, Globe, Shield, Search, Wifi,
+  Zap, Cpu, Network, Globe, Shield, Search, Wifi, Pencil, ChevronLeft, ChevronRight as ChevronRightIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,8 @@ const statusIcon = (status: string) => {
 
 type Tab = "tools" | "pipeline" | "runs";
 
+const TOOLS_PAGE_SIZE = 15;
+
 const emptyForm = {
   name: "", githubUrl: "", category: "recon", description: "",
   runCommand: "", installCommand: "", updateCommand: "", outputFormat: "json",
@@ -53,6 +55,9 @@ const emptyForm = {
 export default function SecurityToolsPage() {
   const [tab, setTab] = useState<Tab>("tools");
   const [showAdd, setShowAdd] = useState(false);
+  const [editingTool, setEditingTool] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ ...emptyForm });
+  const [toolsPage, setToolsPage] = useState(1);
   const [form, setForm] = useState({ ...emptyForm });
   const [runningId, setRunningId] = useState<number | null>(null);
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
@@ -89,6 +94,9 @@ export default function SecurityToolsPage() {
 
   const effectivePipeline = pipelineDirty ? localPipeline : pipeline;
 
+  const toolsTotalPages = Math.max(1, Math.ceil(tools.length / TOOLS_PAGE_SIZE));
+  const paginatedTools = tools.slice((toolsPage - 1) * TOOLS_PAGE_SIZE, toolsPage * TOOLS_PAGE_SIZE);
+
   const handleAddTool = async (e: React.FormEvent) => {
     e.preventDefault();
     await createTool.mutateAsync({ data: { ...form } as any });
@@ -107,6 +115,23 @@ export default function SecurityToolsPage() {
   const handleToggleActive = async (tool: any) => {
     await updateTool.mutateAsync({ toolId: tool.id, data: { isActive: !tool.isActive } as any });
     qc.invalidateQueries({ queryKey: getListSecurityToolsQueryKey() });
+  };
+
+  const openEdit = (tool: any) => {
+    setEditingTool(tool);
+    setEditForm({
+      name: tool.name ?? "", githubUrl: tool.githubUrl ?? "", category: tool.category ?? "recon",
+      description: tool.description ?? "", runCommand: tool.runCommand ?? "",
+      installCommand: tool.installCommand ?? "", updateCommand: tool.updateCommand ?? "",
+      outputFormat: tool.outputFormat ?? "json",
+    });
+  };
+
+  const handleEditSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await updateTool.mutateAsync({ toolId: editingTool.id, data: { ...editForm } as any });
+    qc.invalidateQueries({ queryKey: getListSecurityToolsQueryKey() });
+    setEditingTool(null);
   };
 
   const handleRun = async (toolId: number) => {
@@ -199,6 +224,83 @@ export default function SecurityToolsPage() {
 
   return (
     <div className="space-y-4">
+      {/* ── Edit Tool Dialog ─────────────────────────────────────── */}
+      {editingTool && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-xl w-full max-w-lg mx-4 shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-primary" />
+                <h2 className="font-semibold text-sm">Edit Tool</h2>
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingTool(null)}>
+                <XCircle className="w-4 h-4" />
+              </Button>
+            </div>
+            <form onSubmit={handleEditSave} className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Name</Label>
+                  <Input className="h-8 text-sm" value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} required />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Category</Label>
+                  <select
+                    className="h-8 w-full text-sm rounded-md border border-input bg-background px-3"
+                    value={editForm.category}
+                    onChange={e => setEditForm(p => ({ ...p, category: e.target.value }))}
+                  >
+                    {["recon","enum","vuln","exploit","post","osint","fuzzing","api","web","network","cloud","misc"].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Output Format</Label>
+                  <select
+                    className="h-8 w-full text-sm rounded-md border border-input bg-background px-3"
+                    value={editForm.outputFormat}
+                    onChange={e => setEditForm(p => ({ ...p, outputFormat: e.target.value }))}
+                  >
+                    {["json","xml","csv","text","html"].map(f => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">GitHub URL</Label>
+                  <Input className="h-8 text-sm" value={editForm.githubUrl} onChange={e => setEditForm(p => ({ ...p, githubUrl: e.target.value }))} placeholder="https://github.com/…" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Description</Label>
+                <Input className="h-8 text-sm" value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Install Command</Label>
+                <Input className="h-8 text-sm font-mono" value={editForm.installCommand} onChange={e => setEditForm(p => ({ ...p, installCommand: e.target.value }))} placeholder="go install … / pip install …" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Run Command</Label>
+                <Input className="h-8 text-sm font-mono" value={editForm.runCommand} onChange={e => setEditForm(p => ({ ...p, runCommand: e.target.value }))} placeholder="tool -u {{target}} -o {{output}}" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Update Command</Label>
+                <Input className="h-8 text-sm font-mono" value={editForm.updateCommand} onChange={e => setEditForm(p => ({ ...p, updateCommand: e.target.value }))} placeholder="go install …@latest" />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" size="sm" onClick={() => setEditingTool(null)}>Cancel</Button>
+                <Button type="submit" size="sm" disabled={updateTool.isPending}>
+                  {updateTool.isPending ? "Saving…" : "Save Changes"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Security Tools</h1>
@@ -448,7 +550,7 @@ export default function SecurityToolsPage() {
               </Button>
             </div>
           )}
-          {tools.map((tool: any) => (
+          {paginatedTools.map((tool: any) => (
             <div key={tool.id} className="bg-card border border-border rounded-xl p-4 flex items-start gap-4">
               <div className="w-9 h-9 rounded-lg bg-accent/50 flex items-center justify-center shrink-0">
                 <GitBranch className="w-4 h-4 text-primary" />
@@ -508,6 +610,14 @@ export default function SecurityToolsPage() {
                 </Button>
                 <Button
                   variant="ghost" size="sm"
+                  className="h-7 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+                  onClick={() => openEdit(tool)}
+                  title="Edit tool"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="ghost" size="sm"
                   className="h-7 px-2 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
                   onClick={() => { addToPipeline(tool); setTab("pipeline"); }}
                   title="Add to pipeline"
@@ -531,6 +641,30 @@ export default function SecurityToolsPage() {
               </div>
             </div>
           ))}
+
+          {/* Pagination */}
+          {toolsTotalPages > 1 && (
+            <div className="flex items-center justify-between pt-1">
+              <p className="text-xs text-muted-foreground">
+                Showing {(toolsPage - 1) * TOOLS_PAGE_SIZE + 1}–{Math.min(toolsPage * TOOLS_PAGE_SIZE, tools.length)} of {tools.length} tools
+              </p>
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={toolsPage === 1} onClick={() => setToolsPage(p => p - 1)}>
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </Button>
+                {Array.from({ length: Math.min(toolsTotalPages, 7) }, (_, i) => {
+                  const p = toolsTotalPages <= 7 ? i + 1 : toolsPage <= 4 ? i + 1 : toolsPage >= toolsTotalPages - 3 ? toolsTotalPages - 6 + i : toolsPage - 3 + i;
+                  if (p < 1 || p > toolsTotalPages) return null;
+                  return (
+                    <Button key={p} size="sm" variant={p === toolsPage ? "default" : "outline"} className="h-7 w-7 p-0 text-xs" onClick={() => setToolsPage(p)}>{p}</Button>
+                  );
+                })}
+                <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={toolsPage === toolsTotalPages} onClick={() => setToolsPage(p => p + 1)}>
+                  <ChevronRightIcon className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

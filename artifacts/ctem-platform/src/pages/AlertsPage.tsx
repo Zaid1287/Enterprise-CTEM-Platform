@@ -1,10 +1,11 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import {
   useListAlerts, useUpdateAlert, useListAlertRules, useCreateAlertRule,
   getListAlertsQueryKey, getListAlertRulesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Bell, BellOff, Settings2 } from "lucide-react";
+import { Plus, Bell, BellOff, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, severityBgColor, capitalize, formatDateTime } from "@/lib/utils";
 
 export default function AlertsPage() {
+  const [, navigate] = useLocation();
   const [severityFilter, setSeverityFilter] = useState("");
   const [showCreateRule, setShowCreateRule] = useState(false);
   const [ruleForm, setRuleForm] = useState({ name: "", triggerType: "new_vulnerability", channel: "email", destination: "" });
@@ -91,9 +93,10 @@ export default function AlertsPage() {
             <div
               key={alert.id}
               className={cn(
-                "bg-card border rounded-xl p-4 transition-all",
-                !alert.isRead ? "border-primary/30" : "border-border opacity-60"
+                "bg-card border rounded-xl p-4 transition-all cursor-pointer hover:border-primary/30 hover:bg-accent/10 group",
+                !alert.isRead ? "border-primary/30" : "border-border opacity-70"
               )}
+              onClick={() => navigate(`/alerts/${alert.id}`)}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-2.5 flex-1 min-w-0">
@@ -107,11 +110,18 @@ export default function AlertsPage() {
                     <p className="text-[10px] text-muted-foreground mt-1">{formatDateTime(alert.createdAt)}</p>
                   </div>
                 </div>
-                {!alert.isRead && (
-                  <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => markRead(alert.id)}>
-                    <Bell className="w-3.5 h-3.5" />
-                  </Button>
-                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  {!alert.isRead && (
+                    <Button
+                      variant="ghost" size="icon" className="h-7 w-7"
+                      onClick={(e) => { e.stopPropagation(); markRead(alert.id); }}
+                      title="Mark as read"
+                    >
+                      <Bell className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                  <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+                </div>
               </div>
             </div>
           ))}
