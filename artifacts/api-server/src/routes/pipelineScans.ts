@@ -11,6 +11,7 @@ import { runEndpointDiscovery } from "../lib/endpointDiscovery";
 import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
 import { runCloudRecon, type CloudReconResult } from "../lib/cloudRecon";
+import { runSecretsHunt, type SecretsHuntResult } from "../lib/secretsHunter";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -1395,6 +1396,7 @@ async function executePipeline(
     let jsAnalysis: JsAnalysisResult | null = null;
     let paramDiscovery: ParamDiscoveryResult | null = null;
     let cloudRecon: CloudReconResult | null = null;
+    let secretsHunt: SecretsHuntResult | null = null;
     const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
     // Screenshots + tech detection always run for web asset types regardless of tool pipeline
     const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
@@ -1437,6 +1439,9 @@ async function executePipeline(
           : Promise.resolve(),
         isWebAsset
           ? (async () => { cloudRecon = await runCloudRecon(target); })()
+          : Promise.resolve(),
+        isWebAsset
+          ? (async () => { secretsHunt = await runSecretsHunt(target); })()
           : Promise.resolve(),
       ]);
 
@@ -1984,6 +1989,80 @@ async function executePipeline(
       }
     }
 
+    // ── Secrets Hunt: store result + create findings ─────────────────────────
+    if (isWebAsset && secretsHunt && (secretsHunt.stats.secretsFound > 0 || secretsHunt.stats.gitDirsExposed > 0)) {
+      const secretVulns = [
+        // GitHub secret findings → vulnerabilities
+        ...secretsHunt.githubSecrets
+          .filter(s => s.severity === "critical" || s.severity === "high")
+          .slice(0, 30)
+          .map(s => ({
+            cve: `GH-SECRET-${s.type.replace(/\s+/g, "-").toUpperCase().slice(0, 25)}-${s.repo.split("/")[1]?.slice(0, 10).toUpperCase() ?? "REPO"}`,
+            cvss: s.severity === "critical" ? 9.5 : 7.5,
+            severity: s.severity,
+            title: `Exposed ${s.type} in GitHub repo ${s.repo} (${s.file})`,
+            cwe: "CWE-312",
+            remediation: `Immediately rotate the exposed credential. Use git-filter-repo or BFG Repo Cleaner to remove from history. Enable pre-commit hooks with detect-secrets or trufflehog to prevent future leaks.`,
+            source: s.url,
+          })),
+        // Exposed .git directory → vulnerabilities
+        ...secretsHunt.gitDirectories
+          .filter(d => d.isExposed)
+          .map(d => ({
+            cve: `GIT-DIR-EXPOSURE-${d.host.replace(/[^A-Z0-9]/gi, "-").toUpperCase().slice(0, 25)}`,
+            cvss: 8.8,
+            severity: "high" as const,
+            title: `Exposed .git directory on ${d.host}`,
+            cwe: "CWE-538",
+            remediation: `Block /.git/ path access via web server config (e.g., Nginx: location /.git { deny all; }). Remove .git directory from web root. Rotate any credentials found in repository history.`,
+            source: d.url,
+          })),
+      ];
+
+      const org = secretsHunt.githubOrg;
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id,
+        toolName: "trufflehog", toolCategory: "secrets",
+        rawOutput: [
+          `[Secrets Hunter] TruffleHog-equivalent + .git exposure — ${target}`,
+          org ? `GitHub Org: ${org.login} (${org.publicRepoCount} public repos, ${secretsHunt.stats.reposScanned} scanned)` : "GitHub org: not found",
+          `Repos scanned: ${secretsHunt.stats.reposScanned}  Files scanned: ${secretsHunt.stats.filesScanned}  Commits scanned: ${secretsHunt.stats.commitsScanned}`,
+          `Secrets found: ${secretsHunt.stats.secretsFound} (${secretsHunt.stats.verifiedSecrets} verified)`,
+          `  Critical: ${secretsHunt.stats.criticalCount}  High: ${secretsHunt.stats.highCount}  Medium: ${secretsHunt.stats.mediumCount}`,
+          ``,
+          "=== GITHUB SECRETS ===",
+          secretsHunt.githubSecrets.length === 0 ? "  No secrets found" : "",
+          ...secretsHunt.githubSecrets.map(s =>
+            `  [${s.severity.toUpperCase()}][${s.verified ? "VERIFIED" : "PATTERN"}] ${s.type}\n    Repo: ${s.repo}  File: ${s.file}${s.commitSha ? `  Commit: ${s.commitSha}` : ""}\n    Value: ${s.value}\n    Context: ${s.lineContext}`
+          ),
+          ``,
+          "=== .GIT DIRECTORY EXPOSURE ===",
+          `Checked: ${secretsHunt.stats.gitDirsChecked} hosts  Exposed: ${secretsHunt.stats.gitDirsExposed}`,
+          ...secretsHunt.gitDirectories.filter(d => d.isExposed).map(d =>
+            `  [EXPOSED] ${d.host}\n    URL: ${d.url}\n    Branch: ${d.branch ?? "unknown"}\n    Remote: ${d.remoteUrl ?? "unknown"}\n    Last commit: ${d.commitMsg ?? "unknown"}`
+          ),
+          ...secretsHunt.gitDirectories.filter(d => !d.isExposed).map(d =>
+            `  [SAFE] ${d.host}  HTTP ${d.httpStatus}`
+          ),
+        ].join("\n"),
+        secretsHunt: secretsHunt as any,
+        vulnerabilities: secretVulns.length ? secretVulns as any : null,
+        ports: null as any, subdomains: null as any, endpoints: null as any,
+        httpInfo: null as any, dnsRecords: null as any, intelligence: null as any,
+      });
+
+      for (const v of secretVulns) {
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: v.title, cve: v.cve,
+          severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
+          cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+          description: `${v.title}. Source: ${v.source}`,
+          remediation: v.remediation,
+        });
+      }
+    }
+
     // Deduplicate and insert findings
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
@@ -2175,6 +2254,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     let jsAnalysis: unknown = null;
     let paramDiscovery: unknown = null;
     let cloudRecon: unknown = null;
+    let secretsHunt: unknown = null;
 
     const toolResults = assetResults.map(r => {
       const tr: Record<string, unknown> = {
@@ -2191,6 +2271,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       if (r.jsAnalysis)      { tr.jsAnalysis       = r.jsAnalysis;      jsAnalysis = r.jsAnalysis; }
       if (r.paramDiscovery)  { tr.paramDiscovery   = r.paramDiscovery;  paramDiscovery = r.paramDiscovery; }
       if (r.cloudRecon)      { tr.cloudRecon       = r.cloudRecon;      cloudRecon = r.cloudRecon; }
+      if (r.secretsHunt)     { tr.secretsHunt      = r.secretsHunt;     secretsHunt = r.secretsHunt; }
       return tr;
     });
 
@@ -2226,6 +2307,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       jsAnalysis,
       paramDiscovery,
       cloudRecon,
+      secretsHunt,
       toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
       configuredTools,
     };

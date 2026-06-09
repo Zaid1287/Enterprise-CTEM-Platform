@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronDown, ChevronRight, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud,
+  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud, GitBranch, Github,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud" | "secretshunt";
 
 function downloadScanReportPdf(scan: any, assetReports: any[]) {
   const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
@@ -465,6 +465,7 @@ export default function ScanReportPage() {
     { key: "js",           label: "JavaScript",     icon: Code,          count: selectedAsset?.jsAnalysis?.stats?.totalSecrets ?? undefined },
     { key: "params",       label: "Parameters",     icon: FileCode,      count: selectedAsset?.paramDiscovery?.stats?.unique ?? undefined },
     { key: "cloud",        label: "Cloud Assets",   icon: Cloud,         count: selectedAsset?.cloudRecon?.stats?.existingBuckets ?? undefined },
+    { key: "secretshunt",  label: "Secrets Hunt",   icon: Github,        count: (selectedAsset?.secretsHunt?.stats?.secretsFound ?? 0) + (selectedAsset?.secretsHunt?.stats?.gitDirsExposed ?? 0) || undefined },
     { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
@@ -1179,6 +1180,11 @@ export default function ScanReportPage() {
               {/* Cloud Asset Recon tab */}
               {assetTab === "cloud" && (
                 <CloudReconTab cloudRecon={selectedAsset.cloudRecon ?? null} />
+              )}
+
+              {/* Secrets Hunt tab */}
+              {assetTab === "secretshunt" && (
+                <SecretsHuntTab secretsHunt={selectedAsset.secretsHunt ?? null} />
               )}
 
               {/* Screenshots tab */}
@@ -2055,6 +2061,272 @@ function DnsTab({ records }: { records: any[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Secrets Hunt Tab ──────────────────────────────────────────────────────────
+
+const SEV_META: Record<string, { label: string; badge: string }> = {
+  critical: { label: "CRITICAL", badge: "bg-red-500/15 text-red-400 border-red-500/40" },
+  high:     { label: "HIGH",     badge: "bg-orange-500/15 text-orange-400 border-orange-500/40" },
+  medium:   { label: "MEDIUM",   badge: "bg-yellow-500/15 text-yellow-400 border-yellow-500/40" },
+};
+
+function SecretsHuntTab({ secretsHunt }: { secretsHunt: any }) {
+  const [section, setSection] = useState<"github" | "gitdirs">("github");
+  const [search, setSearch] = useState("");
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
+
+  if (!secretsHunt) {
+    return (
+      <div className="text-center py-10 text-muted-foreground space-y-2">
+        <Github className="w-8 h-8 mx-auto opacity-30" />
+        <p className="text-sm">No secrets hunt data available</p>
+        <p className="text-xs text-muted-foreground/70">Run a new scan — Secrets Hunt runs automatically on web assets.</p>
+      </div>
+    );
+  }
+
+  const stats: any = secretsHunt.stats ?? {};
+  const org: any = secretsHunt.githubOrg;
+  const secrets: any[] = secretsHunt.githubSecrets ?? [];
+  const gitDirs: any[] = secretsHunt.gitDirectories ?? [];
+  const exposed = gitDirs.filter((d: any) => d.isExposed);
+
+  const filteredSecrets = secrets.filter((s: any) => {
+    if (severityFilter !== "all" && s.severity !== severityFilter) return false;
+    if (!search) return true;
+    return (s.type + s.repo + s.file + s.lineContext).toLowerCase().includes(search.toLowerCase());
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Stats bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "Repos Scanned",    value: stats.reposScanned ?? 0,    sub: `${stats.filesScanned ?? 0} files · ${stats.commitsScanned ?? 0} commits`, color: "text-primary" },
+          { label: "Secrets Found",    value: stats.secretsFound ?? 0,    sub: `${stats.verifiedSecrets ?? 0} verified`,                                   color: stats.secretsFound > 0 ? "text-red-400" : "text-green-400" },
+          { label: "Critical / High",  value: `${stats.criticalCount ?? 0} / ${stats.highCount ?? 0}`, sub: `${stats.mediumCount ?? 0} medium`,            color: stats.criticalCount > 0 ? "text-red-400" : stats.highCount > 0 ? "text-orange-400" : "text-foreground" },
+          { label: ".git Exposure",    value: stats.gitDirsExposed ?? 0,  sub: `of ${stats.gitDirsChecked ?? 0} hosts checked`,                            color: stats.gitDirsExposed > 0 ? "text-red-400" : "text-green-400" },
+        ].map(s => (
+          <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
+            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide block mb-1">{s.label}</span>
+            <p className={cn("text-xl font-bold", s.color)}>{s.value}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* GitHub org card */}
+      {org && (
+        <div className="bg-accent/10 border border-border rounded-lg p-3 flex items-center gap-3">
+          <Github className="w-5 h-5 text-foreground shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-sm text-foreground">{org.name ?? org.login}</span>
+              <span className="text-[10px] bg-accent/40 border border-border rounded px-1.5 py-0.5 text-muted-foreground uppercase">{org.type}</span>
+              <span className="text-[10px] text-muted-foreground">{org.publicRepoCount} public repos</span>
+            </div>
+            <p className="font-mono text-[10px] text-primary/80 mt-0.5">{org.url}</p>
+          </div>
+          <a href={org.url} target="_blank" rel="noreferrer">
+            <ExternalLink className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+          </a>
+        </div>
+      )}
+      {!org && (
+        <div className="bg-accent/10 border border-border rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-muted-foreground shrink-0" />
+          <p className="text-xs text-muted-foreground">No GitHub organization found for this target. Secrets scan limited to .git directory exposure checks.</p>
+        </div>
+      )}
+
+      {/* Section tabs */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          { key: "github",  label: `GitHub Secrets (${secrets.length})` },
+          { key: "gitdirs", label: `.git Exposure (${exposed.length} / ${gitDirs.length})` },
+        ] as const).map(s => (
+          <button key={s.key} onClick={() => { setSection(s.key); setSearch(""); setSeverityFilter("all"); }}
+            className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border",
+              section === s.key ? "bg-primary/15 text-primary border-primary/30" : "bg-accent/30 text-muted-foreground border-border hover:text-foreground"
+            )}>{s.label}</button>
+        ))}
+      </div>
+
+      {/* ── GitHub secrets section ── */}
+      {section === "github" && (
+        <>
+          {/* Filters */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {(["all", "critical", "high", "medium"] as const).map(sev => (
+              <button key={sev} onClick={() => setSeverityFilter(sev)}
+                className={cn("px-2.5 py-1 rounded text-[10px] font-bold border transition-colors",
+                  severityFilter === sev ? "bg-primary/15 text-primary border-primary/30" : "bg-accent/20 text-muted-foreground border-border hover:text-foreground"
+                )}>{sev === "all" ? `All (${secrets.length})` : `${sev.toUpperCase()} (${secrets.filter((x: any) => x.severity === sev).length})`}</button>
+            ))}
+            <div className="ml-auto flex items-center gap-1.5 bg-accent/30 border border-border rounded-lg px-2.5 py-1.5">
+              <Search className="w-3 h-3 text-muted-foreground" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search type, repo, file…"
+                className="bg-transparent text-xs outline-none placeholder:text-muted-foreground/60 w-40" />
+              {search && <button onClick={() => setSearch("")}><X className="w-3 h-3 text-muted-foreground hover:text-foreground" /></button>}
+            </div>
+          </div>
+
+          {filteredSecrets.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground space-y-1">
+              <CheckCircle2 className="w-7 h-7 mx-auto text-green-400 opacity-60" />
+              <p className="text-sm">{secrets.length === 0 ? "No secrets found in public repositories" : "No secrets match filter"}</p>
+              {secrets.length === 0 && org && (
+                <p className="text-xs opacity-60">Scanned {stats.reposScanned} repos · {stats.filesScanned} sensitive files · {stats.commitsScanned} recent commits</p>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredSecrets.map((s: any, i: number) => {
+                const sevMeta = SEV_META[s.severity] ?? SEV_META.medium;
+                return (
+                  <div key={i} className={cn("border rounded-lg p-3 space-y-2",
+                    s.severity === "critical" ? "border-red-500/20 bg-red-500/5" :
+                    s.severity === "high"     ? "border-orange-500/15 bg-orange-500/5" :
+                    "border-border bg-accent/10"
+                  )}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5", sevMeta.badge)}>{sevMeta.label}</span>
+                      {s.verified && (
+                        <span className="text-[10px] font-bold border rounded px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border-emerald-500/30">VERIFIED</span>
+                      )}
+                      <span className="text-[10px] font-bold border rounded px-1.5 py-0.5 bg-accent/40 text-muted-foreground border-border">{s.source === "commit" ? "COMMIT HISTORY" : "FILE"}</span>
+                      <span className="text-sm font-semibold text-foreground">{s.type}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <Github className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <span className="text-muted-foreground">Repo:</span>
+                        <span className="font-mono text-foreground">{s.repo}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Code className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <span className="text-muted-foreground">File:</span>
+                        <span className="font-mono text-foreground truncate">{s.file}</span>
+                      </div>
+                      {s.commitSha && (
+                        <div className="flex items-center gap-1.5">
+                          <GitBranch className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="text-muted-foreground">Commit:</span>
+                          <span className="font-mono text-foreground">{s.commitSha}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="bg-black/20 border border-border/50 rounded p-2 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground font-semibold uppercase">Value (masked)</span>
+                        <span className="font-mono text-xs text-red-300 break-all">{s.value}</span>
+                      </div>
+                      {s.lineContext && (
+                        <div>
+                          <span className="text-[10px] text-muted-foreground font-semibold uppercase">Context</span>
+                          <p className="font-mono text-[10px] text-muted-foreground mt-0.5 leading-relaxed break-all">{s.lineContext}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <a href={s.url} target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors">
+                        <ExternalLink className="w-3 h-3" />View on GitHub
+                      </a>
+                      {s.severity === "critical" && (
+                        <div className="flex items-start gap-1 text-[10px] text-red-400">
+                          <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                          <span>Rotate this credential immediately — it may be actively exploited.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── .git directory exposure section ── */}
+      {section === "gitdirs" && (
+        <div className="space-y-3">
+          {exposed.length > 0 && (
+            <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-red-400">Critical: Exposed .git Directories</p>
+                <p className="text-xs text-muted-foreground mt-0.5">An exposed .git directory allows attackers to reconstruct the full source code, credentials, and commit history using tools like GitTools or git-dumper. This is a critical finding.</p>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {gitDirs.map((d: any, i: number) => (
+              <div key={i} className={cn("border rounded-lg p-3 space-y-2",
+                d.isExposed ? "border-red-500/20 bg-red-500/5" : "border-border bg-accent/10"
+              )}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5",
+                    d.isExposed ? "bg-red-500/15 text-red-400 border-red-500/40" : "bg-accent/60 text-muted-foreground border-border"
+                  )}>{d.isExposed ? "EXPOSED" : `SAFE · HTTP ${d.httpStatus}`}</span>
+                  <span className="font-mono text-sm font-semibold text-foreground">{d.host}</span>
+                </div>
+
+                {d.isExposed && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[10px] text-primary/80 flex-1 truncate">{d.url}</span>
+                      <a href={d.url} target="_blank" rel="noreferrer">
+                        <ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                      </a>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                      {d.branch && (
+                        <div className="flex items-center gap-1.5">
+                          <GitBranch className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-muted-foreground">Branch:</span>
+                          <span className="font-mono text-foreground">{d.branch}</span>
+                        </div>
+                      )}
+                      {d.remoteUrl && (
+                        <div className="flex items-center gap-1.5 col-span-2">
+                          <Github className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-muted-foreground">Remote:</span>
+                          <span className="font-mono text-foreground text-[10px] break-all">{d.remoteUrl}</span>
+                        </div>
+                      )}
+                      {d.commitMsg && (
+                        <div className="flex items-center gap-1.5 col-span-2">
+                          <Tag className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-muted-foreground">Last commit:</span>
+                          <span className="text-foreground italic">{d.commitMsg}</span>
+                        </div>
+                      )}
+                    </div>
+                    {d.configContent && (
+                      <details>
+                        <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground select-none">.git/config preview</summary>
+                        <pre className="font-mono text-[10px] text-muted-foreground bg-black/20 border border-border rounded p-2 mt-1 whitespace-pre-wrap break-all max-h-36 overflow-y-auto">{d.configContent}</pre>
+                      </details>
+                    )}
+                    <div className="bg-red-500/5 border border-red-500/20 rounded p-2 text-[10px] text-red-400">
+                      <p className="font-semibold mb-0.5">Exploitation</p>
+                      <p className="text-muted-foreground">Run: <code className="font-mono bg-black/30 rounded px-1">git-dumper https://{d.host}/.git/ ./repo</code> to recover full source code and history.</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
