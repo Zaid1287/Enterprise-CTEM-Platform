@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, count, and, desc, sql, inArray, or, isNull } from "drizzle-orm";
+import { eq, count, and, desc, sql, inArray, or, isNull, lte, gte } from "drizzle-orm";
 import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
@@ -7,6 +7,8 @@ const router = Router();
 
 router.get("/dashboard/overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
   const [assets, findings, scans, alerts] = await Promise.all([
     db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid)),
     db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid)),
@@ -33,10 +35,20 @@ router.get("/dashboard/overview", requireAuth, async (req: AuthenticatedRequest,
   const compliantControls = controls.filter(c => c.status === "compliant").length;
   const complianceScore = controls.length > 0 ? Math.round((compliantControls / controls.length) * 100) : 0;
 
+  // Real trend: compare now vs 7 days ago
+  const assetsLastWeek = assets.filter(a => new Date(a.createdAt) < sevenDaysAgo).length;
+  const findingsLastWeek = findings.filter(f => new Date(f.createdAt) < sevenDaysAgo).length;
+  const assetsTrend = assetsLastWeek > 0
+    ? Math.round(((totalAssets - assetsLastWeek) / assetsLastWeek) * 100)
+    : totalAssets > 0 ? 100 : 0;
+  const findingsTrend = findingsLastWeek > 0
+    ? Math.round(((totalFindings - findingsLastWeek) / findingsLastWeek) * 100)
+    : totalFindings > 0 ? 100 : 0;
+
   res.json({
     totalAssets, totalFindings, criticalFindings, highFindings, openFindings,
     activeScans, complianceScore, riskScore: Math.round(avgRisk),
-    unreadAlerts, assetsTrend: 12, findingsTrend: -8,
+    unreadAlerts, assetsTrend, findingsTrend,
   });
 });
 
@@ -44,21 +56,41 @@ router.get("/dashboard/risk-trend", requireAuth, async (req: AuthenticatedReques
   const days = parseInt(String(req.query.days ?? "30"), 10);
   const tid = req.user!.tenantId;
 
-  const riskRows = await db.select({
-    score: riskScoresTable.score,
-  }).from(riskScoresTable)
-    .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
-    .where(eq(assetsTable.tenantId, tid));
+  const [findings, assets] = await Promise.all([
+    db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid)),
+    db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid)),
+  ]);
 
-  const currentAvg = riskRows.length > 0
-    ? Math.round(riskRows.reduce((s, r) => s + r.score, 0) / riskRows.length)
-    : 0;
-
+  const assetCount = Math.max(1, assets.length);
   const now = new Date();
+
+  // For each day in the window, compute what the risk score would have been
+  // based on which findings were open at end-of-day (created before or on that day,
+  // not yet resolved as of that day).
   const trend = Array.from({ length: days }, (_, i) => {
-    const date = new Date(now);
-    date.setDate(date.getDate() - (days - 1 - i));
-    return { date: date.toISOString().split("T")[0], value: currentAvg };
+    const dayEnd = new Date(now);
+    dayEnd.setDate(dayEnd.getDate() - (days - 1 - i));
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const openOnDay = findings.filter(f => {
+      const created = new Date(f.createdAt);
+      if (created > dayEnd) return false;
+      if (f.status === "resolved") {
+        const updated = new Date(f.updatedAt);
+        return updated > dayEnd;
+      }
+      return true;
+    });
+
+    let penalty = 0;
+    for (const f of openOnDay) {
+      if (f.severity === "critical")    penalty += 20;
+      else if (f.severity === "high")   penalty += 12;
+      else if (f.severity === "medium") penalty += 6;
+      else if (f.severity === "low")    penalty += 2;
+    }
+    const value = Math.max(0, Math.min(100, 100 - Math.round(penalty / assetCount)));
+    return { date: dayEnd.toISOString().split("T")[0], value };
   });
 
   res.json(trend);

@@ -5,6 +5,7 @@ import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray } from "drizzle-orm";
 import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable } from "@workspace/db";
+import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
 import { runEndpointDiscovery } from "../lib/endpointDiscovery";
@@ -97,59 +98,10 @@ const SECRET_PATTERNS: SecretMatch[] = [
   { name: "Docker Config Auth",      severity: "high",     cwe: "CWE-798", pattern: /"auths":\s*\{\s*"[^"]+"\s*:\s*\{\s*"auth":\s*"[A-Za-z0-9+/]{20,}=/,              remediation: "Remove Docker auth from code. Use docker logout and credential stores." },
 ];
 
-// ── Expanded CVE Pool (40+ entries) ────────────────────────────────────────────
-const CVE_POOL = [
-  // Web servers
-  { cve: "CVE-2023-44487", cvss: 7.5, severity: "high",     title: "HTTP/2 Rapid Reset DoS (Nginx/Apache/IIS)",          cwe: "CWE-400", remediation: "Update web server to patched version.",                                   affected: ["nginx", "apache", "iis", "http2", "h2"] },
-  { cve: "CVE-2021-41773", cvss: 9.8, severity: "critical", title: "Apache HTTP Server Path Traversal & RCE",             cwe: "CWE-22",  remediation: "Upgrade Apache to 2.4.50+.",                                              affected: ["apache"] },
-  { cve: "CVE-2021-42013", cvss: 9.8, severity: "critical", title: "Apache Path Traversal bypass (Sequel to 41773)",      cwe: "CWE-22",  remediation: "Upgrade Apache to 2.4.51+.",                                              affected: ["apache"] },
-  { cve: "CVE-2023-25690", cvss: 9.8, severity: "critical", title: "Apache mod_proxy HTTP Request Smuggling",             cwe: "CWE-444", remediation: "Upgrade Apache to 2.4.56+.",                                              affected: ["apache", "proxy"] },
-  { cve: "CVE-2017-7679",  cvss: 9.8, severity: "critical", title: "Apache mod_mime Buffer Overread",                     cwe: "CWE-125", remediation: "Upgrade Apache to 2.2.33+ / 2.4.26+.",                                   affected: ["apache"] },
-  // OpenSSH
-  { cve: "CVE-2023-38408", cvss: 9.8, severity: "critical", title: "OpenSSH Remote Code Execution via ssh-agent",         cwe: "CWE-122", remediation: "Upgrade OpenSSH to 9.3p2+.",                                              affected: ["ssh", "openssh", "22"] },
-  { cve: "CVE-2024-6387",  cvss: 8.1, severity: "high",     title: "OpenSSH regreSSHion Race Condition RCE",              cwe: "CWE-364", remediation: "Update OpenSSH to 9.8p1+.",                                               affected: ["ssh", "openssh", "22"] },
-  { cve: "CVE-2021-3156",  cvss: 7.8, severity: "high",     title: "sudo Heap Overflow (Baron Samedit)",                  cwe: "CWE-193", remediation: "Upgrade sudo to 1.9.5p2+.",                                               affected: ["ssh", "22"] },
-  { cve: "CVE-2020-15778", cvss: 7.8, severity: "high",     title: "OpenSSH scp Command Injection",                       cwe: "CWE-78",  remediation: "Disable SCP or upgrade to OpenSSH 9.0+.",                                affected: ["ssh", "22", "sftp"] },
-  // SSL/TLS
-  { cve: "CVE-2014-0160",  cvss: 7.5, severity: "high",     title: "Heartbleed — OpenSSL TLS Memory Disclosure",          cwe: "CWE-125", remediation: "Upgrade OpenSSL to 1.0.1g+, reissue all certificates.",                  affected: ["https", "ssl", "tls", "443"] },
-  { cve: "CVE-2022-0778",  cvss: 7.5, severity: "high",     title: "OpenSSL BN_mod_sqrt() Infinite Loop (DoS)",           cwe: "CWE-835", remediation: "Upgrade OpenSSL to 1.0.2zd / 1.1.1n / 3.0.2+.",                         affected: ["ssl", "tls", "https", "openssl"] },
-  { cve: "CVE-2024-0727",  cvss: 5.5, severity: "medium",   title: "OpenSSL PKCS12 Null Pointer Dereference",             cwe: "CWE-476", remediation: "Upgrade OpenSSL to 3.2.1+.",                                              affected: ["ssl", "tls", "https", "openssl"] },
-  // PHP
-  { cve: "CVE-2024-4577",  cvss: 9.8, severity: "critical", title: "PHP CGI Argument Injection RCE",                      cwe: "CWE-88",  remediation: "Update PHP to 8.3.8+ / 8.2.20+ / 8.1.29+.",                              affected: ["http", "https", "php"] },
-  { cve: "CVE-2022-31628", cvss: 7.8, severity: "high",     title: "PHP phar Deserialization Arbitrary Code Execution",   cwe: "CWE-502", remediation: "Update PHP to 8.1.12+ / 8.0.25+ / 7.4.33+.",                             affected: ["php", "http"] },
-  { cve: "CVE-2019-11043", cvss: 9.8, severity: "critical", title: "PHP-FPM Remote Code Execution via Nginx",             cwe: "CWE-119", remediation: "Upgrade PHP-FPM to 7.3.11+, configure Nginx correctly.",                 affected: ["php-fpm", "nginx", "http"] },
-  // Applications
-  { cve: "CVE-2022-26134", cvss: 9.8, severity: "critical", title: "Confluence Server OGNL Injection RCE",                cwe: "CWE-74",  remediation: "Upgrade Confluence to 7.4.17+.",                                          affected: ["http", "https", "confluence"] },
-  { cve: "CVE-2023-42793", cvss: 9.8, severity: "critical", title: "JetBrains TeamCity Authentication Bypass",            cwe: "CWE-288", remediation: "Update TeamCity to 2023.05.4+.",                                           affected: ["http", "https", "8111"] },
-  { cve: "CVE-2024-27198", cvss: 9.8, severity: "critical", title: "JetBrains TeamCity Auth Bypass (Critical)",           cwe: "CWE-288", remediation: "Upgrade TeamCity to 2023.11.4+.",                                          affected: ["http", "https"] },
-  { cve: "CVE-2024-23897", cvss: 9.8, severity: "critical", title: "Jenkins Arbitrary File Read → RCE",                   cwe: "CWE-22",  remediation: "Upgrade Jenkins to 2.442+ / LTS 2.426.3+.",                               affected: ["http", "https", "jenkins", "8080"] },
-  { cve: "CVE-2023-46604", cvss: 10.0,severity: "critical", title: "Apache ActiveMQ RCE via ExceptionResponse",           cwe: "CWE-502", remediation: "Upgrade ActiveMQ to 5.15.16+ / 5.16.7+ / 5.18.3+.",                      affected: ["activemq", "61616"] },
-  { cve: "CVE-2021-44228", cvss: 10.0,severity: "critical", title: "Log4Shell — Apache Log4j2 JNDI RCE",                  cwe: "CWE-20",  remediation: "Upgrade Log4j to 2.17.1+; set -Dlog4j2.formatMsgNoLookups=true.",        affected: ["http", "https", "java", "8080", "8443"] },
-  { cve: "CVE-2022-42889", cvss: 9.8, severity: "critical", title: "Apache Commons Text RCE (Text4Shell)",                cwe: "CWE-94",  remediation: "Upgrade commons-text to 1.10.0+.",                                        affected: ["http", "https", "java"] },
-  // WordPress
-  { cve: "CVE-2023-2732",  cvss: 9.8, severity: "critical", title: "WordPress MStore API Authentication Bypass",          cwe: "CWE-287", remediation: "Update MStore API plugin to latest.",                                      affected: ["wordpress", "http", "https"] },
-  { cve: "CVE-2024-9047",  cvss: 9.8, severity: "critical", title: "WordPress File Manager Pro Arbitrary Upload",         cwe: "CWE-434", remediation: "Update File Manager Pro plugin to latest.",                                affected: ["wordpress", "http"] },
-  { cve: "CVE-2023-6553",  cvss: 9.8, severity: "critical", title: "Backup Migration WordPress Plugin RCE",               cwe: "CWE-78",  remediation: "Update Backup Migration to 1.3.8+.",                                      affected: ["wordpress"] },
-  // Network / Infrastructure
-  { cve: "CVE-2024-3400",  cvss: 10.0,severity: "critical", title: "PAN-OS GlobalProtect Command Injection",              cwe: "CWE-77",  remediation: "Apply PAN-OS hotfix, patch PSIRT-ADV-2024-006.",                          affected: ["https", "vpn", "443"] },
-  { cve: "CVE-2023-20198", cvss: 10.0,severity: "critical", title: "Cisco IOS XE Web UI Privilege Escalation",            cwe: "CWE-306", remediation: "Disable HTTP/HTTPS Server or upgrade IOS XE firmware.",                   affected: ["http", "https", "cisco"] },
-  { cve: "CVE-2024-21893", cvss: 8.2, severity: "high",     title: "Ivanti Connect Secure SSRF",                         cwe: "CWE-918", remediation: "Apply Ivanti patches from January 2024 advisory.",                        affected: ["https", "vpn", "ssl"] },
-  // Databases
-  { cve: "CVE-2024-21096", cvss: 4.9, severity: "medium",   title: "MySQL Server Information Disclosure",                 cwe: "CWE-284", remediation: "Upgrade MySQL to 8.0.37+.",                                                affected: ["mysql", "3306"] },
-  { cve: "CVE-2023-2454",  cvss: 7.2, severity: "high",     title: "PostgreSQL pg_catalog Privilege Escalation",          cwe: "CWE-20",  remediation: "Upgrade PostgreSQL to 15.3+ / 14.8+.",                                   affected: ["postgresql", "postgres", "5432"] },
-  { cve: "CVE-2024-1597",  cvss: 10.0,severity: "critical", title: "PostgreSQL SQL Injection via pg JDBC",                cwe: "CWE-89",  remediation: "Upgrade PostgreSQL JDBC to 42.7.2+.",                                    affected: ["postgresql", "5432"] },
-  // Containers
-  { cve: "CVE-2024-21626", cvss: 8.6, severity: "high",     title: "runc Container Breakout (Leaky Vessels)",             cwe: "CWE-22",  remediation: "Update runc to v1.1.12+.",                                                affected: ["docker", "http", "2376"] },
-  { cve: "CVE-2023-34048", cvss: 9.8, severity: "critical", title: "VMware vCenter DCERPC Out-of-Bounds RCE",             cwe: "CWE-787", remediation: "Apply VMware patch VMSA-2023-0023.",                                       affected: ["https", "vmware", "443"] },
-  // FTP
-  { cve: "CVE-2024-28995", cvss: 8.6, severity: "high",     title: "SolarWinds Serv-U Path Traversal",                   cwe: "CWE-22",  remediation: "Upgrade Serv-U to 15.4.2.228+.",                                          affected: ["ftp", "sftp", "21", "22"] },
-  { cve: "CVE-2023-38035", cvss: 9.8, severity: "critical", title: "Ivanti MobileIron Endpoint Manager SSRF → RCE",       cwe: "CWE-918", remediation: "Apply Ivanti security advisory SA-2023-08-21.",                           affected: ["https", "http", "443"] },
-  { cve: "CVE-2024-23334", cvss: 7.5, severity: "high",     title: "aiohttp Path Traversal (Python web apps)",            cwe: "CWE-22",  remediation: "Upgrade aiohttp to 3.9.2+.",                                              affected: ["http", "python", "8080"] },
-  { cve: "CVE-2024-9487",  cvss: 8.8, severity: "high",     title: "GitHub Enterprise SAML Authentication Bypass",        cwe: "CWE-347", remediation: "Upgrade GitHub Enterprise Server to 3.14+.",                               affected: ["https", "http"] },
-  { cve: "CVE-2024-20767", cvss: 9.8, severity: "critical", title: "Adobe ColdFusion Arbitrary File Read/Exec",           cwe: "CWE-20",  remediation: "Apply ColdFusion security update APSB24-14.",                             affected: ["http", "https", "coldfusion"] },
-  { cve: "CVE-2024-37085", cvss: 6.8, severity: "medium",   title: "VMware ESXi AD Integration Auth Bypass",              cwe: "CWE-290", remediation: "Apply VMware VMSA-2024-0013.",                                             affected: ["https", "esxi"] },
-  { cve: "CVE-2024-1086",  cvss: 7.8, severity: "high",     title: "Linux nf_tables Use-After-Free Local Privesc",        cwe: "CWE-416", remediation: "Apply kernel patch, update to 6.7.3+.",                                   affected: ["ssh", "22", "ftp"] },
-];
+// CVE_POOL removed — CVEs are now sourced from real APIs:
+//   1. Shodan InternetDB  — CVE IDs per IP, enriched with NVD metadata
+//   2. NVD CPE lookup     — per service CPE string → authoritative CVEs
+//   3. Nuclei scanner     — active template-based detection with real CVE IDs
 
 // ── Type interfaces ─────────────────────────────────────────────────────────────
 interface PortFinding      { port: number; service: string; version: string; protocol: string; state: string; }
@@ -1097,27 +1049,44 @@ async function runCloudSurfaceScan(target: string): Promise<IntelItem[]> {
   return intel;
 }
 
-// ── CVE matching from discovered services ─────────────────────────────────────
+// ── Real CVE lookup from Shodan InternetDB + NVD CPE API ─────────────────────
+// Replaces the old static keyword-matching CVE_POOL.
+//
+// Strategy:
+//  1. Shodan InternetDB returns CVE IDs per IP — enrich with NVD for full metadata
+//  2. nmap CPE strings (e.g. cpe:/a:apache:http_server:2.4.49) → NVD CPE API
+//  Both sources are deduped into a single VulnFinding[] list.
 
-function matchCvesFromPorts(ports: PortFinding[], httpInfo: HttpInfo | null, tech: string[]): VulnFinding[] {
-  const vulns: VulnFinding[] = [];
+async function lookupRealCves(
+  ports: PortFinding[],
+  shodanCveIds: string[],
+): Promise<VulnFinding[]> {
   const seen = new Set<string>();
+  const results: VulnFinding[] = [];
 
-  const serviceStr = [
-    ...ports.map(p => `${p.service} ${p.version} ${p.port}`),
-    httpInfo ? [...httpInfo.tech, httpInfo.server].join(" ") : "",
-    ...tech,
-  ].join(" ").toLowerCase();
+  const nvdFromCve = (c: NvdCve): VulnFinding => ({
+    cve: c.cve, cvss: c.cvss ?? 0, severity: c.severity,
+    title: c.title, cwe: c.cwe ?? "CWE-Unknown", remediation: c.remediation,
+  });
 
-  for (const cve of CVE_POOL) {
-    if (seen.has(cve.cve)) continue;
-    if (cve.affected.some(a => serviceStr.includes(a.toLowerCase()))) {
-      vulns.push({ cve: cve.cve, cvss: cve.cvss, severity: cve.severity, title: cve.title, cwe: cve.cwe, remediation: cve.remediation });
-      seen.add(cve.cve);
+  // ── 1. Shodan CVE IDs enriched via NVD ──────────────────────────────────
+  if (shodanCveIds.length > 0) {
+    const enriched = await enrichShodanCves(shodanCveIds);
+    for (const c of enriched) {
+      if (!seen.has(c.cve)) { seen.add(c.cve); results.push(nvdFromCve(c)); }
     }
   }
 
-  return vulns;
+  // ── 2. CPEs from nmap service fingerprinting → NVD CPE API ──────────────
+  const allCpes = ports.flatMap((p: any) => p.cpes ?? []).filter(Boolean) as string[];
+  if (allCpes.length > 0) {
+    const fromCpe = await lookupCvesFromCpes(allCpes);
+    for (const c of fromCpe) {
+      if (!seen.has(c.cve)) { seen.add(c.cve); results.push(nvdFromCve(c)); }
+    }
+  }
+
+  return results.sort((a, b) => (b.cvss ?? 0) - (a.cvss ?? 0));
 }
 
 // ── Build per-tool raw output ─────────────────────────────────────────────────
@@ -1595,10 +1564,12 @@ async function executePipeline(
       const p4Start = Date.now();
       for (const t of p4) startTool(t.name, t.name === "trufflehog" ? `Scanning ${domain} for exposed credentials & secrets…` : `Running vulnerability analysis on ${domain}…`);
 
+      const shodanCveIds: string[] = portScanReport?.shodan?.vulns ?? [];
+
       await Promise.allSettled([
-        needsSecrets  && (async () => { secretFindings = await runSecretsScanner(target, endpoints, httpInfo); })(),
+        needsSecrets && (async () => { secretFindings = await runSecretsScanner(target, endpoints, httpInfo); })(),
         (async () => {
-          cveFindings = matchCvesFromPorts(realPorts, httpInfo, httpInfo?.tech ?? []);
+          cveFindings = await lookupRealCves(realPorts, shodanCveIds);
           headerVulnFindings = analyzeSecurityHeaders(httpInfo);
         })(),
       ].filter(Boolean));
@@ -1606,7 +1577,7 @@ async function executePipeline(
       for (const t of p4) {
         const isSecrets = t.name === "trufflehog";
         const count = isSecrets ? secretFindings.length : cveFindings.length + headerVulnFindings.length;
-        doneTool(t.name, count, isSecrets ? `${secretFindings.length} secrets/credentials found` : `${cveFindings.length} CVEs, ${headerVulnFindings.length} header issues`, p4Start);
+        doneTool(t.name, count, isSecrets ? `${secretFindings.length} secrets/credentials found` : `${cveFindings.length} CVEs (Shodan+NVD), ${headerVulnFindings.length} header issues`, p4Start);
       }
     }
 

@@ -403,49 +403,13 @@ router.get("/auth/avatar/:filename", requireAuth, (req: AuthenticatedRequest, re
   res.sendFile(filePath);
 });
 
-// ── Seed demo data ─────────────────────────────────────────────────────────────
+// ── Seed compliance frameworks + tools for new tenant (no fake assets/findings) ──
 
 async function seedNewTenantData(tenantId: number): Promise<void> {
   try {
-    const { assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable,
-      complianceFrameworksTable, complianceControlsTable } = await import("@workspace/db");
+    const { complianceFrameworksTable, securityToolsTable } = await import("@workspace/db");
 
-    const assets = await db.insert(assetsTable).values([
-      { tenantId, name: "Main Website", type: "domain", value: "acme-corp.com", verificationStatus: "verified", riskLevel: "medium", tags: ["production", "external"] },
-      { tenantId, name: "API Gateway", type: "url", value: "api.acme-corp.com", verificationStatus: "verified", riskLevel: "high", tags: ["production", "external"] },
-      { tenantId, name: "Admin Panel", type: "url", value: "admin.acme-corp.com", verificationStatus: "verified", riskLevel: "critical", tags: ["production", "internal"] },
-      { tenantId, name: "Dev Server", type: "ip", value: "10.0.1.50", verificationStatus: "verified", riskLevel: "low", tags: ["development", "internal"], ipAddress: "10.0.1.50" },
-      { tenantId, name: "Cloud Storage", type: "cloud_asset", value: "acme-prod-storage.s3.amazonaws.com", verificationStatus: "verified", riskLevel: "high", tags: ["production", "cloud"] },
-    ]).returning();
-
-    const [scan] = await db.insert(scansTable).values([
-      { tenantId, name: "Full Attack Surface Scan", type: "full", status: "completed", assetIds: assets.map(a => a.id), findingsCount: 12, startedAt: new Date(Date.now() - 3600000), completedAt: new Date(Date.now() - 1800000) },
-    ]).returning();
-
-    const findings = await db.insert(findingsTable).values([
-      { tenantId, assetId: assets[2].id, scanId: scan.id, title: "CVE-2024-1234: Remote Code Execution in Admin Panel", severity: "critical", status: "open", cve: "CVE-2024-1234", cvss: 9.8, epss: 0.87, cwe: "CWE-78", isKev: true, description: "A critical RCE vulnerability was found in the admin panel authentication module.", remediation: "Update to version 2.1.5 or apply the vendor-provided patch immediately.", riskScore: 95 },
-      { tenantId, assetId: assets[1].id, scanId: scan.id, title: "CVE-2024-5678: SQL Injection in API Gateway", severity: "high", status: "in_progress", cve: "CVE-2024-5678", cvss: 8.2, epss: 0.42, cwe: "CWE-89", isKev: false, description: "SQL injection vulnerability found in the /api/v1/users endpoint.", remediation: "Use parameterized queries and input validation.", riskScore: 78 },
-      { tenantId, assetId: assets[0].id, scanId: scan.id, title: "Exposed .git directory", severity: "high", status: "open", cve: null, cvss: 7.5, epss: 0.21, cwe: "CWE-200", isKev: false, description: "The .git directory is publicly accessible.", remediation: "Block access to .git directory via web server configuration.", riskScore: 72 },
-      { tenantId, assetId: assets[4].id, scanId: scan.id, title: "Public S3 Bucket with Sensitive Data", severity: "critical", status: "open", cve: null, cvss: 9.1, epss: 0.95, cwe: "CWE-285", isKev: true, description: "S3 bucket is publicly accessible and contains customer PII.", remediation: "Restrict bucket ACL to private.", riskScore: 98 },
-      { tenantId, assetId: assets[3].id, scanId: scan.id, title: "SSL Certificate Expiring in 14 Days", severity: "medium", status: "open", cve: null, cvss: 5.3, epss: 0.05, cwe: "CWE-295", isKev: false, description: "SSL/TLS certificate will expire in 14 days.", remediation: "Renew the SSL certificate before expiration.", riskScore: 45 },
-      { tenantId, assetId: assets[1].id, scanId: scan.id, title: "CVE-2023-9999: Outdated OpenSSL Version", severity: "medium", status: "mitigated", cve: "CVE-2023-9999", cvss: 5.9, epss: 0.12, cwe: "CWE-327", isKev: false, description: "Server is running OpenSSL 1.1.1 which reached end-of-life.", remediation: "Upgrade to OpenSSL 3.x.", riskScore: 40 },
-    ]).returning();
-
-    await db.insert(riskScoresTable).values([
-      { assetId: assets[0].id, score: 62, level: "high", cvssComponent: 30, epssComponent: 20, kevBonus: 0, criticalityBonus: 10, exposureBonus: 2 },
-      { assetId: assets[1].id, score: 78, level: "high", cvssComponent: 35, epssComponent: 25, kevBonus: 0, criticalityBonus: 15, exposureBonus: 3 },
-      { assetId: assets[2].id, score: 95, level: "critical", cvssComponent: 45, epssComponent: 30, kevBonus: 10, criticalityBonus: 8, exposureBonus: 2 },
-      { assetId: assets[3].id, score: 25, level: "low", cvssComponent: 10, epssComponent: 5, kevBonus: 0, criticalityBonus: 8, exposureBonus: 2 },
-      { assetId: assets[4].id, score: 98, level: "critical", cvssComponent: 42, epssComponent: 40, kevBonus: 10, criticalityBonus: 4, exposureBonus: 2 },
-    ]);
-
-    await db.insert(alertsTable).values([
-      { tenantId, title: "Critical RCE Found on Admin Panel", message: "CVE-2024-1234 with CVSS 9.8 and KEV classification detected", type: "new_vulnerability", severity: "critical", isRead: false, relatedAssetId: assets[2].id, relatedFindingId: findings[0].id },
-      { tenantId, title: "Public S3 Bucket Exposure Detected", message: "Customer data may be publicly accessible via S3 bucket", type: "critical_exposure", severity: "critical", isRead: false, relatedAssetId: assets[4].id },
-      { tenantId, title: "SSL Certificate Expiring Soon", message: "SSL certificate for dev server expires in 14 days", type: "ssl_expiry", severity: "medium", isRead: true, relatedAssetId: assets[3].id },
-      { tenantId, title: "New Asset Discovered", message: "Passive discovery found new subdomain: staging.acme-corp.com", type: "new_asset", severity: "low", isRead: true },
-    ]);
-
+    // Ensure compliance frameworks exist (shared across all tenants)
     let frameworks = await db.select().from(complianceFrameworksTable);
     if (frameworks.length === 0) {
       frameworks = await db.insert(complianceFrameworksTable).values([
@@ -457,30 +421,13 @@ async function seedNewTenantData(tenantId: number): Promise<void> {
       ]).returning();
     }
 
-    const iso = frameworks.find(f => f.shortName === "ISO27001")!;
-    const soc2 = frameworks.find(f => f.shortName === "SOC2")!;
-    const pci = frameworks.find(f => f.shortName === "PCI-DSS")!;
-
-    await db.insert(complianceControlsTable).values([
-      { tenantId, frameworkId: iso.id, controlId: "A.5.1", title: "Policies for information security", status: "compliant", evidence: "Information security policy documented and approved by management" },
-      { tenantId, frameworkId: iso.id, controlId: "A.8.1", title: "Inventory of information and other associated assets", status: "in_progress", evidence: "Asset inventory in CTEM platform - partially complete" },
-      { tenantId, frameworkId: iso.id, controlId: "A.8.8", title: "Management of technical vulnerabilities", status: "non_compliant", evidence: null, assignedTo: "security@acme-corp.com" },
-      { tenantId, frameworkId: iso.id, controlId: "A.9.2", title: "User access provisioning", status: "compliant" },
-      { tenantId, frameworkId: iso.id, controlId: "A.12.6", title: "Management of technical vulnerabilities", status: "in_progress" },
-      { tenantId, frameworkId: soc2.id, controlId: "CC6.1", title: "Logical and physical access controls", status: "compliant" },
-      { tenantId, frameworkId: soc2.id, controlId: "CC7.1", title: "Security monitoring", status: "in_progress" },
-      { tenantId, frameworkId: soc2.id, controlId: "CC9.1", title: "Risk mitigation activities", status: "non_compliant" },
-      { tenantId, frameworkId: pci.id, controlId: "6.3.3", title: "All system components are protected from known vulnerabilities", status: "non_compliant", assignedTo: "devops@acme-corp.com" },
-      { tenantId, frameworkId: pci.id, controlId: "11.3.1", title: "External penetration testing", status: "in_progress" },
-    ]);
-
-    const { securityToolsTable } = await import("@workspace/db");
+    // Default tools for every tenant
     await db.insert(securityToolsTable).values([
       { tenantId, name: "subfinder", description: "Subdomain enumeration using passive OSINT sources", githubUrl: "https://github.com/projectdiscovery/subfinder", category: "recon", installCommand: "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", updateCommand: "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", runCommand: "subfinder -d {target} -all -json", outputFormat: "json", isActive: true },
       { tenantId, name: "httpx", description: "Fast and multi-purpose HTTP toolkit for probing web servers", githubUrl: "https://github.com/projectdiscovery/httpx", category: "web_recon", installCommand: "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", updateCommand: "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", runCommand: "httpx -u {target} -title -status-code -tech-detect -json", outputFormat: "json", isActive: true },
       { tenantId, name: "naabu", description: "Fast port scanner", githubUrl: "https://github.com/projectdiscovery/naabu", category: "port_scan", installCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", updateCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", runCommand: "naabu -host {target} -top-ports 1000 -json", outputFormat: "json", isActive: true },
       { tenantId, name: "nuclei", description: "Fast and customizable vulnerability scanner", githubUrl: "https://github.com/projectdiscovery/nuclei", category: "vuln_scan", installCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", updateCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", runCommand: "nuclei -u {target} -json", outputFormat: "json", isActive: true },
-    ]);
+    ]).onConflictDoNothing();
 
   } catch (_err) {
     // Seed failure should not block registration
