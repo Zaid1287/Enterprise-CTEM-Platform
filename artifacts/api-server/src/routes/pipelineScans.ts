@@ -148,8 +148,10 @@ interface PortFinding      { port: number; service: string; version: string; pro
 interface SubdomainFinding { name: string; ip: string; cname: string | null; status: string; cdnProvider: string | null; sources?: string[]; httpStatus?: number | null; httpTitle?: string | null; redirectTo?: string | null; webServer?: string | null; }
 interface EndpointFinding  { url: string; method: string; status: number; title?: string; }
 interface CookieFlag       { name: string; secure: boolean; httpOnly: boolean; sameSite: string; raw: string; }
-interface HostFingerprint  { host: string; techs: string[]; }
-interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; cdn: string | null; headers: Record<string, string>; cookieFlags?: CookieFlag[]; hostFingerprints?: HostFingerprint[]; }
+interface HostFingerprint  { host: string; techs: string[]; waf?: string; }
+interface WafDetection     { name: string; method: string; confidence: "high" | "medium" | "low"; }
+interface OriginIpCandidate { ip: string; method: string; confidence: "high" | "medium" | "low"; reverseDns?: string; org?: string; openPorts?: number[]; }
+interface HttpInfo         { url: string; status: number; title: string; server: string; contentLength: number; tech: string[]; waf: string; cdn: string | null; headers: Record<string, string>; cookieFlags?: CookieFlag[]; hostFingerprints?: HostFingerprint[]; wafDetails?: WafDetection; originIps?: OriginIpCandidate[]; }
 interface DnsRecord        { type: string; value: string; ttl: number; priority?: number; weight?: number; port?: number; target?: string; notes?: string; }
 interface IntelItem        { type: string; key: string; value: string; severity?: string; }
 interface VulnFinding      { cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source?: string; }
@@ -550,6 +552,217 @@ async function runNmapScan(target: string, scanId: number): Promise<{ ports: Por
   }
 }
 
+// ── WAF Detection (header + body fingerprinting, 30+ WAFs) ────────────────────
+
+function detectWafFromHeaders(headers: Record<string, string>, server: string, body: string): WafDetection | null {
+  const h = headers;
+  const s = (server ?? "").toLowerCase();
+  const b = (body ?? "").toLowerCase();
+
+  // High-confidence header signatures
+  if (h["cf-ray"] || /cloudflare/i.test(s))             return { name: "Cloudflare", method: "cf-ray / server header", confidence: "high" };
+  if (h["x-iinfo"] || h["x-iinfo-ns"] || h["x-cdn"] === "Incapsula") return { name: "Imperva Incapsula", method: "x-iinfo header", confidence: "high" };
+  if (h["x-amz-cf-id"] || h["x-amz-rid"])               return { name: "AWS WAF / CloudFront", method: "x-amz-cf-id header", confidence: "high" };
+  if (h["x-sucuri-id"] || h["x-sucuri-cache"])           return { name: "Sucuri", method: "x-sucuri header", confidence: "high" };
+  if (h["x-fw-hash"])                                     return { name: "Wordfence", method: "x-fw-hash header", confidence: "high" };
+  if (s.includes("ddos-guard"))                           return { name: "DDoS-Guard", method: "server header", confidence: "high" };
+  if (h["x-reblaze-protection"] || h["x-rb-waf"])       return { name: "Reblaze", method: "x-reblaze-protection header", confidence: "high" };
+  if (h["x-datadome-request-id"] || h["x-dd-b"])        return { name: "DataDome", method: "x-datadome header", confidence: "high" };
+  if (h["x-px-authorization"] || h["x-px-original-token"]) return { name: "PerimeterX", method: "x-px header", confidence: "high" };
+  if (h["x-protected-by"]?.toLowerCase().includes("barracuda")) return { name: "Barracuda WAF", method: "x-protected-by header", confidence: "high" };
+  if (s.includes("bigip") || s.includes("f5 asm") || h["x-wa-info"]) return { name: "F5 BIG-IP ASM", method: "server / x-wa-info header", confidence: "high" };
+  if (h["x-waf-event-info"] || h["x-blocks"])           return { name: "IBM DataPower Gateway", method: "x-waf-event-info header", confidence: "high" };
+  if (h["x-malicious-content-protection"])               return { name: "Fortinet FortiWeb", method: "x-malicious-content-protection header", confidence: "high" };
+  if (s.includes("netscaler") || h["ns-server"])         return { name: "Citrix NetScaler AppFW", method: "server header", confidence: "high" };
+  if (h["x-avi-waf-status"])                             return { name: "Avi Networks WAF", method: "x-avi-waf-status header", confidence: "high" };
+  if (h["x-akamai-transformed"] || /akamai/i.test(s))   return { name: "Akamai Kona Site Defender", method: "x-akamai-transformed header", confidence: "high" };
+  if (h["x-azure-ref"])                                  return { name: "Azure Front Door WAF", method: "x-azure-ref header", confidence: "high" };
+  if (h["x-kong-proxy-latency"] || h["x-kong-upstream-latency"]) return { name: "Kong Gateway", method: "x-kong header", confidence: "high" };
+  if (h["x-waf"] || h["x-waf-score"])                   return { name: "Generic WAF", method: "x-waf header", confidence: "medium" };
+  if (h["x-wr-diag"])                                    return { name: "WebARX WAF", method: "x-wr-diag header", confidence: "high" };
+  if (h["x-powered-by"]?.toLowerCase().includes("neustar")) return { name: "Neustar SiteProtect", method: "x-powered-by header", confidence: "high" };
+  if (h["x-envoy-upstream-service-time"])                return { name: "Envoy Proxy", method: "x-envoy header", confidence: "medium" };
+  if (h["x-mod-pagespeed"] && (s.includes("apache") || s.includes("nginx"))) return { name: "ModSecurity", method: "header pattern", confidence: "medium" };
+  if (s.includes("litespeed") || h["x-litespeed-cache"]) return { name: "LiteSpeed WAF", method: "server / cache header", confidence: "medium" };
+  if (h["x-shield"])                                     return { name: "Shield WAF", method: "x-shield header", confidence: "medium" };
+  if (h["server"]?.includes("ARR") && h["x-powered-by"]?.includes("ASP.NET")) return { name: "Microsoft Azure WAF / ARR", method: "ARR server header", confidence: "medium" };
+  if (h["via"]?.includes("1.1 varnish"))                 return { name: "Fastly WAF", method: "via header", confidence: "medium" };
+
+  // Cookie-based fingerprints
+  const cookies = (h["set-cookie"] ?? "");
+  if (cookies.includes("__cf_bm") || cookies.includes("__cfduid")) return { name: "Cloudflare", method: "cf cookie fingerprint", confidence: "medium" };
+  if (cookies.includes("_px3") || cookies.includes("_pxhd"))        return { name: "PerimeterX", method: "px cookie fingerprint", confidence: "medium" };
+  if (cookies.includes("datadome"))                                   return { name: "DataDome", method: "cookie fingerprint", confidence: "medium" };
+
+  // Block-page body signatures
+  if (b.includes("__cf_chl") || b.includes("cf-challenge") || b.includes("just a moment") || b.includes("checking your browser"))
+    return { name: "Cloudflare", method: "JS challenge page", confidence: "high" };
+  if (b.includes("sucuri_cloudproxy") || b.includes("sucuri website firewall"))
+    return { name: "Sucuri", method: "block page", confidence: "high" };
+  if (b.includes("incapsula incident id") || b.includes("_incapsula_resource"))
+    return { name: "Imperva Incapsula", method: "block page", confidence: "high" };
+  if (b.includes("perimeterx") || b.includes("_pxid="))
+    return { name: "PerimeterX", method: "block page", confidence: "high" };
+  if (b.includes("datadome") && b.includes("blocked"))
+    return { name: "DataDome", method: "block page", confidence: "high" };
+  if (b.includes("barracuda networks"))
+    return { name: "Barracuda WAF", method: "block page", confidence: "high" };
+  if (b.includes("mod_security") && (b.includes("request rejected") || b.includes("not acceptable")))
+    return { name: "ModSecurity", method: "block page", confidence: "high" };
+  if (b.includes("fortiweb") || b.includes("fortigate") || b.includes("web application firewall violation"))
+    return { name: "Fortinet FortiWeb", method: "block page", confidence: "high" };
+  if (b.includes("webknight") || b.includes("aqtronix webknight"))
+    return { name: "WebKnight WAF", method: "block page", confidence: "high" };
+
+  return null;
+}
+
+// ── Active WAF Probe (Node-native, equivalent to wafw00f) ─────────────────────
+// Sends payloads with common WAF triggers and analyzes the 40x/50x response.
+async function runActiveWafProbe(target: string): Promise<WafDetection | null> {
+  const baseUrl = target.startsWith("http") ? target : `https://${target}`;
+  const triggerPath = `/?s=<script>alert(1)</script>&id=1+OR+1=1--&etc=/etc/passwd`;
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 14000);
+    const resp = await fetch(`${baseUrl}${triggerPath}`, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+      redirect: "follow",
+    });
+    clearTimeout(tid);
+    const headers: Record<string, string> = {};
+    resp.headers.forEach((v, k) => { headers[k] = v; });
+    const body = await resp.text().catch(() => "");
+    const server = headers["server"] ?? "";
+
+    // WAF typically returns 403 / 406 / 429 / 503 for malicious payloads
+    const detected = detectWafFromHeaders(headers, server, body);
+    if (detected) return { ...detected, method: `${detected.method} (active probe, ${resp.status})` };
+
+    if ([403, 406, 429, 503].includes(resp.status)) {
+      const b = body.toLowerCase();
+      if (b.includes("blocked") || b.includes("firewall") || b.includes("security") || b.includes("denied") || b.includes("forbidden"))
+        return { name: "Unknown WAF", method: `active probe — ${resp.status} block response`, confidence: "low" };
+    }
+  } catch {}
+  return null;
+}
+
+// ── CDN / WAF org filter for origin IP discovery ───────────────────────────────
+const CDN_ORG_KEYWORDS = ["cloudflare", "akamai", "fastly", "amazon", "cloudfront", "incapsula",
+  "sucuri", "azure", "microsoft", "google cloud", "ddos-guard", "stackpath", "cdn", "imperva"];
+
+function isCdnOrg(text: string): boolean {
+  const t = text.toLowerCase();
+  return CDN_ORG_KEYWORDS.some(k => t.includes(k));
+}
+
+async function shodanIpEnrich(ip: string): Promise<{ ports: number[]; org: string; reverseDns: string; tags: string[] } | null> {
+  try {
+    const r = await fetch(`https://internetdb.shodan.io/${ip}`, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return null;
+    const d = await r.json() as any;
+    return { ports: d.ports ?? [], org: (d.hostnames ?? []).join(", "), reverseDns: (d.hostnames ?? [])[0] ?? "", tags: d.tags ?? [] };
+  } catch { return null; }
+}
+
+// Lightweight WAF header check for subdomain probing (HEAD request, 5s timeout)
+async function quickWafCheck(host: string): Promise<string | null> {
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 5000);
+    const resp = await fetch(`https://${host}`, { signal: ctrl.signal, method: "HEAD", redirect: "follow" });
+    clearTimeout(tid);
+    const headers: Record<string, string> = {};
+    resp.headers.forEach((v, k) => { headers[k] = v; });
+    return detectWafFromHeaders(headers, headers["server"] ?? "", "")?.name ?? null;
+  } catch { return null; }
+}
+
+async function discoverOriginIps(domain: string, dnsRecords: DnsRecord[], subdomains: SubdomainFinding[]): Promise<OriginIpCandidate[]> {
+  const candidates: OriginIpCandidate[] = [];
+  const seen = new Set<string>();
+  const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+  const addCandidate = async (ip: string, method: string) => {
+    if (!ip || seen.has(ip) || !IP_RE.test(ip)) return;
+    seen.add(ip);
+    const info = await shodanIpEnrich(ip);
+    // Filter out IPs that belong to CDN/WAF infrastructure
+    const orgInfo = `${info?.org ?? ""} ${(info?.tags ?? []).join(" ")}`;
+    if (isCdnOrg(orgInfo)) return;
+    candidates.push({
+      ip, method,
+      confidence: "medium",
+      reverseDns: info?.reverseDns,
+      org: info?.org,
+      openPorts: info?.ports,
+    });
+  };
+
+  // Method 1: SPF record ip4: directives (servers sending mail = real origin IPs)
+  for (const r of dnsRecords) {
+    if (r.type === "TXT" && r.value.includes("v=spf1")) {
+      for (const m of r.value.matchAll(/ip4:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g))
+        await addCandidate(m[1], "SPF record ip4 directive");
+    }
+  }
+
+  // Method 2: Active non-CDN subdomain IPs from Phase 1 DNS recon
+  for (const sub of subdomains.filter(s => s.status === "active" && s.ip))
+    await addCandidate(sub.ip!, `DNS — ${sub.name}`);
+
+  // Method 3: HackerTarget historical host search (free, no API key)
+  try {
+    const resp = await fetch(`https://api.hackertarget.com/hostsearch/?q=${encodeURIComponent(domain)}`, { signal: AbortSignal.timeout(10000) });
+    const text = await resp.text();
+    if (!text.startsWith("error") && !text.startsWith("API count") && !text.startsWith("<?")) {
+      for (const line of text.trim().split("\n")) {
+        const parts = line.split(",");
+        if (parts.length >= 2) await addCandidate(parts[1].trim(), "DNS history — hackertarget.com");
+      }
+    }
+  } catch {}
+
+  // Method 4: Confirm origin by direct IP bypass (Host header spoofing)
+  for (const c of candidates.slice(0, 5)) {
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 5000);
+      const resp = await fetch(`https://${c.ip}`, {
+        signal: ctrl.signal,
+        headers: { "Host": domain },
+        redirect: "manual",
+      });
+      clearTimeout(tid);
+      if (resp.status > 0 && resp.status < 500) {
+        c.confidence = "high";
+        c.method += " — bypass confirmed";
+      }
+    } catch {}
+  }
+
+  // Method 5: SecurityTrails (if API key configured — optional)
+  const stKey = process.env["SECURITYTRAILS_API_KEY"];
+  if (stKey) {
+    try {
+      const resp = await fetch(`https://api.securitytrails.com/v1/history/${domain}/dns/a`, {
+        signal: AbortSignal.timeout(8000),
+        headers: { apikey: stKey, Accept: "application/json" },
+      });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        for (const rec of (data.records ?? []))
+          for (const v of (rec.values ?? []))
+            if (v.ip) await addCandidate(v.ip, "SecurityTrails DNS history");
+      }
+    } catch {}
+  }
+
+  return candidates.slice(0, 12);
+}
+
 // ── Phase 3: Web Recon ─────────────────────────────────────────────────────────
 
 function parseCookieFlags(setCookieList: string[]): CookieFlag[] {
@@ -610,14 +823,9 @@ async function runHttpProbe(target: string): Promise<HttpInfo | null> {
       if (body.includes("jquery") || body.includes("jQuery"))    tech.push("jQuery");
       if (body.includes("bootstrap"))                            tech.push("Bootstrap");
 
-      let waf = "none";
-      if (headers["cf-ray"] || /cloudflare/i.test(server))      waf = "Cloudflare";
-      else if (headers["x-iinfo"])                               waf = "Imperva";
-      else if (headers["x-amz-cf-id"])                          waf = "AWS WAF/CloudFront";
-      else if (headers["x-sucuri-id"])                          waf = "Sucuri";
-      else if (headers["x-fw-hash"])                             waf = "Wordfence";
-      else if (headers["x-cdn"] === "Incapsula")                 waf = "Imperva Incapsula";
-      else if (headers["server"]?.toLowerCase().includes("ddos-guard")) waf = "DDoS-Guard";
+      const wafDet = detectWafFromHeaders(headers, server, body);
+      const wafDetails: WafDetection | undefined = wafDet ?? undefined;
+      const waf = wafDet?.name ?? "none";
 
       let cdn: string | null = null;
       if (headers["cf-ray"])                                     cdn = "Cloudflare";
@@ -627,7 +835,7 @@ async function runHttpProbe(target: string): Promise<HttpInfo | null> {
       else if (/akamai/i.test(headers["server"] ?? ""))          cdn = "Akamai";
       else if (headers["x-azure-ref"])                           cdn = "Azure CDN";
 
-      return { url: response.url ?? url, status: response.status, title, server, contentLength: body.length, tech: [...new Set(tech)], waf, cdn, headers, cookieFlags: cookieFlags.length > 0 ? cookieFlags : undefined };
+      return { url: response.url ?? url, status: response.status, title, server, contentLength: body.length, tech: [...new Set(tech)], waf, cdn, headers, cookieFlags: cookieFlags.length > 0 ? cookieFlags : undefined, wafDetails };
     } catch {}
   }
   return null;
@@ -1202,14 +1410,32 @@ async function executePipeline(
         ? `Capturing screenshots of ${domain}…`
         : `Probing web application at ${domain}…`);
 
+      let wafProbeResult: WafDetection | null = null;
+      let originIpCandidates: OriginIpCandidate[] = [];
+
       await Promise.allSettled([
         (async () => { httpInfo  = await runHttpProbe(target); })(),
         (async () => { endpoints = await runEndpointProbe(target); })(),
         (async () => { detectedTechs = await detectTechnologies(target); })(),
+        // Active WAF probe (Node-native, runs in parallel with HTTP probe)
+        (async () => { wafProbeResult = await runActiveWafProbe(target); })(),
+        // Origin IP discovery: SPF + subdomain IPs + hackertarget + bypass check + SecurityTrails
+        (async () => { originIpCandidates = await discoverOriginIps(domain, dnsResult.dnsRecords, dnsResult.subdomains); })(),
         shouldScreenshot
           ? (async () => { capturedPages = await captureScreenshots(target, 90000); })()
           : Promise.resolve(),
       ]);
+
+      // Merge active WAF probe result if header detection didn't find a high-confidence WAF
+      if (httpInfo) {
+        if (!httpInfo.wafDetails || httpInfo.wafDetails.confidence !== "high") {
+          if (wafProbeResult) {
+            httpInfo.wafDetails = wafProbeResult;
+            httpInfo.waf = wafProbeResult.name;
+          }
+        }
+        if (originIpCandidates.length > 0) httpInfo.originIps = originIpCandidates;
+      }
 
       // ── Multi-host tech fingerprinting on live subdomains ─────────────────
       // Run detectTechnologies on up to 15 live subdomains discovered in Phase 1,
@@ -1222,14 +1448,18 @@ async function executePipeline(
           for (const t of detectedTechs) t.hosts = [primaryDomain];
 
           const subResults = await Promise.allSettled(
-            liveHosts.map(async s => ({ host: s.name, techs: await detectTechnologies(s.name, 8000) }))
+            liveHosts.map(async s => ({
+              host: s.name,
+              techs: await detectTechnologies(s.name, 8000),
+              waf: await quickWafCheck(s.name),
+            }))
           );
 
-          const hostFpMap = new Map<string, string[]>();
+          const hostFpMap = new Map<string, { techs: string[]; waf?: string }>();
           for (const r of subResults) {
             if (r.status !== "fulfilled" || !r.value.techs.length) continue;
-            const { host, techs } = r.value;
-            hostFpMap.set(host, techs.map(t => t.name));
+            const { host, techs, waf } = r.value;
+            hostFpMap.set(host, { techs: techs.map(t => t.name), waf: waf ?? undefined });
             for (const t of techs) {
               const existing = detectedTechs.find(d => d.slug === t.slug);
               if (existing) {
@@ -1240,9 +1470,9 @@ async function executePipeline(
             }
           }
 
-          // Attach per-host fingerprints to httpInfo for UI display
+          // Attach per-host fingerprints + WAF to httpInfo for UI display
           if (httpInfo && hostFpMap.size > 0) {
-            httpInfo.hostFingerprints = [...hostFpMap.entries()].map(([host, techs]) => ({ host, techs }));
+            httpInfo.hostFingerprints = [...hostFpMap.entries()].map(([host, { techs, waf }]) => ({ host, techs, waf }));
           }
         } else {
           // Single-host scan — tag primary domain on all detections

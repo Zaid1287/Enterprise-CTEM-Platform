@@ -1025,6 +1025,84 @@ export default function ScanReportPage() {
                         </div>
                       )}
 
+                      {/* WAF Intelligence */}
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                          <Shield className="w-3 h-3" /> WAF Intelligence
+                        </p>
+                        {(selectedAsset.httpInfo as any)?.wafDetails ? (
+                          <div className="bg-accent/10 border border-border/50 rounded-lg px-4 py-3 flex items-start justify-between gap-4">
+                            <div>
+                              <p className="text-sm font-semibold">{(selectedAsset.httpInfo as any).wafDetails.name}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">{(selectedAsset.httpInfo as any).wafDetails.method}</p>
+                            </div>
+                            <span className={cn("text-[10px] border rounded px-2 py-1 font-bold uppercase tracking-wide shrink-0",
+                              (selectedAsset.httpInfo as any).wafDetails.confidence === "high"   ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                              (selectedAsset.httpInfo as any).wafDetails.confidence === "medium" ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                              "bg-muted/60 text-muted-foreground border-border"
+                            )}>{(selectedAsset.httpInfo as any).wafDetails.confidence} confidence</span>
+                          </div>
+                        ) : (
+                          <div className="bg-accent/10 border border-border/50 rounded-lg px-4 py-2.5 flex items-center gap-2 text-sm text-muted-foreground">
+                            <XCircle className="w-4 h-4 text-muted-foreground/40 shrink-0" /> No WAF detected on primary host (header inspection + active probe)
+                          </div>
+                        )}
+                        {/* Per-host WAF from subdomain fingerprinting */}
+                        {(selectedAsset.httpInfo?.hostFingerprints ?? []).some((fp: any) => fp.waf) && (
+                          <div className="mt-2 space-y-1">
+                            <p className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+                              <Globe className="w-3 h-3" /> Detected on subdomains:
+                            </p>
+                            {(selectedAsset.httpInfo!.hostFingerprints as any[])
+                              .filter((fp: any) => fp.waf)
+                              .map((fp: any, i: number) => (
+                                <div key={i} className="flex items-center justify-between gap-2 bg-accent/10 border border-border/50 rounded px-3 py-1">
+                                  <span className="font-mono text-xs text-primary">{fp.host}</span>
+                                  <span className="text-xs bg-accent/60 border border-border rounded px-2 py-0.5 font-medium">{fp.waf}</span>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Origin IP Discovery */}
+                      {((selectedAsset.httpInfo as any)?.originIps ?? []).length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                            <Network className="w-3 h-3" /> Origin IP Discovery
+                            <span className="ml-1 text-[10px] bg-accent/60 border border-border rounded px-1.5 py-0.5">{(selectedAsset.httpInfo as any).originIps.length} candidate{(selectedAsset.httpInfo as any).originIps.length !== 1 ? "s" : ""}</span>
+                          </p>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left border-b border-border">
+                                <th className="pb-2 text-xs font-medium text-muted-foreground">IP Address</th>
+                                <th className="pb-2 text-xs font-medium text-muted-foreground">Discovery Method</th>
+                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-24">Confidence</th>
+                                <th className="pb-2 text-xs font-medium text-muted-foreground">Org / rDNS</th>
+                                <th className="pb-2 text-xs font-medium text-muted-foreground">Open Ports</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {((selectedAsset.httpInfo as any).originIps as any[]).map((c: any, i: number) => (
+                                <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
+                                  <td className="py-1.5 font-mono text-xs text-foreground">{c.ip}</td>
+                                  <td className="py-1.5 text-xs text-muted-foreground max-w-[180px] truncate">{c.method}</td>
+                                  <td className="py-1.5 text-center">
+                                    <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-bold",
+                                      c.confidence === "high"   ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                                      c.confidence === "medium" ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                                      "bg-muted/50 text-muted-foreground border-border"
+                                    )}>{c.confidence}</span>
+                                  </td>
+                                  <td className="py-1.5 text-xs text-muted-foreground font-mono max-w-[160px] truncate">{c.org || c.reverseDns || "—"}</td>
+                                  <td className="py-1.5 text-xs text-muted-foreground font-mono">{(c.openPorts ?? []).slice(0, 6).join(", ") || "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
                       {/* Cookie Security Analysis */}
                       {(selectedAsset.httpInfo?.cookieFlags ?? []).length > 0 && (
                         <div>
