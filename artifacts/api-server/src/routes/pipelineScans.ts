@@ -10,6 +10,7 @@ import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine
 import { runEndpointDiscovery } from "../lib/endpointDiscovery";
 import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
+import { runCloudRecon, type CloudReconResult } from "../lib/cloudRecon";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -1393,6 +1394,7 @@ async function executePipeline(
     let capturedPages: PageScreenshot[] = [];
     let jsAnalysis: JsAnalysisResult | null = null;
     let paramDiscovery: ParamDiscoveryResult | null = null;
+    let cloudRecon: CloudReconResult | null = null;
     const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
     // Screenshots + tech detection always run for web asset types regardless of tool pipeline
     const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
@@ -1432,6 +1434,9 @@ async function executePipeline(
           : Promise.resolve(),
         isWebAsset
           ? (async () => { paramDiscovery = await runParamDiscovery(target); })()
+          : Promise.resolve(),
+        isWebAsset
+          ? (async () => { cloudRecon = await runCloudRecon(target); })()
           : Promise.resolve(),
       ]);
 
@@ -1904,6 +1909,81 @@ async function executePipeline(
       });
     }
 
+    // ── Cloud Recon: store result + create findings for public buckets ──────────
+    if (isWebAsset && cloudRecon && (cloudRecon.stats.existingBuckets > 0 || cloudRecon.stats.publicFirebase > 0)) {
+      const cloudVulns = [
+        ...cloudRecon.buckets
+          .filter(b => b.isPublic)
+          .map(b => ({
+            cve: `CLOUD-${b.provider.toUpperCase()}-${b.name.replace(/[^A-Z0-9]/gi, "-").toUpperCase().slice(0, 20)}`,
+            cvss: b.isListable ? 9.0 : 7.5,
+            severity: b.isListable ? "critical" : "high",
+            title: `${b.isListable ? "Publicly listable" : "Publicly accessible"} ${b.provider === "aws_s3" ? "S3" : b.provider === "gcs" ? "GCS" : "Azure"} bucket: ${b.name}`,
+            cwe: "CWE-552",
+            remediation: `Set bucket ACL to private. Remove public-read/public-read-write ACL. Enable Block Public Access settings.`,
+            source: b.url,
+          })),
+        ...cloudRecon.firebase
+          .filter(f => f.isPublic)
+          .map(f => ({
+            cve: `CLOUD-FIREBASE-${f.name.toUpperCase().slice(0, 20)}`,
+            cvss: f.dataKeys && f.dataKeys.length > 0 ? 9.5 : 8.0,
+            severity: f.dataKeys && f.dataKeys.length > 0 ? "critical" : "high",
+            title: `Public Firebase Realtime Database: ${f.name}`,
+            cwe: "CWE-284",
+            remediation: "Set Firebase Realtime Database rules to require authentication. Change rules from .read: true to .read: auth != null",
+            source: f.url,
+          })),
+      ];
+
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id,
+        toolName: "cloud-enum", toolCategory: "cloud_recon",
+        rawOutput: [
+          `[Cloud Asset Recon] S3 + GCS + Azure + Firebase — ${target}`,
+          `Bucket names tested: ${cloudRecon.stats.totalTested}`,
+          `Buckets found: ${cloudRecon.stats.existingBuckets} (${cloudRecon.stats.publicBuckets} public, ${cloudRecon.stats.privateBuckets} private)`,
+          `  AWS S3: ${cloudRecon.stats.awsFound}  |  GCS: ${cloudRecon.stats.gcsFound}  |  Azure: ${cloudRecon.stats.azureFound}`,
+          `Firebase: ${cloudRecon.stats.publicFirebase} public, ${cloudRecon.stats.restrictedFirebase} restricted`,
+          "",
+          "=== CLOUD BUCKETS FOUND ===",
+          ...cloudRecon.buckets.map(b =>
+            `  [${b.provider.toUpperCase()}][${b.status.toUpperCase()}] ${b.name}\n    URL: ${b.url}\n    HTTP: ${b.httpStatus}${b.fileCount != null ? `  Files: ${b.fileCount}` : ""}${b.sampleFiles?.length ? `\n    Sample files: ${b.sampleFiles.slice(0, 5).join(", ")}` : ""}`
+          ),
+          "",
+          "=== FIREBASE DATABASES ===",
+          cloudRecon.firebase.length === 0 ? "  None found" : "",
+          ...cloudRecon.firebase.map(f =>
+            `  [${f.status.toUpperCase()}] ${f.url}\n    HTTP: ${f.httpStatus}${f.dataKeys ? `  Keys: ${f.dataKeys.join(", ")}` : ""}${f.dataPreview ? `\n    Preview: ${f.dataPreview.slice(0, 150)}` : ""}`
+          ),
+          "",
+          "=== SSRF METADATA ENDPOINTS (for manual testing) ===",
+          ...cloudRecon.ssrfEndpoints.map(e =>
+            `  [${e.risk.toUpperCase()}] ${e.provider}\n    Primary URL: ${e.url}\n    ${e.description.slice(0, 200)}`
+          ),
+        ].join("\n"),
+        cloudRecon: cloudRecon as any,
+        vulnerabilities: cloudVulns.length ? cloudVulns as any : null,
+        ports: null as any, subdomains: null as any, endpoints: null as any,
+        httpInfo: null as any, dnsRecords: null as any, intelligence: null as any,
+      });
+
+      // Insert public bucket/firebase findings
+      for (const v of cloudVulns) {
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: v.title,
+          cve: v.cve,
+          severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
+          cvssScore: String(v.cvss),
+          cwe: v.cwe,
+          status: "open",
+          description: `${v.title}. Resource URL: ${v.source}`,
+          remediation: v.remediation,
+        });
+      }
+    }
+
     // Deduplicate and insert findings
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
@@ -2094,6 +2174,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     let httpInfo: unknown = null;
     let jsAnalysis: unknown = null;
     let paramDiscovery: unknown = null;
+    let cloudRecon: unknown = null;
 
     const toolResults = assetResults.map(r => {
       const tr: Record<string, unknown> = {
@@ -2109,6 +2190,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       if (r.vulnerabilities) { tr.vulnerabilities  = r.vulnerabilities; allVulns.push(...(r.vulnerabilities as unknown[])); }
       if (r.jsAnalysis)      { tr.jsAnalysis       = r.jsAnalysis;      jsAnalysis = r.jsAnalysis; }
       if (r.paramDiscovery)  { tr.paramDiscovery   = r.paramDiscovery;  paramDiscovery = r.paramDiscovery; }
+      if (r.cloudRecon)      { tr.cloudRecon       = r.cloudRecon;      cloudRecon = r.cloudRecon; }
       return tr;
     });
 
@@ -2143,6 +2225,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       intelligence: intel, vulnerabilities: vulns, secrets, cves, headerIssues,
       jsAnalysis,
       paramDiscovery,
+      cloudRecon,
       toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
       configuredTools,
     };

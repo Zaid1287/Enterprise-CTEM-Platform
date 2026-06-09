@@ -50,6 +50,7 @@ export const scanAssetResultsTable = pgTable("scan_asset_results", {
   vulnerabilities: jsonb("vulnerabilities"),
   jsAnalysis: jsonb("js_analysis"),
   paramDiscovery: jsonb("param_discovery"),
+  cloudRecon: jsonb("cloud_recon"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

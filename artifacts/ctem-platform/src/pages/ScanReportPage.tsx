@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronDown, ChevronRight, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert,
+  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud";
 
 function downloadScanReportPdf(scan: any, assetReports: any[]) {
   const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
@@ -464,6 +464,7 @@ export default function ScanReportPage() {
     { key: "endpoints",    label: "Endpoints",      icon: Search,        count: summary.endpoints },
     { key: "js",           label: "JavaScript",     icon: Code,          count: selectedAsset?.jsAnalysis?.stats?.totalSecrets ?? undefined },
     { key: "params",       label: "Parameters",     icon: FileCode,      count: selectedAsset?.paramDiscovery?.stats?.unique ?? undefined },
+    { key: "cloud",        label: "Cloud Assets",   icon: Cloud,         count: selectedAsset?.cloudRecon?.stats?.existingBuckets ?? undefined },
     { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
@@ -1173,6 +1174,11 @@ export default function ScanReportPage() {
               {/* Parameter Discovery tab */}
               {assetTab === "params" && (
                 <ParamDiscoveryTab paramDiscovery={selectedAsset.paramDiscovery ?? null} />
+              )}
+
+              {/* Cloud Asset Recon tab */}
+              {assetTab === "cloud" && (
+                <CloudReconTab cloudRecon={selectedAsset.cloudRecon ?? null} />
               )}
 
               {/* Screenshots tab */}
@@ -2049,6 +2055,273 @@ function DnsTab({ records }: { records: any[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Cloud Asset Recon Tab ─────────────────────────────────────────────────────
+
+const PROVIDER_META: Record<string, { label: string; color: string; bg: string }> = {
+  aws_s3: { label: "AWS S3",    color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/30" },
+  gcs:    { label: "GCS",       color: "text-blue-400",   bg: "bg-blue-500/10 border-blue-500/30" },
+  azure:  { label: "Azure",     color: "text-cyan-400",   bg: "bg-cyan-500/10 border-cyan-500/30" },
+};
+
+const BUCKET_STATUS_META: Record<string, { label: string; color: string }> = {
+  public_listable: { label: "PUBLIC · LISTABLE", color: "bg-red-500/15 text-red-400 border-red-500/40" },
+  public_exists:   { label: "PUBLIC",            color: "bg-orange-500/15 text-orange-400 border-orange-500/40" },
+  private:         { label: "PRIVATE",           color: "bg-accent/60 text-muted-foreground border-border" },
+  error:           { label: "ERROR",             color: "bg-accent/30 text-muted-foreground/60 border-border" },
+};
+
+function CloudReconTab({ cloudRecon }: { cloudRecon: any }) {
+  const [section, setSection] = useState<"buckets" | "firebase" | "ssrf">("buckets");
+  const [search, setSearch] = useState("");
+
+  if (!cloudRecon) {
+    return (
+      <div className="text-center py-10 text-muted-foreground space-y-2">
+        <Cloud className="w-8 h-8 mx-auto opacity-30" />
+        <p className="text-sm">No cloud recon data available</p>
+        <p className="text-xs text-muted-foreground/70">Run a new scan — Cloud Asset Recon runs automatically on web assets.</p>
+      </div>
+    );
+  }
+
+  const stats       = cloudRecon.stats ?? {};
+  const buckets: any[]  = cloudRecon.buckets ?? [];
+  const firebase: any[] = cloudRecon.firebase ?? [];
+  const ssrf: any[]     = cloudRecon.ssrfEndpoints ?? [];
+  const testedNames: string[] = cloudRecon.testedNames ?? [];
+
+  const filteredBuckets = buckets.filter(b =>
+    !search || b.name?.toLowerCase().includes(search.toLowerCase()) || b.url?.includes(search)
+  );
+  const filteredFb = firebase.filter(f =>
+    !search || f.name?.toLowerCase().includes(search.toLowerCase()) || f.url?.includes(search)
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Stats bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "Names Tested",    value: stats.totalTested ?? testedNames.length, sub: "bucket variations",              color: "text-primary" },
+          { label: "Buckets Found",   value: stats.existingBuckets ?? 0,              sub: `${stats.publicBuckets ?? 0} public`, color: stats.publicBuckets > 0 ? "text-red-400" : "text-green-400" },
+          { label: "Firebase",        value: (stats.publicFirebase ?? 0) + (stats.restrictedFirebase ?? 0), sub: `${stats.publicFirebase ?? 0} public`, color: stats.publicFirebase > 0 ? "text-red-400" : "text-foreground" },
+          { label: "SSRF Targets",    value: stats.ssrfEndpoints ?? ssrf.length,      sub: "metadata endpoints",              color: "text-orange-400" },
+        ].map(s => (
+          <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
+            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide block mb-1">{s.label}</span>
+            <p className={cn("text-xl font-bold", s.color)}>{s.value}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Provider breakdown */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { key: "aws_s3", count: stats.awsFound ?? 0 },
+          { key: "gcs",    count: stats.gcsFound ?? 0 },
+          { key: "azure",  count: stats.azureFound ?? 0 },
+        ].map(({ key, count }) => {
+          const meta = PROVIDER_META[key];
+          return (
+            <div key={key} className={cn("border rounded-lg p-3 flex items-center gap-3", count > 0 ? meta.bg : "bg-accent/10 border-border")}>
+              <Cloud className={cn("w-5 h-5 shrink-0", count > 0 ? meta.color : "text-muted-foreground/40")} />
+              <div>
+                <p className={cn("text-sm font-bold", count > 0 ? meta.color : "text-muted-foreground")}>{count}</p>
+                <p className="text-[10px] text-muted-foreground">{meta.label}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Section tabs + search */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          { key: "buckets", label: `Buckets (${buckets.length})` },
+          { key: "firebase", label: `Firebase (${firebase.length})` },
+          { key: "ssrf", label: `SSRF Metadata (${ssrf.length})` },
+        ] as const).map(s => (
+          <button key={s.key} onClick={() => { setSection(s.key); setSearch(""); }}
+            className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border",
+              section === s.key ? "bg-primary/15 text-primary border-primary/30" : "bg-accent/30 text-muted-foreground border-border hover:text-foreground"
+            )}>{s.label}</button>
+        ))}
+        {section !== "ssrf" && (
+          <div className="ml-auto flex items-center gap-1.5 bg-accent/30 border border-border rounded-lg px-2.5 py-1.5">
+            <Search className="w-3 h-3 text-muted-foreground" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter…"
+              className="bg-transparent text-xs outline-none placeholder:text-muted-foreground/60 w-36" />
+            {search && <button onClick={() => setSearch("")} className="text-muted-foreground hover:text-foreground"><X className="w-3 h-3" /></button>}
+          </div>
+        )}
+      </div>
+
+      {/* ── Buckets section ── */}
+      {section === "buckets" && (
+        filteredBuckets.length === 0
+          ? (
+            <div className="text-center py-8 text-muted-foreground space-y-1">
+              <CheckCircle2 className="w-7 h-7 mx-auto text-green-400 opacity-60" />
+              <p className="text-sm">{search ? "No buckets match filter" : "No exposed cloud storage found"}</p>
+              <p className="text-xs opacity-60">Tested {testedNames.length} naming patterns across S3, GCS, and Azure</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredBuckets.map((b: any, i: number) => {
+                const provMeta = PROVIDER_META[b.provider] ?? { label: b.provider, color: "text-foreground", bg: "" };
+                const statMeta = BUCKET_STATUS_META[b.status] ?? BUCKET_STATUS_META.error;
+                return (
+                  <div key={i} className={cn("border rounded-lg p-3 space-y-2", b.isPublic ? "border-red-500/20 bg-red-500/5" : "border-border bg-accent/10")}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5", statMeta.color)}>{statMeta.label}</span>
+                      <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5", provMeta.bg, provMeta.color)}>{provMeta.label}</span>
+                      <span className="font-mono text-sm font-semibold text-foreground">{b.name}</span>
+                      <span className="ml-auto text-[10px] text-muted-foreground">HTTP {b.httpStatus}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[10px] text-primary/80 flex-1 truncate">{b.url}</span>
+                      <a href={b.url} target="_blank" rel="noreferrer" className="shrink-0">
+                        <ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                      </a>
+                    </div>
+                    {b.region && <p className="text-xs text-muted-foreground">Region: <span className="text-foreground">{b.region}</span></p>}
+                    {b.fileCount != null && (
+                      <p className="text-xs text-muted-foreground">Files listed: <span className="text-red-400 font-semibold">{b.fileCount}</span></p>
+                    )}
+                    {b.sampleFiles && b.sampleFiles.length > 0 && (
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] text-muted-foreground font-medium">Sample files:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {b.sampleFiles.slice(0, 10).map((f: string, j: number) => (
+                            <span key={j} className="font-mono text-[10px] bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5 text-red-300">{f}</span>
+                          ))}
+                          {b.sampleFiles.length > 10 && <span className="text-[10px] text-muted-foreground">+{b.sampleFiles.length - 10} more</span>}
+                        </div>
+                      </div>
+                    )}
+                    {b.isPublic && (
+                      <div className="flex items-start gap-1.5 text-[10px] text-orange-400 bg-orange-500/5 border border-orange-500/20 rounded px-2 py-1.5">
+                        <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                        <span>{b.isListable ? "Bucket is publicly listable — all contents are exposed to the internet. This is a critical finding." : "Bucket is publicly accessible — direct access possible. Review ACL settings immediately."}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
+      )}
+
+      {/* ── Firebase section ── */}
+      {section === "firebase" && (
+        filteredFb.length === 0
+          ? (
+            <div className="text-center py-8 text-muted-foreground space-y-1">
+              <CheckCircle2 className="w-7 h-7 mx-auto text-green-400 opacity-60" />
+              <p className="text-sm">No Firebase databases found</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredFb.map((f: any, i: number) => (
+                <div key={i} className={cn("border rounded-lg p-3 space-y-2", f.isPublic ? "border-red-500/20 bg-red-500/5" : "border-border bg-accent/10")}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5",
+                      f.status === "public" ? "bg-red-500/15 text-red-400 border-red-500/40" :
+                      f.status === "restricted" ? "bg-accent/60 text-muted-foreground border-border" :
+                      "bg-accent/30 text-muted-foreground/60 border-border"
+                    )}>{f.status.toUpperCase()}</span>
+                    <span className="text-[10px] font-bold border rounded px-1.5 py-0.5 text-yellow-400 border-yellow-500/30 bg-yellow-500/10">Firebase RTDB</span>
+                    <span className="font-mono text-sm font-semibold text-foreground">{f.name}</span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">HTTP {f.httpStatus}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-primary/80 flex-1 truncate">{f.url}</span>
+                    <a href={f.url} target="_blank" rel="noreferrer"><ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" /></a>
+                  </div>
+                  {f.dataKeys && f.dataKeys.length > 0 && (
+                    <div>
+                      <p className="text-[10px] text-muted-foreground font-medium mb-1">Exposed data keys:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {f.dataKeys.map((k: string, j: number) => (
+                          <span key={j} className="font-mono text-[10px] bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5 text-red-300">{k}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {f.dataPreview && (
+                    <p className="font-mono text-[10px] bg-red-500/5 border border-red-500/15 rounded px-2 py-1.5 text-muted-foreground break-all">{f.dataPreview.slice(0, 300)}</p>
+                  )}
+                  {f.isPublic && (
+                    <div className="flex items-start gap-1.5 text-[10px] text-red-400 bg-red-500/5 border border-red-500/20 rounded px-2 py-1.5">
+                      <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                      <span>Firebase database allows unauthenticated reads. Update Security Rules: set .read to <code className="font-mono bg-black/20 rounded px-1">auth != null</code></span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )
+      )}
+
+      {/* ── SSRF Metadata Endpoints section ── */}
+      {section === "ssrf" && (
+        <div className="space-y-3">
+          <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-orange-400">For Manual Testing Only</p>
+              <p className="text-xs text-muted-foreground mt-0.5">These endpoints are only reachable from within cloud VM instances. If you discover an SSRF vulnerability in the target application, probe these URLs to escalate to credential theft and lateral movement.</p>
+            </div>
+          </div>
+          {ssrf.map((e: any, i: number) => (
+            <div key={i} className="bg-accent/10 border border-border rounded-lg p-3 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5",
+                  e.risk === "critical" ? "bg-red-500/15 text-red-400 border-red-500/40" : "bg-orange-500/15 text-orange-400 border-orange-500/40"
+                )}>{e.risk?.toUpperCase()}</span>
+                <span className="text-sm font-semibold text-foreground">{e.provider}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[10px] text-primary/80 bg-primary/5 border border-primary/20 rounded px-2 py-1">{e.url}</span>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{e.description}</p>
+              {e.payloadVariants && e.payloadVariants.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Payload Variants</p>
+                  <div className="space-y-0.5 max-h-36 overflow-y-auto">
+                    {e.payloadVariants.map((v: string, j: number) => (
+                      <div key={j} className="font-mono text-[10px] text-muted-foreground bg-muted/30 rounded px-2 py-1 break-all">{v}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {e.notes && (
+                <p className="text-[10px] text-muted-foreground/80 border-t border-border pt-2 leading-relaxed">{e.notes}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Tested names (collapsed) */}
+      {testedNames.length > 0 && section === "buckets" && (
+        <details className="group">
+          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 select-none">
+            <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
+            {testedNames.length} naming patterns tested
+          </summary>
+          <div className="mt-2 flex flex-wrap gap-1 max-h-28 overflow-y-auto">
+            {testedNames.map((n: string, i: number) => (
+              <span key={i} className="font-mono text-[10px] bg-accent/30 border border-border rounded px-1.5 py-0.5 text-muted-foreground">{n}</span>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
