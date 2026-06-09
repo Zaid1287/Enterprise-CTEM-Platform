@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "P07TOV92HXKonZ7d04x4Y"
+uri = "file://DOCUMENTATION.md"
+type = "text"
+title = "Sentinelware CTEM — Full Technical Documentation"
+
+[[outputs]]
+id = "U3LFlWn-DpAwLqoxkyo3q"
+uri = "file://REQUIREMENTS.md"
+type = "text"
+title = "Sentinelware CTEM — Requirements"
