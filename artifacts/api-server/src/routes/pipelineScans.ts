@@ -7,6 +7,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable } from "@workspace/db";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
+import { runEndpointDiscovery } from "../lib/endpointDiscovery";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -146,7 +147,7 @@ const CVE_POOL = [
 // ── Type interfaces ─────────────────────────────────────────────────────────────
 interface PortFinding      { port: number; service: string; version: string; protocol: string; state: string; }
 interface SubdomainFinding { name: string; ip: string; cname: string | null; status: string; cdnProvider: string | null; sources?: string[]; httpStatus?: number | null; httpTitle?: string | null; redirectTo?: string | null; webServer?: string | null; }
-interface EndpointFinding  { url: string; method: string; status: number; title?: string; }
+interface EndpointFinding  { url: string; method: string; status: number; title?: string; category?: string; source?: string; }
 interface CookieFlag       { name: string; secure: boolean; httpOnly: boolean; sameSite: string; raw: string; }
 interface HostFingerprint  { host: string; techs: string[]; waf?: string; }
 interface WafDetection     { name: string; method: string; confidence: "high" | "medium" | "low"; }
@@ -1232,6 +1233,12 @@ async function executePipeline(
     { name: "httpx",      description: "Fast multi-purpose HTTP probing — status codes, tech detection, web server, page titles, redirect chains — probes all discovered subdomains",                                        category: "web_recon",  githubUrl: "https://github.com/projectdiscovery/httpx",    runCommand: "httpx -u {target} -json -status-code -title -tech-detect" },
     { name: "dnsx",       description: "Fast bulk DNS resolver and brute-forcer — resolves all subdomain candidates and active DNS brute-force with built-in wordlist",                                                       category: "recon",      githubUrl: "https://github.com/projectdiscovery/dnsx",     runCommand: "dnsx -d {target} -silent -a" },
     { name: "alterx",     description: "Smart subdomain permutation wordlist generator — creates variations from existing subdomains using customisable patterns for active discovery",                                        category: "recon",      githubUrl: "https://github.com/projectdiscovery/alterx",   runCommand: "alterx -d {target} -silent" },
+    // ── Endpoint discovery engine tools ──────────────────────────────────────────
+    { name: "gau",        description: "GetAllURLs — aggregates historical URLs from Wayback Machine, Common Crawl, URLScan.io, and OTX AlienVault for passive URL harvesting; auto-runs on every domain scan",                       category: "web_recon",  githubUrl: "https://github.com/lc/gau",                                  runCommand: "gau {target}" },
+    { name: "waybackurls", description: "Wayback Machine CDX API client — queries the Internet Archive CDX index for all historically crawled URLs for a domain, revealing endpoints that are no longer publicly linked",              category: "web_recon",  githubUrl: "https://github.com/tomnomnom/waybackurls",                   runCommand: "waybackurls {target}" },
+    { name: "katana",     description: "JS-aware web crawler (ProjectDiscovery) — crawls single-page applications with Puppeteer, captures all XHR/fetch requests, parses JS bundles for embedded API endpoints and routes",           category: "web_recon",  githubUrl: "https://github.com/projectdiscovery/katana",                 runCommand: "katana -u https://{target} -js-crawl -silent" },
+    { name: "hakrawler",  description: "Fast web crawler — extracts URLs from HTML anchor/form tags, JS src references, sitemaps, and robots.txt; runs against all live discovered hosts",                                              category: "web_recon",  githubUrl: "https://github.com/hakluke/hakrawler",                       runCommand: "hakrawler -url https://{target} -depth 3 -scope subs" },
+    { name: "uro",        description: "URL deduplication & normalization — collapses parameterized URLs with identical structure, removes duplicate paths, and merges output from all harvesting sources (GAU, Wayback, Katana, Hakrawler)", category: "web_recon", githubUrl: "https://github.com/s0md3v/uro",                             runCommand: "uro" },
   ];
   for (const def of builtinToolDefs) {
     const exists = await db.select({ id: securityToolsTable.id })
@@ -1415,7 +1422,17 @@ async function executePipeline(
 
       await Promise.allSettled([
         (async () => { httpInfo  = await runHttpProbe(target); })(),
-        (async () => { endpoints = await runEndpointProbe(target); })(),
+        (async () => {
+          const discovered = await runEndpointDiscovery(target);
+          endpoints = discovered.map(d => ({
+            url:      d.url,
+            method:   "GET",
+            status:   d.status ?? 0,
+            title:    d.title,
+            category: d.category,
+            source:   d.source,
+          }));
+        })(),
         (async () => { detectedTechs = await detectTechnologies(target); })(),
         // Active WAF probe (Node-native, runs in parallel with HTTP probe)
         (async () => { wafProbeResult = await runActiveWafProbe(target); })(),

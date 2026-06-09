@@ -1160,41 +1160,7 @@ export default function ScanReportPage() {
 
               {/* Endpoints tab */}
               {assetTab === "endpoints" && (
-                <div>
-                  {(selectedAsset.endpoints ?? []).length === 0 ? (
-                    <EmptyState message="No endpoints discovered" />
-                  ) : (
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left border-b border-border">
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">URL / Path</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Method</th>
-                          <th className="pb-2 text-xs font-medium text-muted-foreground">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(selectedAsset.endpoints ?? []).map((e: any, i: number) => {
-                          const statusCls =
-                            e.status < 300 ? "bg-green-500/15 text-green-400 border-green-500/30" :
-                            e.status < 400 ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
-                            e.status < 500 ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
-                            "bg-red-500/15 text-red-400 border-red-500/30";
-                          return (
-                            <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
-                              <td className="py-2 font-mono text-xs">{e.url}</td>
-                              <td className="py-2">
-                                <span className="text-[10px] bg-accent/60 text-foreground rounded px-1.5 py-0.5 font-mono font-bold">{e.method}</span>
-                              </td>
-                              <td className="py-2">
-                                <span className={cn("text-[10px] rounded border px-1.5 py-0.5 font-mono", statusCls)}>{e.status}</span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                <EndpointsTab endpoints={selectedAsset.endpoints ?? []} />
               )}
 
               {/* Screenshots tab */}
@@ -1735,6 +1701,176 @@ function DnsTypeStyle(type: string): string {
     BIMI:    "bg-purple-500/15 text-purple-400 border-purple-500/30",
   };
   return map[type] ?? "bg-accent/60 text-primary border-border";
+}
+
+// ── Endpoints Tab ─────────────────────────────────────────────────────────────
+
+const ENDPOINT_CATEGORIES = ["all", "sensitive", "admin", "graphql", "api", "auth", "parameterized", "page", "other"] as const;
+type EpCat = (typeof ENDPOINT_CATEGORIES)[number];
+
+const CAT_STYLE: Record<string, string> = {
+  sensitive:    "bg-red-500/15 text-red-400 border-red-500/30",
+  admin:        "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  graphql:      "bg-purple-500/15 text-purple-400 border-purple-500/30",
+  api:          "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  auth:         "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  parameterized:"bg-pink-500/15 text-pink-400 border-pink-500/30",
+  page:         "bg-accent/60 text-muted-foreground border-border",
+  asset:        "bg-accent/40 text-muted-foreground/60 border-border/40",
+  other:        "bg-accent/40 text-muted-foreground/60 border-border/40",
+};
+
+const SRC_STYLE: Record<string, string> = {
+  wayback:      "bg-violet-500/15 text-violet-400 border-violet-500/30",
+  commoncrawl:  "bg-sky-500/15 text-sky-400 border-sky-500/30",
+  urlscan:      "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  otx:          "bg-red-500/15 text-red-300 border-red-500/30",
+  crawl:        "bg-green-500/15 text-green-400 border-green-500/30",
+  "js-crawl":   "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+  probe:        "bg-accent/60 text-muted-foreground border-border",
+};
+
+const SRC_LABEL: Record<string, string> = {
+  wayback:      "Wayback",
+  commoncrawl:  "CommonCrawl",
+  urlscan:      "URLScan",
+  otx:          "OTX",
+  crawl:        "Hakrawler",
+  "js-crawl":   "Katana",
+  probe:        "Probe",
+};
+
+function EndpointsTab({ endpoints }: { endpoints: any[] }) {
+  const [activeCat, setActiveCat] = useState<EpCat>("all");
+  const [search, setSearch] = useState("");
+  const PAGE_SIZE = 200;
+  const [page, setPage] = useState(0);
+
+  if (endpoints.length === 0) return <EmptyState message="No endpoints discovered" icon={Search} />;
+
+  const counts: Record<string, number> = { all: endpoints.length };
+  for (const e of endpoints) {
+    const c = (e.category as string) ?? "other";
+    counts[c] = (counts[c] ?? 0) + 1;
+  }
+
+  const sourceCounts: Record<string, number> = {};
+  for (const e of endpoints) {
+    const s = (e.source as string) ?? "probe";
+    sourceCounts[s] = (sourceCounts[s] ?? 0) + 1;
+  }
+
+  const filtered = endpoints.filter(e => {
+    const cat = (e.category as string) ?? "other";
+    const matchCat = activeCat === "all" || cat === activeCat;
+    const matchSearch = !search || e.url.toLowerCase().includes(search.toLowerCase());
+    return matchCat && matchSearch;
+  });
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  return (
+    <div className="space-y-4">
+      {/* Stats bar */}
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]).map(([src, cnt]) => (
+          <span key={src} className={cn("text-[10px] border rounded px-2 py-0.5 font-medium", SRC_STYLE[src] ?? "bg-accent/60 text-muted-foreground border-border")}>
+            {SRC_LABEL[src] ?? src}: {cnt}
+          </span>
+        ))}
+        <span className="text-[10px] text-muted-foreground self-center ml-auto">{endpoints.length.toLocaleString()} total (deduped)</span>
+      </div>
+
+      {/* Category filter tabs */}
+      <div className="flex flex-wrap gap-1.5">
+        {ENDPOINT_CATEGORIES.filter(c => c === "all" || (counts[c] ?? 0) > 0).map(cat => (
+          <button
+            key={cat}
+            onClick={() => { setActiveCat(cat); setPage(0); }}
+            className={cn(
+              "text-[11px] px-2.5 py-1 rounded border font-medium transition-colors",
+              activeCat === cat
+                ? cat === "all" ? "bg-primary text-primary-foreground border-primary" : CAT_STYLE[cat]
+                : "bg-accent/20 text-muted-foreground border-border hover:bg-accent/40"
+            )}
+          >
+            {cat.charAt(0).toUpperCase() + cat.slice(1)}
+            {cat !== "all" && <span className="ml-1 opacity-70">{counts[cat]}</span>}
+            {cat === "all" && <span className="ml-1 opacity-70">{counts.all}</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Filter by URL…"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(0); }}
+          className="w-full pl-8 pr-3 py-1.5 text-xs bg-accent/20 border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary/50 font-mono"
+        />
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="text-xs text-muted-foreground text-center py-6">No endpoints match this filter.</p>
+      ) : (
+        <>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left border-b border-border">
+                <th className="pb-2 font-medium text-muted-foreground">URL</th>
+                <th className="pb-2 font-medium text-muted-foreground w-28">Category</th>
+                <th className="pb-2 font-medium text-muted-foreground w-24">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((e: any, i: number) => (
+                <tr key={i} className="border-b border-border/30 hover:bg-accent/20 group">
+                  <td className="py-1.5 pr-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[11px] break-all leading-tight">{e.url}</span>
+                      <a href={e.url} target="_blank" rel="noopener noreferrer"
+                        className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity">
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-medium capitalize", CAT_STYLE[(e.category as string) ?? "other"] ?? CAT_STYLE.other)}>
+                      {e.category ?? "other"}
+                    </span>
+                  </td>
+                  <td className="py-1.5">
+                    <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-medium", SRC_STYLE[(e.source as string)] ?? SRC_STYLE.probe)}>
+                      {SRC_LABEL[(e.source as string)] ?? e.source ?? "probe"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs text-muted-foreground">
+                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length.toLocaleString()}
+              </span>
+              <div className="flex gap-1.5">
+                <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
+                  className="text-xs px-2.5 py-1 rounded border border-border disabled:opacity-30 hover:bg-accent/40">← Prev</button>
+                <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
+                  className="text-xs px-2.5 py-1 rounded border border-border disabled:opacity-30 hover:bg-accent/40">Next →</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function DnsTab({ records }: { records: any[] }) {
