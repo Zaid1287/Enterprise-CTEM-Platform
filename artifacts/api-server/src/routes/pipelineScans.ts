@@ -1441,7 +1441,7 @@ async function executePipeline(
       // then merge unique techs and attach per-host data to httpInfo.
       {
         const primaryDomain = extractDomain(target);
-        const liveHosts = allSubdomains.filter(s => s.status === "active" && s.ip).slice(0, 15);
+        const liveHosts = dnsResult.subdomains.filter(s => s.status === "active" && s.ip).slice(0, 15);
         if (liveHosts.length > 0) {
           // Tag primary domain on all existing detections
           for (const t of detectedTechs) t.hosts = [primaryDomain];
