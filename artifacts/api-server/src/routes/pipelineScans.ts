@@ -12,6 +12,7 @@ import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
 import { runCloudRecon, type CloudReconResult } from "../lib/cloudRecon";
 import { runSecretsHunt, type SecretsHuntResult } from "../lib/secretsHunter";
+import { runDirFuzz, type DirFuzzResult } from "../lib/dirFuzzer";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -1397,6 +1398,7 @@ async function executePipeline(
     let paramDiscovery: ParamDiscoveryResult | null = null;
     let cloudRecon: CloudReconResult | null = null;
     let secretsHunt: SecretsHuntResult | null = null;
+    let dirFuzz: DirFuzzResult | null = null;
     const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
     // Screenshots + tech detection always run for web asset types regardless of tool pipeline
     const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
@@ -1442,6 +1444,9 @@ async function executePipeline(
           : Promise.resolve(),
         isWebAsset
           ? (async () => { secretsHunt = await runSecretsHunt(target); })()
+          : Promise.resolve(),
+        isWebAsset
+          ? (async () => { dirFuzz = await runDirFuzz(target, dnsResult.subdomains.map(s => s.name)); })()
           : Promise.resolve(),
       ]);
 
@@ -2063,6 +2068,75 @@ async function executePipeline(
       }
     }
 
+    // ── Dir Fuzz: store result + create findings for critical exposures ─────────
+    if (isWebAsset && dirFuzz && dirFuzz.stats.totalUnique > 0) {
+      // Critical paths that being HTTP-200 accessible is a finding
+      const CRITICAL_PATHS = new Set([".env",".env.local",".env.backup",".env.prod","config.json","secrets.json","credentials.json","database.sql","backup.sql","dump.sql","backup.zip",".aws/credentials",".htpasswd","id_rsa"]);
+      const HIGH_PATHS = new Set(["phpmyadmin","adminer","adminer.php","wp-admin","phpinfo.php","info.php","debug",".git/HEAD"]);
+      const MEDIUM_PATHS = new Set(["swagger-ui","swagger","graphql","graphiql","api-docs","openapi.json","actuator","actuator/env","actuator/heapdump","server-status"]);
+
+      const dirVulns: Array<{ cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source: string }> = [];
+      const seen = new Set<string>();
+      for (const host of dirFuzz.hosts) {
+        for (const ep of host.endpoints) {
+          if (ep.source !== "fuzz" || ep.statusCode !== 200) continue;
+          const pathClean = ep.path.replace(/^\//, "");
+          const key = `${pathClean}:${ep.host}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          if (CRITICAL_PATHS.has(pathClean)) {
+            dirVulns.push({ cve: `EXPOSED-FILE-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 9.5, severity: "critical", title: `Sensitive file exposed: ${ep.url}`, cwe: "CWE-538", remediation: `Immediately remove or block public access to ${ep.path}. Add server-level deny rule (e.g. Nginx: location ~ /\\.env { deny all; }). Rotate any credentials contained in the file.`, source: ep.url });
+          } else if (HIGH_PATHS.has(pathClean)) {
+            dirVulns.push({ cve: `EXPOSED-ADMIN-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 7.5, severity: "high", title: `Admin interface exposed: ${ep.url}`, cwe: "CWE-284", remediation: `Restrict access to ${ep.path} via IP allowlist or authentication gateway. Consider relocating admin interfaces off the public web root.`, source: ep.url });
+          } else if (MEDIUM_PATHS.has(pathClean)) {
+            dirVulns.push({ cve: `EXPOSED-API-DOCS-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 5.3, severity: "medium", title: `API documentation/debug endpoint exposed: ${ep.url}`, cwe: "CWE-200", remediation: `Restrict ${ep.path} to authenticated or internal users only. Disable debug endpoints in production.`, source: ep.url });
+          }
+        }
+      }
+
+      const interestingUrls = dirFuzz.hosts.flatMap(h => h.endpoints.filter(e => e.isInteresting || (e.source === "fuzz" && e.statusCode === 200)));
+
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id,
+        toolName: "feroxbuster", toolCategory: "web_recon",
+        rawOutput: [
+          `[Dir Fuzzer] Feroxbuster + GAU + Katana + Hakrawler — ${target}`,
+          `Hosts scanned: ${dirFuzz.stats.hostsScanned} (${dirFuzz.stats.hostsLive} live)`,
+          `Total unique endpoints: ${dirFuzz.stats.totalUnique}`,
+          `  Feroxbuster hits: ${dirFuzz.stats.fuzzHits}`,
+          `  GAU/Wayback:      ${dirFuzz.stats.waybackFound}`,
+          `  Crawler:          ${dirFuzz.stats.crawledFound}`,
+          `  Interesting:      ${dirFuzz.stats.interestingEndpoints}`,
+          `  Live (2xx/3xx):   ${dirFuzz.stats.liveEndpoints}`,
+          ``,
+          "=== ALL_ENDPOINTS_MASTER.TXT ===",
+          ...dirFuzz.masterList.slice(0, 200),
+          dirFuzz.masterList.length > 200 ? `... (${dirFuzz.masterList.length - 200} more — see report for full list)` : "",
+          ``,
+          "=== INTERESTING ENDPOINTS ===",
+          ...interestingUrls.slice(0, 100).map(e =>
+            `  [${e.statusCode}] [${e.source.toUpperCase()}] ${e.url}${e.redirectTo ? ` → ${e.redirectTo}` : ""}`
+          ),
+        ].join("\n"),
+        dirFuzz: dirFuzz as any,
+        vulnerabilities: dirVulns.length ? dirVulns as any : null,
+        ports: null as any, subdomains: null as any, endpoints: null as any,
+        httpInfo: null as any, dnsRecords: null as any, intelligence: null as any,
+      });
+
+      for (const v of dirVulns) {
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: v.title, cve: v.cve,
+          severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
+          cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+          description: `${v.title}. This was discovered by directory fuzzing. Immediate remediation is required.`,
+          remediation: v.remediation,
+        });
+      }
+    }
+
     // Deduplicate and insert findings
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
@@ -2255,6 +2329,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     let paramDiscovery: unknown = null;
     let cloudRecon: unknown = null;
     let secretsHunt: unknown = null;
+    let dirFuzz: unknown = null;
 
     const toolResults = assetResults.map(r => {
       const tr: Record<string, unknown> = {
@@ -2272,6 +2347,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       if (r.paramDiscovery)  { tr.paramDiscovery   = r.paramDiscovery;  paramDiscovery = r.paramDiscovery; }
       if (r.cloudRecon)      { tr.cloudRecon       = r.cloudRecon;      cloudRecon = r.cloudRecon; }
       if (r.secretsHunt)     { tr.secretsHunt      = r.secretsHunt;     secretsHunt = r.secretsHunt; }
+      if (r.dirFuzz)         { tr.dirFuzz          = r.dirFuzz;         dirFuzz = r.dirFuzz; }
       return tr;
     });
 
@@ -2308,6 +2384,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       paramDiscovery,
       cloudRecon,
       secretsHunt,
+      dirFuzz,
       toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
       configuredTools,
     };

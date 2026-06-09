@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronDown, ChevronRight, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud, GitBranch, Github,
+  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud, GitBranch, Github, FolderOpen, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud" | "secretshunt";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud" | "secretshunt" | "dirfuzz";
 
 function downloadScanReportPdf(scan: any, assetReports: any[]) {
   const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
@@ -466,6 +466,7 @@ export default function ScanReportPage() {
     { key: "params",       label: "Parameters",     icon: FileCode,      count: selectedAsset?.paramDiscovery?.stats?.unique ?? undefined },
     { key: "cloud",        label: "Cloud Assets",   icon: Cloud,         count: selectedAsset?.cloudRecon?.stats?.existingBuckets ?? undefined },
     { key: "secretshunt",  label: "Secrets Hunt",   icon: Github,        count: (selectedAsset?.secretsHunt?.stats?.secretsFound ?? 0) + (selectedAsset?.secretsHunt?.stats?.gitDirsExposed ?? 0) || undefined },
+    { key: "dirfuzz",      label: "Dir Fuzz",       icon: FolderOpen,    count: selectedAsset?.dirFuzz?.stats?.totalUnique ?? undefined },
     { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
@@ -1185,6 +1186,11 @@ export default function ScanReportPage() {
               {/* Secrets Hunt tab */}
               {assetTab === "secretshunt" && (
                 <SecretsHuntTab secretsHunt={selectedAsset.secretsHunt ?? null} />
+              )}
+
+              {/* Directory Fuzz tab */}
+              {assetTab === "dirfuzz" && (
+                <DirFuzzTab dirFuzz={selectedAsset.dirFuzz ?? null} />
               )}
 
               {/* Screenshots tab */}
@@ -2061,6 +2067,295 @@ function DnsTab({ records }: { records: any[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Directory Fuzz Tab ────────────────────────────────────────────────────────
+
+const DIR_SOURCE_META: Record<string, { label: string; badge: string; tool: string }> = {
+  fuzz:    { label: "Feroxbuster", badge: "bg-purple-500/15 text-purple-400 border-purple-500/30",   tool: "Dir Fuzz" },
+  wayback: { label: "GAU/Wayback", badge: "bg-blue-500/15 text-blue-400 border-blue-500/30",        tool: "GAU" },
+  otx:     { label: "OTX",         badge: "bg-teal-500/15 text-teal-400 border-teal-500/30",        tool: "OTX" },
+  crawl:   { label: "Katana",      badge: "bg-green-500/15 text-green-400 border-green-500/30",     tool: "Crawler" },
+};
+
+const STATUS_BADGE: Record<number, string> = {
+  200: "bg-green-500/15 text-green-400 border-green-500/30",
+  201: "bg-green-500/15 text-green-400 border-green-500/30",
+  204: "bg-green-500/15 text-green-400 border-green-500/30",
+  301: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  302: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  401: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  403: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+};
+
+const INTERESTING_KEYWORDS_UI = ["admin","login","swagger","graphql","actuator","config","secret","backup","database","debug","git","phpinfo","phpmyadmin"];
+
+function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
+  const [section, setSection] = useState<"interesting" | "master" | "hosts">("interesting");
+  const [search, setSearch] = useState("");
+  const [hostFilter, setHostFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [showAll, setShowAll] = useState(false);
+
+  if (!dirFuzz) {
+    return (
+      <div className="text-center py-10 text-muted-foreground space-y-2">
+        <FolderOpen className="w-8 h-8 mx-auto opacity-30" />
+        <p className="text-sm">No directory fuzz data available</p>
+        <p className="text-xs text-muted-foreground/70">Run a new scan — Dir Fuzz runs automatically on web assets.</p>
+      </div>
+    );
+  }
+
+  const stats: any      = dirFuzz.stats ?? {};
+  const hosts: any[]    = dirFuzz.hosts ?? [];
+  const masterList: string[] = dirFuzz.masterList ?? [];
+
+  const allEndpoints: any[] = hosts.flatMap((h: any) => h.endpoints ?? []);
+
+  const hostNames = ["all", ...hosts.map((h: any) => h.host)];
+
+  const interestingEndpoints = allEndpoints.filter((e: any) =>
+    e.isInteresting ||
+    (e.source === "fuzz" && [200, 401, 403].includes(e.statusCode) &&
+      INTERESTING_KEYWORDS_UI.some(kw => e.path?.toLowerCase().includes(kw)))
+  );
+
+  function applyFilters(list: any[]) {
+    return list.filter((e: any) => {
+      if (hostFilter !== "all" && e.host !== hostFilter) return false;
+      if (sourceFilter !== "all" && e.source !== sourceFilter) return false;
+      if (statusFilter === "2xx" && !(e.statusCode >= 200 && e.statusCode < 300)) return false;
+      if (statusFilter === "3xx" && !(e.statusCode >= 300 && e.statusCode < 400)) return false;
+      if (statusFilter === "auth" && ![401, 403].includes(e.statusCode)) return false;
+      if (search && !e.url?.toLowerCase().includes(search.toLowerCase()) && !e.path?.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }
+
+  const filtered = section === "interesting"
+    ? applyFilters(interestingEndpoints)
+    : section === "master"
+      ? applyFilters(allEndpoints)
+      : [];
+
+  const PAGE = 100;
+  const displayed = showAll ? filtered : filtered.slice(0, PAGE);
+
+  return (
+    <div className="space-y-4">
+      {/* Stats row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "Hosts Scanned",  value: `${stats.hostsLive ?? 0}/${stats.hostsScanned ?? 0}`, sub: "live / total",                  color: "text-primary" },
+          { label: "Total Unique",   value: stats.totalUnique ?? 0,   sub: `${stats.liveEndpoints ?? 0} live (2xx/3xx)`,                 color: "text-primary" },
+          { label: "Feroxbuster",    value: stats.fuzzHits ?? 0,      sub: "active dir hits",                                           color: stats.fuzzHits > 0 ? "text-purple-400" : "text-muted-foreground" },
+          { label: "Interesting",    value: interestingEndpoints.length, sub: "admin/api/config/backup",                                color: interestingEndpoints.length > 0 ? "text-orange-400" : "text-green-400" },
+        ].map(s => (
+          <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
+            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide block mb-1">{s.label}</span>
+            <p className={cn("text-xl font-bold", s.color)}>{s.value}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Source breakdown */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { key: "fuzz",    count: stats.fuzzHits    ?? 0 },
+          { key: "wayback", count: stats.waybackFound ?? 0 },
+          { key: "crawl",   count: stats.crawledFound ?? 0 },
+        ].map(({ key, count }) => {
+          const meta = DIR_SOURCE_META[key];
+          return (
+            <div key={key} className={cn("border rounded-lg p-3 flex items-center gap-2", count > 0 ? meta.badge : "bg-accent/10 border-border")}>
+              <FolderOpen className={cn("w-4 h-4 shrink-0", count > 0 ? meta.badge.split(" ")[1] : "text-muted-foreground/40")} />
+              <div>
+                <p className={cn("text-sm font-bold", count > 0 ? meta.badge.split(" ")[1] : "text-muted-foreground")}>{count.toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground">{meta.label}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Section tabs */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          { key: "interesting", label: `Interesting (${interestingEndpoints.length})` },
+          { key: "master",      label: `Master List (${allEndpoints.length.toLocaleString()})` },
+          { key: "hosts",       label: `By Host (${hosts.length})` },
+        ] as const).map(s => (
+          <button key={s.key} onClick={() => { setSection(s.key); setSearch(""); setShowAll(false); }}
+            className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border",
+              section === s.key ? "bg-primary/15 text-primary border-primary/30" : "bg-accent/30 text-muted-foreground border-border hover:text-foreground"
+            )}>{s.label}</button>
+        ))}
+      </div>
+
+      {/* Filters (for interesting + master tabs) */}
+      {section !== "hosts" && (
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Host filter */}
+          {hosts.length > 1 && (
+            <select value={hostFilter} onChange={e => setHostFilter(e.target.value)}
+              className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none max-w-44 truncate">
+              {hostNames.map(h => <option key={h} value={h}>{h === "all" ? "All hosts" : h}</option>)}
+            </select>
+          )}
+          {/* Source filter */}
+          <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+            className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+            <option value="all">All sources</option>
+            <option value="fuzz">Feroxbuster</option>
+            <option value="wayback">GAU/Wayback</option>
+            <option value="crawl">Katana</option>
+          </select>
+          {/* Status filter */}
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+            <option value="all">All statuses</option>
+            <option value="2xx">2xx (OK)</option>
+            <option value="3xx">3xx (Redirect)</option>
+            <option value="auth">401/403 (Auth)</option>
+          </select>
+          {/* Search */}
+          <div className="flex items-center gap-1.5 bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 ml-auto">
+            <Search className="w-3 h-3 text-muted-foreground" />
+            <input value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }}
+              placeholder="Search URL or path…"
+              className="bg-transparent text-xs outline-none placeholder:text-muted-foreground/60 w-44" />
+            {search && <button onClick={() => setSearch("")}><X className="w-3 h-3 text-muted-foreground hover:text-foreground" /></button>}
+          </div>
+        </div>
+      )}
+
+      {/* ── Interesting / Master list ── */}
+      {section !== "hosts" && (
+        displayed.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground space-y-1">
+            <CheckCircle2 className="w-7 h-7 mx-auto text-green-400 opacity-60" />
+            <p className="text-sm">{section === "interesting" ? "No interesting endpoints discovered" : "No results match filter"}</p>
+            {section === "interesting" && <p className="text-xs opacity-60">No admin panels, debug tools, or sensitive files found accessible</p>}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {displayed.map((e: any, i: number) => {
+              const srcMeta = DIR_SOURCE_META[e.source] ?? DIR_SOURCE_META.wayback;
+              const statusBadge = STATUS_BADGE[e.statusCode] ?? "bg-accent/40 text-muted-foreground border-border";
+              return (
+                <div key={i} className={cn("flex items-center gap-2 rounded-lg px-3 py-2 border text-xs group",
+                  e.isInteresting && e.statusCode === 200
+                    ? "border-orange-500/20 bg-orange-500/5 hover:bg-orange-500/10"
+                    : "border-border bg-accent/10 hover:bg-accent/20"
+                )}>
+                  {/* Status badge */}
+                  <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1.5 py-0.5 font-mono w-10 text-center", statusBadge)}>
+                    {e.statusCode}
+                  </span>
+                  {/* Source badge */}
+                  <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1.5 py-0.5", srcMeta.badge)}>
+                    {srcMeta.label}
+                  </span>
+                  {/* URL */}
+                  <span className="font-mono text-xs text-foreground flex-1 truncate">{e.url}</span>
+                  {/* Redirect info */}
+                  {e.redirectTo && (
+                    <span className="text-[10px] text-muted-foreground truncate max-w-32 hidden sm:block">→ {e.redirectTo}</span>
+                  )}
+                  {/* Content type */}
+                  {e.contentType && (
+                    <span className="text-[10px] text-muted-foreground hidden lg:block">{e.contentType.split(";")[0]}</span>
+                  )}
+                  {/* External link */}
+                  <a href={e.url} target="_blank" rel="noreferrer" className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                  </a>
+                </div>
+              );
+            })}
+            {/* Show more / less */}
+            {filtered.length > PAGE && (
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <span className="text-xs text-muted-foreground">
+                  Showing {displayed.length} of {filtered.length.toLocaleString()}
+                </span>
+                <button onClick={() => setShowAll(!showAll)}
+                  className="text-xs text-primary hover:underline">
+                  {showAll ? "Show less" : `Show all ${filtered.length.toLocaleString()}`}
+                </button>
+              </div>
+            )}
+          </div>
+        )
+      )}
+
+      {/* ── By Host view ── */}
+      {section === "hosts" && (
+        <div className="space-y-3">
+          {hosts.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <p className="text-sm">No hosts scanned</p>
+            </div>
+          ) : hosts.map((h: any, i: number) => (
+            <div key={i} className={cn("border rounded-lg overflow-hidden", h.isLive ? "border-border" : "border-border/40")}>
+              {/* Host header */}
+              <div className={cn("flex items-center gap-3 px-3 py-2.5", h.isLive ? "bg-accent/20" : "bg-accent/10")}>
+                <div className={cn("w-2 h-2 rounded-full shrink-0", h.isLive ? "bg-green-400" : "bg-muted-foreground/40")} />
+                <span className="font-mono text-sm font-semibold text-foreground flex-1">{h.host}</span>
+                {h.isLive && (
+                  <>
+                    <span className="text-[10px] text-muted-foreground">{(h.endpoints?.length ?? 0).toLocaleString()} endpoints</span>
+                    <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5", STATUS_BADGE[h.liveStatusCode] ?? "bg-accent/40 text-muted-foreground border-border")}>HTTP {h.liveStatusCode}</span>
+                  </>
+                )}
+                {!h.isLive && <span className="text-[10px] text-muted-foreground">Unreachable</span>}
+              </div>
+              {/* Host stats */}
+              {h.isLive && (
+                <div className="px-3 py-2 flex flex-wrap gap-3 text-[10px] text-muted-foreground border-t border-border bg-accent/5">
+                  {[
+                    { label: "Fuzz hits",    value: h.stats?.fuzzHits ?? 0,    color: "text-purple-400" },
+                    { label: "GAU/Wayback",  value: h.stats?.waybackFound ?? 0, color: "text-blue-400" },
+                    { label: "Crawled",      value: h.stats?.crawled ?? 0,      color: "text-green-400" },
+                    { label: "Live 2xx",     value: h.stats?.live200 ?? 0,      color: "text-green-400" },
+                    { label: "3xx",          value: h.stats?.live301 ?? 0,      color: "text-yellow-400" },
+                    { label: "401/403",      value: h.stats?.live401403 ?? 0,   color: "text-orange-400" },
+                    { label: "Interesting",  value: h.stats?.interesting ?? 0,  color: "text-red-400" },
+                  ].map(s => (
+                    <span key={s.label}><span className={cn("font-bold", s.color)}>{s.value}</span> {s.label}</span>
+                  ))}
+                </div>
+              )}
+              {/* Sample endpoints for this host */}
+              {h.isLive && (h.endpoints ?? []).filter((e: any) => e.isInteresting || (e.source === "fuzz" && e.statusCode === 200)).slice(0, 5).map((e: any, j: number) => {
+                const srcMeta = DIR_SOURCE_META[e.source] ?? DIR_SOURCE_META.wayback;
+                const statusBadge = STATUS_BADGE[e.statusCode] ?? "bg-accent/40 text-muted-foreground border-border";
+                return (
+                  <div key={j} className="flex items-center gap-2 px-3 py-1.5 text-xs border-t border-border/40 bg-accent/5">
+                    <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1 py-0.5 font-mono w-10 text-center", statusBadge)}>{e.statusCode}</span>
+                    <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1 py-0.5", srcMeta.badge)}>{srcMeta.label}</span>
+                    <span className="font-mono text-foreground flex-1 truncate">{e.path}</span>
+                    <a href={e.url} target="_blank" rel="noreferrer"><ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" /></a>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Master list download hint */}
+      {section === "master" && masterList.length > 0 && (
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-accent/10 border border-border rounded-lg px-3 py-2">
+          <Info className="w-3 h-3 shrink-0" />
+          <span>all_endpoints_master.txt — {masterList.length.toLocaleString()} unique endpoints merged from Feroxbuster + GAU/Wayback + OTX + Katana. View Raw Output tab for the full text dump.</span>
+        </div>
+      )}
     </div>
   );
 }

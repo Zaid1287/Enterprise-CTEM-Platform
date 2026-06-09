@@ -52,6 +52,7 @@ export const scanAssetResultsTable = pgTable("scan_asset_results", {
   paramDiscovery: jsonb("param_discovery"),
   cloudRecon: jsonb("cloud_recon"),
   secretsHunt: jsonb("secrets_hunt"),
+  dirFuzz: jsonb("dir_fuzz"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
