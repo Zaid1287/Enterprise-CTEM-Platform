@@ -8,6 +8,7 @@ import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, secu
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
 import { runEndpointDiscovery } from "../lib/endpointDiscovery";
+import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -1389,6 +1390,7 @@ async function executePipeline(
     let endpoints: EndpointFinding[] = [];
     let detectedTechs: DetectedTechnology[] = [];
     let capturedPages: PageScreenshot[] = [];
+    let jsAnalysis: JsAnalysisResult | null = null;
     const hasScreenshotTools = toolsForAsset.some(t => t.category === "screenshot");
     // Screenshots + tech detection always run for web asset types regardless of tool pipeline
     const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
@@ -1422,6 +1424,9 @@ async function executePipeline(
         (async () => { originIpCandidates = await discoverOriginIps(domain, dnsResult.dnsRecords, dnsResult.subdomains); })(),
         shouldScreenshot
           ? (async () => { capturedPages = await captureScreenshots(target, 90000); })()
+          : Promise.resolve(),
+        isWebAsset
+          ? (async () => { jsAnalysis = await runJsAnalysis(target); })()
           : Promise.resolve(),
       ]);
 
@@ -1742,6 +1747,10 @@ async function executePipeline(
         else if (["katana", "feroxbuster", "gobuster", "ffuf"].includes(name)) {
           toolEndpts = endpoints.length ? endpoints : null;
         }
+        // ── JS analysis tools: full result stored via dedicated DB entry below ─
+        else if (name === "linkfinder" || name === "secretfinder") {
+          toolEndpts = endpoints.length ? endpoints : null;
+        }
         // ── Default phase-3: HTTP + endpoints ─────────────────────────────────
         else {
           toolHttp   = httpInfo;
@@ -1793,6 +1802,67 @@ async function executePipeline(
     // Batch-insert results
     for (let i = 0; i < results.length; i += 50) {
       await db.insert(scanAssetResultsTable).values(results.slice(i, i + 50));
+    }
+
+    // ── JS Analysis: store result + create secret findings ─────────────────────
+    if (isWebAsset && jsAnalysis && jsAnalysis.stats.analyzedFiles > 0) {
+      const cvssMap: Record<string, number> = { critical: 9.5, high: 7.5, medium: 5.0, low: 3.0, info: 1.0 };
+      const jsSecretVulns = jsAnalysis.secrets
+        .filter(s => s.severity !== "info")
+        .map(s => ({
+          cve:  `JSSEC-${s.type.replace(/[^A-Z0-9]/gi, "-").toUpperCase().slice(0, 20)}`,
+          cvss: cvssMap[s.severity] ?? 5.0,
+          severity: s.severity,
+          title: `${s.type} exposed in JavaScript`,
+          cwe: s.cwe,
+          remediation: s.remediation,
+          source: `${s.file.split("/").pop()}, line ${s.line}`,
+        }));
+
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id,
+        toolName: "linkfinder", toolCategory: "web_recon",
+        rawOutput: [
+          `[LinkFinder + SecretFinder] JS Analysis — ${target}`,
+          `Files found: ${jsAnalysis.stats.totalFiles}  |  Analyzed: ${jsAnalysis.stats.analyzedFiles}`,
+          `Endpoints extracted: ${jsAnalysis.stats.totalEndpoints}`,
+          `Secrets detected: ${jsAnalysis.stats.totalSecrets} (${jsAnalysis.stats.criticalSecrets} critical, ${jsAnalysis.stats.highSecrets} high)`,
+          "",
+          "=== JS FILES ===",
+          ...jsAnalysis.jsFiles.map(f =>
+            `  [${f.analyzed ? "ANALYZED" : "SKIPPED "}] ${f.url}  (${(f.size / 1024).toFixed(0)}KB)  →  ${f.endpointCount} endpoints, ${f.secretCount} secrets`
+          ),
+          "",
+          "=== EXTRACTED ENDPOINTS (sample) ===",
+          ...jsAnalysis.endpoints.slice(0, 100).map(e =>
+            `  ${e.method ? `[${e.method}] ` : ""}${e.path}  (${e.file.split("/").pop()})`
+          ),
+          jsAnalysis.endpoints.length > 100 ? `  ... and ${jsAnalysis.endpoints.length - 100} more endpoints` : "",
+          "",
+          "=== SECRETS DETECTED ===",
+          ...jsAnalysis.secrets.map(s =>
+            `  [${s.severity.toUpperCase()}] ${s.type}  |  ${s.file.split("/").pop()}:${s.line}  |  ${s.value}`
+          ),
+        ].join("\n"),
+        jsAnalysis: jsAnalysis as any,
+        vulnerabilities: jsSecretVulns.length ? jsSecretVulns as any : null,
+        ports: null as any, subdomains: null as any, endpoints: null as any,
+        httpInfo: null as any, dnsRecords: null as any, intelligence: null as any,
+      });
+
+      // Insert JS secrets as findings (exclude info-severity)
+      for (const s of jsAnalysis.secrets.filter(sec => sec.severity !== "info")) {
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: `${s.type} exposed in JavaScript`,
+          cve: `JSSEC-${s.type.replace(/[^A-Z0-9]/gi, "-").toUpperCase().slice(0, 20)}`,
+          severity: s.severity as "critical" | "high" | "medium" | "low" | "info",
+          cvssScore: String(cvssMap[s.severity] ?? 5.0),
+          cwe: s.cwe, status: "open",
+          description: `${s.type} found in ${s.file.split("/").pop()}, line ${s.line}. Context: ${s.rawContext.slice(0, 300)}`,
+          remediation: s.remediation,
+        });
+      }
     }
 
     // Deduplicate and insert findings
@@ -1983,6 +2053,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     const allPorts: unknown[] = [], allSubdomains: unknown[] = [], allEndpoints: unknown[] = [];
     const allVulns: unknown[] = [], allDns: unknown[] = [], allIntel: unknown[] = [];
     let httpInfo: unknown = null;
+    let jsAnalysis: unknown = null;
 
     const toolResults = assetResults.map(r => {
       const tr: Record<string, unknown> = {
@@ -1996,6 +2067,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       if (r.dnsRecords)      { tr.dnsRecords       = r.dnsRecords;      allDns.push(...(r.dnsRecords as unknown[])); }
       if (r.intelligence)    { tr.intelligence     = r.intelligence;    allIntel.push(...(r.intelligence as unknown[])); }
       if (r.vulnerabilities) { tr.vulnerabilities  = r.vulnerabilities; allVulns.push(...(r.vulnerabilities as unknown[])); }
+      if (r.jsAnalysis)      { tr.jsAnalysis       = r.jsAnalysis;      jsAnalysis = r.jsAnalysis; }
       return tr;
     });
 
@@ -2028,6 +2100,7 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
       },
       ports, subdomains: subs, endpoints: eps, httpInfo, dnsRecords: dns,
       intelligence: intel, vulnerabilities: vulns, secrets, cves, headerIssues,
+      jsAnalysis,
       toolResults: toolResults.sort((a, b) => ((a.phase as number) - (b.phase as number))),
       configuredTools,
     };

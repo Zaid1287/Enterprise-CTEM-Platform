@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronDown, ChevronRight, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download, Camera, X, Tag,
+  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
 
-type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies";
+type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js";
 
 function downloadScanReportPdf(scan: any, assetReports: any[]) {
   const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
@@ -462,6 +462,7 @@ export default function ScanReportPage() {
     { key: "http",         label: "HTTP Info",      icon: Wifi },
     { key: "dns",          label: "DNS Records",    icon: Database,      count: summary.dnsRecords },
     { key: "endpoints",    label: "Endpoints",      icon: Search,        count: summary.endpoints },
+    { key: "js",           label: "JavaScript",     icon: Code,          count: selectedAsset?.jsAnalysis?.stats?.totalSecrets ?? undefined },
     { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
     ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
   ];
@@ -1161,6 +1162,11 @@ export default function ScanReportPage() {
               {/* Endpoints tab */}
               {assetTab === "endpoints" && (
                 <EndpointsTab endpoints={selectedAsset.endpoints ?? []} />
+              )}
+
+              {/* JavaScript Analysis tab */}
+              {assetTab === "js" && (
+                <JsAnalysisTab jsAnalysis={selectedAsset.jsAnalysis ?? null} />
               )}
 
               {/* Screenshots tab */}
@@ -2037,6 +2043,174 @@ function DnsTab({ records }: { records: any[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── JavaScript Analysis Tab ────────────────────────────────────────────────────
+
+const SEV_COLORS: Record<string, string> = {
+  critical: "bg-red-500/15 text-red-400 border-red-500/30",
+  high:     "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  medium:   "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  low:      "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  info:     "bg-accent/60 text-muted-foreground border-border",
+};
+
+function JsAnalysisTab({ jsAnalysis }: { jsAnalysis: any }) {
+  const [section, setSection] = useState<"secrets" | "endpoints" | "files">("secrets");
+  const [search, setSearch] = useState("");
+
+  if (!jsAnalysis || jsAnalysis.stats?.analyzedFiles === 0) {
+    return (
+      <div className="text-center py-10 text-muted-foreground space-y-2">
+        <Code className="w-8 h-8 mx-auto opacity-30" />
+        <p className="text-sm">No JavaScript files were analyzed</p>
+        <p className="text-xs text-muted-foreground/70">Run a new scan — JS Analysis runs automatically on web assets.</p>
+      </div>
+    );
+  }
+
+  const stats = jsAnalysis.stats ?? {};
+  const jsFiles: any[]   = jsAnalysis.jsFiles ?? [];
+  const endpoints: any[] = jsAnalysis.endpoints ?? [];
+  const secrets: any[]   = jsAnalysis.secrets ?? [];
+
+  const filteredSecrets   = secrets.filter(s => !search || s.type?.toLowerCase().includes(search.toLowerCase()) || s.file?.includes(search));
+  const filteredEndpoints = endpoints.filter(e => !search || e.path?.toLowerCase().includes(search.toLowerCase()) || e.file?.includes(search));
+  const filteredFiles     = jsFiles.filter(f => !search || f.url?.includes(search));
+
+  return (
+    <div className="space-y-4">
+      {/* Stats bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "JS Files",             value: stats.totalFiles ?? 0,      sub: `${stats.analyzedFiles ?? 0} analyzed`, icon: FileCode,    color: "text-primary" },
+          { label: "Endpoints Extracted",  value: stats.totalEndpoints ?? 0,  sub: "via LinkFinder",                        icon: Search,      color: "text-blue-400" },
+          { label: "Secrets Detected",     value: stats.totalSecrets ?? 0,    sub: `${stats.criticalSecrets ?? 0} critical`, icon: ShieldAlert, color: stats.criticalSecrets > 0 ? "text-red-400" : "text-orange-400" },
+          { label: "High Severity",        value: stats.highSecrets ?? 0,     sub: "need immediate action",                 icon: AlertTriangle, color: "text-orange-400" },
+        ].map(s => (
+          <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <s.icon className={cn("w-3.5 h-3.5", s.color)} />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">{s.label}</span>
+            </div>
+            <p className={cn("text-xl font-bold", s.color)}>{s.value}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Section tabs + search */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {(["secrets", "endpoints", "files"] as const).map(s => (
+          <button
+            key={s}
+            onClick={() => { setSection(s); setSearch(""); }}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border",
+              section === s
+                ? "bg-primary/15 text-primary border-primary/30"
+                : "bg-accent/30 text-muted-foreground border-border hover:text-foreground"
+            )}
+          >
+            {s === "secrets" ? `Secrets (${secrets.length})` : s === "endpoints" ? `Endpoints (${endpoints.length})` : `JS Files (${jsFiles.length})`}
+          </button>
+        ))}
+        <div className="ml-auto flex items-center gap-1.5 bg-accent/30 border border-border rounded-lg px-2.5 py-1.5">
+          <Search className="w-3 h-3 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter…"
+            className="bg-transparent text-xs outline-none placeholder:text-muted-foreground/60 w-36"
+          />
+          {search && <button onClick={() => setSearch("")} className="text-muted-foreground hover:text-foreground"><X className="w-3 h-3" /></button>}
+        </div>
+      </div>
+
+      {/* ── Secrets section ── */}
+      {section === "secrets" && (
+        filteredSecrets.length === 0
+          ? <EmptyState message="No secrets detected in JavaScript files" icon={ShieldAlert} />
+          : (
+            <div className="space-y-2">
+              {filteredSecrets.map((s: any, i: number) => (
+                <div key={i} className="bg-accent/10 border border-border rounded-lg p-3 space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5 uppercase tracking-wide", SEV_COLORS[s.severity ?? "info"])}>
+                      {s.severity}
+                    </span>
+                    <span className="text-sm font-semibold text-foreground">{s.type}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">{s.cwe}</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                    <FileCode className="w-3 h-3 shrink-0" />
+                    <span className="font-mono text-[10px] text-primary/80 truncate max-w-[360px]">{s.file?.split("/").pop() ?? s.file}</span>
+                    {s.line > 0 && <span className="text-muted-foreground/60">line {s.line}</span>}
+                    <span className="font-mono text-[10px] bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5 text-red-400">{s.value}</span>
+                  </div>
+                  {s.rawContext && (
+                    <p className="font-mono text-[10px] bg-muted/40 rounded px-2 py-1.5 text-muted-foreground break-all leading-relaxed">{s.rawContext}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground/80 leading-relaxed">
+                    <span className="text-orange-400 font-medium">Remediation:</span> {s.remediation}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )
+      )}
+
+      {/* ── Endpoints section ── */}
+      {section === "endpoints" && (
+        filteredEndpoints.length === 0
+          ? <EmptyState message="No endpoints extracted from JavaScript files" icon={Search} />
+          : (
+            <div className="space-y-1">
+              {filteredEndpoints.slice(0, 500).map((e: any, i: number) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-1.5 bg-accent/10 border border-border/40 rounded-lg text-xs hover:bg-accent/20 transition-colors">
+                  {e.method
+                    ? <span className="text-[10px] font-bold text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 rounded px-1.5 py-0.5 min-w-[36px] text-center">{e.method}</span>
+                    : <span className="text-[10px] text-muted-foreground/40 min-w-[36px]">—</span>
+                  }
+                  <span className="font-mono text-[11px] text-foreground flex-1 truncate">{e.path}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground/60 shrink-0 hidden sm:block">{e.file?.split("/").pop()}</span>
+                </div>
+              ))}
+              {filteredEndpoints.length > 500 && (
+                <p className="text-xs text-muted-foreground text-center pt-1">… and {filteredEndpoints.length - 500} more</p>
+              )}
+            </div>
+          )
+      )}
+
+      {/* ── JS Files section ── */}
+      {section === "files" && (
+        filteredFiles.length === 0
+          ? <EmptyState message="No JavaScript files found" icon={FileCode} />
+          : (
+            <div className="space-y-1">
+              {filteredFiles.map((f: any, i: number) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-2 bg-accent/10 border border-border/40 rounded-lg text-xs hover:bg-accent/20 transition-colors group">
+                  <FileCode className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                  <span className="font-mono text-[10px] text-foreground flex-1 truncate">{f.url}</span>
+                  <div className="flex items-center gap-2 shrink-0 text-muted-foreground">
+                    <span>{f.analyzed ? `${(f.size / 1024).toFixed(0)}KB` : "skipped"}</span>
+                    {f.endpointCount > 0 && <span className="text-blue-400">{f.endpointCount} ep</span>}
+                    {f.secretCount > 0 && <span className="text-red-400 font-medium">{f.secretCount} secrets</span>}
+                    <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-bold", f.analyzed ? "text-green-400 border-green-500/30 bg-green-500/10" : "text-muted-foreground border-border")}>
+                      {f.analyzed ? "OK" : "SKIP"}
+                    </span>
+                    <a href={f.url} target="_blank" rel="noreferrer" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+      )}
     </div>
   );
 }
