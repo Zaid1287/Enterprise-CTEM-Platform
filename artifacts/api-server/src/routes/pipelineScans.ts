@@ -21,6 +21,7 @@ import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, 
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
+import { logger } from "../lib/logger";
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -1479,43 +1480,53 @@ async function executePipeline(
       }
 
       // ── Auto-store technology detections for this asset ──────────────────
-      if (detectedTechs.length > 0) {
-        await db.delete(technologyDetectionsTable)
-          .where(and(eq(technologyDetectionsTable.tenantId, tenantId), eq(technologyDetectionsTable.assetId, asset.id)));
-        await db.insert(technologyDetectionsTable).values(
-          detectedTechs.map(t => ({
-            tenantId,
-            assetId: asset.id,
-            scanId,
-            technology: t.name,
-            slug: t.slug,
-            category: t.category,
-            version: t.version ?? null,
-            confidence: t.confidence,
-            website: t.website ?? null,
-            cpe: t.cpe ?? null,
-            icon: t.icon ?? null,
-          }))
-        );
+      const validTechs = detectedTechs.filter(t => t.name && t.slug && t.category);
+      if (validTechs.length > 0) {
+        try {
+          await db.delete(technologyDetectionsTable)
+            .where(and(eq(technologyDetectionsTable.tenantId, tenantId), eq(technologyDetectionsTable.assetId, asset.id)));
+          await db.insert(technologyDetectionsTable).values(
+            validTechs.map(t => ({
+              tenantId,
+              assetId: asset.id,
+              scanId,
+              technology: t.name,
+              slug: t.slug,
+              category: t.category,
+              version: t.version ?? null,
+              confidence: t.confidence ?? 100,
+              website: t.website ?? null,
+              cpe: t.cpe ?? null,
+              icon: t.icon ?? null,
+            }))
+          );
+        } catch (techErr) {
+          logger.warn({ err: techErr, assetId: asset.id }, "Technology detections insert failed (non-fatal)");
+        }
       }
 
       // ── Auto-store screenshots for this asset ─────────────────────────
-      if (capturedPages.length > 0) {
-        await db.delete(screenshotsTable)
-          .where(and(eq(screenshotsTable.tenantId, tenantId), eq(screenshotsTable.assetId, asset.id)));
-        await db.insert(screenshotsTable).values(
-          capturedPages.map(p => ({
-            tenantId,
-            assetId: asset.id,
-            scanId,
-            url:            p.url,
-            pageType:       p.pageType,
-            screenshotData: p.screenshotData,
-            title:          p.title ?? null,
-            statusCode:     p.statusCode ?? null,
-            findings:       p.findings,
-          }))
-        );
+      const validPages = capturedPages.filter(p => p.screenshotData && p.screenshotData.length > 0 && p.url && p.pageType);
+      if (validPages.length > 0) {
+        try {
+          await db.delete(screenshotsTable)
+            .where(and(eq(screenshotsTable.tenantId, tenantId), eq(screenshotsTable.assetId, asset.id)));
+          await db.insert(screenshotsTable).values(
+            validPages.map(p => ({
+              tenantId,
+              assetId: asset.id,
+              scanId,
+              url:            p.url,
+              pageType:       p.pageType,
+              screenshotData: p.screenshotData,
+              title:          p.title ?? null,
+              statusCode:     p.statusCode ?? null,
+              findings:       p.findings ?? null,
+            }))
+          );
+        } catch (ssErr) {
+          logger.warn({ err: ssErr, assetId: asset.id }, "Screenshots insert failed (non-fatal)");
+        }
       }
 
       const headerVulns = analyzeSecurityHeaders(httpInfo);
@@ -2308,7 +2319,8 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
           .where(eq(scansTable.id, scan.id));
       }
       await logAudit(tenantId, userId as any, "scan.pipeline_run", "scan", scan.id, { assetCount: configs.length, findingsCount });
-    } catch {
+    } catch (err) {
+      logger.error({ err, scanId: scan.id }, "Pipeline scan execution failed");
       await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
         .where(eq(scansTable.id, scan.id)).catch(() => {});
     }
@@ -2546,7 +2558,8 @@ router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: Aut
       }
       await db.update(scanSchedulesTable).set({ lastRunAt: new Date(), lastScanId: scan.id })
         .where(eq(scanSchedulesTable.id, scheduleId));
-    } catch {
+    } catch (err) {
+      logger.error({ err, scanId: scan.id }, "Scheduled pipeline scan execution failed");
       await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
         .where(eq(scansTable.id, scan.id)).catch(() => {});
     }

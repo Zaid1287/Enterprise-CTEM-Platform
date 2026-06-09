@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
 import {
   useGetScanAssetReport, useGetScan, useStopScan,
@@ -17,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadAsPdf } from "@/lib/generatePdf";
+import { getToken } from "@/lib/auth";
 
 type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud" | "secretshunt" | "dirfuzz" | "nuclei";
 
@@ -167,10 +169,9 @@ function LiveProgressView({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    const token = sessionStorage.getItem("access_token");
-
     async function fetchProgress() {
       try {
+        const token = getToken();
         const res = await fetch(`/api/scans/${scanId}/progress`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
@@ -373,6 +374,8 @@ export default function ScanReportPage() {
   const [stopping, setStopping] = useState(false);
   const { user } = useAuth();
   const isClient = user?.role === "client";
+  const queryClient = useQueryClient();
+  const prevScanStatusRef = useRef<string | undefined>(undefined);
 
   const { data: scanData, refetch: refetchScan } = useGetScan(scanId, {
     query: { queryKey: getGetScanQueryKey(scanId), refetchInterval: (q) => {
@@ -389,11 +392,20 @@ export default function ScanReportPage() {
       refetchInterval: (q) => {
         const data = q.state.data as any[];
         if (data && data.length > 0) return false;
-        if (scanStatus === "running" || scanStatus === "pending") return 3000;
+        if (["running", "pending", "unknown", "completed"].includes(scanStatus)) return 4000;
         return false;
       },
     },
   });
+
+  useEffect(() => {
+    const prev = prevScanStatusRef.current;
+    prevScanStatusRef.current = scanStatus;
+    if (prev === "running" && (scanStatus === "completed" || scanStatus === "failed")) {
+      queryClient.invalidateQueries({ queryKey: getGetScanAssetReportQueryKey(scanId) });
+    }
+  }, [scanStatus, scanId, queryClient]);
+
   const stopMutation = useStopScan();
 
   async function handleStop() {
