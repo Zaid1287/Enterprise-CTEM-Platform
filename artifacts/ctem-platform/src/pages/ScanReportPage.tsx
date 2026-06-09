@@ -481,126 +481,221 @@ export default function ScanReportPage() {
   ]));
   const displayedTool = selectedTool ?? allToolNames[0] ?? null;
 
+  // ── Derived scan-level metrics ────────────────────────────────────────────
+  const totalFindings   = assetReports.reduce((a: number, r: any) => a + (r.summary?.vulnerabilities ?? 0), 0);
+  const totalCritHigh   = assetReports.reduce((a: number, r: any) => a + (r.summary?.criticalVulns ?? 0) + (r.summary?.highVulns ?? 0), 0);
+  const durationStr     = (scan?.startedAt && scan?.completedAt)
+    ? formatDuration(new Date(scan.startedAt).getTime(), new Date(scan.completedAt).getTime())
+    : scanStatus === "running" ? "In progress" : "—";
+
+  const STATUS_META: Record<string, { bar: string; bg: string; border: string; text: string; label: string }> = {
+    completed: { bar: "bg-green-500",  bg: "bg-green-500/10",  border: "border-green-500/30",  text: "text-green-400",        label: "Completed" },
+    running:   { bar: "bg-blue-500",   bg: "bg-blue-500/10",   border: "border-blue-500/30",   text: "text-blue-400",         label: "Running"   },
+    pending:   { bar: "bg-amber-500",  bg: "bg-amber-500/10",  border: "border-amber-500/30",  text: "text-amber-400",        label: "Pending"   },
+    cancelled: { bar: "bg-muted-foreground/40", bg: "bg-muted", border: "border-border", text: "text-muted-foreground", label: "Cancelled" },
+  };
+  const sm = STATUS_META[scanStatus] ?? STATUS_META.completed;
+
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href="/scan-reports">
-          <button className="w-8 h-8 rounded-lg bg-accent/60 hover:bg-accent flex items-center justify-center transition-colors">
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-        </Link>
-        <div>
-          <h1 className="text-lg font-semibold">{scan?.name ?? `Pipeline Scan Report #${scanId}`}</h1>
-          <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-            <p className="text-xs text-muted-foreground">{assetReports.length} assets · {assetReports.reduce((acc: number, a: any) => acc + (a.summary?.vulnerabilities ?? 0), 0)} total findings</p>
-            {scan?.startedAt && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="w-3 h-3" />
-                Started {new Date(scan.startedAt).toLocaleString()}
-              </span>
-            )}
-            {scan?.completedAt && scan?.startedAt && (
-              <span className="text-xs text-muted-foreground">
-                · Duration: <span className="text-foreground font-medium">{formatDuration(new Date(scan.startedAt).getTime(), new Date(scan.completedAt).getTime())}</span>
-              </span>
-            )}
-            {scan?.completedAt && (
-              <span className="text-xs text-muted-foreground">
-                · Completed {new Date(scan.completedAt).toLocaleTimeString()}
-              </span>
-            )}
-          </div>
+    <div className="space-y-5">
+
+      {/* ── Breadcrumb + actions ─────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Link href="/scan-reports">
+            <button className="flex items-center gap-1.5 hover:text-foreground transition-colors">
+              <ChevronLeft className="w-3.5 h-3.5" /> Scan Reports
+            </button>
+          </Link>
+          <span className="opacity-40">/</span>
+          <span className="text-foreground/70 truncate max-w-sm">{scan?.name ?? `Scan #${scanId}`}</span>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex items-center gap-2">
           {(scanStatus === "running" || scanStatus === "pending") && (
-            <Button
-              size="sm" variant="outline"
+            <Button size="sm" variant="outline"
               className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10"
-              onClick={handleStop}
-              disabled={stopping}
-            >
+              onClick={handleStop} disabled={stopping}>
               {stopping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
               Stop Scan
             </Button>
           )}
-          {scanStatus === "running" && (
-            <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs px-2.5 py-1 rounded-full">
-              <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
-            </div>
-          )}
           {scanStatus === "completed" && (
-            <>
-              <Button
-                size="sm" variant="outline" className="h-7 text-xs gap-1.5"
-                onClick={() => downloadScanReportPdf(scan, assetReports)}
-              >
-                <Download className="w-3.5 h-3.5" /> Download Report
-              </Button>
-              <div className="flex items-center gap-1.5 bg-green-500/10 border border-green-500/30 text-green-400 text-xs px-2.5 py-1 rounded-full">
-                <CheckCircle2 className="w-3 h-3" /> Completed
-              </div>
-            </>
-          )}
-          {scanStatus === "cancelled" && (
-            <div className="flex items-center gap-1.5 bg-muted border border-border text-muted-foreground text-xs px-2.5 py-1 rounded-full">
-              <XCircle className="w-3 h-3" /> Cancelled
-            </div>
-          )}
-          {(scanStatus === "pending") && (
-            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs px-2.5 py-1 rounded-full">
-              <Loader2 className="w-3 h-3 animate-spin" /> Pending…
-            </div>
+            <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+              onClick={() => downloadScanReportPdf(scan, assetReports)}>
+              <Download className="w-3.5 h-3.5" /> Download Report
+            </Button>
           )}
         </div>
       </div>
 
-      {/* Asset tabs (left) + content (right) */}
-      <div className="flex gap-4 items-start">
-
-        {/* Asset list */}
-        <div className="w-56 shrink-0 space-y-1">
-          <div className="flex items-center justify-between px-1 mb-2">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Assets Scanned</p>
-            {scanStatus === "running" && (
-              <span className="flex items-center gap-1 text-[10px] text-blue-400">
-                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Live
-              </span>
-            )}
-          </div>
-          {assetReports.map((asset: any, idx: number) => {
-            const critVulns = asset.summary?.criticalVulns ?? 0;
-            const highVulns = asset.summary?.highVulns ?? 0;
-            const secretsNum = (asset.secrets ?? []).length;
-            return (
-              <button
-                key={asset.assetId}
-                onClick={() => { setSelectedAssetIdx(idx); setAssetTab("ports"); setSelectedTool(null); }}
-                className={cn(
-                  "w-full text-left rounded-lg px-3 py-2.5 transition-colors border",
-                  idx === selectedAssetIdx
-                    ? "bg-primary/10 border-primary/30 text-foreground"
-                    : "bg-card border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+      {/* ── Hero card ─────────────────────────────────────────────────────── */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className={cn("h-1", sm.bar)} />
+        <div className="p-5">
+          <div className="flex items-start gap-4">
+            <div className={cn("p-3 rounded-xl border shrink-0", sm.bg, sm.border)}>
+              <Shield className={cn("w-6 h-6", sm.text)} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <span className={cn("text-[10px] flex items-center gap-1 px-2 py-0.5 rounded-md font-bold uppercase border", sm.bg, sm.text, sm.border)}>
+                  {scanStatus === "running"   && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                  {scanStatus === "completed" && <CheckCircle2 className="w-2.5 h-2.5" />}
+                  {scanStatus === "cancelled" && <XCircle className="w-2.5 h-2.5" />}
+                  {sm.label}
+                </span>
+                <span className="text-[10px] bg-accent/60 border border-border px-2 py-0.5 rounded-md text-muted-foreground">
+                  {assetReports.length} asset{assetReports.length !== 1 ? "s" : ""}
+                </span>
+                {totalFindings > 0 && (
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-md font-semibold border",
+                    totalCritHigh > 0 ? "bg-red-500/10 text-red-400 border-red-500/30" : "bg-orange-500/10 text-orange-400 border-orange-500/30")}>
+                    {totalFindings} finding{totalFindings !== 1 ? "s" : ""}
+                  </span>
                 )}
-              >
-                <p className="text-sm font-medium truncate">{asset.assetName}</p>
-                <p className="text-[10px] text-muted-foreground truncate mt-0.5">{asset.assetValue}</p>
-                <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                  <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1">{asset.summary?.openPorts ?? 0} ports</span>
-                  {critVulns > 0 && <span className="text-[10px] bg-red-500/15 text-red-400 rounded px-1">{critVulns} crit</span>}
-                  {highVulns > 0 && !critVulns && <span className="text-[10px] bg-orange-500/15 text-orange-400 rounded px-1">{highVulns} high</span>}
-                  {secretsNum > 0 && <span className="text-[10px] bg-yellow-500/15 text-yellow-400 rounded px-1"><Key className="w-2 h-2 inline mr-0.5" />{secretsNum}</span>}
+                {totalCritHigh > 0 && (
+                  <span className="text-[10px] bg-red-500/15 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-md font-bold">
+                    {totalCritHigh} critical/high
+                  </span>
+                )}
+              </div>
+              <h1 className="text-base font-semibold leading-snug">{scan?.name ?? `Pipeline Scan Report #${scanId}`}</h1>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                {scan?.startedAt && `Started ${new Date(scan.startedAt).toLocaleString()}`}
+                {scan?.completedAt && ` · Completed ${new Date(scan.completedAt).toLocaleTimeString()}`}
+              </p>
+            </div>
+          </div>
+
+          {/* Score tiles */}
+          <div className="grid grid-cols-3 gap-3 mt-5">
+            <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
+              <div className="flex items-center justify-center gap-1.5 mb-2">
+                <Globe className="w-3.5 h-3.5 text-primary" />
+                <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Assets</span>
+              </div>
+              <p className="text-3xl font-bold text-primary">{assetReports.length}</p>
+              <p className="text-[10px] text-muted-foreground/50 mt-1">Scanned</p>
+            </div>
+            <div className={cn("border rounded-xl p-4 text-center",
+              totalCritHigh > 0 ? "bg-red-500/5 border-red-500/30" : "bg-muted/30 border-border")}>
+              <div className="flex items-center justify-center gap-1.5 mb-2">
+                <AlertTriangle className={cn("w-3.5 h-3.5", totalCritHigh > 0 ? "text-red-400" : "text-muted-foreground")} />
+                <span className={cn("text-[10px] font-semibold uppercase tracking-wider",
+                  totalCritHigh > 0 ? "text-red-400" : "text-muted-foreground")}>Critical / High</span>
+              </div>
+              <p className={cn("text-3xl font-bold", totalCritHigh > 0 ? "text-red-400" : "text-muted-foreground/30")}>
+                {totalCritHigh}
+              </p>
+              <p className="text-[10px] text-muted-foreground/50 mt-1">{totalFindings} total findings</p>
+            </div>
+            <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
+              <div className="flex items-center justify-center gap-1.5 mb-2">
+                <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Duration</span>
+              </div>
+              <p className="text-2xl font-bold text-foreground tabular-nums">{durationStr}</p>
+              <p className="text-[10px] text-muted-foreground/50 mt-1">Scan time</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Two-column body ───────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
+
+        {/* ── Left sidebar ──────────────────────────── */}
+        <div className="space-y-4">
+
+          {/* Asset list */}
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border/60 bg-muted/20">
+              <div className="flex items-center gap-2">
+                <Network className="w-3.5 h-3.5 text-primary" />
+                <h2 className="text-xs font-semibold uppercase tracking-wide">Assets Scanned</h2>
+              </div>
+              {scanStatus === "running" && (
+                <span className="flex items-center gap-1 text-[10px] text-blue-400">
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" /> Live
+                </span>
+              )}
+            </div>
+            <div className="p-2 space-y-0.5">
+              {assetReports.map((asset: any, idx: number) => {
+                const critVulns = asset.summary?.criticalVulns ?? 0;
+                const highVulns = asset.summary?.highVulns ?? 0;
+                const secretsNum = (asset.secrets ?? []).length;
+                return (
+                  <button
+                    key={asset.assetId}
+                    onClick={() => { setSelectedAssetIdx(idx); setAssetTab("ports"); setSelectedTool(null); }}
+                    className={cn(
+                      "w-full text-left rounded-lg px-3 py-2.5 transition-colors border",
+                      idx === selectedAssetIdx
+                        ? "bg-primary/10 border-primary/30 text-foreground"
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                    )}
+                  >
+                    <p className="text-sm font-medium truncate">{asset.assetName}</p>
+                    <p className="text-[10px] text-muted-foreground truncate mt-0.5">{asset.assetValue}</p>
+                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                      <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1">{asset.summary?.openPorts ?? 0} ports</span>
+                      {critVulns > 0 && <span className="text-[10px] bg-red-500/15 text-red-400 rounded px-1">{critVulns} crit</span>}
+                      {highVulns > 0 && !critVulns && <span className="text-[10px] bg-orange-500/15 text-orange-400 rounded px-1">{highVulns} high</span>}
+                      {secretsNum > 0 && <span className="text-[10px] bg-yellow-500/15 text-yellow-400 rounded px-1"><Key className="w-2 h-2 inline mr-0.5" />{secretsNum}</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Selected asset summary */}
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-border/60 bg-muted/20">
+              <Server className="w-3.5 h-3.5 text-primary" />
+              <h2 className="text-xs font-semibold uppercase tracking-wide">Asset Summary</h2>
+            </div>
+            <div className="divide-y divide-border/40">
+              {([
+                { label: "Open Ports",  value: summary.openPorts ?? 0,                    highlight: false },
+                { label: "CVEs",        value: (selectedAsset?.cves ?? []).length,         highlight: (selectedAsset?.cves ?? []).length > 0 },
+                { label: "Subdomains",  value: summary.subdomains ?? 0,                    highlight: false },
+                { label: "DNS Records", value: summary.dnsRecords ?? 0,                    highlight: false },
+                { label: "Endpoints",   value: summary.endpoints ?? 0,                     highlight: false },
+                { label: "Secrets",     value: secretsCount,                               highlight: secretsCount > 0 },
+                { label: "Tools Run",   value: summary.toolsRun ?? 0,                      highlight: false },
+              ] as { label: string; value: number; highlight: boolean }[]).map(({ label, value, highlight }) => (
+                <div key={label} className="flex items-center justify-between px-5 py-2">
+                  <span className="text-[11px] text-muted-foreground">{label}</span>
+                  <span className={cn("text-[11px] font-bold tabular-nums", highlight ? "text-red-400" : "text-foreground")}>{value}</span>
                 </div>
-              </button>
-            );
-          })}
+              ))}
+              {summary.waf && summary.waf !== "none" && (
+                <div className="flex items-center justify-between px-5 py-2">
+                  <span className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                    <Shield className="w-3 h-3 text-green-400" /> WAF
+                  </span>
+                  <span className="text-[11px] font-semibold text-green-400">{summary.waf}</span>
+                </div>
+              )}
+              {summary.cdn && (
+                <div className="flex items-center justify-between px-5 py-2">
+                  <span className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                    <Cpu className="w-3 h-3 text-blue-400" /> CDN
+                  </span>
+                  <span className="text-[11px] font-semibold text-blue-400">{summary.cdn}</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Main content */}
-        <div className="flex-1 min-w-0 space-y-3">
+        {/* ── Right main: 3 cols ────────────────────── */}
+        <div className="lg:col-span-3 space-y-4">
 
-          {/* Summary stats */}
-          <div className="grid grid-cols-4 gap-3">
+          {/* Per-asset stat cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard icon={Network} label="Open Ports" value={summary.openPorts ?? 0} />
             <StatCard icon={AlertTriangle} label="CVEs Found" value={(selectedAsset?.cves ?? []).length}
               className={(summary.criticalVulns ?? 0) > 0 ? "border-red-500/30" : ""} />
@@ -609,29 +704,7 @@ export default function ScanReportPage() {
             <StatCard icon={Globe} label="Subdomains" value={summary.subdomains ?? 0} />
           </div>
 
-          {/* WAF / CDN info bar */}
-          {(summary.waf || summary.cdn) && (
-            <div className="bg-card border border-border rounded-xl px-4 py-2.5 flex items-center gap-4 text-xs text-muted-foreground">
-              {summary.waf && summary.waf !== "none" && (
-                <span className="flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-green-400" />
-                  WAF: <span className="text-foreground font-medium">{summary.waf}</span>
-                </span>
-              )}
-              {summary.cdn && (
-                <span className="flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5 text-blue-400" />
-                  CDN: <span className="text-foreground font-medium">{summary.cdn}</span>
-                </span>
-              )}
-              <span className="flex items-center gap-1.5 ml-auto">
-                <Server className="w-3.5 h-3.5" />
-                {summary.toolsRun ?? 0} tools run
-              </span>
-            </div>
-          )}
-
-          {/* Tabs */}
+          {/* Tabs card */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="flex border-b border-border overflow-x-auto">
               {assetTabs.map(t => (
