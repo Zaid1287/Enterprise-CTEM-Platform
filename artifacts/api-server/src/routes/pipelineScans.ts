@@ -51,6 +51,99 @@ interface AssetProgress {
 
 const scanProgressMap = new Map<number, AssetProgress[]>();
 
+// ── Scan execution queue ───────────────────────────────────────────────────────
+// MAX_CONCURRENT_SCANS: max number of scans running simultaneously across all tenants.
+// MAX_PARALLEL_ASSETS:  max number of assets scanned in parallel within a single scan.
+// Raise these only if the host has enough CPU/RAM — each asset spawns multiple child processes.
+const MAX_CONCURRENT_SCANS = 5;
+const MAX_PARALLEL_ASSETS   = 3;
+
+interface QueueEntry {
+  scanId: number;
+  tenantId: number;
+  userId: number;
+  configs: AssetToolConfigItem[];
+  allTools: (typeof securityToolsTable.$inferSelect)[];
+  enabledTools: (typeof securityToolsTable.$inferSelect)[];
+  scheduleId?: number;
+  resolve: () => void;
+}
+
+const scanQueue: QueueEntry[] = [];
+let activeScans = 0;
+
+function queuePosition(scanId: number): number {
+  const idx = scanQueue.findIndex(e => e.scanId === scanId);
+  return idx === -1 ? 0 : idx + 1;
+}
+
+function drainQueue() {
+  while (activeScans < MAX_CONCURRENT_SCANS && scanQueue.length > 0) {
+    const entry = scanQueue.shift()!;
+    activeScans++;
+    logger.info({ scanId: entry.scanId, activeScans, remaining: scanQueue.length }, "Scan dequeued — starting");
+    db.update(scansTable)
+      .set({ status: "running", startedAt: new Date() })
+      .where(eq(scansTable.id, entry.scanId))
+      .catch(err => logger.error({ err, scanId: entry.scanId }, "Failed to mark scan running"));
+    entry.resolve();
+  }
+}
+
+async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> {
+  return new Promise<void>(resolve => {
+    scanQueue.push({ ...entry, resolve });
+    logger.info({ scanId: entry.scanId, queueLength: scanQueue.length }, "Scan queued");
+    drainQueue();
+  }).then(async () => {
+    try {
+      const { findingsCount } = await executePipeline(
+        entry.tenantId, entry.scanId, entry.configs, entry.allTools, entry.enabledTools,
+      );
+      const current = await db.select({ status: scansTable.status }).from(scansTable)
+        .where(eq(scansTable.id, entry.scanId)).then(r => r[0]);
+      if (current?.status !== "cancelled") {
+        await db.update(scansTable).set({ status: "completed", completedAt: new Date(), findingsCount })
+          .where(eq(scansTable.id, entry.scanId));
+      }
+      if (entry.scheduleId) {
+        await db.update(scanSchedulesTable).set({ lastRunAt: new Date(), lastScanId: entry.scanId })
+          .where(eq(scanSchedulesTable.id, entry.scheduleId));
+      }
+      await logAudit(entry.tenantId, entry.userId as any, "scan.pipeline_run", "scan", entry.scanId, {
+        assetCount: entry.configs.length, findingsCount,
+      });
+      logger.info({ scanId: entry.scanId, findingsCount }, "Scan completed");
+    } catch (err) {
+      logger.error({ err, scanId: entry.scanId }, "Pipeline scan execution failed");
+      await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
+        .where(eq(scansTable.id, entry.scanId)).catch(() => {});
+    } finally {
+      activeScans--;
+      scanProgressMap.delete(entry.scanId);
+      drainQueue();
+    }
+  });
+}
+
+// ── On startup: recover any scans stuck as "running" from a previous crash ────
+setImmediate(async () => {
+  try {
+    const stuckScans = await db.select().from(scansTable)
+      .where(eq(scansTable.status, "running" as string));
+    if (stuckScans.length > 0) {
+      logger.warn({ count: stuckScans.length }, "Recovering scans stuck in running state from crash");
+      for (const scan of stuckScans) {
+        await db.update(scansTable)
+          .set({ status: "failed", completedAt: new Date() })
+          .where(eq(scansTable.id, scan.id));
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to recover stuck scans on startup");
+  }
+});
+
 // Tool → pentesting phase mapping
 const TOOL_PHASE: Record<string, number> = {
   subfinder: 1, dnsx: 1, shuffledns: 1, amass: 1, mapcidr: 1, tldfinder: 1,
@@ -1215,18 +1308,24 @@ async function executePipeline(
   let totalFindings = 0;
   scanProgressMap.set(scanId, []);
 
-  for (const config of assetConfigs) {
+  // ── Parallel asset processing with concurrency cap ────────────────────────
+  // Assets within a scan run MAX_PARALLEL_ASSETS at a time instead of sequentially.
+  // Each asset still runs its own phases sequentially internally.
+  const assetErrors: { assetId: number; err: unknown }[] = [];
+  const findingTotals: number[] = [];
+
+  async function processAsset(config: AssetToolConfigItem): Promise<void> {
     const currentScan = await db.select({ status: scansTable.status }).from(scansTable)
       .where(eq(scansTable.id, scanId)).then(r => r[0]);
-    if (currentScan?.status === "cancelled") break;
+    if (currentScan?.status === "cancelled") return;
 
     const asset = assets.find(a => a.id === config.assetId);
-    if (!asset) continue;
+    if (!asset) return;
 
     const toolsForAsset = config.toolIds.length > 0
       ? allTools.filter(t => config.toolIds.includes(t.id))
       : enabledTools;
-    if (toolsForAsset.length === 0) continue;
+    if (toolsForAsset.length === 0) return;
 
     const target = asset.value;
     const domain = extractDomain(target);
@@ -2212,16 +2311,41 @@ async function executePipeline(
     for (let i = 0; i < deduped.length; i += 50) {
       await db.insert(findingsTable).values(deduped.slice(i, i + 50));
     }
-    totalFindings += deduped.length;
+    findingTotals.push(deduped.length);
 
     // Mark all tools done in case any got stuck
     for (const t of toolProgress) {
       if (t.status === "running" || t.status === "queued") {
-        Object.assign(t, { status: "done", completedAt: now(), detail: "Complete" });
+        Object.assign(t, { status: "done", completedAt: new Date().toISOString(), detail: "Complete" });
       }
     }
   }
 
+  // ── Run assets in parallel, capped at MAX_PARALLEL_ASSETS ─────────────────
+  async function runWithConcurrency(items: AssetToolConfigItem[], concurrency: number) {
+    const queue = [...items];
+    const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (!item) break;
+        try {
+          await processAsset(item);
+        } catch (err) {
+          assetErrors.push({ assetId: item.assetId, err });
+          logger.error({ err, scanId, assetId: item.assetId }, "Asset pipeline failed (non-fatal — continuing other assets)");
+        }
+      }
+    });
+    await Promise.all(workers);
+  }
+
+  await runWithConcurrency(assetConfigs, MAX_PARALLEL_ASSETS);
+
+  if (assetErrors.length > 0) {
+    logger.warn({ scanId, failedAssets: assetErrors.length }, "Some assets failed during parallel scan");
+  }
+
+  totalFindings = findingTotals.reduce((a, b) => a + b, 0);
   return { findingsCount: totalFindings };
 }
 
@@ -2265,10 +2389,17 @@ function toScheduleResponse(s: typeof scanSchedulesTable.$inferSelect) {
 router.get("/scans/:scanId/progress", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const scanId = Number(req.params.scanId);
   if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scan ID" }); return; }
-  const scan = await db.select({ tenantId: scansTable.tenantId }).from(scansTable)
+  const scan = await db.select({ tenantId: scansTable.tenantId, status: scansTable.status }).from(scansTable)
     .where(eq(scansTable.id, scanId)).then(r => r[0]);
   if (!scan || scan.tenantId !== req.user!.tenantId) { res.status(404).json({ error: "Scan not found" }); return; }
-  res.json(scanProgressMap.get(scanId) ?? []);
+  const progress = scanProgressMap.get(scanId) ?? [];
+  const pos = queuePosition(scanId);
+  // Attach queue metadata as a synthetic first entry when scan is waiting
+  if (pos > 0) {
+    (res as any).json({ queued: true, queuePosition: pos, activeScans, maxConcurrent: MAX_CONCURRENT_SCANS, progress });
+    return;
+  }
+  res.json(progress);
 });
 
 // ── POST /scans/pipeline-run ───────────────────────────────────────────────────
@@ -2302,28 +2433,21 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
     res.status(400).json({ error: "No pipeline tools enabled. Configure pipeline steps first." }); return;
   }
 
+  // Insert scan as "queued" — enqueueAndRun will flip it to "running" when a slot opens
+  const willQueue = activeScans >= MAX_CONCURRENT_SCANS;
   const [scan] = await db.insert(scansTable).values({
     tenantId, name: name ?? `Pipeline Scan — ${new Date().toLocaleDateString()}`,
-    type: "pipeline", status: "running", assetIds: configs.map(c => c.assetId), startedAt: new Date(), findingsCount: 0,
+    type: "pipeline", status: willQueue ? "pending" : "running",
+    assetIds: configs.map(c => c.assetId), startedAt: willQueue ? null : new Date(), findingsCount: 0,
   }).returning();
 
-  res.status(201).json({ scanId: scan.id, status: "running", assetCount: configs.length, findingsCount: 0 });
+  res.status(201).json({
+    scanId: scan.id, status: scan.status, assetCount: configs.length, findingsCount: 0,
+    queued: willQueue, queuePosition: willQueue ? scanQueue.length + 1 : 0,
+  });
 
-  setImmediate(async () => {
-    try {
-      const { findingsCount } = await executePipeline(tenantId, scan.id, configs, allTools, enabledTools);
-      const current = await db.select({ status: scansTable.status }).from(scansTable)
-        .where(eq(scansTable.id, scan.id)).then(r => r[0]);
-      if (current?.status !== "cancelled") {
-        await db.update(scansTable).set({ status: "completed", completedAt: new Date(), findingsCount })
-          .where(eq(scansTable.id, scan.id));
-      }
-      await logAudit(tenantId, userId as any, "scan.pipeline_run", "scan", scan.id, { assetCount: configs.length, findingsCount });
-    } catch (err) {
-      logger.error({ err, scanId: scan.id }, "Pipeline scan execution failed");
-      await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
-        .where(eq(scansTable.id, scan.id)).catch(() => {});
-    }
+  setImmediate(() => {
+    enqueueAndRun({ scanId: scan.id, tenantId, userId, configs, allTools, enabledTools }).catch(() => {});
   });
 });
 
@@ -2542,27 +2666,18 @@ router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: Aut
     .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
     .where(and(eq(toolPipelineStepsTable.tenantId, tenantId), eq(toolPipelineStepsTable.isEnabled, true)));
   const enabledTools = pipelineSteps.map(p => p.tool);
+  const willQueue = activeScans >= MAX_CONCURRENT_SCANS;
   const [scan] = await db.insert(scansTable).values({
     tenantId, name: `${schedule.name} — ${new Date().toLocaleDateString()}`,
-    type: "pipeline", status: "running", assetIds: configs.map(c => c.assetId), startedAt: new Date(), findingsCount: 0,
+    type: "pipeline", status: willQueue ? "pending" : "running",
+    assetIds: configs.map(c => c.assetId), startedAt: willQueue ? null : new Date(), findingsCount: 0,
   }).returning();
-  res.status(201).json({ scanId: scan.id, status: "running", assetCount: configs.length, findingsCount: 0 });
-  setImmediate(async () => {
-    try {
-      const { findingsCount } = await executePipeline(tenantId, scan.id, configs, allTools, enabledTools);
-      const current = await db.select({ status: scansTable.status }).from(scansTable)
-        .where(eq(scansTable.id, scan.id)).then(r => r[0]);
-      if (current?.status !== "cancelled") {
-        await db.update(scansTable).set({ status: "completed", completedAt: new Date(), findingsCount })
-          .where(eq(scansTable.id, scan.id));
-      }
-      await db.update(scanSchedulesTable).set({ lastRunAt: new Date(), lastScanId: scan.id })
-        .where(eq(scanSchedulesTable.id, scheduleId));
-    } catch (err) {
-      logger.error({ err, scanId: scan.id }, "Scheduled pipeline scan execution failed");
-      await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
-        .where(eq(scansTable.id, scan.id)).catch(() => {});
-    }
+  res.status(201).json({
+    scanId: scan.id, status: scan.status, assetCount: configs.length, findingsCount: 0,
+    queued: willQueue, queuePosition: willQueue ? scanQueue.length + 1 : 0,
+  });
+  setImmediate(() => {
+    enqueueAndRun({ scanId: scan.id, tenantId, userId, configs, allTools, enabledTools, scheduleId }).catch(() => {});
   });
 });
 
