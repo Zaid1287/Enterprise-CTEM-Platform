@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and, ilike, inArray, desc } from "drizzle-orm";
-import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable } from "@workspace/db";
+import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
   ListFindingsQueryParams, ListFindingCommentsParams,
@@ -20,7 +20,10 @@ function toFindingResponse(
   assetIpAddress?: string | null,
   assetPort?: number | null,
   assetTags?: string[] | null,
+  assetRiskScore?: number | null,
 ) {
+  const SEV_RISK: Record<string, number> = { critical: 90, high: 70, medium: 45, low: 20, info: 10 };
+  const riskScore = assetRiskScore ?? f.riskScore ?? SEV_RISK[f.severity ?? "medium"] ?? 45;
   return {
     id: f.id, tenantId: f.tenantId, assetId: f.assetId,
     assetName: assetName ?? null,
@@ -32,7 +35,7 @@ function toFindingResponse(
     assetTags: assetTags ?? [],
     title: f.title, description: f.description, severity: f.severity, status: f.status,
     cve: f.cve, cvss: f.cvss, epss: f.epss, cwe: f.cwe, isKev: f.isKev,
-    remediation: f.remediation, evidence: f.evidence, riskScore: f.riskScore,
+    remediation: f.remediation, evidence: f.evidence, riskScore,
     createdAt: f.createdAt.toISOString(), updatedAt: f.updatedAt.toISOString(),
   };
 }
@@ -64,11 +67,13 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     assetIpAddress: assetsTable.ipAddress,
     assetPort: assetsTable.port,
     assetTags: assetsTable.tags,
+    assetRiskScore: riskScoresTable.score,
   }).from(findingsTable)
     .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
+    .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
     .where(and(...filters));
-  res.json(findings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags }) =>
-    toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags)));
+  res.json(findings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
+    toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
 });
 
 router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -83,11 +88,13 @@ router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest
     assetIpAddress: assetsTable.ipAddress,
     assetPort: assetsTable.port,
     assetTags: assetsTable.tags,
+    assetRiskScore: riskScoresTable.score,
   }).from(findingsTable)
     .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
+    .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
     .where(and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
   if (!row) { res.status(404).json({ error: "Finding not found" }); return; }
-  res.json(toFindingResponse(row.finding, row.assetName, row.assetValue, row.assetType, row.assetLastScannedAt, row.assetIpAddress, row.assetPort, row.assetTags));
+  res.json(toFindingResponse(row.finding, row.assetName, row.assetValue, row.assetType, row.assetLastScannedAt, row.assetIpAddress, row.assetPort, row.assetTags, row.assetRiskScore));
 });
 
 // ── GET /findings/:findingId/scan-data ─────────────────────────────────────

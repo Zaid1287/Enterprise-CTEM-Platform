@@ -64,13 +64,16 @@ function assetTypeLabel(t: string | null) {
   return capitalize(t.replace(/_/g, " "));
 }
 
-/** Compute importance score 0-100 from CVE data */
+/** Compute importance score 0-100 from CVE data, with severity-based fallback */
 function importanceScore(f: any): number | null {
   const cvss = f.cvss ?? 0;
   const epss = f.epss ?? 0;
   const kev  = f.isKev ? 30 : 0;
-  if (!cvss && !epss && !kev) return null;
-  return Math.min(100, Math.round(kev + (cvss / 10) * 40 + epss * 30));
+  if (cvss || epss || kev) {
+    return Math.min(100, Math.round(kev + (cvss / 10) * 40 + epss * 30));
+  }
+  const SEV: Record<string, number> = { critical: 88, high: 68, medium: 45, low: 22, info: 10 };
+  return SEV[f.severity ?? ""] ?? null;
 }
 
 function ScoreBadge({ score, label }: { score: number | null; label?: string }) {

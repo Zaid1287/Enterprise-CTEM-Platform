@@ -1800,3 +1800,103 @@ export const RunPipelineForAssetResponseItem = zod.object({
 export const RunPipelineForAssetResponse = zod.array(RunPipelineForAssetResponseItem)
 
 
+/**
+ * @summary List brand threat scans
+ */
+export const ListBrandThreatsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "domain": zod.string(),
+  "status": zod.string(),
+  "totalPermutations": zod.number(),
+  "liveCount": zod.number(),
+  "registeredCount": zod.number(),
+  "phishingRisk": zod.string(),
+  "fuzzerBreakdown": zod.object({
+
+}).passthrough().nullish(),
+  "error": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish()
+})
+export const ListBrandThreatsResponse = zod.array(ListBrandThreatsResponseItem)
+
+
+/**
+ * @summary Start a new brand threat scan
+ */
+export const CreateBrandThreatScanBody = zod.object({
+  "domain": zod.string()
+})
+
+export const CreateBrandThreatScanResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "domain": zod.string(),
+  "status": zod.string(),
+  "totalPermutations": zod.number(),
+  "liveCount": zod.number(),
+  "registeredCount": zod.number(),
+  "phishingRisk": zod.string(),
+  "fuzzerBreakdown": zod.object({
+
+}).passthrough().nullish(),
+  "error": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish()
+})
+
+
+/**
+ * @summary Get brand threat scan with results
+ */
+export const GetBrandThreatScanParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetBrandThreatScanResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "domain": zod.string(),
+  "status": zod.string(),
+  "totalPermutations": zod.number(),
+  "liveCount": zod.number(),
+  "registeredCount": zod.number(),
+  "phishingRisk": zod.string(),
+  "fuzzerBreakdown": zod.object({
+
+}).passthrough().nullish(),
+  "error": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish()
+}).and(zod.object({
+  "results": zod.array(zod.object({
+  "id": zod.number(),
+  "scanId": zod.number(),
+  "permutation": zod.string(),
+  "fuzzer": zod.string(),
+  "dnsA": zod.array(zod.string()).nullish(),
+  "dnsMx": zod.array(zod.string()).nullish(),
+  "mxSpf": zod.string().nullish(),
+  "whoisRegistrar": zod.string().nullish(),
+  "whoisCreated": zod.string().nullish(),
+  "whoisCountry": zod.string().nullish(),
+  "riskScore": zod.number(),
+  "isSuspicious": zod.boolean(),
+  "createdAt": zod.string()
+}))
+}))
+
+
+/**
+ * @summary Delete a brand threat scan
+ */
+export const DeleteBrandThreatScanParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteBrandThreatScanResponse = zod.object({
+  "success": zod.boolean().optional()
+})
+
+

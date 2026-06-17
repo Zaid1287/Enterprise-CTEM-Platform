@@ -767,6 +767,47 @@ export interface PipelineScanCreated {
   findingsCount?: number;
 }
 
+export interface NewBrandThreatScan {
+  domain: string;
+}
+
+export type BrandThreatScanFuzzerBreakdown = { [key: string]: unknown } | null;
+
+export interface BrandThreatScan {
+  id: number;
+  tenantId: number;
+  domain: string;
+  status: string;
+  totalPermutations: number;
+  liveCount: number;
+  registeredCount: number;
+  phishingRisk: string;
+  fuzzerBreakdown?: BrandThreatScanFuzzerBreakdown;
+  error?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
+}
+
+export interface BrandThreatResult {
+  id: number;
+  scanId: number;
+  permutation: string;
+  fuzzer: string;
+  dnsA?: string[] | null;
+  dnsMx?: string[] | null;
+  mxSpf?: string | null;
+  whoisRegistrar?: string | null;
+  whoisCreated?: string | null;
+  whoisCountry?: string | null;
+  riskScore: number;
+  isSuspicious: boolean;
+  createdAt: string;
+}
+
+export type BrandThreatScanDetail = BrandThreatScan & {
+  results: BrandThreatResult[];
+};
+
 export type AssetScanReportSummary = { [key: string]: unknown };
 
 export type AssetScanReportToolResultsItem = { [key: string]: unknown };
@@ -838,5 +879,9 @@ export type ListToolRunsParams = {
 toolId?: number;
 assetId?: number;
 status?: string;
+};
+
+export type DeleteBrandThreatScan200 = {
+  success?: boolean;
 };
 

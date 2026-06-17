@@ -9,6 +9,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw, Camera, AlertTriangle, X,
+  ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -66,6 +67,7 @@ export default function AssetDetailPage() {
   const [scanning, setScanning]               = useState(false);
   const [screenshotting, setScreenshotting]   = useState(false);
   const [expandedShot, setExpandedShot]       = useState<any | null>(null);
+  const [findingsPage, setFindingsPage]       = useState(0);
 
   const { data: asset, isLoading } = useGetAsset(id, {
     query: { enabled: !!id, queryKey: getGetAssetQueryKey(id) },
@@ -227,24 +229,58 @@ export default function AssetDetailPage() {
       </div>
 
       {/* Findings */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <h3 className="text-sm font-medium mb-3">Findings ({(findings as any[])?.length ?? 0})</h3>
-        <div className="space-y-2">
-          {(findings as any[] ?? []).map((f: any) => (
-            <div key={f.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
-              <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", severityBgColor(f.severity))}>{f.severity}</span>
-              <Link href={`/findings/${f.id}`}>
-                <span className="text-sm text-primary hover:underline cursor-pointer flex-1 line-clamp-1">{f.title}</span>
-              </Link>
-              {f.isKev && <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-bold">KEV</span>}
-              <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", statusBadgeClass(f.status))}>{capitalize(f.status)}</span>
+      {(() => {
+        const FINDINGS_PER_PAGE = 10;
+        const allF = (findings as any[]) ?? [];
+        const totalPages = Math.max(1, Math.ceil(allF.length / FINDINGS_PER_PAGE));
+        const paged = allF.slice(findingsPage * FINDINGS_PER_PAGE, (findingsPage + 1) * FINDINGS_PER_PAGE);
+        return (
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium">
+                Findings
+                {allF.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground font-normal">({allF.length})</span>}
+              </h3>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => setFindingsPage(p => Math.max(0, p - 1))}
+                    disabled={findingsPage === 0}
+                    className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-xs text-muted-foreground px-1.5 tabular-nums">
+                    {findingsPage + 1} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setFindingsPage(p => Math.min(totalPages - 1, p + 1))}
+                    disabled={findingsPage >= totalPages - 1}
+                    className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
-          ))}
-          {(findings as any[] ?? []).length === 0 && (
-            <p className="text-sm text-muted-foreground">No findings for this asset.</p>
-          )}
-        </div>
-      </div>
+            <div className="space-y-2">
+              {paged.map((f: any) => (
+                <div key={f.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
+                  <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", severityBgColor(f.severity))}>{f.severity}</span>
+                  <Link href={`/findings/${f.id}`}>
+                    <span className="text-sm text-primary hover:underline cursor-pointer flex-1 line-clamp-1">{f.title}</span>
+                  </Link>
+                  {f.isKev && <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-bold">KEV</span>}
+                  <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", statusBadgeClass(f.status))}>{capitalize(f.status)}</span>
+                </div>
+              ))}
+              {allF.length === 0 && (
+                <p className="text-sm text-muted-foreground">No findings for this asset.</p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Technology Detection */}
       <div className="bg-card border border-border rounded-xl p-4">

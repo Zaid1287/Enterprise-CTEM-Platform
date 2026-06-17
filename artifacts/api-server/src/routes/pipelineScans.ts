@@ -148,7 +148,7 @@ setImmediate(async () => {
 const TOOL_PHASE: Record<string, number> = {
   subfinder: 1, dnsx: 1, shuffledns: 1, amass: 1, mapcidr: 1, tldfinder: 1,
   gau: 1, asnmap: 1, cdncheck: 1, uncover: 1, cloud_enum: 1, s3scanner: 1,
-  theHarvester: 1, aix: 1, maltego: 1,
+  theHarvester: 1, aix: 1, maltego: 1, dnstwist: 1,
   naabu: 2, masscan: 2, rustscan: 2,
   httpx: 3, katana: 3, feroxbuster: 3, gobuster: 3, ffuf: 3,
   whatweb: 3, wafw00f: 3, useragent: 3, wappalyzer: 3, webcheck: 3,

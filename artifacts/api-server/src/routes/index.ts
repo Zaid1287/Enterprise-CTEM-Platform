@@ -23,6 +23,7 @@ import userAiSettingsRouter from "./userAiSettings";
 import invitationsRouter from "./invitations";
 import screenshotsRouter from "./screenshots";
 import platformSettingsRouter from "./platformSettings";
+import brandThreatsRouter from "./brandThreats";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use(userAiSettingsRouter);
 router.use(invitationsRouter);
 router.use(screenshotsRouter);
 router.use(platformSettingsRouter);
+router.use(brandThreatsRouter);
 
 export default router;

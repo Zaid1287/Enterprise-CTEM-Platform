@@ -51,6 +51,7 @@ export const BUILTIN_TOOL_DEFS = [
   // ── Parameter Discovery ─────────────────────────────────────────────────────
   { name: "paramspider",  description: "Parameter harvesting tool — mines historical URLs from Wayback Machine and CommonCrawl to extract real query parameters used by the target, crawls live pages for form inputs and href params, auto-runs on every domain scan", category: "web_recon",  githubUrl: "https://github.com/devanshbatham/paramspider",              runCommand: "paramspider -d {target} --level high --quiet" },
   { name: "arjun",        description: "Hidden HTTP parameter discovery — brute-forces ~300 common parameter names against target endpoints using differential response analysis (length change + value reflection detection), identifies parameters not exposed in page HTML", category: "web_recon",  githubUrl: "https://github.com/s0md3v/Arjun",                           runCommand: "arjun -u https://{target} -oJ arjun_output.json" },
+  { name: "dnstwist",     description: "Domain permutation engine for detecting typosquatting and brand impersonation — generates lookalike domain permutations (homoglyphs, transposition, omission, substitution, addition, TLD-swap) and checks live DNS/MX/WHOIS records to identify phishing infrastructure and brand-squatting domains targeting your organization", category: "recon", githubUrl: "https://github.com/elceef/dnstwist", runCommand: "dnstwist {target} -f json --mxcheck --whois" },
 ] as const;
 
 // ── Seed tools for all tenants on startup ─────────────────────────────────────

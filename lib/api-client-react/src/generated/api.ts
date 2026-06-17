@@ -42,12 +42,15 @@ import type {
   AssetUpdate,
   AuditLog,
   AuthResponse,
+  BrandThreatScan,
+  BrandThreatScanDetail,
   ChangePasswordInput,
   ComplianceControl,
   ComplianceControlUpdate,
   ComplianceFramework,
   ComplianceSummary,
   DashboardOverview,
+  DeleteBrandThreatScan200,
   ExposureCount,
   Finding,
   FindingComment,
@@ -65,6 +68,7 @@ import type {
   ListScansParams,
   ListToolRunsParams,
   LoginInput,
+  NewBrandThreatScan,
   PipelineScanCreated,
   PipelineScanInput,
   RefreshTokenInput,
@@ -6980,5 +6984,300 @@ export const useRunPipelineForAsset = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getRunPipelineForAssetMutationOptions(options));
+    }
+
+export const getListBrandThreatsUrl = () => {
+
+
+
+
+  return `/api/brand-threats`
+}
+
+/**
+ * @summary List brand threat scans
+ */
+export const listBrandThreats = async ( options?: RequestInit): Promise<BrandThreatScan[]> => {
+
+  return customFetch<BrandThreatScan[]>(getListBrandThreatsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListBrandThreatsQueryKey = () => {
+    return [
+    `/api/brand-threats`
+    ] as const;
+    }
+
+
+export const getListBrandThreatsQueryOptions = <TData = Awaited<ReturnType<typeof listBrandThreats>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBrandThreats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListBrandThreatsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listBrandThreats>>> = ({ signal }) => listBrandThreats({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listBrandThreats>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListBrandThreatsQueryResult = NonNullable<Awaited<ReturnType<typeof listBrandThreats>>>
+export type ListBrandThreatsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List brand threat scans
+ */
+
+export function useListBrandThreats<TData = Awaited<ReturnType<typeof listBrandThreats>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBrandThreats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListBrandThreatsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateBrandThreatScanUrl = () => {
+
+
+
+
+  return `/api/brand-threats`
+}
+
+/**
+ * @summary Start a new brand threat scan
+ */
+export const createBrandThreatScan = async (newBrandThreatScan: NewBrandThreatScan, options?: RequestInit): Promise<BrandThreatScan> => {
+
+  return customFetch<BrandThreatScan>(getCreateBrandThreatScanUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      newBrandThreatScan,)
+  }
+);}
+
+
+
+
+export const getCreateBrandThreatScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBrandThreatScan>>, TError,{data: BodyType<NewBrandThreatScan>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createBrandThreatScan>>, TError,{data: BodyType<NewBrandThreatScan>}, TContext> => {
+
+const mutationKey = ['createBrandThreatScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createBrandThreatScan>>, {data: BodyType<NewBrandThreatScan>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createBrandThreatScan(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateBrandThreatScanMutationResult = NonNullable<Awaited<ReturnType<typeof createBrandThreatScan>>>
+    export type CreateBrandThreatScanMutationBody = BodyType<NewBrandThreatScan>
+    export type CreateBrandThreatScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Start a new brand threat scan
+ */
+export const useCreateBrandThreatScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBrandThreatScan>>, TError,{data: BodyType<NewBrandThreatScan>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createBrandThreatScan>>,
+        TError,
+        {data: BodyType<NewBrandThreatScan>},
+        TContext
+      > => {
+      return useMutation(getCreateBrandThreatScanMutationOptions(options));
+    }
+
+export const getGetBrandThreatScanUrl = (id: number,) => {
+
+
+
+
+  return `/api/brand-threats/${id}`
+}
+
+/**
+ * @summary Get brand threat scan with results
+ */
+export const getBrandThreatScan = async (id: number, options?: RequestInit): Promise<BrandThreatScanDetail> => {
+
+  return customFetch<BrandThreatScanDetail>(getGetBrandThreatScanUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBrandThreatScanQueryKey = (id: number,) => {
+    return [
+    `/api/brand-threats/${id}`
+    ] as const;
+    }
+
+
+export const getGetBrandThreatScanQueryOptions = <TData = Awaited<ReturnType<typeof getBrandThreatScan>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBrandThreatScan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBrandThreatScanQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrandThreatScan>>> = ({ signal }) => getBrandThreatScan(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBrandThreatScan>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBrandThreatScanQueryResult = NonNullable<Awaited<ReturnType<typeof getBrandThreatScan>>>
+export type GetBrandThreatScanQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get brand threat scan with results
+ */
+
+export function useGetBrandThreatScan<TData = Awaited<ReturnType<typeof getBrandThreatScan>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBrandThreatScan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBrandThreatScanQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getDeleteBrandThreatScanUrl = (id: number,) => {
+
+
+
+
+  return `/api/brand-threats/${id}`
+}
+
+/**
+ * @summary Delete a brand threat scan
+ */
+export const deleteBrandThreatScan = async (id: number, options?: RequestInit): Promise<DeleteBrandThreatScan200> => {
+
+  return customFetch<DeleteBrandThreatScan200>(getDeleteBrandThreatScanUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteBrandThreatScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandThreatScan>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteBrandThreatScan>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteBrandThreatScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteBrandThreatScan>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteBrandThreatScan(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteBrandThreatScanMutationResult = NonNullable<Awaited<ReturnType<typeof deleteBrandThreatScan>>>
+
+    export type DeleteBrandThreatScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a brand threat scan
+ */
+export const useDeleteBrandThreatScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandThreatScan>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteBrandThreatScan>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteBrandThreatScanMutationOptions(options));
     }
 

@@ -1835,6 +1835,88 @@ paths:
                 items:
                   $ref: "#/components/schemas/ToolRun"
 
+  # ──────────────────────────────────────────────────────────
+  # BRAND THREATS
+  # ──────────────────────────────────────────────────────────
+  /brand-threats:
+    get:
+      operationId: listBrandThreats
+      tags: [brand-threats]
+      summary: List brand threat scans
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of brand threat scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BrandThreatScan"
+    post:
+      operationId: createBrandThreatScan
+      tags: [brand-threats]
+      summary: Start a new brand threat scan
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewBrandThreatScan"
+      responses:
+        "200":
+          description: Created scan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandThreatScan"
+
+  /brand-threats/{id}:
+    get:
+      operationId: getBrandThreatScan
+      tags: [brand-threats]
+      summary: Get brand threat scan with results
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan with results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandThreatScanDetail"
+    delete:
+      operationId: deleteBrandThreatScan
+      tags: [brand-threats]
+      summary: Delete a brand threat scan
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
 components:
   schemas:
     ScreenshotFinding:
@@ -3130,6 +3212,97 @@ components:
           type: integer
         findingsCount:
           type: integer
+
+    NewBrandThreatScan:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+
+    BrandThreatScan:
+      type: object
+      required: [id, tenantId, domain, status, totalPermutations, liveCount, registeredCount, phishingRisk, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        domain:
+          type: string
+        status:
+          type: string
+        totalPermutations:
+          type: integer
+        liveCount:
+          type: integer
+        registeredCount:
+          type: integer
+        phishingRisk:
+          type: string
+        fuzzerBreakdown:
+          type: object
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        completedAt:
+          type: string
+          nullable: true
+
+    BrandThreatResult:
+      type: object
+      required: [id, scanId, permutation, fuzzer, riskScore, isSuspicious, createdAt]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+        permutation:
+          type: string
+        fuzzer:
+          type: string
+        dnsA:
+          type: array
+          items:
+            type: string
+          nullable: true
+        dnsMx:
+          type: array
+          items:
+            type: string
+          nullable: true
+        mxSpf:
+          type: string
+          nullable: true
+        whoisRegistrar:
+          type: string
+          nullable: true
+        whoisCreated:
+          type: string
+          nullable: true
+        whoisCountry:
+          type: string
+          nullable: true
+        riskScore:
+          type: integer
+        isSuspicious:
+          type: boolean
+        createdAt:
+          type: string
+
+    BrandThreatScanDetail:
+      allOf:
+        - $ref: "#/components/schemas/BrandThreatScan"
+        - type: object
+          required: [results]
+          properties:
+            results:
+              type: array
+              items:
+                $ref: "#/components/schemas/BrandThreatResult"
 
     AssetScanReport:
       type: object

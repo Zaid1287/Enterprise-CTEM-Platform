@@ -19,3 +19,4 @@ export * from "./invitations";
 export * from "./technologyDetections";
 export * from "./screenshots";
 export * from "./platformSettings";
+export * from "./brandThreats";
