@@ -23,6 +23,11 @@ import { logAudit } from "../lib/audit";
 import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
 import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
+import { getPlatformSetting } from "./platformSettings";
+import { setNvdApiKey } from "../lib/nvdLookup";
+import { getVirusTotalDomain } from "../lib/virusTotal";
+import { hunterDomainSearch } from "../lib/hunterOsint";
+import { dispatchNotifications } from "../lib/notifier";
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -133,6 +138,34 @@ async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> 
           }
         } catch (err) {
           logger.error({ err, scanId: entry.scanId }, "Failed to auto-trigger brand threat scan");
+        }
+      });
+
+      // ── Dispatch Slack / Discord / email notifications ────────────────────────
+      setImmediate(async () => {
+        try {
+          const [critRows, highRows] = await Promise.all([
+            db.select({ id: findingsTable.id }).from(findingsTable)
+              .where(and(eq(findingsTable.scanId, entry.scanId), eq(findingsTable.severity, "critical"))),
+            db.select({ id: findingsTable.id }).from(findingsTable)
+              .where(and(eq(findingsTable.scanId, entry.scanId), eq(findingsTable.severity, "high"))),
+          ]);
+          const criticalCount = critRows.length;
+          const highCount = highRows.length;
+          const severity = criticalCount > 0 ? "critical" : highCount > 0 ? "high" : "medium";
+          await dispatchNotifications({
+            tenantId: entry.tenantId,
+            eventType: criticalCount > 0 ? "critical_finding" : highCount > 0 ? "high_finding" : "scan_complete",
+            title: `Scan Complete — ${findingsCount} finding${findingsCount !== 1 ? "s" : ""} detected`,
+            message: `Pipeline scan #${entry.scanId} completed across ${entry.configs.length} asset${entry.configs.length !== 1 ? "s" : ""}. ${criticalCount} critical, ${highCount} high severity findings.`,
+            severity,
+            scanId: entry.scanId,
+            findingsCount,
+            criticalCount,
+            highCount,
+          });
+        } catch (err) {
+          logger.warn({ err, scanId: entry.scanId }, "Notification dispatch failed (non-fatal)");
         }
       });
     } catch (err) {
@@ -1311,6 +1344,15 @@ async function executePipeline(
   const assets = await db.select().from(assetsTable)
     .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
 
+  // ── Load platform API keys for this run ──────────────────────────────────
+  const [nvdKey, shodanKey, vtKey, hunterKey] = await Promise.all([
+    getPlatformSetting("nvd_api_key"),
+    getPlatformSetting("shodan_api_key"),
+    getPlatformSetting("virustotal_api_key"),
+    getPlatformSetting("hunter_api_key"),
+  ]);
+  if (nvdKey) setNvdApiKey(nvdKey);
+
   // ── Auto-ensure built-in tools exist for this tenant (fallback — startup seed is primary) ──
   for (const def of BUILTIN_TOOL_DEFS) {
     const exists = await db.select({ id: securityToolsTable.id })
@@ -1438,6 +1480,48 @@ async function executePipeline(
       doneTool(t.name, subs + recs, detail, p1Start);
     }
 
+    // ── VirusTotal domain reputation ─────────────────────────────────────────
+    if (vtKey && domain && !isIp(domain)) {
+      try {
+        const vtResult = await getVirusTotalDomain(domain, vtKey);
+        if (vtResult) {
+          geoIntel.push({ type: "VirusTotal", key: "Reputation score",  value: String(vtResult.reputation) });
+          geoIntel.push({ type: "VirusTotal", key: "Detection summary", value: `${vtResult.malicious} malicious, ${vtResult.suspicious} suspicious, ${vtResult.harmless} clean` });
+          if (vtResult.categories.length > 0)
+            geoIntel.push({ type: "VirusTotal", key: "Categories", value: vtResult.categories.slice(0, 5).join(", ") });
+          if (vtResult.registrar)
+            geoIntel.push({ type: "VirusTotal", key: "Registrar", value: vtResult.registrar });
+          if (vtResult.lastAnalysisDate)
+            geoIntel.push({ type: "VirusTotal", key: "Last analysis", value: vtResult.lastAnalysisDate });
+          logger.info({ domain, malicious: vtResult.malicious, suspicious: vtResult.suspicious }, "VirusTotal scan complete");
+        }
+      } catch (err) {
+        logger.warn({ err, domain }, "VirusTotal lookup failed (non-fatal)");
+      }
+    }
+
+    // ── Hunter.io employee email OSINT ────────────────────────────────────────
+    if (hunterKey && domain && !isIp(domain)) {
+      try {
+        const hunterResult = await hunterDomainSearch(domain, hunterKey);
+        if (hunterResult && hunterResult.emails.length > 0) {
+          if (hunterResult.organization)
+            geoIntel.push({ type: "Hunter.io", key: "Organization",  value: hunterResult.organization });
+          if (hunterResult.pattern)
+            geoIntel.push({ type: "Hunter.io", key: "Email pattern", value: hunterResult.pattern });
+          geoIntel.push({ type: "Hunter.io", key: "Emails found", value: String(hunterResult.emails.length) });
+          for (const e of hunterResult.emails.slice(0, 25)) {
+            const label = [e.firstName, e.lastName, e.position, e.department].filter(Boolean).join(", ")
+              || `Confidence: ${e.confidence}%`;
+            geoIntel.push({ type: "Hunter.io", key: e.email, value: label });
+          }
+          logger.info({ domain, emailCount: hunterResult.emails.length }, "Hunter.io OSINT complete");
+        }
+      } catch (err) {
+        logger.warn({ err, domain }, "Hunter.io OSINT failed (non-fatal)");
+      }
+    }
+
     // ── PHASE 2: Port Scanning — always runs (Naabu + Nmap + Shodan) ──────────
     let realPorts: PortFinding[] = [];
     let nmapRaw = "";
@@ -1446,7 +1530,7 @@ async function executePipeline(
       const p2Start = Date.now();
       for (const t of p2) startTool(t.name, `Full-port discovery on ${domain} (Naabu + Nmap + Shodan)…`);
 
-      portScanReport = await scanPorts(target);
+      portScanReport = await scanPorts(target, shodanKey ?? undefined);
       realPorts = portScanReport.ports as PortFinding[];
       nmapRaw = [
         `=== NAABU — Full Port Discovery (${portScanReport.naabuPorts.length} ports found, 1–65535) ===`,
@@ -1456,8 +1540,8 @@ async function executePipeline(
         portScanReport.nmapRaw.slice(0, 8000) || "(no output)",
         "",
         portScanReport.shodan
-          ? `=== SHODAN InternetDB — ${portScanReport.targetIp ?? "?"} ===\nPorts: ${portScanReport.shodan.ports.join(", ") || "none"}\nTags: ${portScanReport.shodan.tags.join(", ") || "none"}\nCPEs: ${portScanReport.shodan.cpes.slice(0, 5).join(", ") || "none"}\nCVEs: ${portScanReport.shodan.vulns.join(", ") || "none"}\nHostnames: ${portScanReport.shodan.hostnames.join(", ") || "none"}`
-          : "=== SHODAN InternetDB — no data available ===",
+          ? `=== SHODAN ${shodanKey ? "Full API" : "InternetDB"} — ${portScanReport.targetIp ?? "?"} ===\nPorts: ${portScanReport.shodan.ports.join(", ") || "none"}\nTags: ${portScanReport.shodan.tags.join(", ") || "none"}\nCPEs: ${portScanReport.shodan.cpes.slice(0, 5).join(", ") || "none"}\nCVEs: ${portScanReport.shodan.vulns.join(", ") || "none"}\nHostnames: ${portScanReport.shodan.hostnames.join(", ") || "none"}`
+          : `=== SHODAN ${shodanKey ? "Full API" : "InternetDB"} — no data available ===`,
       ].join("\n");
 
       // Merge Shodan intelligence into geoIntel for display in Intel tab
@@ -1778,6 +1862,39 @@ async function executePipeline(
 
     const results: Array<typeof scanAssetResultsTable.$inferInsert> = [];
     const findingInserts: Array<typeof findingsTable.$inferInsert>   = [];
+
+    // ── VirusTotal findings — domains flagged malicious or suspicious ─────────
+    if (vtKey && domain && !isIp(domain)) {
+      try {
+        const vtResult = await getVirusTotalDomain(domain, vtKey);
+        if (vtResult && vtResult.malicious > 0) {
+          const vtSev = vtResult.malicious >= 10 ? "critical" : vtResult.malicious >= 5 ? "high" : "medium";
+          findingInserts.push({
+            tenantId, assetId: asset.id, scanId,
+            title: `VirusTotal: ${domain} flagged by ${vtResult.malicious} security engine${vtResult.malicious > 1 ? "s" : ""}`,
+            cve: `VT-MALICIOUS-${domain.replace(/[^a-z0-9]/gi, "-").toUpperCase().slice(0, 30)}`,
+            severity: vtSev,
+            cvss: vtResult.malicious >= 10 ? 9.0 : vtResult.malicious >= 5 ? 7.5 : 5.0,
+            cwe: "CWE-829",
+            status: "open",
+            description: `VirusTotal flagged ${domain} as malicious by ${vtResult.malicious} vendor${vtResult.malicious > 1 ? "s" : ""} (${vtResult.suspicious} suspicious, ${vtResult.harmless} clean). Reputation score: ${vtResult.reputation}.${vtResult.categories.length > 0 ? ` Categories: ${vtResult.categories.slice(0, 3).join(", ")}.` : ""}`,
+            remediation: "Investigate immediately. Check for drive-by downloads, phishing content, or malware. Consider blocking at the network perimeter and reviewing recent code changes.",
+          });
+        } else if (vtResult && vtResult.suspicious > 0) {
+          findingInserts.push({
+            tenantId, assetId: asset.id, scanId,
+            title: `VirusTotal: ${domain} flagged suspicious by ${vtResult.suspicious} engine${vtResult.suspicious > 1 ? "s" : ""}`,
+            cve: `VT-SUSPICIOUS-${domain.replace(/[^a-z0-9]/gi, "-").toUpperCase().slice(0, 30)}`,
+            severity: "low",
+            cvss: 3.0,
+            cwe: "CWE-829",
+            status: "open",
+            description: `VirusTotal analysis flagged ${domain} as suspicious by ${vtResult.suspicious} vendor${vtResult.suspicious > 1 ? "s" : ""}. Reputation score: ${vtResult.reputation}.`,
+            remediation: `Review the full VirusTotal report for ${domain} and monitor for further malicious activity.`,
+          });
+        }
+      } catch { /* non-fatal — VT findings are bonus data */ }
+    }
 
     // Insert findings once (not per-tool, to avoid duplicates)
     for (const v of cveFindings) {

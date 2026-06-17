@@ -12,6 +12,10 @@ export interface NvdCve {
   isKev: boolean;
 }
 
+// ── Module-level NVD API key (set from pipeline on each run) ─────────────────
+let nvdApiKey: string | null = null;
+export function setNvdApiKey(key: string | null): void { nvdApiKey = key; }
+
 // ── Severity from CVSS score ──────────────────────────────────────────────────
 function severityFromCvss(score: number): NvdCve["severity"] {
   if (score >= 9.0) return "critical";
@@ -63,15 +67,19 @@ function parseNvdItem(item: any): NvdCve | null {
 }
 
 // ── Fetch with retry + 429 back-off ──────────────────────────────────────────
+// Passes apiKey header when available for 10× higher rate limit (50/30s vs 5/30s)
 async function fetchNvd(url: string, retries = 3): Promise<any> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const data = await new Promise<any>((resolve, reject) => {
+        const reqHeaders: Record<string, string> = {
+          "User-Agent": "SentinelwareCTEM/1.0",
+          "Accept": "application/json",
+        };
+        if (nvdApiKey) reqHeaders["apiKey"] = nvdApiKey;
+
         const req = https.get(url, {
-          headers: {
-            "User-Agent": "SentinelwareCTEM/1.0",
-            "Accept": "application/json",
-          },
+          headers: reqHeaders,
           timeout: 15000,
         }, (res) => {
           if (res.statusCode === 429) {
@@ -100,6 +108,11 @@ async function fetchNvd(url: string, retries = 3): Promise<any> {
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
+// Rate limit spacing:
+//   Without API key: 5 req/30s  → ~6500ms between requests
+//   With API key:    50 req/30s → ~650ms between requests
+function nvdDelay(): number { return nvdApiKey ? 650 : 6500; }
+
 // ── Look up CVEs for a single CVE ID ─────────────────────────────────────────
 export async function lookupCveById(cveId: string): Promise<NvdCve | null> {
   const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId)}`;
@@ -118,7 +131,7 @@ export async function lookupCvesByCpe(cpe: string, maxResults = 10): Promise<Nvd
 }
 
 // ── Enrich a list of Shodan CVE IDs with full NVD metadata ───────────────────
-// Rate: NVD public = 5 req/30s without API key; we space 700ms apart to be safe
+// Rate: 5 req/30s without key (6.5s delay), 50 req/30s with key (650ms delay)
 export async function enrichShodanCves(cveIds: string[]): Promise<NvdCve[]> {
   const results: NvdCve[] = [];
   for (const id of cveIds.slice(0, 20)) {
@@ -126,7 +139,7 @@ export async function enrichShodanCves(cveIds: string[]): Promise<NvdCve[]> {
       const cve = await lookupCveById(id);
       if (cve) results.push(cve);
     } catch { }
-    await sleep(700);
+    await sleep(nvdDelay());
   }
   return results;
 }
@@ -144,7 +157,7 @@ export async function lookupCvesFromCpes(cpes: string[]): Promise<NvdCve[]> {
         if (!allCves.has(c.cve)) allCves.set(c.cve, c);
       }
     } catch { }
-    await sleep(700);
+    await sleep(nvdDelay());
   }
 
   return [...allCves.values()].sort((a, b) => (b.cvss ?? 0) - (a.cvss ?? 0));

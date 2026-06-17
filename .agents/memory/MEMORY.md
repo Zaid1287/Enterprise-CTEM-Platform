@@ -10,3 +10,6 @@
 - [Wouter Link nesting](wouter-link-nesting.md) — Never nest `<Link>` inside `<Link>` (renders nested `<a>` which breaks JSX). Use onClick+navigate on the outer div instead.
 - [Port Scanner Engine](port-scanner-engine.md) — Naabu+Nmap+Shodan engine in portScanner.ts; naabu zip at artifacts/api-server/binaries/naabu.zip; auto-extracts to /tmp/naabu; always runs for every scan.
 - [Scan Queue Architecture](scan-queue-architecture.md) — In-process FIFO queue; MAX_CONCURRENT_SCANS=5, MAX_PARALLEL_ASSETS=3; enqueueAndRun() is the single entry point; status goes pending→running→completed/failed.
+- [Email circular import avoidance](email-circular-import.md) — email.ts imports platformSettings.ts; notifier.ts imports email.ts. Break the loop: define AlertEmailEvent inline in email.ts rather than importing NotificationEvent from notifier.ts.
+- [Findings table cvss column](findings-schema.md) — DB column is `cvss` (real/float), not `cvssScore` (string). findingInserts must use `cvss: 7.5` not `cvssScore: "7.5"`.
+- [NVD rate limit upgrade](nvd-rate-limit.md) — Without API key: 5 req/30s → use 6500ms delay. With key: 50 req/30s → use 650ms delay. Pass key as `apiKey` header (not Authorization). Stored in platform settings as nvd_api_key.

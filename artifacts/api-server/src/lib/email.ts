@@ -1,10 +1,16 @@
 import { Resend } from "resend";
+import { getPlatformSetting } from "../routes/platformSettings";
 
 let resend: Resend | null = null;
+let cachedKey: string | null = null;
 
-function getResend(): Resend | null {
-  if (!process.env.RESEND_API_KEY) return null;
-  if (!resend) resend = new Resend(process.env.RESEND_API_KEY);
+async function getResendAsync(): Promise<Resend | null> {
+  const key = process.env.RESEND_API_KEY || await getPlatformSetting("resend_api_key");
+  if (!key) return null;
+  if (!resend || key !== cachedKey) {
+    resend = new Resend(key);
+    cachedKey = key;
+  }
   return resend;
 }
 
@@ -15,9 +21,8 @@ export interface EmailOptions {
 }
 
 export async function sendEmail(opts: EmailOptions): Promise<void> {
-  const client = getResend();
+  const client = await getResendAsync();
   if (!client) {
-    // Dev mode: log to console
     console.log(`[Email] To: ${opts.to} | Subject: ${opts.subject}`);
     return;
   }
@@ -64,6 +69,66 @@ export function otpEmailHtml(opts: {
     <p style="font-size:13px;">If you did not request this, you can safely ignore this email.</p>
     <div class="footer">
       &copy; ${new Date().getFullYear()} Sentinelware. All rights reserved.
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+export interface AlertEmailEvent {
+  title: string;
+  message: string;
+  severity: string;
+  scanId?: number;
+  findingsCount?: number;
+  criticalCount?: number;
+  highCount?: number;
+  assetName?: string;
+}
+
+export function alertEmailHtml(event: AlertEmailEvent): string {
+  const severityColor: Record<string, string> = {
+    critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e", info: "#6b7280",
+  };
+  const color = severityColor[event.severity] ?? "#6b7280";
+  const rows = [
+    event.findingsCount !== undefined && `<tr><td style="color:#999;padding:6px 0;">Total Findings</td><td style="color:#fff;padding:6px 0;font-weight:600;">${event.findingsCount}</td></tr>`,
+    event.criticalCount !== undefined && `<tr><td style="color:#999;padding:6px 0;">Critical</td><td style="color:#ef4444;padding:6px 0;font-weight:600;">${event.criticalCount}</td></tr>`,
+    event.highCount !== undefined && event.highCount > 0 && `<tr><td style="color:#999;padding:6px 0;">High</td><td style="color:#f97316;padding:6px 0;font-weight:600;">${event.highCount}</td></tr>`,
+    event.assetName && `<tr><td style="color:#999;padding:6px 0;">Asset</td><td style="color:#fff;padding:6px 0;">${event.assetName}</td></tr>`,
+    event.scanId && `<tr><td style="color:#999;padding:6px 0;">Scan ID</td><td style="color:#fff;padding:6px 0;">#${event.scanId}</td></tr>`,
+  ].filter(Boolean).join("");
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e5e5e5; margin: 0; padding: 40px 20px; }
+    .container { max-width: 520px; margin: 0 auto; background: #111; border: 1px solid #222; border-radius: 12px; overflow: hidden; }
+    .header { padding: 24px 32px; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 12px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; background: ${color}22; color: ${color}; border: 1px solid ${color}44; }
+    .body { padding: 32px; }
+    h2 { font-size: 20px; font-weight: 700; color: #fff; margin: 0 0 8px; }
+    .message { font-size: 14px; color: #aaa; line-height: 1.6; margin: 0 0 24px; }
+    table { width: 100%; border-collapse: collapse; }
+    .footer { padding: 20px 32px; border-top: 1px solid #1e1e1e; font-size: 12px; color: #555; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <span style="font-size:16px;font-weight:700;color:#fff;">Sentinelware</span>
+      <span class="badge">${event.severity.toUpperCase()}</span>
+    </div>
+    <div class="body">
+      <h2>${event.title}</h2>
+      <p class="message">${event.message}</p>
+      ${rows ? `<table>${rows}</table>` : ""}
+    </div>
+    <div class="footer">
+      Sentinelware CTEM &nbsp;&bull;&nbsp; ${new Date().toUTCString()}
     </div>
   </div>
 </body>

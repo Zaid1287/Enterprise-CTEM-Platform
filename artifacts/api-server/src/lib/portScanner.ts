@@ -83,6 +83,7 @@ export interface PortScanReport {
   scanMethod: "naabu+nmap" | "nmap-only";
   scannedAt: string;
   targetIp?: string;
+  shodanSource?: "full-api" | "internetdb";
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -178,24 +179,18 @@ async function runNaabu(target: string): Promise<{ ports: number[]; raw: string 
 
 // ── Nmap: service detection + banner grabbing + NSE scripts ──────────────────
 
-async function runNmapDetailed(target: string, openPorts: number[]): Promise<{ portDetails: PortDetail[]; raw: string }> {
+async function runNmapDetailed(target: string, ports: number[]): Promise<{ portDetails: PortDetail[]; raw: string }> {
   const host = extractTarget(target);
-  const portSpec = openPorts.length > 0
-    ? `-p ${openPorts.slice(0, 300).join(",")}`
-    : "--top-ports 1000";
+  const portSpec = ports.length > 0 ? `-p ${ports.slice(0, 500).join(",")}` : "-p 1-1024";
 
   const scripts = [
     "banner",
-    "http-title",
-    "http-server-header",
-    "ssl-cert",
-    "ssh-hostkey",
-    "smtp-commands",
-    "ftp-anon",
-    "rdp-enum-encryption",
-    "mysql-info",
-    "ms-sql-info",
-    "mongodb-info",
+    "http-title", "http-server-header", "http-methods",
+    "ssl-cert", "ssl-enum-ciphers",
+    "ssh-hostkey", "ssh-auth-methods",
+    "ftp-anon", "ftp-bounce",
+    "smtp-commands", "smtp-open-relay",
+    "dns-recursion", "dns-service-discovery",
   ].join(",");
 
   const cmd = [
@@ -243,15 +238,56 @@ export async function queryShodanInternetDB(ip: string): Promise<ShodanHostData 
   }
 }
 
+// ── Shodan Full API (requires API key — returns CVE dict + CPEs from data[]) ──
+// Full API: /shodan/host/{ip}?key={apiKey}
+// vulns is {cveId: {cvss, summary, ...}} unlike InternetDB which is string[]
+// cpes are nested inside data[].cpe array — must be extracted and deduped
+
+export async function queryShodanFullApi(ip: string, apiKey: string): Promise<ShodanHostData | null> {
+  if (!ip || !isIp(ip)) return null;
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 12000);
+    const res = await fetch(
+      `https://api.shodan.io/shodan/host/${ip}?key=${apiKey}`,
+      { signal: ctrl.signal },
+    );
+    if (!res.ok) return null;
+    const d: any = await res.json();
+    if (d.error) return null;
+    const vulns: string[] = Object.keys(d.vulns ?? {});
+    const cpes: string[] = [...new Set(
+      (d.data ?? []).flatMap((item: any) => [
+        ...(Array.isArray(item.cpe) ? item.cpe : []),
+        ...(Array.isArray(item.cpe23) ? item.cpe23 : []),
+      ]) as string[]
+    )];
+    return {
+      ip,
+      ports: (d.ports ?? []).map(Number),
+      tags: d.tags ?? [],
+      cpes,
+      vulns,
+      hostnames: d.hostnames ?? [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export async function scanPorts(target: string): Promise<PortScanReport> {
+export async function scanPorts(target: string, shodanApiKey?: string | null): Promise<PortScanReport> {
   const scannedAt = new Date().toISOString();
   const targetIp = await resolveToIp(target);
 
   const [naabuResult, shodanData] = await Promise.all([
     runNaabu(target),
-    targetIp ? queryShodanInternetDB(targetIp) : Promise.resolve(null),
+    targetIp
+      ? (shodanApiKey
+          ? queryShodanFullApi(targetIp, shodanApiKey)
+          : queryShodanInternetDB(targetIp))
+      : Promise.resolve(null),
   ]);
 
   const naabuPorts = naabuResult.ports;
@@ -285,5 +321,6 @@ export async function scanPorts(target: string): Promise<PortScanReport> {
     scanMethod: naabuPorts.length > 0 ? "naabu+nmap" : "nmap-only",
     scannedAt,
     targetIp: targetIp ?? undefined,
+    shodanSource: shodanData ? (shodanApiKey ? "full-api" : "internetdb") : undefined,
   };
 }
