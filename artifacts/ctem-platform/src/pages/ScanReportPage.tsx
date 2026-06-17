@@ -96,19 +96,6 @@ function formatMs(ms: number | null): string {
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
 }
 
-function StatCard({ icon: Icon, label, value, className }: { icon: React.ElementType; label: string; value: number | string; className?: string }) {
-  return (
-    <div className={cn("bg-card border border-border rounded-xl p-4 flex items-center gap-3", className)}>
-      <div className="w-9 h-9 rounded-lg bg-accent/60 flex items-center justify-center shrink-0">
-        <Icon className="w-4.5 h-4.5 text-primary" />
-      </div>
-      <div>
-        <p className="text-lg font-bold leading-tight">{value}</p>
-        <p className="text-xs text-muted-foreground">{label}</p>
-      </div>
-    </div>
-  );
-}
 
 interface ToolProgress {
   toolName: string;
@@ -364,12 +351,89 @@ function LiveProgressView({
   );
 }
 
+// ── ASM Score & Report Metric Helpers ─────────────────────────────────────
+function computeAsmScore(asset: any): number {
+  let score = 100;
+  score -= Math.min((asset.summary?.criticalVulns ?? 0) * 15, 40);
+  score -= Math.min((asset.summary?.highVulns ?? 0) * 6, 20);
+  score -= Math.min((asset.secrets ?? []).length * 8, 20);
+  score -= Math.min((asset.vulnScan?.stats?.critical ?? 0) * 12, 30);
+  score -= Math.min((asset.vulnScan?.stats?.high ?? 0) * 4, 15);
+  score -= Math.min((asset.secretsHunt?.stats?.secretsFound ?? 0) * 5, 15);
+  if ((asset.secretsHunt?.stats?.gitDirsExposed ?? 0) > 0) score -= 10;
+  const waf = asset.httpInfo?.waf;
+  if (!waf || waf === "none" || waf === "None") score -= 5;
+  if ((asset.summary?.openPorts ?? 0) > 20) score -= 5;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function computeScanAsmScore(assetReports: any[]): number {
+  if (assetReports.length === 0) return 100;
+  return Math.round(assetReports.map(computeAsmScore).reduce((a, b) => a + b, 0) / assetReports.length);
+}
+
+function worstSeverity(assetReports: any[]): "critical" | "high" | "medium" | "low" {
+  for (const a of assetReports) {
+    if ((a.summary?.criticalVulns ?? 0) > 0 || (a.vulnScan?.stats?.critical ?? 0) > 0) return "critical";
+  }
+  for (const a of assetReports) {
+    if ((a.summary?.highVulns ?? 0) > 0 || (a.vulnScan?.stats?.high ?? 0) > 0 || (a.secrets ?? []).length > 0) return "high";
+  }
+  for (const a of assetReports) {
+    if ((a.cves ?? []).some((c: any) => c.severity === "medium")) return "medium";
+  }
+  return "low";
+}
+
+function worstImportance(assetReports: any[]): "critical" | "high" | "medium" | "low" {
+  for (const a of assetReports) {
+    if ((a.summary?.criticalVulns ?? 0) > 0 || (a.vulnScan?.stats?.critical ?? 0) > 0 || (a.secrets ?? []).length >= 3) return "critical";
+  }
+  for (const a of assetReports) {
+    if ((a.summary?.highVulns ?? 0) > 0 || (a.secrets ?? []).length > 0) return "high";
+  }
+  for (const a of assetReports) {
+    if ((a.summary?.subdomains ?? 0) > 5 || (a.summary?.openPorts ?? 0) > 10) return "medium";
+  }
+  return "low";
+}
+
+function SectionCard({
+  title, icon: Icon, count, accent, fullWidth, children,
+}: {
+  title: string; icon: React.ElementType; count?: number; accent?: "red" | "orange" | "yellow";
+  fullWidth?: boolean; children: React.ReactNode;
+}) {
+  const badgeCls =
+    accent === "red"    ? "bg-red-500/20 text-red-400" :
+    accent === "orange" ? "bg-orange-500/20 text-orange-400" :
+    accent === "yellow" ? "bg-yellow-500/20 text-yellow-400" :
+    "bg-primary/20 text-primary";
+  return (
+    <div className={cn("bg-card border border-border rounded-xl overflow-hidden flex flex-col", fullWidth && "xl:col-span-2")}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-muted/20 shrink-0">
+        <div className="flex items-center gap-2">
+          <Icon className="w-3.5 h-3.5 text-primary" />
+          <h3 className="text-xs font-semibold uppercase tracking-wide">{title}</h3>
+        </div>
+        {count !== undefined && (
+          <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center",
+            count > 0 ? badgeCls : "bg-muted text-muted-foreground/40"
+          )}>{count}</span>
+        )}
+      </div>
+      <div className="p-4 overflow-y-auto">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function ScanReportPage() {
   const params = useParams<{ id: string }>();
   const scanId = Number(params.id);
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(0);
-  const [assetTab, setAssetTab] = useState<AssetTab>("ports");
-  const [subdomainFilter, setSubdomainFilter] = useState<"all" | "200" | "auth" | "redirect" | "dead">("all");
+  const [subdomainSearch, setSubdomainSearch] = useState("");
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const { user } = useAuth();
@@ -462,31 +526,10 @@ export default function ScanReportPage() {
   const assetReports = reports as any[];
   const selectedAsset = assetReports[selectedAssetIdx] ?? assetReports[0];
   const summary = selectedAsset?.summary ?? {};
-
   const secretsCount = (selectedAsset?.secrets ?? []).length;
-  const assetTabs: { key: AssetTab; label: string; icon: React.ElementType; count?: number }[] = [
-    { key: "ports",        label: "Open Ports",    icon: Network,       count: summary.openPorts },
-    { key: "vulns",        label: "CVEs",           icon: AlertTriangle, count: (selectedAsset?.cves ?? []).length },
-    { key: "secrets",      label: "Secrets",        icon: Key,           count: secretsCount },
-    { key: "screenshots",  label: "Screenshots",    icon: Camera },
-    { key: "technologies", label: "Technologies",   icon: Cpu },
-    { key: "subdomains",   label: "Subdomains",     icon: Globe,         count: summary.subdomains },
-    { key: "http",         label: "HTTP Info",      icon: Wifi },
-    { key: "dns",          label: "DNS Records",    icon: Database,      count: summary.dnsRecords },
-    { key: "endpoints",    label: "Endpoints",      icon: Search,        count: summary.endpoints },
-    { key: "js",           label: "JavaScript",     icon: Code,          count: selectedAsset?.jsAnalysis?.stats?.totalSecrets ?? undefined },
-    { key: "params",       label: "Parameters",     icon: FileCode,      count: selectedAsset?.paramDiscovery?.stats?.unique ?? undefined },
-    { key: "cloud",        label: "Cloud Assets",   icon: Cloud,         count: selectedAsset?.cloudRecon?.stats?.existingBuckets ?? undefined },
-    { key: "secretshunt",  label: "Secrets Hunt",   icon: Github,        count: (selectedAsset?.secretsHunt?.stats?.secretsFound ?? 0) + (selectedAsset?.secretsHunt?.stats?.gitDirsExposed ?? 0) || undefined },
-    { key: "dirfuzz",      label: "Dir Fuzz",       icon: FolderOpen,    count: selectedAsset?.dirFuzz?.stats?.totalUnique ?? undefined },
-    { key: "nuclei",       label: "Nuclei",         icon: ShieldAlert,   count: ((selectedAsset?.vulnScan?.stats?.critical ?? 0) + (selectedAsset?.vulnScan?.stats?.high ?? 0)) || undefined },
-    { key: "intel",        label: "Intelligence",   icon: Eye,           count: summary.intelItems },
-    ...(!isClient ? [{ key: "raw" as AssetTab, label: "Raw Output", icon: Terminal }] : []),
-  ];
 
   const toolResults: any[] = selectedAsset?.toolResults ?? [];
   const configuredTools: any[] = selectedAsset?.configuredTools ?? [];
-  // All tool names to show = union of configured + any extra results
   const allToolNames = Array.from(new Set([
     ...configuredTools.map((t: any) => t.name),
     ...toolResults.map((t: any) => t.toolName),
@@ -494,11 +537,15 @@ export default function ScanReportPage() {
   const displayedTool = selectedTool ?? allToolNames[0] ?? null;
 
   // ── Derived scan-level metrics ────────────────────────────────────────────
-  const totalFindings   = assetReports.reduce((a: number, r: any) => a + (r.summary?.vulnerabilities ?? 0), 0);
-  const totalCritHigh   = assetReports.reduce((a: number, r: any) => a + (r.summary?.criticalVulns ?? 0) + (r.summary?.highVulns ?? 0), 0);
-  const durationStr     = (scan?.startedAt && scan?.completedAt)
+  const totalFindings = assetReports.reduce((a: number, r: any) => a + (r.summary?.vulnerabilities ?? 0), 0);
+  const totalCritHigh = assetReports.reduce((a: number, r: any) => a + (r.summary?.criticalVulns ?? 0) + (r.summary?.highVulns ?? 0), 0);
+  const durationStr   = (scan?.startedAt && scan?.completedAt)
     ? formatDuration(new Date(scan.startedAt).getTime(), new Date(scan.completedAt).getTime())
     : scanStatus === "running" ? "In progress" : "—";
+
+  const scanAsmScore  = computeScanAsmScore(assetReports);
+  const scanSeverity  = worstSeverity(assetReports);
+  const scanImportance = worstImportance(assetReports);
 
   const STATUS_META: Record<string, { bar: string; bg: string; border: string; text: string; label: string }> = {
     completed: { bar: "bg-green-500",  bg: "bg-green-500/10",  border: "border-green-500/30",  text: "text-green-400",        label: "Completed" },
@@ -507,6 +554,18 @@ export default function ScanReportPage() {
     cancelled: { bar: "bg-muted-foreground/40", bg: "bg-muted", border: "border-border", text: "text-muted-foreground", label: "Cancelled" },
   };
   const sm = STATUS_META[scanStatus] ?? STATUS_META.completed;
+
+  const SEV_COLORS_MAP: Record<string, string> = {
+    critical: "text-red-400", high: "text-orange-400", medium: "text-yellow-400", low: "text-green-400",
+  };
+  const SEV_BG_MAP: Record<string, string> = {
+    critical: "bg-red-500/5 border-red-500/30",
+    high:     "bg-orange-500/5 border-orange-500/30",
+    medium:   "bg-yellow-500/5 border-yellow-500/30",
+    low:      "bg-green-500/5 border-green-500/30",
+  };
+  const asmColor = scanAsmScore >= 80 ? "text-green-400" : scanAsmScore >= 60 ? "text-yellow-400" : scanAsmScore >= 40 ? "text-orange-400" : "text-red-400";
+  const asmBg    = scanAsmScore >= 80 ? "bg-green-500/5 border-green-500/30" : scanAsmScore >= 60 ? "bg-yellow-500/5 border-yellow-500/30" : scanAsmScore >= 40 ? "bg-orange-500/5 border-orange-500/30" : "bg-red-500/5 border-red-500/30";
 
   return (
     <div className="space-y-5">
@@ -578,38 +637,59 @@ export default function ScanReportPage() {
               </p>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Score tiles */}
-          <div className="grid grid-cols-3 gap-3 mt-5">
-            <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-2">
-                <Globe className="w-3.5 h-3.5 text-primary" />
-                <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Assets</span>
-              </div>
-              <p className="text-3xl font-bold text-primary">{assetReports.length}</p>
-              <p className="text-[10px] text-muted-foreground/50 mt-1">Scanned</p>
-            </div>
-            <div className={cn("border rounded-xl p-4 text-center",
-              totalCritHigh > 0 ? "bg-red-500/5 border-red-500/30" : "bg-muted/30 border-border")}>
-              <div className="flex items-center justify-center gap-1.5 mb-2">
-                <AlertTriangle className={cn("w-3.5 h-3.5", totalCritHigh > 0 ? "text-red-400" : "text-muted-foreground")} />
-                <span className={cn("text-[10px] font-semibold uppercase tracking-wider",
-                  totalCritHigh > 0 ? "text-red-400" : "text-muted-foreground")}>Critical / High</span>
-              </div>
-              <p className={cn("text-3xl font-bold", totalCritHigh > 0 ? "text-red-400" : "text-muted-foreground/30")}>
-                {totalCritHigh}
-              </p>
-              <p className="text-[10px] text-muted-foreground/50 mt-1">{totalFindings} total findings</p>
-            </div>
-            <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-2">
-                <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Duration</span>
-              </div>
-              <p className="text-2xl font-bold text-foreground tabular-nums">{durationStr}</p>
-              <p className="text-[10px] text-muted-foreground/50 mt-1">Scan time</p>
-            </div>
+      {/* ── 5 Summary Metric Cards ─────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {/* ASM Score */}
+        <div className={cn("border rounded-xl p-4 text-center", asmBg)}>
+          <div className="flex items-center justify-center gap-1.5 mb-1">
+            <ShieldAlert className={cn("w-3.5 h-3.5", asmColor)} />
+            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", asmColor)}>ASM Score</span>
           </div>
+          <p className={cn("text-3xl font-bold tabular-nums", asmColor)}>{scanAsmScore}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1">out of 100</p>
+        </div>
+
+        {/* Severity */}
+        <div className={cn("border rounded-xl p-4 text-center", SEV_BG_MAP[scanSeverity])}>
+          <div className="flex items-center justify-center gap-1.5 mb-1">
+            <AlertTriangle className={cn("w-3.5 h-3.5", SEV_COLORS_MAP[scanSeverity])} />
+            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", SEV_COLORS_MAP[scanSeverity])}>Severity</span>
+          </div>
+          <p className={cn("text-2xl font-bold capitalize", SEV_COLORS_MAP[scanSeverity])}>{scanSeverity}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1">Worst finding</p>
+        </div>
+
+        {/* Importance */}
+        <div className={cn("border rounded-xl p-4 text-center", SEV_BG_MAP[scanImportance])}>
+          <div className="flex items-center justify-center gap-1.5 mb-1">
+            <Fingerprint className={cn("w-3.5 h-3.5", SEV_COLORS_MAP[scanImportance])} />
+            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", SEV_COLORS_MAP[scanImportance])}>Importance</span>
+          </div>
+          <p className={cn("text-2xl font-bold capitalize", SEV_COLORS_MAP[scanImportance])}>{scanImportance}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1">Remediation priority</p>
+        </div>
+
+        {/* Assets Scanned */}
+        <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
+          <div className="flex items-center justify-center gap-1.5 mb-1">
+            <Globe className="w-3.5 h-3.5 text-primary" />
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Assets</span>
+          </div>
+          <p className="text-3xl font-bold text-primary">{assetReports.length}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1">Scanned</p>
+        </div>
+
+        {/* Duration */}
+        <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
+          <div className="flex items-center justify-center gap-1.5 mb-1">
+            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Duration</span>
+          </div>
+          <p className="text-2xl font-bold text-foreground tabular-nums">{durationStr}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1">Scan time</p>
         </div>
       </div>
 
@@ -637,10 +717,12 @@ export default function ScanReportPage() {
                 const critVulns = asset.summary?.criticalVulns ?? 0;
                 const highVulns = asset.summary?.highVulns ?? 0;
                 const secretsNum = (asset.secrets ?? []).length;
+                const assetScore = computeAsmScore(asset);
+                const scoreColor = assetScore >= 80 ? "text-green-400" : assetScore >= 60 ? "text-yellow-400" : assetScore >= 40 ? "text-orange-400" : "text-red-400";
                 return (
                   <button
                     key={asset.assetId}
-                    onClick={() => { setSelectedAssetIdx(idx); setAssetTab("ports"); setSelectedTool(null); }}
+                    onClick={() => { setSelectedAssetIdx(idx); setSelectedTool(null); }}
                     className={cn(
                       "w-full text-left rounded-lg px-3 py-2.5 transition-colors border",
                       idx === selectedAssetIdx
@@ -650,7 +732,8 @@ export default function ScanReportPage() {
                   >
                     <p className="text-sm font-medium truncate">{asset.assetName}</p>
                     <p className="text-[10px] text-muted-foreground truncate mt-0.5">{asset.assetValue}</p>
-                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                    <div className="flex gap-1.5 mt-1.5 flex-wrap items-center">
+                      <span className={cn("text-[10px] font-bold tabular-nums", scoreColor)}>{assetScore}</span>
                       <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1">{asset.summary?.openPorts ?? 0} ports</span>
                       {critVulns > 0 && <span className="text-[10px] bg-red-500/15 text-red-400 rounded px-1">{critVulns} crit</span>}
                       {highVulns > 0 && !critVulns && <span className="text-[10px] bg-orange-500/15 text-orange-400 rounded px-1">{highVulns} high</span>}
@@ -703,779 +786,322 @@ export default function ScanReportPage() {
           </div>
         </div>
 
-        {/* ── Right main: 3 cols ────────────────────── */}
-        <div className="lg:col-span-3 space-y-4">
+        {/* ── Right main: 3 cols ─ 16 data cards ──── */}
+        <div className="lg:col-span-3">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
-          {/* Per-asset stat cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <StatCard icon={Network} label="Open Ports" value={summary.openPorts ?? 0} />
-            <StatCard icon={AlertTriangle} label="CVEs Found" value={(selectedAsset?.cves ?? []).length}
-              className={(summary.criticalVulns ?? 0) > 0 ? "border-red-500/30" : ""} />
-            <StatCard icon={Key} label="Secrets Found" value={secretsCount}
-              className={secretsCount > 0 ? "border-yellow-500/30" : ""} />
-            <StatCard icon={Globe} label="Subdomains" value={summary.subdomains ?? 0} />
-          </div>
-
-          {/* Tabs card */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="flex border-b border-border overflow-x-auto">
-              {assetTabs.map(t => (
-                <button
-                  key={t.key}
-                  onClick={() => setAssetTab(t.key)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-2.5 text-xs whitespace-nowrap border-b-2 transition-colors shrink-0",
-                    assetTab === t.key
-                      ? "border-primary text-foreground font-medium"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <t.icon className="w-3.5 h-3.5" />
-                  {t.label}
-                  {t.count !== undefined && t.count > 0 && (
-                    <span className={cn(
-                      "ml-0.5 text-[10px] rounded-full px-1.5",
-                      t.key === "secrets" ? "bg-yellow-500/20 text-yellow-400" : "bg-primary/20 text-primary"
-                    )}>{t.count}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            <div className="p-4">
-              {/* Ports tab */}
-              {assetTab === "ports" && (() => {
-                const ports = selectedAsset.ports ?? [];
-                const intel: any[] = selectedAsset.intelligence ?? [];
-                const shodanItems = intel.filter((i: any) => i.type === "Shodan");
-                const shodanTags   = shodanItems.find((i: any) => i.key === "Tags")?.value;
-                const shodanVulns  = shodanItems.find((i: any) => i.key === "Known CVEs")?.value;
-                const shodanCpes   = shodanItems.find((i: any) => i.key === "CPEs")?.value;
-                const scanMethod   = shodanItems.find((i: any) => i.key === "Scan Method")?.value;
-                const resolvedIp   = shodanItems.find((i: any) => i.key === "Resolved IP")?.value;
-                const hasShodan    = shodanItems.length > 0;
-                const vulnList     = shodanVulns ? shodanVulns.split(", ").filter(Boolean) : [];
-
-                return (
-                  <div className="space-y-4">
-                    {/* Shodan InternetDB panel */}
-                    {hasShodan && (
-                      <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-3">
-                        <div className="flex items-center gap-2">
-                          <Database className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                          <p className="text-xs font-semibold text-blue-300">Shodan InternetDB</p>
-                          {resolvedIp && (
-                            <span className="font-mono text-[10px] bg-muted/60 px-1.5 py-0.5 rounded text-muted-foreground">{resolvedIp}</span>
-                          )}
-                          {scanMethod && (
-                            <span className="ml-auto text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium uppercase tracking-wide">
-                              {scanMethod}
-                            </span>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-2 gap-3 text-xs">
-                          {shodanTags && (
-                            <div>
-                              <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
-                                <Tag className="w-2.5 h-2.5" /> Tags
-                              </p>
-                              <div className="flex flex-wrap gap-1">
-                                {shodanTags.split(", ").filter(Boolean).map((t: string) => (
-                                  <span key={t} className="bg-blue-500/10 border border-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded text-[10px] font-medium">{t}</span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {vulnList.length > 0 && (
-                            <div>
-                              <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
-                                <AlertTriangle className="w-2.5 h-2.5 text-red-400" />
-                                <span className="text-red-400">Known CVEs ({vulnList.length})</span>
-                              </p>
-                              <div className="flex flex-wrap gap-1">
-                                {vulnList.slice(0, 10).map((v: string) => (
-                                  <a key={v} href={`https://nvd.nist.gov/vuln/detail/${v}`} target="_blank" rel="noopener noreferrer"
-                                     className="text-[10px] font-mono bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded hover:bg-red-500/20 transition-colors">
-                                    {v}
-                                  </a>
-                                ))}
-                                {vulnList.length > 10 && (
-                                  <span className="text-[10px] text-muted-foreground self-center">+{vulnList.length - 10} more</span>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          {shodanCpes && (
-                            <div className="col-span-2">
-                              <p className="text-[10px] text-muted-foreground mb-1">CPEs</p>
-                              <p className="text-[10px] font-mono text-muted-foreground/70 break-all leading-relaxed">{shodanCpes}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Header row */}
-                    {ports.length > 0 && (
-                      <div className="flex items-center gap-2 px-3 pb-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                        <span className="w-3 shrink-0" />
-                        <span className="w-14 shrink-0">Port</span>
-                        <span className="w-8 shrink-0">Proto</span>
-                        <span className="w-24 shrink-0">Service</span>
-                        <span className="flex-1">Version / Banner</span>
-                        <span>State</span>
-                      </div>
-                    )}
-
-                    {ports.length === 0 ? (
-                      <EmptyState message="No open ports found" />
-                    ) : (
-                      <div className="space-y-0.5">
-                        {ports.map((p: any, i: number) => <PortRow key={i} port={p} />)}
-                      </div>
-                    )}
+            {/* ── 1. Open Ports (full-width) ─────────────────────────── */}
+            <SectionCard icon={Network} title="Open Ports" count={(selectedAsset?.ports ?? []).length} fullWidth>
+              {(selectedAsset?.ports ?? []).length === 0
+                ? <EmptyState message="No open ports detected" icon={Network} />
+                : (
+                  <div className="space-y-0.5">
+                    {(selectedAsset.ports as any[]).map((port: any, i: number) => (
+                      <PortRow key={i} port={port} />
+                    ))}
                   </div>
-                );
-              })()}
+                )}
+            </SectionCard>
 
-              {/* CVEs tab */}
-              {assetTab === "vulns" && (
-                <div className="space-y-2">
-                  {(selectedAsset.cves ?? selectedAsset.vulnerabilities ?? []).length === 0 ? (
-                    <EmptyState message="No CVEs detected" icon={CheckCircle2} />
-                  ) : (
-                    (selectedAsset.cves ?? selectedAsset.vulnerabilities ?? []).map((v: any, i: number) => (
-                      <div key={i} className={cn("rounded-lg border p-3.5", v.severity === "critical" ? "border-red-500/30 bg-red-500/5" : v.severity === "high" ? "border-orange-500/30 bg-orange-500/5" : "border-border bg-card")}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <SeverityBadge severity={v.severity} />
-                            <span className="text-xs font-mono text-muted-foreground">{v.cve}</span>
-                            <span className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">{v.cwe}</span>
-                          </div>
-                          <span className="text-xs font-bold text-foreground shrink-0">CVSS {v.cvss}</span>
-                        </div>
-                        <p className="text-sm font-semibold mt-1.5">{v.title}</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          <span className="text-foreground font-medium">Remediation: </span>{v.remediation}
-                        </p>
-                        <a
-                          href={`https://nvd.nist.gov/vuln/detail/${v.cve}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] text-primary mt-1.5 hover:underline"
-                        >
-                          View in NVD <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-
-              {/* Secrets tab */}
-              {assetTab === "secrets" && (
-                <div className="space-y-2">
-                  {(selectedAsset.secrets ?? []).length === 0 ? (
-                    <EmptyState message="No secrets or credentials detected" icon={Lock} />
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2 mb-3 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
-                        <Fingerprint className="w-4 h-4 text-yellow-400 shrink-0" />
-                        <p className="text-xs text-yellow-300">
-                          <span className="font-semibold">{(selectedAsset.secrets ?? []).length} credential{(selectedAsset.secrets ?? []).length !== 1 ? "s" : ""} detected</span>
-                          {" "}— exposed secrets can enable full account takeover. Rotate immediately.
-                        </p>
-                      </div>
-                      {(selectedAsset.secrets ?? []).map((s: any, i: number) => (
-                        <div key={i} className={cn(
-                          "rounded-lg border p-3.5",
-                          s.severity === "critical" ? "border-red-500/30 bg-red-500/5" :
-                          s.severity === "high" ? "border-orange-500/30 bg-orange-500/5" :
-                          "border-yellow-500/20 bg-yellow-500/5"
-                        )}>
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                              <SeverityBadge severity={s.severity} />
-                              <span className="text-xs font-mono text-muted-foreground">{s.cve}</span>
-                              {s.cwe && <span className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">{s.cwe}</span>}
-                            </div>
-                            <Key className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" />
-                          </div>
-                          <p className="text-sm font-semibold mt-1.5">{s.title}</p>
-                          {s.source && (
-                            <p className="text-xs font-mono text-muted-foreground mt-1 bg-muted/30 rounded px-2 py-1 break-all">
-                              {s.source}
-                            </p>
-                          )}
-                          <p className="text-xs text-muted-foreground mt-1.5">
-                            <span className="text-foreground font-medium">Remediation: </span>{s.remediation}
-                          </p>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Subdomains tab */}
-              {assetTab === "subdomains" && (() => {
-                const allSubs: any[] = selectedAsset.subdomains ?? [];
-                const live200     = allSubs.filter((s: any) => s.httpStatus === 200);
-                const liveAuth    = allSubs.filter((s: any) => s.httpStatus === 401 || s.httpStatus === 403);
-                const liveRedir   = allSubs.filter((s: any) => s.httpStatus && [301,302,307,308].includes(s.httpStatus));
-                const deadSubs    = allSubs.filter((s: any) => !s.ip);
-                const filtered    =
-                  subdomainFilter === "200"      ? live200 :
-                  subdomainFilter === "auth"     ? liveAuth :
-                  subdomainFilter === "redirect" ? liveRedir :
-                  subdomainFilter === "dead"     ? deadSubs :
-                  allSubs;
-
-                const httpStatusBadge = (s: any) => {
-                  const code = s.httpStatus;
-                  if (!code) return null;
-                  let cls = "bg-muted text-muted-foreground border-border";
-                  if (code === 200) cls = "bg-green-500/15 text-green-400 border-green-500/30";
-                  else if (code === 401 || code === 403) cls = "bg-yellow-500/15 text-yellow-400 border-yellow-500/30";
-                  else if ([301,302,307,308].includes(code)) cls = "bg-blue-500/15 text-blue-400 border-blue-500/30";
-                  else if (code >= 400) cls = "bg-red-500/15 text-red-400 border-red-500/30";
-                  return <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border font-semibold", cls)}>{code}</span>;
-                };
-
-                if (allSubs.length === 0) return <EmptyState message="No subdomains discovered" />;
-
-                return (
-                  <div className="space-y-4">
-                    {/* Summary cards */}
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                      {[
-                        { label: "Total",       count: allSubs.length,   cls: "border-border",            active: subdomainFilter === "all" },
-                        { label: "200 OK",      count: live200.length,   cls: "border-green-500/30",      active: subdomainFilter === "200", f: "200" },
-                        { label: "401 / 403",   count: liveAuth.length,  cls: "border-yellow-500/30",     active: subdomainFilter === "auth", f: "auth" },
-                        { label: "Redirects",   count: liveRedir.length, cls: "border-blue-500/30",       active: subdomainFilter === "redirect", f: "redirect" },
-                        { label: "Dead / Unresolved", count: deadSubs.length, cls: "border-red-500/30",  active: subdomainFilter === "dead", f: "dead" },
-                      ].map(({ label, count, cls, active, f }) => (
-                        <button
-                          key={label}
-                          onClick={() => setSubdomainFilter((f ?? "all") as any)}
-                          className={cn(
-                            "bg-card border rounded-xl p-3 text-left transition-all hover:bg-accent/30",
-                            cls, active && "ring-1 ring-primary bg-primary/5",
-                          )}
-                        >
-                          <p className="text-lg font-bold leading-tight">{count}</p>
-                          <p className="text-[10px] text-muted-foreground">{label}</p>
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Source legend (compact) */}
-                    {(() => {
-                      const srcMap: Record<string, number> = {};
-                      for (const s of allSubs) for (const src of (s.sources ?? [])) srcMap[src] = (srcMap[src] ?? 0) + 1;
-                      const entries = Object.entries(srcMap).sort((a, b) => b[1] - a[1]);
-                      if (entries.length === 0) return null;
+            {/* ── 2. CVEs ──────────────────────────────────────────────── */}
+            <SectionCard icon={AlertTriangle} title="CVEs" count={(selectedAsset?.cves ?? []).length}>
+              {(selectedAsset?.cves ?? []).length === 0
+                ? <EmptyState message="No CVEs found" icon={AlertTriangle} />
+                : (
+                  <div className="space-y-2">
+                    {(selectedAsset.cves as any[]).map((cve: any) => {
+                      const sev = (cve.severity ?? "unknown").toLowerCase();
+                      const sevColor = sev === "critical" ? "text-red-400 bg-red-500/10 border-red-500/30"
+                        : sev === "high" ? "text-orange-400 bg-orange-500/10 border-orange-500/30"
+                        : sev === "medium" ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
+                        : "text-muted-foreground bg-muted/30 border-border";
                       return (
-                        <div className="flex flex-wrap gap-1.5">
-                          {entries.map(([src, cnt]) => (
-                            <span key={src} className="text-[10px] px-2 py-0.5 rounded-full bg-accent/50 border border-border text-muted-foreground">
-                              {src} <span className="font-semibold text-foreground/70">{cnt}</span>
-                            </span>
-                          ))}
+                        <div key={cve.id} className="flex items-start gap-2 py-1.5 border-b border-border/30 last:border-0">
+                          <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 mt-0.5", sevColor)}>{sev.toUpperCase()}</span>
+                          <div className="flex-1 min-w-0">
+                            <a href={`https://nvd.nist.gov/vuln/detail/${cve.id}`} target="_blank" rel="noopener noreferrer"
+                               className="text-xs font-mono text-primary hover:underline">{cve.id}</a>
+                            {cve.description && <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">{cve.description}</p>}
+                          </div>
+                          {cve.cvss !== undefined && (
+                            <span className="text-[10px] font-bold tabular-nums shrink-0 text-muted-foreground">{Number(cve.cvss).toFixed(1)}</span>
+                          )}
                         </div>
                       );
-                    })()}
-
-                    {/* Table */}
-                    {filtered.length === 0 ? (
-                      <EmptyState message={`No subdomains match filter "${subdomainFilter}"`} />
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="text-left border-b border-border">
-                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">Subdomain</th>
-                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">IP</th>
-                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-3">HTTP</th>
-                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">Title</th>
-                              <th className="pb-2 text-xs font-medium text-muted-foreground pr-4">CDN / Server</th>
-                              <th className="pb-2 text-xs font-medium text-muted-foreground">Sources</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filtered.map((s: any, i: number) => (
-                              <tr key={i} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
-                                <td className="py-2 pr-4">
-                                  <a
-                                    href={`https://${s.name}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="font-mono text-xs text-primary hover:underline flex items-center gap-1 group"
-                                  >
-                                    {s.name}
-                                    <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 shrink-0" />
-                                  </a>
-                                  {s.redirectTo && (
-                                    <p className="text-[10px] text-blue-400 font-mono truncate max-w-[200px]" title={s.redirectTo}>
-                                      → {s.redirectTo}
-                                    </p>
-                                  )}
-                                </td>
-                                <td className="py-2 pr-4 font-mono text-xs text-muted-foreground whitespace-nowrap">
-                                  {s.ip || "—"}
-                                </td>
-                                <td className="py-2 pr-3 whitespace-nowrap">
-                                  {httpStatusBadge(s) ?? <span className="text-muted-foreground text-xs">—</span>}
-                                </td>
-                                <td className="py-2 pr-4 text-xs text-muted-foreground max-w-[180px] truncate" title={s.httpTitle ?? ""}>
-                                  {s.httpTitle || "—"}
-                                </td>
-                                <td className="py-2 pr-4">
-                                  <div className="flex flex-col gap-0.5">
-                                    {s.cdnProvider && (
-                                      <span className="text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded w-fit">
-                                        {s.cdnProvider}
-                                      </span>
-                                    )}
-                                    {s.webServer && (
-                                      <span className="text-[10px] text-muted-foreground font-mono">{s.webServer}</span>
-                                    )}
-                                    {!s.cdnProvider && !s.webServer && <span className="text-muted-foreground text-xs">—</span>}
-                                  </div>
-                                </td>
-                                <td className="py-2">
-                                  <div className="flex flex-wrap gap-1">
-                                    {(s.sources ?? []).slice(0, 3).map((src: string) => (
-                                      <span key={src} className="text-[9px] px-1.5 py-0.5 rounded bg-accent/60 border border-border text-muted-foreground whitespace-nowrap">
-                                        {src}
-                                      </span>
-                                    ))}
-                                    {(s.sources ?? []).length > 3 && (
-                                      <span className="text-[9px] px-1 py-0.5 text-muted-foreground">+{s.sources.length - 3}</span>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                    })}
                   </div>
-                );
-              })()}
+                )}
+            </SectionCard>
 
-              {/* HTTP Info tab */}
-              {assetTab === "http" && (
-                <div>
-                  {!selectedAsset.httpInfo ? (
-                    <EmptyState message="No HTTP information collected" />
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-3">
-                        <InfoRow label="URL" value={selectedAsset.httpInfo.url} mono />
-                        <InfoRow label="Status Code" value={String(selectedAsset.httpInfo.status)} />
-                        <InfoRow label="Title" value={selectedAsset.httpInfo.title} />
-                        <InfoRow label="Server" value={selectedAsset.httpInfo.server} mono />
-                        <InfoRow label="Content Length" value={`${(selectedAsset.httpInfo.contentLength / 1024).toFixed(1)} KB`} />
-                        <InfoRow label="WAF" value={selectedAsset.httpInfo.waf} />
-                        <InfoRow label="Technologies" value={(selectedAsset.httpInfo.tech ?? []).join(", ")} />
-                      </div>
-                      {Object.keys(selectedAsset.httpInfo.headers ?? {}).length > 0 && (
-                        <div>
-                          <p className="text-xs font-semibold text-muted-foreground mb-2">Response Headers</p>
-                          {/* Highlight security-relevant headers first */}
-                          {(() => {
-                            const h = selectedAsset.httpInfo.headers ?? {};
-                            const secHeaders = ["server","x-powered-by","strict-transport-security","content-security-policy","x-frame-options","x-content-type-options","referrer-policy","permissions-policy"];
-                            const highlighted = secHeaders.filter(k => h[k]);
-                            if (!highlighted.length) return null;
-                            return (
-                              <div className="mb-2 space-y-1">
-                                {highlighted.map(k => {
-                                  const isVuln = ["server","x-powered-by"].includes(k);
-                                  const isMissingSec = ["strict-transport-security","content-security-policy","x-frame-options","x-content-type-options","referrer-policy","permissions-policy"].includes(k) && h[k];
-                                  return (
-                                    <div key={k} className={cn("flex gap-2 rounded px-2 py-1.5 font-mono text-xs border", isVuln ? "bg-orange-500/5 border-orange-500/20" : "bg-green-500/5 border-green-500/20")}>
-                                      <span className={cn("shrink-0 font-semibold", isVuln ? "text-orange-400" : "text-green-400")}>{k}:</span>
-                                      <span className="text-muted-foreground break-all">{String(h[k])}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })()}
-                          <div className="bg-muted/30 rounded-lg p-3 space-y-1 font-mono text-xs">
-                            {Object.entries(selectedAsset.httpInfo.headers ?? {}).map(([k, v]) => (
-                              <div key={k} className="flex gap-2">
-                                <span className="text-primary shrink-0">{k}:</span>
-                                <span className="text-muted-foreground break-all">{String(v)}</span>
-                              </div>
-                            ))}
-                          </div>
+            {/* ── 3. Secrets & Credentials ─────────────────────────────── */}
+            <SectionCard icon={Key} title="Secrets & Credentials" count={secretsCount}>
+              {secretsCount === 0
+                ? <EmptyState message="No secrets found" icon={Key} />
+                : (
+                  <div className="space-y-2">
+                    {(selectedAsset.secrets as any[]).map((s: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 py-1.5 border-b border-border/30 last:border-0">
+                        <Key className="w-3 h-3 text-yellow-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-yellow-300 truncate">{s.type ?? "Secret"}</p>
+                          {s.value && <p className="text-[10px] font-mono text-muted-foreground mt-0.5 truncate">{s.value}</p>}
+                          {s.file && <p className="text-[10px] text-muted-foreground/60 truncate">{s.file}</p>}
                         </div>
-                      )}
+                        {s.port && <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1 shrink-0">:{s.port}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </SectionCard>
 
-                      {/* WAF Intelligence */}
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                          <Shield className="w-3 h-3" /> WAF Intelligence
-                        </p>
-                        {(selectedAsset.httpInfo as any)?.wafDetails ? (
-                          <div className="bg-accent/10 border border-border/50 rounded-lg px-4 py-3 flex items-start justify-between gap-4">
-                            <div>
-                              <p className="text-sm font-semibold">{(selectedAsset.httpInfo as any).wafDetails.name}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">{(selectedAsset.httpInfo as any).wafDetails.method}</p>
+            {/* ── 4. Screenshots ───────────────────────────────────────── */}
+            <SectionCard icon={Camera} title="Screenshots">
+              <ScreenshotsTab assetId={selectedAsset?.assetId} />
+            </SectionCard>
+
+            {/* ── 5. Technologies ──────────────────────────────────────── */}
+            <SectionCard icon={Cpu} title="Technologies">
+              <TechnologiesTab assetId={selectedAsset?.assetId} />
+            </SectionCard>
+
+            {/* ── 6. DNS Records ───────────────────────────────────────── */}
+            <SectionCard icon={Database} title="DNS Records" count={(selectedAsset?.dnsRecords ?? []).length}>
+              {(selectedAsset?.dnsRecords ?? []).length === 0
+                ? <EmptyState message="No DNS records found" icon={Database} />
+                : <DnsTab records={selectedAsset?.dnsRecords ?? []} />
+              }
+            </SectionCard>
+
+            {/* ── 7. Subdomains (full-width) ────────────────────────────── */}
+            <SectionCard icon={Globe} title="Subdomains" count={(selectedAsset?.subdomains ?? []).length} fullWidth>
+              {(selectedAsset?.subdomains ?? []).length === 0
+                ? <EmptyState message="No subdomains discovered" icon={Globe} />
+                : (() => {
+                  const subs: any[] = selectedAsset.subdomains ?? [];
+                  const filtered = subdomainSearch
+                    ? subs.filter((s: any) => {
+                        const name = typeof s === "string" ? s : String(s.subdomain ?? s.name ?? "");
+                        return name.toLowerCase().includes(subdomainSearch.toLowerCase());
+                      })
+                    : subs;
+                  return (
+                    <div className="space-y-3">
+                      <input
+                        value={subdomainSearch}
+                        onChange={e => setSubdomainSearch(e.target.value)}
+                        placeholder="Filter subdomains…"
+                        className="w-full bg-muted/30 border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-primary/50"
+                      />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                        {filtered.slice(0, 100).map((s: any, i: number) => {
+                          const name = typeof s === "string" ? s : (s.subdomain ?? s.name ?? "");
+                          const ip   = typeof s === "object" ? (s.ip ?? "") : "";
+                          return (
+                            <div key={i} className="flex items-center gap-2 py-1 border-b border-border/20 last:border-0">
+                              <Globe className="w-2.5 h-2.5 text-muted-foreground/50 shrink-0" />
+                              <span className="text-xs font-mono text-foreground/80 truncate">{name}</span>
+                              {ip && <span className="text-[10px] text-muted-foreground/50 font-mono shrink-0">{ip}</span>}
                             </div>
-                            <span className={cn("text-[10px] border rounded px-2 py-1 font-bold uppercase tracking-wide shrink-0",
-                              (selectedAsset.httpInfo as any).wafDetails.confidence === "high"   ? "bg-green-500/15 text-green-400 border-green-500/30" :
-                              (selectedAsset.httpInfo as any).wafDetails.confidence === "medium" ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
-                              "bg-muted/60 text-muted-foreground border-border"
-                            )}>{(selectedAsset.httpInfo as any).wafDetails.confidence} confidence</span>
-                          </div>
-                        ) : (
-                          <div className="bg-accent/10 border border-border/50 rounded-lg px-4 py-2.5 flex items-center gap-2 text-sm text-muted-foreground">
-                            <XCircle className="w-4 h-4 text-muted-foreground/40 shrink-0" /> No WAF detected on primary host (header inspection + active probe)
-                          </div>
-                        )}
-                        {/* Per-host WAF from subdomain fingerprinting */}
-                        {(selectedAsset.httpInfo?.hostFingerprints ?? []).some((fp: any) => fp.waf) && (
-                          <div className="mt-2 space-y-1">
-                            <p className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
-                              <Globe className="w-3 h-3" /> Detected on subdomains:
-                            </p>
-                            {(selectedAsset.httpInfo!.hostFingerprints as any[])
-                              .filter((fp: any) => fp.waf)
-                              .map((fp: any, i: number) => (
-                                <div key={i} className="flex items-center justify-between gap-2 bg-accent/10 border border-border/50 rounded px-3 py-1">
-                                  <span className="font-mono text-xs text-primary">{fp.host}</span>
-                                  <span className="text-xs bg-accent/60 border border-border rounded px-2 py-0.5 font-medium">{fp.waf}</span>
-                                </div>
-                              ))}
-                          </div>
+                          );
+                        })}
+                        {filtered.length > 100 && (
+                          <p className="text-[10px] text-muted-foreground/50 col-span-2 pt-1">…and {filtered.length - 100} more</p>
                         )}
                       </div>
-
-                      {/* Origin IP Discovery */}
-                      {((selectedAsset.httpInfo as any)?.originIps ?? []).length > 0 && (
-                        <div>
-                          <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                            <Network className="w-3 h-3" /> Origin IP Discovery
-                            <span className="ml-1 text-[10px] bg-accent/60 border border-border rounded px-1.5 py-0.5">{(selectedAsset.httpInfo as any).originIps.length} candidate{(selectedAsset.httpInfo as any).originIps.length !== 1 ? "s" : ""}</span>
-                          </p>
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="text-left border-b border-border">
-                                <th className="pb-2 text-xs font-medium text-muted-foreground">IP Address</th>
-                                <th className="pb-2 text-xs font-medium text-muted-foreground">Discovery Method</th>
-                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-24">Confidence</th>
-                                <th className="pb-2 text-xs font-medium text-muted-foreground">Org / rDNS</th>
-                                <th className="pb-2 text-xs font-medium text-muted-foreground">Open Ports</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {((selectedAsset.httpInfo as any).originIps as any[]).map((c: any, i: number) => (
-                                <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
-                                  <td className="py-1.5 font-mono text-xs text-foreground">{c.ip}</td>
-                                  <td className="py-1.5 text-xs text-muted-foreground max-w-[180px] truncate">{c.method}</td>
-                                  <td className="py-1.5 text-center">
-                                    <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-bold",
-                                      c.confidence === "high"   ? "bg-green-500/15 text-green-400 border-green-500/30" :
-                                      c.confidence === "medium" ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
-                                      "bg-muted/50 text-muted-foreground border-border"
-                                    )}>{c.confidence}</span>
-                                  </td>
-                                  <td className="py-1.5 text-xs text-muted-foreground font-mono max-w-[160px] truncate">{c.org || c.reverseDns || "—"}</td>
-                                  <td className="py-1.5 text-xs text-muted-foreground font-mono">{(c.openPorts ?? []).slice(0, 6).join(", ") || "—"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {/* Cookie Security Analysis */}
-                      {(selectedAsset.httpInfo?.cookieFlags ?? []).length > 0 && (
-                        <div>
-                          <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                            <Lock className="w-3 h-3" /> Cookie Security Analysis
-                            <span className="ml-1 text-[10px] bg-accent/60 border border-border rounded px-1.5 py-0.5">{selectedAsset.httpInfo.cookieFlags.length} cookies</span>
-                          </p>
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="text-left border-b border-border">
-                                <th className="pb-2 text-xs font-medium text-muted-foreground">Cookie Name</th>
-                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-20">Secure</th>
-                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-24">HttpOnly</th>
-                                <th className="pb-2 text-xs font-medium text-muted-foreground text-center w-28">SameSite</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(selectedAsset.httpInfo.cookieFlags as any[]).map((c: any, i: number) => (
-                                <tr key={i} className="border-b border-border/40 hover:bg-accent/20">
-                                  <td className="py-2 font-mono text-xs text-foreground">{c.name || "(unnamed)"}</td>
-                                  <td className="py-2 text-center">
-                                    {c.secure
-                                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mx-auto" />
-                                      : <AlertCircle className="w-3.5 h-3.5 text-red-400 mx-auto" />}
-                                  </td>
-                                  <td className="py-2 text-center">
-                                    {c.httpOnly
-                                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mx-auto" />
-                                      : <AlertCircle className="w-3.5 h-3.5 text-red-400 mx-auto" />}
-                                  </td>
-                                  <td className="py-2 text-center">
-                                    {c.sameSite ? (
-                                      <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold",
-                                        c.sameSite.toLowerCase() === "strict" ? "bg-green-500/15 text-green-400 border-green-500/30" :
-                                        c.sameSite.toLowerCase() === "lax"    ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
-                                        "bg-red-500/15 text-red-400 border-red-500/30"
-                                      )}>{c.sameSite}</span>
-                                    ) : <AlertCircle className="w-3.5 h-3.5 text-red-400 mx-auto" />}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
                     </div>
-                  )}
-                </div>
-              )}
+                  );
+                })()
+              }
+            </SectionCard>
 
-              {/* DNS Records tab */}
-              {assetTab === "dns" && (
-                <DnsTab records={selectedAsset.dnsRecords ?? []} />
-              )}
-
-              {/* Endpoints tab */}
-              {assetTab === "endpoints" && (
-                <EndpointsTab endpoints={selectedAsset.endpoints ?? []} />
-              )}
-
-              {/* JavaScript Analysis tab */}
-              {assetTab === "js" && (
-                <JsAnalysisTab jsAnalysis={selectedAsset.jsAnalysis ?? null} />
-              )}
-
-              {/* Parameter Discovery tab */}
-              {assetTab === "params" && (
-                <ParamDiscoveryTab paramDiscovery={selectedAsset.paramDiscovery ?? null} />
-              )}
-
-              {/* Cloud Asset Recon tab */}
-              {assetTab === "cloud" && (
-                <CloudReconTab cloudRecon={selectedAsset.cloudRecon ?? null} />
-              )}
-
-              {/* Secrets Hunt tab */}
-              {assetTab === "secretshunt" && (
-                <SecretsHuntTab secretsHunt={selectedAsset.secretsHunt ?? null} />
-              )}
-
-              {/* Directory Fuzz tab */}
-              {assetTab === "dirfuzz" && (
-                <DirFuzzTab dirFuzz={selectedAsset.dirFuzz ?? null} />
-              )}
-
-              {/* Nuclei Vuln Scan tab */}
-              {assetTab === "nuclei" && (
-                <NucleiTab vulnScan={selectedAsset.vulnScan ?? null} />
-              )}
-
-              {/* Screenshots tab */}
-              {assetTab === "screenshots" && (
-                <ScreenshotsTab assetId={selectedAsset.assetId} />
-              )}
-
-              {/* Technologies tab */}
-              {assetTab === "technologies" && (
-                <div className="space-y-4">
-                  {/* Per-host fingerprint breakdown from multi-host scan */}
-                  {(selectedAsset.httpInfo?.hostFingerprints ?? []).length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                        <Globe className="w-3 h-3" /> Per-Host Fingerprints
-                        <span className="ml-1 text-[10px] bg-accent/60 border border-border rounded px-1.5 py-0.5">{selectedAsset.httpInfo.hostFingerprints.length} subdomains</span>
-                      </p>
-                      <div className="space-y-1.5">
-                        {(selectedAsset.httpInfo.hostFingerprints as any[]).map((fp: any, i: number) => (
-                          <div key={i} className="flex items-start gap-2 bg-accent/10 border border-border/50 rounded-lg px-3 py-2">
-                            <span className="font-mono text-xs text-primary shrink-0 mt-0.5">{fp.host}</span>
-                            <div className="flex flex-wrap gap-1">
-                              {(fp.techs as string[]).map((t: string) => (
-                                <span key={t} className="text-[10px] bg-accent/50 border border-border rounded px-1.5 py-0.5 text-muted-foreground">{t}</span>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <TechnologiesTab assetId={selectedAsset.assetId} />
-                </div>
-              )}
-
-              {/* Intelligence tab */}
-              {assetTab === "intel" && (
-                <div>
-                  {(selectedAsset.intelligence ?? []).length === 0 ? (
-                    <EmptyState message="No intelligence data collected" />
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      {(selectedAsset.intelligence ?? []).map((item: any, i: number) => (
-                        <div key={i} className="bg-accent/20 border border-border rounded-lg px-3 py-2.5">
-                          <div className="flex items-center gap-1.5 mb-0.5">
-                            <span className="text-[10px] bg-primary/15 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium">{item.type}</span>
-                            <span className="text-xs text-muted-foreground">{item.key}</span>
-                          </div>
-                          <p className="text-sm font-medium">{item.value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Raw Output tab */}
-              {assetTab === "raw" && (() => {
-                // Build per-phase groups from all configured tools
-                const phaseGroups: Record<number, { phaseName: string; tools: string[] }> = {};
-                for (const t of configuredTools) {
-                  if (!phaseGroups[t.phase]) phaseGroups[t.phase] = { phaseName: t.phaseName, tools: [] };
-                  phaseGroups[t.phase].tools.push(t.name);
-                }
-                // Also include any tools that ran but weren't in configuredTools
-                for (const tr of toolResults) {
-                  const ph = tr.phase ?? 1;
-                  if (!phaseGroups[ph]) phaseGroups[ph] = { phaseName: tr.phaseName ?? "Recon", tools: [] };
-                  if (!phaseGroups[ph].tools.includes(tr.toolName)) phaseGroups[ph].tools.push(tr.toolName);
-                }
-                const sortedPhases = Object.entries(phaseGroups).sort(([a], [b]) => Number(a) - Number(b));
-
-                const selectedResult = toolResults.find((t: any) => t.toolName === displayedTool);
-                const toolRan = !!selectedResult;
-                // "No Results" = tool ran but rawOutput has no data sections (no === markers after header)
-                const hasData = selectedResult?.rawOutput
-                  ? selectedResult.rawOutput.includes("===")
-                  : false;
-
+            {/* ── 8. HTTP Info (full-width) ─────────────────────────────── */}
+            <SectionCard icon={Wifi} title="HTTP Info" fullWidth>
+              {(() => {
+                const httpInfo = selectedAsset?.httpInfo ?? {};
+                const headers  = selectedAsset?.httpHeaders ?? {};
+                const hasInfo  = Object.keys(httpInfo).length > 0 || Object.keys(headers).length > 0;
+                if (!hasInfo) return <EmptyState message="No HTTP info collected" icon={Wifi} />;
                 return (
-                  <div className="flex gap-4 min-h-[400px]">
-                    {/* Tool sidebar */}
-                    <div className="w-44 shrink-0 space-y-3">
-                      {sortedPhases.map(([phaseNum, group]) => (
-                        <div key={phaseNum}>
-                          <p className={cn(
-                            "text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded-md border mb-1.5 inline-block",
-                            PHASE_COLORS[Number(phaseNum)] ?? "text-muted-foreground bg-muted border-border"
-                          )}>
-                            {group.phaseName}
-                          </p>
-                          <div className="space-y-0.5">
-                            {group.tools.map(toolName => {
-                              const ran = toolResults.some((t: any) => t.toolName === toolName);
-                              const result = toolResults.find((t: any) => t.toolName === toolName);
-                              const hasOutput = result?.rawOutput?.includes("===");
-                              return (
-                                <button
-                                  key={toolName}
-                                  onClick={() => setSelectedTool(toolName)}
-                                  className={cn(
-                                    "w-full text-left text-xs px-2.5 py-1.5 rounded-lg border transition-colors flex items-center gap-2",
-                                    displayedTool === toolName
-                                      ? "bg-primary/20 border-primary/40 text-foreground"
-                                      : "bg-accent/20 border-border/50 text-muted-foreground hover:text-foreground hover:bg-accent/40"
-                                  )}
-                                >
-                                  <span className={cn(
-                                    "w-1.5 h-1.5 rounded-full shrink-0",
-                                    !ran ? "bg-muted-foreground/30" :
-                                    !hasOutput ? "bg-yellow-500/60" :
-                                    "bg-green-500"
-                                  )} />
-                                  <span className="font-mono truncate">{toolName}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                      {sortedPhases.length === 0 && (
-                        <p className="text-[10px] text-muted-foreground/50 px-2">No tools configured</p>
-                      )}
-                    </div>
-
-                    {/* Output area */}
-                    <div className="flex-1 min-w-0">
-                      {!displayedTool && (
-                        <div className="h-full flex items-center justify-center text-muted-foreground/40">
-                          <p className="text-sm">Select a tool to view output</p>
-                        </div>
-                      )}
-                      {displayedTool && (
-                        <div className="space-y-2">
-                          {/* Tool header */}
-                          <div className="flex items-center gap-2 pb-2 border-b border-border/50">
-                            <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
-                            <span className="text-xs font-mono font-semibold">{displayedTool}</span>
-                            {!toolRan && (
-                              <span className="text-[10px] bg-muted border border-border px-1.5 py-0.5 rounded text-muted-foreground">did not run</span>
-                            )}
-                            {toolRan && !hasData && (
-                              <span className="text-[10px] bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 px-1.5 py-0.5 rounded">no results</span>
-                            )}
-                            {toolRan && hasData && (
-                              <span className="text-[10px] bg-green-500/10 border border-green-500/30 text-green-400 px-1.5 py-0.5 rounded">results available</span>
-                            )}
-                            {selectedResult?.phaseName && (
-                              <span className="ml-auto text-[10px] text-muted-foreground/50">{selectedResult.phaseName}</span>
-                            )}
-                          </div>
-
-                          {/* Content */}
-                          {!toolRan && (
-                            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/40 gap-2">
-                              <XCircle className="w-8 h-8" />
-                              <p className="text-sm font-medium">Tool did not run</p>
-                              <p className="text-xs">This tool was configured but was not executed during the scan.</p>
-                            </div>
-                          )}
-                          {toolRan && !hasData && (
-                            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/40 gap-2">
-                              <AlertCircle className="w-8 h-8 text-yellow-500/40" />
-                              <p className="text-sm font-medium">No Results</p>
-                              <p className="text-xs">Tool ran successfully but found no data for this target.</p>
-                              {selectedResult?.rawOutput && (
-                                <details className="mt-3 w-full max-w-lg">
-                                  <summary className="text-[10px] text-muted-foreground/50 cursor-pointer hover:text-muted-foreground">Show execution log</summary>
-                                  <pre className="mt-2 bg-muted/20 border border-border/40 rounded-lg p-3 text-[10px] font-mono text-muted-foreground/50 overflow-x-auto whitespace-pre-wrap leading-relaxed">
-                                    {selectedResult.rawOutput}
-                                  </pre>
-                                </details>
-                              )}
-                            </div>
-                          )}
-                          {toolRan && hasData && (
-                            <pre className="bg-muted/20 border border-border/40 rounded-lg p-4 text-xs font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-[600px] overflow-y-auto">
-                              {selectedResult!.rawOutput}
-                            </pre>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                  <div className="space-y-0.5">
+                    {httpInfo.statusCode   && <InfoRow label="Status Code"    value={String(httpInfo.statusCode)} />}
+                    {httpInfo.title        && <InfoRow label="Title"           value={httpInfo.title} />}
+                    {httpInfo.server       && <InfoRow label="Server"          value={httpInfo.server} mono />}
+                    {httpInfo.contentType  && <InfoRow label="Content-Type"    value={httpInfo.contentType} mono />}
+                    {httpInfo.waf          && <InfoRow label="WAF"             value={httpInfo.waf} />}
+                    {httpInfo.cdn          && <InfoRow label="CDN"             value={httpInfo.cdn} />}
+                    {httpInfo.ip           && <InfoRow label="Resolved IP"     value={httpInfo.ip} mono />}
+                    {Object.entries(headers).slice(0, 10).map(([k, v]) => (
+                      <InfoRow key={k} label={k} value={String(v)} mono />
+                    ))}
                   </div>
                 );
               })()}
-            </div>
+            </SectionCard>
+
+            {/* ── 9. Endpoints ─────────────────────────────────────────── */}
+            <SectionCard icon={Search} title="Endpoints" count={(selectedAsset?.endpoints ?? []).length}>
+              {(selectedAsset?.endpoints ?? []).length === 0
+                ? <EmptyState message="No endpoints discovered" icon={Search} />
+                : <EndpointsTab endpoints={selectedAsset?.endpoints ?? []} />
+              }
+            </SectionCard>
+
+            {/* ── 10. Intelligence ─────────────────────────────────────── */}
+            <SectionCard icon={Eye} title="Intelligence" count={(selectedAsset?.intelligence ?? []).length}>
+              {(selectedAsset?.intelligence ?? []).length === 0
+                ? <EmptyState message="No intelligence data" icon={Eye} />
+                : (
+                  <div className="space-y-1">
+                    {(selectedAsset.intelligence as any[]).map((item: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 py-1.5 border-b border-border/30 last:border-0">
+                        <span className="text-[10px] bg-muted/40 text-muted-foreground border border-border rounded px-1.5 py-0.5 shrink-0 whitespace-nowrap">{item.type}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-semibold text-foreground/80 truncate">{item.key}</p>
+                          <p className="text-[10px] text-muted-foreground truncate">{item.value}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </SectionCard>
+
+            {/* ── 11. JavaScript Analysis (full-width) ──────────────────── */}
+            <SectionCard icon={Code} title="JavaScript Analysis"
+              count={selectedAsset?.jsAnalysis?.stats?.totalSecrets ?? undefined} fullWidth>
+              {!(selectedAsset?.jsAnalysis)
+                ? <EmptyState message="No JavaScript analysis performed" icon={Code} />
+                : <JsAnalysisTab jsAnalysis={selectedAsset?.jsAnalysis} />
+              }
+            </SectionCard>
+
+            {/* ── 12. Parameter Discovery ──────────────────────────────── */}
+            <SectionCard icon={FileCode} title="Parameter Discovery"
+              count={selectedAsset?.paramDiscovery?.stats?.unique ?? undefined}>
+              {!(selectedAsset?.paramDiscovery)
+                ? <EmptyState message="No parameter discovery performed" icon={FileCode} />
+                : <ParamDiscoveryTab paramDiscovery={selectedAsset?.paramDiscovery} />
+              }
+            </SectionCard>
+
+            {/* ── 13. Cloud Assets ─────────────────────────────────────── */}
+            <SectionCard icon={Cloud} title="Cloud Assets"
+              count={selectedAsset?.cloudRecon?.stats?.existingBuckets ?? undefined}>
+              {!(selectedAsset?.cloudRecon)
+                ? <EmptyState message="No cloud recon performed" icon={Cloud} />
+                : <CloudReconTab cloudRecon={selectedAsset?.cloudRecon} />
+              }
+            </SectionCard>
+
+            {/* ── 14. Secrets Hunt ─────────────────────────────────────── */}
+            <SectionCard icon={Github} title="Secrets Hunt"
+              count={(selectedAsset?.secretsHunt?.stats?.secretsFound ?? 0) + (selectedAsset?.secretsHunt?.stats?.gitDirsExposed ?? 0) || undefined}>
+              {!(selectedAsset?.secretsHunt)
+                ? <EmptyState message="No secrets hunt performed" icon={Github} />
+                : <SecretsHuntTab secretsHunt={selectedAsset?.secretsHunt} />
+              }
+            </SectionCard>
+
+            {/* ── 15. Directory Fuzzing ─────────────────────────────────── */}
+            <SectionCard icon={FolderOpen} title="Directory Fuzzing"
+              count={selectedAsset?.dirFuzz?.stats?.totalUnique ?? undefined}>
+              {!(selectedAsset?.dirFuzz)
+                ? <EmptyState message="No directory fuzzing performed" icon={FolderOpen} />
+                : <DirFuzzTab dirFuzz={selectedAsset?.dirFuzz} />
+              }
+            </SectionCard>
+
+            {/* ── 16. Nuclei Scan ──────────────────────────────────────── */}
+            <SectionCard icon={ShieldAlert} title="Nuclei Scan"
+              count={((selectedAsset?.vulnScan?.stats?.critical ?? 0) + (selectedAsset?.vulnScan?.stats?.high ?? 0)) || undefined}>
+              {!(selectedAsset?.vulnScan)
+                ? <EmptyState message="No Nuclei scan performed" icon={ShieldAlert} />
+                : <NucleiTab vulnScan={selectedAsset?.vulnScan} />
+              }
+            </SectionCard>
+
           </div>
+
+          {/* ── Raw Output (admin only, full-width) ────────────────────── */}
+          {!isClient && allToolNames.length > 0 && (
+            <div className="mt-4 bg-card border border-border rounded-xl overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-3 border-b border-border/60 bg-muted/20">
+                <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
+                <h2 className="text-xs font-semibold uppercase tracking-wide">Raw Tool Output</h2>
+                <span className="ml-auto text-[10px] bg-muted/40 text-muted-foreground border border-border px-1.5 py-0.5 rounded">Admin</span>
+              </div>
+              <div className="flex">
+                {/* Tool list sidebar */}
+                <div className="w-44 shrink-0 border-r border-border/60 overflow-y-auto max-h-[500px]">
+                  {allToolNames.map((name: string) => {
+                    const result = toolResults.find((r: any) => r.toolName === name);
+                    const ran    = !!result;
+                    const ok     = ran && !result.error;
+                    return (
+                      <button
+                        key={name}
+                        onClick={() => setSelectedTool(name)}
+                        className={cn(
+                          "w-full text-left flex items-center gap-2 px-3 py-2.5 text-xs border-b border-border/40 transition-colors",
+                          displayedTool === name
+                            ? "bg-primary/10 text-foreground"
+                            : "text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                        )}
+                      >
+                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0",
+                          !ran ? "bg-muted-foreground/30" : ok ? "bg-green-400" : "bg-red-400")} />
+                        <span className="truncate">{name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Output panel */}
+                <div className="flex-1 p-4 overflow-auto max-h-[500px]">
+                  {(() => {
+                    if (!displayedTool) return <EmptyState icon={Terminal} message="Select a tool" />;
+                    const selectedResult = toolResults.find((r: any) => r.toolName === displayedTool);
+                    const toolRan  = !!selectedResult;
+                    const hasData  = toolRan && selectedResult.rawOutput && selectedResult.rawOutput.length > 0;
+                    return (
+                      <div>
+                        {!toolRan && (
+                          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/40 gap-2">
+                            <Clock className="w-8 h-8" />
+                            <p className="text-sm font-medium">Not yet run</p>
+                            <p className="text-xs">This tool hasn't executed for this asset.</p>
+                          </div>
+                        )}
+                        {toolRan && selectedResult.error && (
+                          <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4">
+                            <p className="text-xs font-semibold text-red-400 mb-1">Tool Error</p>
+                            <pre className="text-[10px] font-mono text-red-300/80 whitespace-pre-wrap">{selectedResult.error}</pre>
+                          </div>
+                        )}
+                        {toolRan && !hasData && !selectedResult.error && (
+                          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/40 gap-2">
+                            <AlertCircle className="w-8 h-8 text-yellow-500/40" />
+                            <p className="text-sm font-medium">No Results</p>
+                            <p className="text-xs">Tool ran but found no data for this target.</p>
+                          </div>
+                        )}
+                        {toolRan && hasData && (
+                          <pre className="bg-muted/20 border border-border/40 rounded-lg p-4 text-xs font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-[400px] overflow-y-auto">
+                            {selectedResult!.rawOutput}
+                          </pre>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
     </div>
   );
 }
+
 
 // ── Page type badge colours ────────────────────────────────────────────────────
 const PAGE_TYPE_STYLES: Record<string, string> = {
