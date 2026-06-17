@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
+import { RadialBarChart, RadialBar, PolarAngleAxis, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import {
   useGetScanAssetReport, useGetScan, useStopScan,
   getGetScanQueryKey, getGetScanAssetReportQueryKey,
@@ -11,7 +12,7 @@ import {
   ChevronLeft, ChevronDown, ChevronRight, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud, GitBranch, Github, FolderOpen, Filter,
+  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud, GitBranch, Github, FolderOpen, Filter, Zap, Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -422,37 +423,31 @@ function SectionCard({
   title: string; icon: React.ElementType; count?: number; accent?: "red" | "orange" | "yellow";
   fullWidth?: boolean; children: React.ReactNode;
 }) {
-  const iconBg =
-    accent === "red"    ? "bg-red-500/15" :
-    accent === "orange" ? "bg-orange-500/15" :
-    accent === "yellow" ? "bg-yellow-500/15" :
-    "bg-primary/10";
-  const iconColor =
-    accent === "red"    ? "text-red-400" :
-    accent === "orange" ? "text-orange-400" :
-    accent === "yellow" ? "text-yellow-400" :
-    "text-primary";
-  const badgeCls =
-    accent === "red"    ? "bg-red-500/20 text-red-400 border border-red-500/30" :
-    accent === "orange" ? "bg-orange-500/20 text-orange-400 border border-orange-500/30" :
-    accent === "yellow" ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" :
-    "bg-primary/15 text-primary border border-primary/30";
+  const palette = {
+    red:    { leftBar: "bg-red-500",    iconBg: "bg-red-500/15",    iconColor: "text-red-400",    badgeCls: "bg-red-500/20 text-red-400 border border-red-500/30" },
+    orange: { leftBar: "bg-orange-500", iconBg: "bg-orange-500/15", iconColor: "text-orange-400", badgeCls: "bg-orange-500/20 text-orange-400 border border-orange-500/30" },
+    yellow: { leftBar: "bg-yellow-500", iconBg: "bg-yellow-500/15", iconColor: "text-yellow-400", badgeCls: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" },
+    none:   { leftBar: "bg-primary/60", iconBg: "bg-primary/10",    iconColor: "text-primary",    badgeCls: "bg-primary/15 text-primary border border-primary/30" },
+  };
+  const p = palette[accent ?? "none"];
   return (
     <div className={cn("bg-card border border-border rounded-2xl overflow-hidden flex flex-col", fullWidth && "xl:col-span-2")}>
-      <div className="flex items-center justify-between px-5 py-4 border-b border-border/50 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center shrink-0", iconBg)}>
-            <Icon className={cn("w-3.5 h-3.5", iconColor)} />
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 shrink-0 bg-gradient-to-r from-muted/30 to-transparent">
+        <div className="flex items-center gap-2.5">
+          <div className={cn("w-1 h-6 rounded-full shrink-0", p.leftBar)} />
+          <div className={cn("w-6 h-6 rounded-md flex items-center justify-center shrink-0", p.iconBg)}>
+            <Icon className={cn("w-3 h-3", p.iconColor)} />
           </div>
-          <h3 className="text-xs font-bold uppercase tracking-wider text-foreground/80">{title}</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-widest text-foreground/60">{title}</h3>
         </div>
         {count !== undefined && (
-          <span className={cn("text-[11px] font-bold px-2.5 py-0.5 rounded-full min-w-[28px] text-center",
-            count > 0 ? badgeCls : "bg-muted/60 text-muted-foreground/40 border border-border"
+          <span className={cn(
+            "text-[11px] font-black px-2.5 py-0.5 rounded-full min-w-[28px] text-center tabular-nums",
+            count > 0 ? p.badgeCls : "bg-muted/40 text-muted-foreground/30 border border-border"
           )}>{count}</span>
         )}
       </div>
-      <div className="p-5 overflow-y-auto">
+      <div className="p-5 overflow-y-auto flex-1">
         {children}
       </div>
     </div>
@@ -655,15 +650,16 @@ export default function ScanReportPage() {
   const displayedTool = selectedTool ?? allToolNames[0] ?? null;
 
   // ── Derived scan-level metrics ────────────────────────────────────────────
-  const totalFindings = assetReports.reduce((a: number, r: any) => a + (r.summary?.vulnerabilities ?? 0), 0);
-  const totalCritHigh = assetReports.reduce((a: number, r: any) => a + (r.summary?.criticalVulns ?? 0) + (r.summary?.highVulns ?? 0), 0);
+  const totalFindings      = assetReports.reduce((a: number, r: any) => a + (r.summary?.vulnerabilities ?? 0), 0);
+  const totalCritHigh      = assetReports.reduce((a: number, r: any) => a + (r.summary?.criticalVulns ?? 0) + (r.summary?.highVulns ?? 0), 0);
+  const totalCriticalCves  = (selectedAsset?.cves ?? []).filter((c: any) => c.severity === "critical").length;
+  const totalHighCves      = (selectedAsset?.cves ?? []).filter((c: any) => c.severity === "high").length;
   const durationStr   = (scan?.startedAt && scan?.completedAt)
     ? formatDuration(new Date(scan.startedAt).getTime(), new Date(scan.completedAt).getTime())
     : scanStatus === "running" ? "In progress" : "—";
 
-  const scanAsmScore  = computeScanAsmScore(assetReports);
-  const scanSeverity  = worstSeverity(assetReports);
-  const scanImportance = worstImportance(assetReports);
+  const scanAsmScore = computeScanAsmScore(assetReports);
+  const scanSeverity = worstSeverity(assetReports);
 
   const STATUS_META: Record<string, { bar: string; bg: string; border: string; text: string; label: string }> = {
     completed: { bar: "bg-green-500",  bg: "bg-green-500/10",  border: "border-green-500/30",  text: "text-green-400",        label: "Completed" },
@@ -683,7 +679,6 @@ export default function ScanReportPage() {
     low:      "bg-green-500/5 border-green-500/30",
   };
   const asmColor = scanAsmScore >= 80 ? "text-green-400" : scanAsmScore >= 60 ? "text-yellow-400" : scanAsmScore >= 40 ? "text-orange-400" : "text-red-400";
-  const asmBg    = scanAsmScore >= 80 ? "bg-green-500/5 border-green-500/30" : scanAsmScore >= 60 ? "bg-yellow-500/5 border-yellow-500/30" : scanAsmScore >= 40 ? "bg-orange-500/5 border-orange-500/30" : "bg-red-500/5 border-red-500/30";
 
   return (
     <div className="space-y-5">
@@ -717,42 +712,92 @@ export default function ScanReportPage() {
         </div>
       </div>
 
-      {/* ── Hero card ─────────────────────────────────────────────────────── */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className={cn("h-1", sm.bar)} />
-        <div className="p-5">
-          <div className="flex items-start gap-4">
-            <div className={cn("p-3 rounded-xl border shrink-0", sm.bg, sm.border)}>
-              <Shield className={cn("w-6 h-6", sm.text)} />
+      {/* ── Hero banner ─────────────────────────────────────────────────────── */}
+      <div className="relative rounded-2xl border border-border overflow-hidden bg-card">
+        {/* Subtle dot-grid pattern */}
+        <div className="absolute inset-0 opacity-[0.025]"
+          style={{ backgroundImage: "radial-gradient(circle, hsl(var(--foreground)) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
+        {/* Threat-level gradient tint */}
+        <div className={cn("absolute inset-0 opacity-30",
+          scanSeverity === "critical" ? "bg-gradient-to-br from-red-950/60 via-transparent to-transparent" :
+          scanSeverity === "high"     ? "bg-gradient-to-br from-orange-950/60 via-transparent to-transparent" :
+          "bg-gradient-to-br from-yellow-950/40 via-transparent to-transparent"
+        )} />
+        {/* Top status bar */}
+        <div className={cn("h-0.5 w-full", sm.bar)} />
+
+        <div className="relative px-6 py-5">
+          <div className="flex items-start gap-6">
+            {/* ASM Score radial gauge */}
+            <div className="relative shrink-0 w-[84px] h-[84px]">
+              <svg width="84" height="84" className="-rotate-90">
+                <circle cx="42" cy="42" r="34" fill="none" stroke="currentColor"
+                  className="text-muted/20" strokeWidth="7" />
+                <circle cx="42" cy="42" r="34" fill="none" stroke="currentColor"
+                  className={asmColor}
+                  strokeWidth="7"
+                  strokeLinecap="round"
+                  strokeDasharray={`${2 * Math.PI * 34}`}
+                  strokeDashoffset={`${2 * Math.PI * 34 * (1 - scanAsmScore / 100)}`}
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center rotate-0">
+                <p className={cn("text-2xl font-black tabular-nums leading-none", asmColor)}>{scanAsmScore}</p>
+                <p className="text-[8px] uppercase tracking-widest text-muted-foreground/60 mt-0.5">ASM</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className={cn("text-[10px] flex items-center gap-1 px-2 py-0.5 rounded-md font-bold uppercase border", sm.bg, sm.text, sm.border)}>
+
+            {/* Scan info */}
+            <div className="flex-1 min-w-0 pt-0.5">
+              <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+                <span className={cn("text-[10px] flex items-center gap-1 px-2.5 py-1 rounded-full font-bold uppercase border", sm.bg, sm.text, sm.border)}>
                   {scanStatus === "running"   && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                   {scanStatus === "completed" && <CheckCircle2 className="w-2.5 h-2.5" />}
                   {scanStatus === "cancelled" && <XCircle className="w-2.5 h-2.5" />}
                   {sm.label}
                 </span>
-                <span className="text-[10px] bg-accent/60 border border-border px-2 py-0.5 rounded-md text-muted-foreground">
-                  {assetReports.length} asset{assetReports.length !== 1 ? "s" : ""}
+                <span className={cn("text-[10px] px-2.5 py-1 rounded-full font-bold uppercase border",
+                  scanSeverity === "critical" ? "bg-red-500/10 text-red-400 border-red-500/30" :
+                  scanSeverity === "high"     ? "bg-orange-500/10 text-orange-400 border-orange-500/30" :
+                  "bg-yellow-500/10 text-yellow-400 border-yellow-500/30"
+                )}>
+                  {scanSeverity} threat
                 </span>
-                {totalFindings > 0 && (
-                  <span className={cn("text-[10px] px-2 py-0.5 rounded-md font-semibold border",
-                    totalCritHigh > 0 ? "bg-red-500/10 text-red-400 border-red-500/30" : "bg-orange-500/10 text-orange-400 border-orange-500/30")}>
-                    {totalFindings} finding{totalFindings !== 1 ? "s" : ""}
-                  </span>
-                )}
                 {totalCritHigh > 0 && (
-                  <span className="text-[10px] bg-red-500/15 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-md font-bold">
-                    {totalCritHigh} critical/high
+                  <span className="text-[10px] bg-red-500/15 text-red-400 border border-red-500/30 px-2.5 py-1 rounded-full font-bold flex items-center gap-1">
+                    <XCircle className="w-2.5 h-2.5" />{totalCritHigh} crit/high
                   </span>
                 )}
               </div>
-              <h1 className="text-base font-semibold leading-snug">{scan?.name ?? `Pipeline Scan Report #${scanId}`}</h1>
-              <p className="text-xs text-muted-foreground mt-1.5">
-                {scan?.startedAt && `Started ${new Date(scan.startedAt).toLocaleString()}`}
-                {scan?.completedAt && ` · Completed ${new Date(scan.completedAt).toLocaleTimeString()}`}
+
+              <h1 className="text-lg font-bold leading-tight tracking-tight">{scan?.name ?? `Pipeline Scan Report #${scanId}`}</h1>
+              <p className="text-xs text-muted-foreground mt-1">
+                {scan?.startedAt && new Date(scan.startedAt).toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
+                {scan?.startedAt && ` · ${new Date(scan.startedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`}
+                {durationStr !== "—" && <span className="ml-2 opacity-60">· {durationStr}</span>}
               </p>
+
+              {/* Quick stats row */}
+              <div className="flex items-center gap-4 mt-3.5 flex-wrap text-xs">
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <Globe className="w-3.5 h-3.5" />
+                  <span className="font-bold text-foreground">{assetReports.length}</span> asset{assetReports.length !== 1 ? "s" : ""}
+                </span>
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <AlertTriangle className={cn("w-3.5 h-3.5", totalFindings > 0 ? "text-orange-400" : "")} />
+                  <span className="font-bold text-foreground">{totalFindings}</span> finding{totalFindings !== 1 ? "s" : ""}
+                </span>
+                {(summary.waf && summary.waf !== "none") && (
+                  <span className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/25 rounded-full px-2.5 py-0.5 text-blue-400 font-medium">
+                    <Shield className="w-3 h-3" /> WAF: {summary.waf}
+                  </span>
+                )}
+                {summary.cdn && (
+                  <span className="flex items-center gap-1.5 bg-purple-500/10 border border-purple-500/25 rounded-full px-2.5 py-0.5 text-purple-400 font-medium">
+                    <Zap className="w-3 h-3" /> CDN: {summary.cdn}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -760,64 +805,84 @@ export default function ScanReportPage() {
 
       {/* ── 4 Summary Metric Cards ─────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {/* ASM Score */}
-        <div className={cn("border rounded-2xl p-5 relative overflow-hidden", asmBg)}>
-          <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
-          <div className="flex items-center gap-2 mb-4">
-            <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border", asmBg, asmColor.replace("text-", "border-").replace("400", "500/40"))}>
-              <ShieldAlert className={cn("w-4 h-4", asmColor)} />
+        {/* CVEs Critical/High */}
+        <div className="border border-red-500/25 bg-red-500/5 rounded-2xl p-5 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-red-500/10 to-transparent pointer-events-none" />
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-7 h-7 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center">
+              <ShieldAlert className="w-3.5 h-3.5 text-red-400" />
             </div>
-            <span className={cn("text-[11px] font-bold uppercase tracking-wider", asmColor)}>ASM Score</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-red-400/80">Critical / High</span>
           </div>
-          <p className={cn("text-5xl font-black tabular-nums leading-none", asmColor)}>{scanAsmScore}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1.5">out of 100</p>
-          <div className="mt-4 h-1.5 rounded-full bg-black/20 overflow-hidden">
-            <div className={cn("h-full rounded-full", scanAsmScore >= 80 ? "bg-green-400" : scanAsmScore >= 60 ? "bg-yellow-400" : scanAsmScore >= 40 ? "bg-orange-400" : "bg-red-400")}
-              style={{ width: `${scanAsmScore}%` }} />
+          <div className="flex items-end gap-1.5">
+            <p className="text-4xl font-black tabular-nums leading-none text-red-400">{totalCriticalCves}</p>
+            <p className="text-xl font-black tabular-nums leading-none text-orange-400 pb-0.5">/{totalHighCves}</p>
+          </div>
+          <p className="text-[10px] text-muted-foreground/60 mt-2">CVEs by severity</p>
+          <div className="mt-3 flex gap-0.5 h-1 rounded-full overflow-hidden">
+            {totalCriticalCves > 0 && <div className="bg-red-500 h-full" style={{ flex: totalCriticalCves }} />}
+            {totalHighCves > 0    && <div className="bg-orange-500 h-full" style={{ flex: totalHighCves }} />}
+            {Math.max(0, (selectedAsset?.cves?.length ?? 0) - totalCriticalCves - totalHighCves) > 0 && <div className="bg-muted/40 h-full" style={{ flex: Math.max(1, (selectedAsset?.cves?.length ?? 0) - totalCriticalCves - totalHighCves) }} />}
           </div>
         </div>
 
         {/* Severity */}
         <div className={cn("border rounded-2xl p-5 relative overflow-hidden", SEV_BG_MAP[scanSeverity])}>
           <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
-          <div className="flex items-center gap-2 mb-4">
-            <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center", SEV_BG_MAP[scanSeverity])}>
-              <AlertTriangle className={cn("w-4 h-4", SEV_COLORS_MAP[scanSeverity])} />
+          <div className="flex items-center gap-2 mb-3">
+            <div className={cn("w-7 h-7 rounded-xl flex items-center justify-center border", SEV_BG_MAP[scanSeverity])}>
+              <AlertTriangle className={cn("w-3.5 h-3.5", SEV_COLORS_MAP[scanSeverity])} />
             </div>
-            <span className={cn("text-[11px] font-bold uppercase tracking-wider", SEV_COLORS_MAP[scanSeverity])}>Severity</span>
+            <span className={cn("text-[10px] font-bold uppercase tracking-widest", SEV_COLORS_MAP[scanSeverity], "opacity-80")}>Risk Level</span>
           </div>
-          <p className={cn("text-4xl font-black capitalize leading-none", SEV_COLORS_MAP[scanSeverity])}>{scanSeverity}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1.5">Worst finding</p>
+          <p className={cn("text-3xl font-black capitalize leading-none", SEV_COLORS_MAP[scanSeverity])}>{scanSeverity}</p>
+          <p className="text-[10px] text-muted-foreground/60 mt-2">Worst finding</p>
+          <div className="mt-3 flex items-center gap-1">
+            {(["low","medium","high","critical"] as const).map(s => (
+              <div key={s} className={cn("h-1.5 flex-1 rounded-full transition-all",
+                s === scanSeverity ? SEV_COLORS_MAP[s].replace("text-","bg-").replace("-400","-500") :
+                "bg-muted/25"
+              )} />
+            ))}
+          </div>
         </div>
 
         {/* Assets Scanned */}
         <div className="bg-card border border-border rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Globe className="w-4 h-4 text-primary" />
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-7 h-7 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <Globe className="w-3.5 h-3.5 text-primary" />
             </div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Assets</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">Assets</span>
           </div>
-          <p className="text-5xl font-black text-primary leading-none tabular-nums">{assetReports.length}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1.5">Scanned</p>
+          <p className="text-4xl font-black text-primary leading-none tabular-nums">{assetReports.length}</p>
+          <p className="text-[10px] text-muted-foreground/60 mt-2">Scanned targets</p>
+          <div className="mt-3 flex gap-1">
+            {assetReports.slice(0, 8).map((_: any, i: number) => (
+              <div key={i} className={cn("h-1.5 flex-1 rounded-full", i === selectedAssetIdx ? "bg-primary" : "bg-primary/20")} />
+            ))}
+          </div>
         </div>
 
         {/* Duration */}
         <div className="bg-card border border-border rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-muted/30 to-transparent pointer-events-none" />
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center">
-              <Clock className="w-4 h-4 text-muted-foreground" />
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-7 h-7 rounded-xl bg-muted border border-border flex items-center justify-center">
+              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Duration</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">Duration</span>
           </div>
-          <p className="text-4xl font-black text-foreground leading-none tabular-nums">{durationStr}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1.5">Scan time</p>
+          <p className="text-3xl font-black text-foreground leading-none tabular-nums">{durationStr}</p>
+          <p className="text-[10px] text-muted-foreground/60 mt-2">Scan time</p>
+          <div className="mt-3 flex items-center gap-1.5 text-[10px] text-muted-foreground/50">
+            <span>{summary.toolsRun ?? 0} tools run</span>
+          </div>
         </div>
       </div>
 
-      {/* ── Asset selector: horizontal scrollable tabs ─────────────────── */}
+      {/* ── Asset selector ─────────────────────────────────────────────────── */}
       <div className="flex gap-2.5 overflow-x-auto pb-1">
         {assetReports.map((asset: any, idx: number) => {
           const critVulns  = asset.summary?.criticalVulns ?? 0;
@@ -825,29 +890,39 @@ export default function ScanReportPage() {
           const secretsNum = (asset.secrets ?? []).length;
           const assetScore = computeAsmScore(asset);
           const scoreColor = assetScore >= 80 ? "text-green-400" : assetScore >= 60 ? "text-yellow-400" : assetScore >= 40 ? "text-orange-400" : "text-red-400";
+          const scoreBg    = assetScore >= 80 ? "bg-green-500" : assetScore >= 60 ? "bg-yellow-500" : assetScore >= 40 ? "bg-orange-500" : "bg-red-500";
+          const isActive   = idx === selectedAssetIdx;
           return (
             <button
               key={asset.assetId}
               onClick={() => { setSelectedAssetIdx(idx); setSelectedTool(null); }}
               className={cn(
-                "flex-shrink-0 text-left rounded-2xl px-4 py-3 border transition-all",
-                idx === selectedAssetIdx
-                  ? "bg-primary/10 border-primary/40 shadow-sm"
-                  : "bg-card border-border hover:border-muted-foreground/30 hover:bg-accent/30"
+                "flex-shrink-0 text-left rounded-2xl border transition-all duration-150 overflow-hidden",
+                isActive
+                  ? "bg-card border-primary/50 shadow-lg shadow-primary/10 ring-1 ring-primary/20"
+                  : "bg-card/60 border-border hover:border-muted-foreground/30 hover:bg-card"
               )}
             >
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className={cn("text-base font-black tabular-nums", scoreColor)}>{assetScore}</span>
-                {critVulns > 0 && <span className="text-[9px] font-bold bg-red-500/15 text-red-400 border border-red-500/20 rounded-full px-1.5 py-0.5">CRIT</span>}
-                {highVulns > 0 && !critVulns && <span className="text-[9px] font-bold bg-orange-500/15 text-orange-400 border border-orange-500/20 rounded-full px-1.5 py-0.5">HIGH</span>}
-                {secretsNum > 0 && <span className="text-[9px] font-bold bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 rounded-full px-1.5 py-0.5">KEY</span>}
-                {scanStatus === "running" && idx === selectedAssetIdx && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin ml-auto" />}
-              </div>
-              <p className="text-sm font-semibold truncate leading-tight max-w-[200px]">{asset.assetName}</p>
-              <p className="text-[10px] text-muted-foreground truncate mt-0.5 max-w-[200px]">{asset.assetValue}</p>
-              <div className="flex gap-1.5 mt-2">
-                <span className="text-[9px] bg-muted/40 text-muted-foreground rounded-full px-1.5 py-0.5">{asset.summary?.openPorts ?? 0} ports</span>
-                {(asset.summary?.subdomains ?? 0) > 0 && <span className="text-[9px] bg-muted/40 text-muted-foreground rounded-full px-1.5 py-0.5">{asset.summary.subdomains} subs</span>}
+              {/* Score bar top */}
+              <div className={cn("h-0.5 w-full", isActive ? scoreBg : "bg-transparent")} />
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className={cn("text-lg font-black tabular-nums leading-none", scoreColor)}>{assetScore}</span>
+                  <span className="text-[9px] text-muted-foreground/50 font-medium">/ 100</span>
+                  <div className="flex gap-1 ml-1">
+                    {critVulns > 0 && <span className="text-[8px] font-bold bg-red-500/15 text-red-400 border border-red-500/20 rounded px-1 py-0.5">CRIT</span>}
+                    {highVulns > 0 && !critVulns && <span className="text-[8px] font-bold bg-orange-500/15 text-orange-400 border border-orange-500/20 rounded px-1 py-0.5">HIGH</span>}
+                    {secretsNum > 0 && <span className="text-[8px] font-bold bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 rounded px-1 py-0.5">KEY</span>}
+                  </div>
+                  {scanStatus === "running" && isActive && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin ml-auto" />}
+                </div>
+                <p className="text-sm font-semibold truncate leading-tight max-w-[180px]">{asset.assetName}</p>
+                <p className="text-[10px] text-muted-foreground truncate mt-0.5 max-w-[180px] font-mono">{asset.assetValue}</p>
+                <div className="flex gap-1.5 mt-2">
+                  {(asset.summary?.openPorts ?? 0) > 0 && <span className="text-[9px] bg-muted/30 text-muted-foreground rounded px-1.5 py-0.5">{asset.summary.openPorts} ports</span>}
+                  {(asset.summary?.subdomains ?? 0) > 0 && <span className="text-[9px] bg-muted/30 text-muted-foreground rounded px-1.5 py-0.5">{asset.summary.subdomains} subs</span>}
+                  {(asset.summary?.cves ?? 0) > 0 && <span className="text-[9px] bg-red-500/10 text-red-400 rounded px-1.5 py-0.5">{asset.summary.cves} CVEs</span>}
+                </div>
               </div>
             </button>
           );
@@ -855,23 +930,39 @@ export default function ScanReportPage() {
       </div>
 
       {/* ── Asset summary stats strip ──────────────────────────────────────── */}
-      <div className="grid grid-cols-4 sm:grid-cols-7 xl:grid-cols-9 gap-3">
+      <div className="grid grid-cols-4 sm:grid-cols-7 xl:grid-cols-9 gap-2.5">
         {([
-          { label: "Open Ports",  value: summary.openPorts ?? 0,                    highlight: false },
-          { label: "CVEs",        value: (selectedAsset?.cves ?? []).length,         highlight: (selectedAsset?.cves ?? []).length > 0 },
-          { label: "Subdomains",  value: summary.subdomains ?? 0,                    highlight: false },
-          { label: "DNS Records", value: summary.dnsRecords ?? 0,                    highlight: false },
-          { label: "Endpoints",   value: summary.endpoints ?? 0,                     highlight: false },
-          { label: "Secrets",     value: secretsCount,                               highlight: secretsCount > 0 },
-          { label: "Tools Run",   value: summary.toolsRun ?? 0,                      highlight: false },
-          ...(summary.waf && summary.waf !== "none" ? [{ label: "WAF", value: summary.waf as any, highlight: false }] : []),
-          ...(summary.cdn ? [{ label: "CDN", value: summary.cdn as any, highlight: false }] : []),
-        ] as { label: string; value: number | string; highlight: boolean }[]).map(({ label, value, highlight }) => (
-          <div key={label} className="bg-card border border-border rounded-2xl p-4 text-center">
-            <p className={cn("text-xl font-black tabular-nums leading-none", highlight ? "text-red-400" : "text-foreground")}>{value}</p>
-            <p className="text-[10px] text-muted-foreground/70 mt-1.5 uppercase tracking-wide font-medium">{label}</p>
+          { label: "Open Ports",  value: summary.openPorts ?? 0,                   icon: Network,    highlight: false,                              color: "text-foreground" },
+          { label: "CVEs",        value: (selectedAsset?.cves ?? []).length,        icon: AlertTriangle, highlight: (selectedAsset?.cves ?? []).length > 0, color: (selectedAsset?.cves ?? []).length > 0 ? "text-red-400" : "text-foreground" },
+          { label: "Subdomains",  value: summary.subdomains ?? 0,                   icon: Globe,      highlight: false,                              color: "text-foreground" },
+          { label: "DNS Records", value: summary.dnsRecords ?? 0,                   icon: Database,   highlight: false,                              color: "text-foreground" },
+          { label: "Endpoints",   value: summary.endpoints ?? 0,                    icon: Search,     highlight: false,                              color: "text-foreground" },
+          { label: "Secrets",     value: secretsCount,                              icon: Key,        highlight: secretsCount > 0,                   color: secretsCount > 0 ? "text-yellow-400" : "text-foreground" },
+          { label: "Tools Run",   value: summary.toolsRun ?? 0,                     icon: Wrench,     highlight: false,                              color: "text-primary" },
+        ] as { label: string; value: number | string; icon: React.ElementType; highlight: boolean; color: string }[]).map(({ label, value, icon: StatIcon, highlight, color }) => (
+          <div key={label} className={cn(
+            "bg-card border rounded-xl p-3 text-center transition-colors",
+            highlight ? "border-red-500/20 bg-red-500/5" : "border-border"
+          )}>
+            <StatIcon className={cn("w-3.5 h-3.5 mx-auto mb-1.5 opacity-50", color)} />
+            <p className={cn("text-lg font-black tabular-nums leading-none", color)}>{value}</p>
+            <p className="text-[9px] text-muted-foreground/60 mt-1 uppercase tracking-wide font-medium">{label}</p>
           </div>
         ))}
+        {summary.waf && summary.waf !== "none" && (
+          <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 text-center">
+            <Shield className="w-3.5 h-3.5 mx-auto mb-1.5 opacity-50 text-blue-400" />
+            <p className="text-xs font-bold text-blue-400 leading-snug">{summary.waf}</p>
+            <p className="text-[9px] text-muted-foreground/60 mt-1 uppercase tracking-wide font-medium">WAF</p>
+          </div>
+        )}
+        {summary.cdn && (
+          <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-3 text-center">
+            <Zap className="w-3.5 h-3.5 mx-auto mb-1.5 opacity-50 text-purple-400" />
+            <p className="text-xs font-bold text-purple-400 leading-snug">{summary.cdn}</p>
+            <p className="text-[9px] text-muted-foreground/60 mt-1 uppercase tracking-wide font-medium">CDN</p>
+          </div>
+        )}
       </div>
 
       {/* ── Data cards: full-width ─────────────────────────────────────────── */}
@@ -891,28 +982,89 @@ export default function ScanReportPage() {
 
             {/* ── 2. CVEs ──────────────────────────────────────────────── */}
             <SectionCard icon={AlertTriangle} title="CVEs" count={(selectedAsset?.cves ?? []).length} fullWidth accent="red">
+              {(selectedAsset?.cves ?? []).length > 0 && (
+                <div className="flex items-center gap-2 mb-4 pb-4 border-b border-border/30">
+                  {[
+                    { label: "Critical", count: (selectedAsset?.cves ?? []).filter((c: any) => c.severity === "critical").length, color: "bg-red-500", text: "text-red-400" },
+                    { label: "High",     count: (selectedAsset?.cves ?? []).filter((c: any) => c.severity === "high").length,     color: "bg-orange-500", text: "text-orange-400" },
+                    { label: "Medium",   count: (selectedAsset?.cves ?? []).filter((c: any) => c.severity === "medium").length,   color: "bg-yellow-500", text: "text-yellow-400" },
+                    { label: "Low",      count: (selectedAsset?.cves ?? []).filter((c: any) => c.severity === "low").length,      color: "bg-blue-500",  text: "text-blue-400" },
+                  ].map(({ label, count, color, text }) => count > 0 && (
+                    <div key={label} className="flex items-center gap-1.5">
+                      <div className={cn("w-2 h-2 rounded-full shrink-0", color)} />
+                      <span className={cn("text-sm font-black tabular-nums", text)}>{count}</span>
+                      <span className="text-[10px] text-muted-foreground">{label}</span>
+                    </div>
+                  ))}
+                  <div className="ml-auto flex-1 max-w-[140px]">
+                    <div className="flex h-1.5 rounded-full overflow-hidden gap-px">
+                      {[
+                        { sev: "critical", color: "bg-red-500" },
+                        { sev: "high",     color: "bg-orange-500" },
+                        { sev: "medium",   color: "bg-yellow-500" },
+                        { sev: "low",      color: "bg-blue-400" },
+                      ].map(({ sev, color }) => {
+                        const n = (selectedAsset?.cves ?? []).filter((c: any) => c.severity === sev).length;
+                        return n > 0 ? <div key={sev} className={cn("h-full", color)} style={{ flex: n }} /> : null;
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
               <PaginatedSection
                 items={selectedAsset?.cves ?? []}
-                pageSize={15}
+                pageSize={12}
                 emptyMessage="No CVEs found"
                 emptyIcon={AlertTriangle}
                 renderItem={(cve) => {
                   const sev = (cve.severity ?? "unknown").toLowerCase();
-                  const sevColor = sev === "critical" ? "text-red-400 bg-red-500/10 border-red-500/30"
-                    : sev === "high" ? "text-orange-400 bg-orange-500/10 border-orange-500/30"
+                  const leftBar  = sev === "critical" ? "bg-red-500"    : sev === "high" ? "bg-orange-500" : sev === "medium" ? "bg-yellow-500" : "bg-blue-400";
+                  const sevBadge = sev === "critical" ? "text-red-400 bg-red-500/10 border-red-500/30"
+                    : sev === "high"   ? "text-orange-400 bg-orange-500/10 border-orange-500/30"
                     : sev === "medium" ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
-                    : "text-muted-foreground bg-muted/30 border-border";
+                    : "text-blue-400 bg-blue-500/10 border-blue-500/30";
+                  const cvssNum   = cve.cvss !== undefined ? Number(cve.cvss) : null;
+                  const cvssColor = cvssNum === null ? "" : cvssNum >= 9 ? "text-red-400" : cvssNum >= 7 ? "text-orange-400" : cvssNum >= 4 ? "text-yellow-400" : "text-blue-400";
+                  const cvssBarW  = cvssNum !== null ? `${Math.min(cvssNum / 10, 1) * 100}%` : "0%";
                   return (
-                    <div key={cve.id} className="flex items-start gap-3 py-3 border-b border-border/30 last:border-0">
-                      <span className={cn("text-[10px] font-bold px-2 py-1 rounded-lg border shrink-0 mt-0.5 uppercase", sevColor)}>{sev}</span>
-                      <div className="flex-1 min-w-0">
-                        <a href={`https://nvd.nist.gov/vuln/detail/${cve.id}`} target="_blank" rel="noopener noreferrer"
-                           className="text-sm font-mono font-semibold text-primary hover:underline">{cve.id}</a>
-                        {cve.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{cve.description}</p>}
+                    <div key={cve.id} className="group mb-2 last:mb-0 rounded-xl border border-border/50 bg-card/50 hover:border-border hover:bg-card transition-all overflow-hidden flex">
+                      {/* Left severity stripe */}
+                      <div className={cn("w-1 shrink-0", leftBar)} />
+                      <div className="flex-1 px-3.5 py-3 min-w-0">
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                              <a href={`https://nvd.nist.gov/vuln/detail/${cve.cve ?? cve.id}`} target="_blank" rel="noopener noreferrer"
+                                className="text-xs font-mono font-bold text-primary hover:underline shrink-0">
+                                {cve.cve ?? cve.id}
+                              </a>
+                              {cve.cwe && <span className="text-[9px] font-mono text-muted-foreground/60 border border-border/50 rounded px-1">{cve.cwe}</span>}
+                            </div>
+                            <p className="text-xs font-medium text-foreground/90 leading-snug">
+                              {cve.title ?? cve.description ?? ""}
+                            </p>
+                            {cve.remediation && (
+                              <p className="text-[10px] text-green-400/80 mt-1 leading-snug line-clamp-1">
+                                Fix: {cve.remediation}
+                              </p>
+                            )}
+                          </div>
+                          <div className="shrink-0 flex flex-col items-end gap-1">
+                            <span className={cn("text-[9px] font-black uppercase border rounded-md px-1.5 py-0.5", sevBadge)}>{sev}</span>
+                            {cvssNum !== null && (
+                              <div className="text-right">
+                                <p className={cn("text-sm font-black tabular-nums leading-none", cvssColor)}>{cvssNum.toFixed(1)}</p>
+                                <p className="text-[8px] text-muted-foreground/50 uppercase">CVSS</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {cvssNum !== null && (
+                          <div className="mt-2 h-0.5 bg-muted/20 rounded-full overflow-hidden">
+                            <div className={cn("h-full rounded-full", leftBar)} style={{ width: cvssBarW }} />
+                          </div>
+                        )}
                       </div>
-                      {cve.cvss !== undefined && (
-                        <span className="text-sm font-black tabular-nums shrink-0 text-muted-foreground">{Number(cve.cvss).toFixed(1)}</span>
-                      )}
                     </div>
                   );
                 }}
