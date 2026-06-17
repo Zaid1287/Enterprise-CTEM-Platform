@@ -2,11 +2,16 @@ import { Router } from "express";
 import { eq, count, and, desc, sql, inArray, or, isNull, lte, gte } from "drizzle-orm";
 import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { cacheGet, cacheSet, cacheDelete, ck } from "../lib/cache";
 
 const router = Router();
 
 router.get("/dashboard/overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
+  const cKey = ck("dash:overview", tid);
+  const cached = await cacheGet(cKey);
+  if (cached) { res.json(cached); return; }
+
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   const [assets, findings, scans, alerts] = await Promise.all([
@@ -45,11 +50,13 @@ router.get("/dashboard/overview", requireAuth, async (req: AuthenticatedRequest,
     ? Math.round(((totalFindings - findingsLastWeek) / findingsLastWeek) * 100)
     : totalFindings > 0 ? 100 : 0;
 
-  res.json({
+  const payload = {
     totalAssets, totalFindings, criticalFindings, highFindings, openFindings,
     activeScans, complianceScore, riskScore: Math.round(avgRisk),
     unreadAlerts, assetsTrend, findingsTrend,
-  });
+  };
+  await cacheSet(cKey, payload, 120);
+  res.json(payload);
 });
 
 router.get("/dashboard/risk-trend", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

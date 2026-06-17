@@ -40,6 +40,7 @@ const BrandThreatPage = lazy(() => import("@/pages/BrandThreatPage"));
 const BrandThreatDetailPage = lazy(() => import("@/pages/BrandThreatDetailPage"));
 const AssetGroupDetailPage = lazy(() => import("@/pages/AssetGroupDetailPage"));
 const AssetTopologyPage = lazy(() => import("@/pages/AssetTopologyPage"));
+const QueueMonitorPage = lazy(() => import("@/pages/QueueMonitorPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -140,6 +141,7 @@ function Router() {
       <Route path="/settings/platform" component={() => <ProtectedRoute component={PlatformSettingsPage} />} />
       <Route path="/brand-threats" component={() => <ProtectedRoute component={BrandThreatPage} />} />
       <Route path="/brand-threats/:id" component={() => <ProtectedRoute component={BrandThreatDetailPage} />} />
+      <Route path="/queue-monitor" component={() => <ProtectedRoute component={QueueMonitorPage} />} />
 
       {/* Fallback */}
       <Route component={() => <Redirect to="/dashboard" />} />

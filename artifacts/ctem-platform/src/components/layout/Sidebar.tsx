@@ -6,7 +6,7 @@ import {
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
-  ShieldAlert, Network,
+  ShieldAlert, Network, Activity,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -85,6 +85,13 @@ const navGroups: NavGroup[] = [
     title: "Brand Monitoring",
     items: [
       { label: "Brand Threat Monitor", href: "/brand-threats", icon: ShieldAlert },
+    ],
+  },
+  {
+    title: "Infrastructure",
+    onlyFor: ["admin", "super_admin"],
+    items: [
+      { label: "Queue Monitor", href: "/queue-monitor", icon: Activity, onlyFor: ["admin", "super_admin"] },
     ],
   },
   {

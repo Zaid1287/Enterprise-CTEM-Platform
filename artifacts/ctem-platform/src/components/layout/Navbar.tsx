@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, Link } from "wouter";
 import { Bell, LogOut, ChevronDown, User } from "lucide-react";
+import { GlobalSearch } from "@/components/GlobalSearch";
 import { useAuth } from "@/hooks/useAuth";
 import { useListAlerts, useLogout } from "@workspace/api-client-react";
 import {
@@ -92,6 +93,7 @@ export function Navbar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <GlobalSearch />
         <Link href="/alerts">
           <Button variant="ghost" size="icon" className="relative">
             <Bell className="w-4 h-4" />

@@ -2,6 +2,10 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
 import { startScanScheduler } from "./lib/scanScheduler";
+import { getRedis } from "./lib/redis";
+import { startScanWorker } from "./workers/scanWorker";
+import { startAlertWorker } from "./workers/alertWorker";
+import { startBeatScheduler } from "./workers/beatScheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -25,5 +29,21 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
-  startScanScheduler();
+
+  // ── Redis initialisation (warm up connection) ─────────────────────────────
+  getRedis();
+
+  if (process.env.REDIS_URL) {
+    logger.info("Redis URL detected — starting BullMQ workers");
+    startScanWorker(port);
+    startAlertWorker();
+  } else {
+    logger.info("No REDIS_URL — BullMQ workers disabled, using in-process fallback");
+  }
+
+  // Beat scheduler replaces the legacy startScanScheduler when Redis is available
+  startBeatScheduler().catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
+  if (!process.env.REDIS_URL) {
+    startScanScheduler();
+  }
 });

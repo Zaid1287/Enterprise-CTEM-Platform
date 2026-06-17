@@ -24,6 +24,8 @@ import invitationsRouter from "./invitations";
 import screenshotsRouter from "./screenshots";
 import platformSettingsRouter from "./platformSettings";
 import brandThreatsRouter from "./brandThreats";
+import searchRouter from "./search";
+import queuesRouter from "./queues";
 
 const router: IRouter = Router();
 
@@ -52,5 +54,7 @@ router.use(invitationsRouter);
 router.use(screenshotsRouter);
 router.use(platformSettingsRouter);
 router.use(brandThreatsRouter);
+router.use(searchRouter);
+router.use(queuesRouter);
 
 export default router;
