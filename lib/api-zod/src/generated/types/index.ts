@@ -20,6 +20,7 @@ export * from './alertUpdate';
 export * from './asset';
 export * from './assetGroup';
 export * from './assetGroupInput';
+export * from './assetGroupMembersInput';
 export * from './assetGroupUpdate';
 export * from './assetInput';
 export * from './assetRiskSummary';

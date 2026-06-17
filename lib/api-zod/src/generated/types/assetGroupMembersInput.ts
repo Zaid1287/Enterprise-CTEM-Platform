@@ -6,8 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface AssetGroupUpdate {
-  name?: string;
-  description?: string;
-  assetIds?: number[];
+export interface AssetGroupMembersInput {
+  assetIds: number[];
 }

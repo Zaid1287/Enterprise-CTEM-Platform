@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, and, count } from "drizzle-orm";
-import { db, assetGroupsTable, assetGroupMembersTable } from "@workspace/db";
+import { eq, and, count, inArray } from "drizzle-orm";
+import { db, assetGroupsTable, assetGroupMembersTable, assetsTable } from "@workspace/db";
 import {
   CreateAssetGroupBody, GetAssetGroupParams, UpdateAssetGroupParams,
   UpdateAssetGroupBody, DeleteAssetGroupParams,
@@ -8,6 +8,15 @@ import {
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+
+function toAssetResponse(a: typeof assetsTable.$inferSelect) {
+  return {
+    id: a.id, tenantId: a.tenantId, name: a.name, type: a.type, value: a.value,
+    status: a.status, riskScore: a.riskScore, ipAddress: a.ipAddress,
+    createdAt: a.createdAt.toISOString(),
+    lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
+  };
+}
 
 router.get("/asset-groups", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const groups = await db.select().from(assetGroupsTable)
@@ -36,6 +45,41 @@ router.post("/asset-groups", requireAuth, async (req: AuthenticatedRequest, res)
   res.status(201).json({ ...group, assetCount: assetIds?.length ?? 0, createdAt: group.createdAt.toISOString() });
 });
 
+router.get("/asset-groups/:groupId/members", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const groupId = parseInt(req.params.groupId, 10);
+  if (isNaN(groupId)) { res.status(400).json({ error: "Invalid groupId" }); return; }
+  const [group] = await db.select().from(assetGroupsTable)
+    .where(and(eq(assetGroupsTable.id, groupId), eq(assetGroupsTable.tenantId, req.user!.tenantId)));
+  if (!group) { res.status(404).json({ error: "Asset group not found" }); return; }
+
+  const members = await db.select({ assetId: assetGroupMembersTable.assetId })
+    .from(assetGroupMembersTable).where(eq(assetGroupMembersTable.groupId, groupId));
+
+  if (members.length === 0) { res.json([]); return; }
+
+  const assetIds = members.map(m => m.assetId);
+  const assets = await db.select().from(assetsTable)
+    .where(and(inArray(assetsTable.id, assetIds), eq(assetsTable.tenantId, req.user!.tenantId)));
+  res.json(assets.map(toAssetResponse));
+});
+
+router.put("/asset-groups/:groupId/members", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const groupId = parseInt(req.params.groupId, 10);
+  if (isNaN(groupId)) { res.status(400).json({ error: "Invalid groupId" }); return; }
+  const [group] = await db.select().from(assetGroupsTable)
+    .where(and(eq(assetGroupsTable.id, groupId), eq(assetGroupsTable.tenantId, req.user!.tenantId)));
+  if (!group) { res.status(404).json({ error: "Asset group not found" }); return; }
+
+  const assetIds: number[] = Array.isArray(req.body.assetIds) ? req.body.assetIds.map(Number).filter((n: number) => !isNaN(n)) : [];
+
+  await db.delete(assetGroupMembersTable).where(eq(assetGroupMembersTable.groupId, groupId));
+  if (assetIds.length > 0) {
+    await db.insert(assetGroupMembersTable).values(assetIds.map(id => ({ groupId, assetId: id })));
+  }
+
+  res.json({ ...group, assetCount: assetIds.length, createdAt: group.createdAt.toISOString() });
+});
+
 router.get("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetAssetGroupParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
@@ -52,11 +96,23 @@ router.patch("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedReq
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateAssetGroupBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const [group] = await db.update(assetGroupsTable).set(parsed.data)
+
+  const { assetIds, ...updates } = parsed.data as any;
+  const [group] = await db.update(assetGroupsTable).set(updates)
     .where(and(eq(assetGroupsTable.id, params.data.groupId), eq(assetGroupsTable.tenantId, req.user!.tenantId)))
     .returning();
   if (!group) { res.status(404).json({ error: "Asset group not found" }); return; }
-  res.json({ ...group, assetCount: 0, createdAt: group.createdAt.toISOString() });
+
+  if (Array.isArray(assetIds)) {
+    await db.delete(assetGroupMembersTable).where(eq(assetGroupMembersTable.groupId, group.id));
+    if (assetIds.length > 0) {
+      await db.insert(assetGroupMembersTable).values(assetIds.map((id: number) => ({ groupId: group.id, assetId: id })));
+    }
+  }
+
+  const [{ cnt }] = await db.select({ cnt: count() }).from(assetGroupMembersTable)
+    .where(eq(assetGroupMembersTable.groupId, group.id));
+  res.json({ ...group, assetCount: Number(cnt), createdAt: group.createdAt.toISOString() });
 });
 
 router.delete("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

@@ -437,7 +437,7 @@ export default function FindingsPage() {
                 const impScore = importanceScore(f);
 
                 return (
-                  <tr key={f.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors group cursor-pointer" onClick={() => navigate(`/findings/${f.id}`)}>
+                  <tr key={f.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors group cursor-pointer" onClick={() => openDrawer(f, "metadata")}>
                     {/* Title */}
                     <td className="px-3 py-2.5 max-w-[240px]">
                       <div className="flex items-start gap-1.5">

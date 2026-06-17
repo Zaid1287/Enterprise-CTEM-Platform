@@ -6,7 +6,7 @@ import {
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
-  ShieldAlert,
+  ShieldAlert, Network,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -60,6 +60,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "Asset Inventory", href: "/assets", icon: Server },
       { label: "Asset Groups", href: "/asset-groups", icon: Layers },
+      { label: "Asset Topology", href: "/topology", icon: Network },
     ],
   },
   {

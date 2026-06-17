@@ -1,11 +1,12 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { eq, and, inArray, isNull, or } from "drizzle-orm";
 import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
   CreateAlertRuleBody,
 } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, type AuthenticatedRequest, verifyToken } from "../lib/auth";
+import { addSseClient, removeSseClient } from "../lib/sseManager";
 
 const router = Router();
 
@@ -18,27 +19,29 @@ function toAlertResponse(a: typeof alertsTable.$inferSelect) {
   };
 }
 
-router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const q = ListAlertsQueryParams.safeParse(req.query);
-  const filters = [eq(alertsTable.tenantId, req.user!.tenantId)];
+router.get("/alerts/stream", (req: Request, res: Response): void => {
+  const token = req.query.token as string;
+  if (!token) { res.status(401).end(); return; }
+  let user: ReturnType<typeof verifyToken>;
+  try { user = verifyToken(token); } catch { res.status(401).end(); return; }
 
-  if (req.user!.role === "client") {
-    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-      .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
-    const assignedIds = assignedAssets.map(a => a.id);
-    if (assignedIds.length > 0) {
-      filters.push(or(isNull(alertsTable.relatedAssetId), inArray(alertsTable.relatedAssetId, assignedIds))!);
-    } else {
-      filters.push(isNull(alertsTable.relatedAssetId));
-    }
-  }
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
 
-  if (q.success) {
-    if (q.data.severity) filters.push(eq(alertsTable.severity, q.data.severity));
-    if (q.data.read !== undefined) filters.push(eq(alertsTable.isRead, q.data.read));
-  }
-  const alerts = await db.select().from(alertsTable).where(and(...filters));
-  res.json(alerts.map(toAlertResponse));
+  addSseClient(user.tenantId, res);
+  res.write(": connected\n\n");
+
+  const keepAlive = setInterval(() => {
+    try { res.write(": keepalive\n\n"); } catch {}
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    removeSseClient(user.tenantId, res);
+  });
 });
 
 router.get("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -62,6 +65,29 @@ router.post("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res)
     channel: rule.channel, destination: rule.destination, isActive: rule.isActive,
     createdAt: rule.createdAt.toISOString(),
   });
+});
+
+router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const q = ListAlertsQueryParams.safeParse(req.query);
+  const filters = [eq(alertsTable.tenantId, req.user!.tenantId)];
+
+  if (req.user!.role === "client") {
+    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    const assignedIds = assignedAssets.map(a => a.id);
+    if (assignedIds.length > 0) {
+      filters.push(or(isNull(alertsTable.relatedAssetId), inArray(alertsTable.relatedAssetId, assignedIds))!);
+    } else {
+      filters.push(isNull(alertsTable.relatedAssetId));
+    }
+  }
+
+  if (q.success) {
+    if (q.data.severity) filters.push(eq(alertsTable.severity, q.data.severity));
+    if (q.data.read !== undefined) filters.push(eq(alertsTable.isRead, q.data.read));
+  }
+  const alerts = await db.select().from(alertsTable).where(and(...filters));
+  res.json(alerts.map(toAlertResponse));
 });
 
 router.get("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

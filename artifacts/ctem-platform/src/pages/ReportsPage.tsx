@@ -13,9 +13,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, statusBadgeClass, capitalize, formatDateTime } from "@/lib/utils";
 import { downloadAsPdf } from "@/lib/generatePdf";
+import { getToken } from "@/lib/auth";
 
 const REPORT_TYPES = ["executive", "technical", "compliance", "asset_inventory"];
-const FORMATS = ["pdf", "xlsx", "csv", "json"];
+const FORMATS = ["pdf", "csv", "json"];
 const PAGE_SIZE = 10;
 
 function StatusIcon({ status }: { status: string }) {
@@ -48,29 +49,34 @@ function generateReportPdf(report: any) {
   ];
 
   if (report.type === "executive") {
-    sections.push({
-      title: "Sections Included",
-      lines: ["  • Risk Score Overview", "  • Critical & High Findings Summary", "  • Remediation Priorities", "  • Trend Analysis"],
-    });
+    sections.push({ title: "Sections Included", lines: ["  • Risk Score Overview", "  • Critical & High Findings Summary", "  • Remediation Priorities", "  • Trend Analysis"] });
   } else if (report.type === "technical") {
-    sections.push({
-      title: "Sections Included",
-      lines: ["  • Full Vulnerability Listing (CVE details)", "  • CVSS & EPSS Scores", "  • Port & Service Exposure", "  • Secrets & Misconfigurations"],
-    });
+    sections.push({ title: "Sections Included", lines: ["  • Full Vulnerability Listing (CVE details)", "  • CVSS & EPSS Scores", "  • Port & Service Exposure", "  • Secrets & Misconfigurations"] });
   } else if (report.type === "compliance") {
-    sections.push({
-      title: "Sections Included",
-      lines: ["  • Compliance Control Status", "  • Gap Analysis", "  • Evidence Mapping", "  • Remediation Roadmap"],
-    });
+    sections.push({ title: "Sections Included", lines: ["  • Compliance Control Status", "  • Gap Analysis", "  • Evidence Mapping", "  • Remediation Roadmap"] });
   } else if (report.type === "asset_inventory") {
-    sections.push({
-      title: "Sections Included",
-      lines: ["  • Full Asset List", "  • Asset Risk Levels", "  • Last Scan Dates", "  • Coverage Map"],
-    });
+    sections.push({ title: "Sections Included", lines: ["  • Full Asset List", "  • Asset Risk Levels", "  • Last Scan Dates", "  • Coverage Map"] });
   }
 
   const safeName = report.title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
   downloadAsPdf(`${safeName}_${report.type}.pdf`, report.title, sections);
+}
+
+async function downloadReportData(report: any) {
+  const token = getToken();
+  const res = await fetch(`/api/reports/${report.id}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const ext = report.format === "json" ? "json" : "csv";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safeName = report.title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
+  a.download = `${safeName}_${report.type}.${ext}`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function ReportsPage() {
@@ -102,6 +108,14 @@ export default function ReportsPage() {
     if (!confirm("Delete this report?")) return;
     await deleteReport.mutateAsync({ reportId: id });
     queryClient.invalidateQueries({ queryKey: getListReportsQueryKey() });
+  };
+
+  const handleDownload = (r: any) => {
+    if (r.format === "pdf") {
+      generateReportPdf(r);
+    } else {
+      downloadReportData(r);
+    }
   };
 
   return (
@@ -138,8 +152,9 @@ export default function ReportsPage() {
             <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", statusBadgeClass(r.status))}>{r.status}</span>
             <div className="flex gap-1">
               {r.status === "ready" && (
-                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => generateReportPdf(r)}>
-                  <Download className="w-3 h-3" /> Download PDF
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => handleDownload(r)}>
+                  <Download className="w-3 h-3" />
+                  {r.format === "pdf" ? "PDF" : r.format === "json" ? "JSON" : "CSV"}
                 </Button>
               )}
               <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(r.id)}>

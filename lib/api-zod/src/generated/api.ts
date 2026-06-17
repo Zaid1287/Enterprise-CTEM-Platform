@@ -575,7 +575,8 @@ export const UpdateAssetGroupParams = zod.object({
 
 export const UpdateAssetGroupBody = zod.object({
   "name": zod.string().optional(),
-  "description": zod.string().optional()
+  "description": zod.string().optional(),
+  "assetIds": zod.array(zod.number()).optional()
 })
 
 export const UpdateAssetGroupResponse = zod.object({
@@ -593,6 +594,57 @@ export const UpdateAssetGroupResponse = zod.object({
  */
 export const DeleteAssetGroupParams = zod.object({
   "groupId": zod.coerce.number()
+})
+
+
+/**
+ * @summary List assets in a group
+ */
+export const GetAssetGroupMembersParams = zod.object({
+  "groupId": zod.coerce.number()
+})
+
+export const GetAssetGroupMembersResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "value": zod.string(),
+  "verificationStatus": zod.string(),
+  "riskLevel": zod.string(),
+  "tags": zod.array(zod.string()).optional(),
+  "description": zod.string().nullish(),
+  "ipAddress": zod.string().nullish(),
+  "port": zod.number().nullish(),
+  "isActive": zod.boolean().optional(),
+  "assignedClientId": zod.number().nullish(),
+  "assignedClientName": zod.string().nullish(),
+  "assignedAccountManagerId": zod.number().nullish(),
+  "assignedAccountManagerName": zod.string().nullish(),
+  "lastScannedAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const GetAssetGroupMembersResponse = zod.array(GetAssetGroupMembersResponseItem)
+
+
+/**
+ * @summary Set assets in a group (replaces all members)
+ */
+export const SetAssetGroupMembersParams = zod.object({
+  "groupId": zod.coerce.number()
+})
+
+export const SetAssetGroupMembersBody = zod.object({
+  "assetIds": zod.array(zod.number())
+})
+
+export const SetAssetGroupMembersResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "name": zod.string(),
+  "description": zod.string().nullish(),
+  "assetCount": zod.number().optional(),
+  "createdAt": zod.string()
 })
 
 

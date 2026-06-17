@@ -1,8 +1,9 @@
-import { db, alertRulesTable } from "@workspace/db";
+import { db, alertRulesTable, alertsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { sendEmail, alertEmailHtml } from "./email";
 import { getPlatformSetting } from "../routes/platformSettings";
 import { logger } from "./logger";
+import { pushSseEvent } from "./sseManager";
 
 export interface NotificationEvent {
   tenantId: number;
@@ -16,6 +17,8 @@ export interface NotificationEvent {
   highCount?: number;
   assetName?: string;
   domain?: string;
+  relatedAssetId?: number;
+  relatedFindingId?: number;
 }
 
 function shouldRuleFire(triggerType: string, event: NotificationEvent): boolean {
@@ -94,8 +97,37 @@ async function postWebhook(url: string, body: object): Promise<void> {
   if (!res.ok) throw new Error(`Webhook POST failed: HTTP ${res.status}`);
 }
 
+async function insertAlertRecord(event: NotificationEvent): Promise<void> {
+  try {
+    const [alert] = await db.insert(alertsTable).values({
+      tenantId: event.tenantId,
+      title: event.title,
+      message: event.message,
+      type: event.eventType,
+      severity: event.severity,
+      isRead: false,
+      relatedAssetId: event.relatedAssetId ?? null,
+      relatedFindingId: event.relatedFindingId ?? null,
+    }).returning();
+
+    pushSseEvent(event.tenantId, "new-alert", {
+      id: alert.id,
+      title: alert.title,
+      message: alert.message,
+      type: alert.type,
+      severity: alert.severity,
+      isRead: false,
+      createdAt: alert.createdAt.toISOString(),
+    });
+  } catch (err) {
+    logger.warn({ err, tenantId: event.tenantId }, "Failed to insert alert record");
+  }
+}
+
 export async function dispatchNotifications(event: NotificationEvent): Promise<void> {
   try {
+    await insertAlertRecord(event);
+
     const rules = await db.select().from(alertRulesTable)
       .where(and(eq(alertRulesTable.tenantId, event.tenantId), eq(alertRulesTable.isActive, true)));
 
@@ -133,7 +165,6 @@ export async function dispatchNotifications(event: NotificationEvent): Promise<v
       }
     }
 
-    // Platform-level fallback webhooks (used if no per-rule destination matched)
     const [platformSlack, platformDiscord] = await Promise.all([
       getPlatformSetting("slack_webhook_url"),
       getPlatformSetting("discord_webhook_url"),

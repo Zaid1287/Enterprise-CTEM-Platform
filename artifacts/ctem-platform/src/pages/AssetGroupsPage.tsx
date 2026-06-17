@@ -1,10 +1,11 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import {
   useListAssetGroups, useCreateAssetGroup, useDeleteAssetGroup,
   useListAssets, getListAssetGroupsQueryKey, getListAssetsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Layers } from "lucide-react";
+import { Plus, Trash2, Layers, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate } from "@/lib/utils";
 
 export default function AssetGroupsPage() {
+  const [, navigate] = useLocation();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", assetIds: [] as number[] });
   const queryClient = useQueryClient();
@@ -54,15 +56,22 @@ export default function AssetGroupsPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {isLoading && [...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
         {!isLoading && (groups as any[] ?? []).map((g: any) => (
-          <div key={g.id} className="bg-card border border-border rounded-xl p-4">
+          <div
+            key={g.id}
+            className="bg-card border border-border rounded-xl p-4 hover:border-primary/40 transition-colors cursor-pointer group"
+            onClick={() => navigate(`/asset-groups/${g.id}`)}
+          >
             <div className="flex items-start justify-between mb-2">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-primary" />
                 <p className="text-sm font-medium">{g.name}</p>
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={async () => { if(confirm("Delete group?")) { await deleteGroup.mutateAsync({ groupId: g.id }); queryClient.invalidateQueries({ queryKey: getListAssetGroupsQueryKey() }); } }}>
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
+              <div className="flex items-center gap-0.5">
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={async (e) => { e.stopPropagation(); if(confirm("Delete group?")) { await deleteGroup.mutateAsync({ groupId: g.id }); queryClient.invalidateQueries({ queryKey: getListAssetGroupsQueryKey() }); } }}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+                <ChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
+              </div>
             </div>
             {g.description && <p className="text-xs text-muted-foreground mb-2">{g.description}</p>}
             <div className="flex items-center justify-between mt-3">

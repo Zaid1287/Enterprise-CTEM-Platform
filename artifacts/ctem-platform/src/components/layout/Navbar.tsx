@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useLocation, Link } from "wouter";
 import { Bell, LogOut, ChevronDown, User } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -12,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { getToken } from "@/lib/auth";
 
 const BREADCRUMB_MAP: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -27,15 +29,45 @@ const BREADCRUMB_MAP: Record<string, string> = {
   "/audit-logs": "Audit Logs",
   "/settings/users": "User Management",
   "/settings/tenant": "Tenant Settings",
+  "/topology": "Asset Topology",
 };
 
 export function Navbar() {
   const [location, navigate] = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, isAuthenticated } = useAuth();
   const logoutMutation = useLogout();
 
   const { data: alerts } = useListAlerts();
-  const unreadCount = Array.isArray(alerts) ? alerts.filter((a: any) => !a.isRead).length : 0;
+  const baseUnread = Array.isArray(alerts) ? alerts.filter((a: any) => !a.isRead).length : 0;
+  const [sseExtra, setSseExtra] = useState(0);
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const token = getToken();
+    if (!token) return;
+
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    const url = `${base}/api/alerts/stream?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    es.addEventListener("new-alert", () => {
+      setSseExtra(n => n + 1);
+    });
+
+    es.onerror = () => {
+      es.close();
+      esRef.current = null;
+    };
+
+    return () => {
+      es.close();
+      esRef.current = null;
+    };
+  }, [isAuthenticated]);
+
+  const unreadCount = baseUnread + sseExtra;
 
   const breadcrumb = Object.entries(BREADCRUMB_MAP).find(([path]) =>
     location === path || location.startsWith(path + "/")

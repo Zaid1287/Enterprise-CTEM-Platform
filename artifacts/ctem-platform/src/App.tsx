@@ -38,6 +38,8 @@ const AlertDetailPage = lazy(() => import("@/pages/AlertDetailPage"));
 const PlatformSettingsPage = lazy(() => import("@/pages/PlatformSettingsPage"));
 const BrandThreatPage = lazy(() => import("@/pages/BrandThreatPage"));
 const BrandThreatDetailPage = lazy(() => import("@/pages/BrandThreatDetailPage"));
+const AssetGroupDetailPage = lazy(() => import("@/pages/AssetGroupDetailPage"));
+const AssetTopologyPage = lazy(() => import("@/pages/AssetTopologyPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -113,6 +115,8 @@ function Router() {
       <Route path="/assets" component={() => <ProtectedRoute component={AssetsPage} />} />
       <Route path="/assets/:id" component={() => <ProtectedRoute component={AssetDetailPage} />} />
       <Route path="/asset-groups" component={() => <ProtectedRoute component={AssetGroupsPage} />} />
+      <Route path="/asset-groups/:groupId" component={() => <ProtectedRoute component={AssetGroupDetailPage} />} />
+      <Route path="/topology" component={() => <ProtectedRoute component={AssetTopologyPage} />} />
       <Route path="/findings" component={() => <ProtectedRoute component={FindingsPage} />} />
       <Route path="/findings/:id" component={() => <ProtectedRoute component={FindingDetailPage} />} />
       <Route path="/scans" component={() => <ProtectedRoute component={ScansPage} />} />

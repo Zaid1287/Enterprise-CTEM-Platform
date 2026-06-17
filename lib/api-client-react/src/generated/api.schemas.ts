@@ -229,6 +229,11 @@ export interface AssetGroupInput {
 export interface AssetGroupUpdate {
   name?: string;
   description?: string;
+  assetIds?: number[];
+}
+
+export interface AssetGroupMembersInput {
+  assetIds: number[];
 }
 
 export interface Scan {

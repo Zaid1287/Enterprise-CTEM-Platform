@@ -34,6 +34,7 @@ import type {
   Asset,
   AssetGroup,
   AssetGroupInput,
+  AssetGroupMembersInput,
   AssetGroupUpdate,
   AssetInput,
   AssetRiskSummary,
@@ -2465,6 +2466,155 @@ export const useDeleteAssetGroup = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getDeleteAssetGroupMutationOptions(options));
+    }
+
+export const getGetAssetGroupMembersUrl = (groupId: number,) => {
+
+
+
+
+  return `/api/asset-groups/${groupId}/members`
+}
+
+/**
+ * @summary List assets in a group
+ */
+export const getAssetGroupMembers = async (groupId: number, options?: RequestInit): Promise<Asset[]> => {
+
+  return customFetch<Asset[]>(getGetAssetGroupMembersUrl(groupId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAssetGroupMembersQueryKey = (groupId: number,) => {
+    return [
+    `/api/asset-groups/${groupId}/members`
+    ] as const;
+    }
+
+
+export const getGetAssetGroupMembersQueryOptions = <TData = Awaited<ReturnType<typeof getAssetGroupMembers>>, TError = ErrorType<unknown>>(groupId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAssetGroupMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAssetGroupMembersQueryKey(groupId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAssetGroupMembers>>> = ({ signal }) => getAssetGroupMembers(groupId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(groupId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAssetGroupMembers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAssetGroupMembersQueryResult = NonNullable<Awaited<ReturnType<typeof getAssetGroupMembers>>>
+export type GetAssetGroupMembersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List assets in a group
+ */
+
+export function useGetAssetGroupMembers<TData = Awaited<ReturnType<typeof getAssetGroupMembers>>, TError = ErrorType<unknown>>(
+ groupId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAssetGroupMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAssetGroupMembersQueryOptions(groupId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getSetAssetGroupMembersUrl = (groupId: number,) => {
+
+
+
+
+  return `/api/asset-groups/${groupId}/members`
+}
+
+/**
+ * @summary Set assets in a group (replaces all members)
+ */
+export const setAssetGroupMembers = async (groupId: number,
+    assetGroupMembersInput: AssetGroupMembersInput, options?: RequestInit): Promise<AssetGroup> => {
+
+  return customFetch<AssetGroup>(getSetAssetGroupMembersUrl(groupId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      assetGroupMembersInput,)
+  }
+);}
+
+
+
+
+export const getSetAssetGroupMembersMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAssetGroupMembers>>, TError,{groupId: number;data: BodyType<AssetGroupMembersInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setAssetGroupMembers>>, TError,{groupId: number;data: BodyType<AssetGroupMembersInput>}, TContext> => {
+
+const mutationKey = ['setAssetGroupMembers'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAssetGroupMembers>>, {groupId: number;data: BodyType<AssetGroupMembersInput>}> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  setAssetGroupMembers(groupId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAssetGroupMembersMutationResult = NonNullable<Awaited<ReturnType<typeof setAssetGroupMembers>>>
+    export type SetAssetGroupMembersMutationBody = BodyType<AssetGroupMembersInput>
+    export type SetAssetGroupMembersMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Set assets in a group (replaces all members)
+ */
+export const useSetAssetGroupMembers = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAssetGroupMembers>>, TError,{groupId: number;data: BodyType<AssetGroupMembersInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setAssetGroupMembers>>,
+        TError,
+        {groupId: number;data: BodyType<AssetGroupMembersInput>},
+        TContext
+      > => {
+      return useMutation(getSetAssetGroupMembersMutationOptions(options));
     }
 
 export const getListScansUrl = (params?: ListScansParams,) => {

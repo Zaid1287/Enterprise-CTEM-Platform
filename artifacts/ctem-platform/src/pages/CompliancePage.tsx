@@ -1,16 +1,16 @@
-import { useState } from "react";
-import { Link } from "wouter";
+import { useState, useRef } from "react";
 import {
   useGetComplianceSummary, useListComplianceControls, useUpdateComplianceControl,
   getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight } from "lucide-react";
+import { Paperclip, Upload, FileText, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, statusBadgeClass, capitalize } from "@/lib/utils";
+import { cn, statusBadgeClass } from "@/lib/utils";
+import { getToken } from "@/lib/auth";
 
 const FRAMEWORK_COLORS: Record<string, string> = {
   ISO27001: "border-blue-500/40 bg-blue-500/5",
@@ -20,9 +20,41 @@ const FRAMEWORK_COLORS: Record<string, string> = {
   CIS: "border-yellow-500/40 bg-yellow-500/5",
 };
 
+async function uploadEvidence(controlId: number, files: FileList): Promise<void> {
+  const form = new FormData();
+  for (const f of Array.from(files)) form.append("files", f);
+  const token = getToken();
+  const res = await fetch(`/api/compliance/controls/${controlId}/evidence`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+function EvidenceFiles({ evidence }: { evidence: string | null }) {
+  if (!evidence) return null;
+  let files: { name: string; size: number }[] = [];
+  try { files = JSON.parse(evidence); } catch { return null; }
+  if (!files.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {files.map((f, i) => (
+        <span key={i} className="flex items-center gap-1 text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded border border-primary/20">
+          <FileText className="w-2.5 h-2.5" />
+          {f.name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function CompliancePage() {
   const [selectedFramework, setSelectedFramework] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
+  const [uploadingId, setUploadingId] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingControlId, setPendingControlId] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
   const { data: summary, isLoading: loadingSummary } = useGetComplianceSummary({
@@ -44,6 +76,27 @@ export default function CompliancePage() {
     queryClient.invalidateQueries({ queryKey: getGetComplianceSummaryQueryKey() });
   };
 
+  const handleUploadClick = (controlId: number) => {
+    setPendingControlId(controlId);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !files.length || !pendingControlId) return;
+    setUploadingId(pendingControlId);
+    try {
+      await uploadEvidence(pendingControlId, files);
+      queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() });
+    } catch (err) {
+      console.error("Evidence upload failed:", err);
+    } finally {
+      setUploadingId(null);
+      setPendingControlId(null);
+      e.target.value = "";
+    }
+  };
+
   const frameworks = summary as any[] ?? [];
 
   return (
@@ -52,6 +105,16 @@ export default function CompliancePage() {
         <h1 className="text-lg font-semibold">Compliance Management</h1>
         <p className="text-sm text-muted-foreground">Track compliance across security frameworks</p>
       </div>
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.txt,.csv"
+        className="hidden"
+        onChange={handleFileChange}
+      />
 
       {/* Framework Cards */}
       {loadingSummary ? (
@@ -127,12 +190,13 @@ export default function CompliancePage() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Framework</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Assigned To</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Evidence</th>
               </tr>
             </thead>
             <tbody>
               {loadingControls && [...Array(5)].map((_, i) => (
                 <tr key={i} className="border-b border-border/50">
-                  {[...Array(5)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
+                  {[...Array(6)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
               ))}
               {!loadingControls && (controls as any[] ?? []).map((c: any) => (
@@ -140,7 +204,7 @@ export default function CompliancePage() {
                   <td className="px-4 py-2.5 text-xs font-mono font-medium text-primary">{c.controlId}</td>
                   <td className="px-4 py-2.5 text-xs max-w-xs">
                     <p className="font-medium">{c.title}</p>
-                    {c.evidence && <p className="text-muted-foreground line-clamp-1 mt-0.5">{c.evidence}</p>}
+                    <EvidenceFiles evidence={c.evidenceFiles} />
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.frameworkName}</td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.assignedTo ?? "—"}</td>
@@ -157,10 +221,24 @@ export default function CompliancePage() {
                       </SelectContent>
                     </Select>
                   </td>
+                  <td className="px-4 py-2.5">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                      disabled={uploadingId === c.id}
+                      onClick={() => handleUploadClick(c.id)}
+                    >
+                      {uploadingId === c.id
+                        ? <><Upload className="w-3 h-3 animate-pulse" /> Uploading…</>
+                        : <><Paperclip className="w-3 h-3" /> Attach</>
+                      }
+                    </Button>
+                  </td>
                 </tr>
               ))}
               {!loadingControls && (controls as any[] ?? []).length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No controls found.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">No controls found.</td></tr>
               )}
             </tbody>
           </table>
