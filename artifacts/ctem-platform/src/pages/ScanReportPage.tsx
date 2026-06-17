@@ -404,27 +404,128 @@ function SectionCard({
   title: string; icon: React.ElementType; count?: number; accent?: "red" | "orange" | "yellow";
   fullWidth?: boolean; children: React.ReactNode;
 }) {
+  const iconBg =
+    accent === "red"    ? "bg-red-500/15" :
+    accent === "orange" ? "bg-orange-500/15" :
+    accent === "yellow" ? "bg-yellow-500/15" :
+    "bg-primary/10";
+  const iconColor =
+    accent === "red"    ? "text-red-400" :
+    accent === "orange" ? "text-orange-400" :
+    accent === "yellow" ? "text-yellow-400" :
+    "text-primary";
   const badgeCls =
-    accent === "red"    ? "bg-red-500/20 text-red-400" :
-    accent === "orange" ? "bg-orange-500/20 text-orange-400" :
-    accent === "yellow" ? "bg-yellow-500/20 text-yellow-400" :
-    "bg-primary/20 text-primary";
+    accent === "red"    ? "bg-red-500/20 text-red-400 border border-red-500/30" :
+    accent === "orange" ? "bg-orange-500/20 text-orange-400 border border-orange-500/30" :
+    accent === "yellow" ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" :
+    "bg-primary/15 text-primary border border-primary/30";
   return (
-    <div className={cn("bg-card border border-border rounded-xl overflow-hidden flex flex-col", fullWidth && "xl:col-span-2")}>
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-muted/20 shrink-0">
-        <div className="flex items-center gap-2">
-          <Icon className="w-3.5 h-3.5 text-primary" />
-          <h3 className="text-xs font-semibold uppercase tracking-wide">{title}</h3>
+    <div className={cn("bg-card border border-border rounded-2xl overflow-hidden flex flex-col", fullWidth && "xl:col-span-2")}>
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border/50 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center shrink-0", iconBg)}>
+            <Icon className={cn("w-3.5 h-3.5", iconColor)} />
+          </div>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-foreground/80">{title}</h3>
         </div>
         {count !== undefined && (
-          <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center",
-            count > 0 ? badgeCls : "bg-muted text-muted-foreground/40"
+          <span className={cn("text-[11px] font-bold px-2.5 py-0.5 rounded-full min-w-[28px] text-center",
+            count > 0 ? badgeCls : "bg-muted/60 text-muted-foreground/40 border border-border"
           )}>{count}</span>
         )}
       </div>
-      <div className="p-4 overflow-y-auto">
+      <div className="p-5 overflow-y-auto">
         {children}
       </div>
+    </div>
+  );
+}
+
+function PaginatedSection({ items, pageSize = 25, renderItem, emptyMessage, emptyIcon }: {
+  items: any[]; pageSize?: number;
+  renderItem: (item: any, idx: number) => React.ReactNode;
+  emptyMessage?: string; emptyIcon?: React.ElementType;
+}) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.ceil(items.length / pageSize);
+  const visible = items.slice(page * pageSize, (page + 1) * pageSize);
+  if (items.length === 0) {
+    return emptyMessage ? <EmptyState message={emptyMessage} icon={emptyIcon} /> : null;
+  }
+  return (
+    <div>
+      <div className="space-y-0.5">
+        {visible.map((item, i) => renderItem(item, page * pageSize + i))}
+      </div>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-4 mt-2 border-t border-border/30">
+          <span className="text-xs text-muted-foreground">
+            {(page * pageSize + 1).toLocaleString()}–{Math.min((page + 1) * pageSize, items.length).toLocaleString()} of {items.length.toLocaleString()}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border disabled:opacity-30 hover:bg-accent/40 transition-colors">← Prev</button>
+            <span className="text-xs text-muted-foreground px-2 tabular-nums">{page + 1} / {totalPages}</span>
+            <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border disabled:opacity-30 hover:bg-accent/40 transition-colors">Next →</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubdomainsContent({ subdomains }: { subdomains: any[] }) {
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 48;
+  const filtered = search
+    ? subdomains.filter((s: any) => {
+        const name = typeof s === "string" ? s : String(s.subdomain ?? s.name ?? "");
+        return name.toLowerCase().includes(search.toLowerCase());
+      })
+    : subdomains;
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  if (subdomains.length === 0) return <EmptyState message="No subdomains discovered" icon={Globe} />;
+  return (
+    <div className="space-y-4">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+        <input
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(0); }}
+          placeholder={`Filter ${subdomains.length} subdomains…`}
+          className="w-full pl-9 pr-4 py-2 bg-muted/20 border border-border rounded-xl text-xs focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
+        />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        {visible.map((s: any, i: number) => {
+          const name = typeof s === "string" ? s : (s.subdomain ?? s.name ?? "");
+          const ip   = typeof s === "object" ? (s.ip ?? "") : "";
+          return (
+            <div key={i} className="flex items-center gap-2.5 bg-muted/15 border border-border/50 rounded-xl px-3 py-2.5 hover:bg-accent/20 transition-colors">
+              <Globe className="w-3 h-3 text-primary/50 shrink-0" />
+              <span className="text-xs font-mono text-foreground/80 truncate flex-1">{name}</span>
+              {ip && <span className="text-[10px] text-muted-foreground/50 font-mono shrink-0">{ip}</span>}
+            </div>
+          );
+        })}
+      </div>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-2 border-t border-border/30">
+          <span className="text-xs text-muted-foreground">
+            {(page * PAGE_SIZE + 1).toLocaleString()}–{Math.min((page + 1) * PAGE_SIZE, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border disabled:opacity-30 hover:bg-accent/40 transition-colors">← Prev</button>
+            <span className="text-xs text-muted-foreground px-2 tabular-nums">{page + 1} / {totalPages}</span>
+            <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border disabled:opacity-30 hover:bg-accent/40 transition-colors">Next →</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -433,7 +534,6 @@ export default function ScanReportPage() {
   const params = useParams<{ id: string }>();
   const scanId = Number(params.id);
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(0);
-  const [subdomainSearch, setSubdomainSearch] = useState("");
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const { user } = useAuth();
@@ -640,56 +740,62 @@ export default function ScanReportPage() {
         </div>
       </div>
 
-      {/* ── 5 Summary Metric Cards ─────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      {/* ── 4 Summary Metric Cards ─────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {/* ASM Score */}
-        <div className={cn("border rounded-xl p-4 text-center", asmBg)}>
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <ShieldAlert className={cn("w-3.5 h-3.5", asmColor)} />
-            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", asmColor)}>ASM Score</span>
+        <div className={cn("border rounded-2xl p-5 relative overflow-hidden", asmBg)}>
+          <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+          <div className="flex items-center gap-2 mb-4">
+            <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border", asmBg, asmColor.replace("text-", "border-").replace("400", "500/40"))}>
+              <ShieldAlert className={cn("w-4 h-4", asmColor)} />
+            </div>
+            <span className={cn("text-[11px] font-bold uppercase tracking-wider", asmColor)}>ASM Score</span>
           </div>
-          <p className={cn("text-3xl font-bold tabular-nums", asmColor)}>{scanAsmScore}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">out of 100</p>
+          <p className={cn("text-5xl font-black tabular-nums leading-none", asmColor)}>{scanAsmScore}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1.5">out of 100</p>
+          <div className="mt-4 h-1.5 rounded-full bg-black/20 overflow-hidden">
+            <div className={cn("h-full rounded-full", scanAsmScore >= 80 ? "bg-green-400" : scanAsmScore >= 60 ? "bg-yellow-400" : scanAsmScore >= 40 ? "bg-orange-400" : "bg-red-400")}
+              style={{ width: `${scanAsmScore}%` }} />
+          </div>
         </div>
 
         {/* Severity */}
-        <div className={cn("border rounded-xl p-4 text-center", SEV_BG_MAP[scanSeverity])}>
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <AlertTriangle className={cn("w-3.5 h-3.5", SEV_COLORS_MAP[scanSeverity])} />
-            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", SEV_COLORS_MAP[scanSeverity])}>Severity</span>
+        <div className={cn("border rounded-2xl p-5 relative overflow-hidden", SEV_BG_MAP[scanSeverity])}>
+          <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+          <div className="flex items-center gap-2 mb-4">
+            <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center", SEV_BG_MAP[scanSeverity])}>
+              <AlertTriangle className={cn("w-4 h-4", SEV_COLORS_MAP[scanSeverity])} />
+            </div>
+            <span className={cn("text-[11px] font-bold uppercase tracking-wider", SEV_COLORS_MAP[scanSeverity])}>Severity</span>
           </div>
-          <p className={cn("text-2xl font-bold capitalize", SEV_COLORS_MAP[scanSeverity])}>{scanSeverity}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">Worst finding</p>
-        </div>
-
-        {/* Importance */}
-        <div className={cn("border rounded-xl p-4 text-center", SEV_BG_MAP[scanImportance])}>
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <Fingerprint className={cn("w-3.5 h-3.5", SEV_COLORS_MAP[scanImportance])} />
-            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", SEV_COLORS_MAP[scanImportance])}>Importance</span>
-          </div>
-          <p className={cn("text-2xl font-bold capitalize", SEV_COLORS_MAP[scanImportance])}>{scanImportance}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">Remediation priority</p>
+          <p className={cn("text-4xl font-black capitalize leading-none", SEV_COLORS_MAP[scanSeverity])}>{scanSeverity}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1.5">Worst finding</p>
         </div>
 
         {/* Assets Scanned */}
-        <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <Globe className="w-3.5 h-3.5 text-primary" />
-            <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Assets</span>
+        <div className="bg-card border border-border rounded-2xl p-5 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Globe className="w-4 h-4 text-primary" />
+            </div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Assets</span>
           </div>
-          <p className="text-3xl font-bold text-primary">{assetReports.length}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">Scanned</p>
+          <p className="text-5xl font-black text-primary leading-none tabular-nums">{assetReports.length}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1.5">Scanned</p>
         </div>
 
         {/* Duration */}
-        <div className="bg-muted/30 border border-border rounded-xl p-4 text-center">
-          <div className="flex items-center justify-center gap-1.5 mb-1">
-            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Duration</span>
+        <div className="bg-card border border-border rounded-2xl p-5 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-muted/30 to-transparent pointer-events-none" />
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+            </div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Duration</span>
           </div>
-          <p className="text-2xl font-bold text-foreground tabular-nums">{durationStr}</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">Scan time</p>
+          <p className="text-4xl font-black text-foreground leading-none tabular-nums">{durationStr}</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1.5">Scan time</p>
         </div>
       </div>
 
@@ -792,75 +898,75 @@ export default function ScanReportPage() {
 
             {/* ── 1. Open Ports (full-width) ─────────────────────────── */}
             <SectionCard icon={Network} title="Open Ports" count={(selectedAsset?.ports ?? []).length} fullWidth>
-              {(selectedAsset?.ports ?? []).length === 0
-                ? <EmptyState message="No open ports detected" icon={Network} />
-                : (
-                  <div className="space-y-0.5">
-                    {(selectedAsset.ports as any[]).map((port: any, i: number) => (
-                      <PortRow key={i} port={port} />
-                    ))}
-                  </div>
-                )}
+              <PaginatedSection
+                items={selectedAsset?.ports ?? []}
+                pageSize={25}
+                emptyMessage="No open ports detected"
+                emptyIcon={Network}
+                renderItem={(port, i) => <PortRow key={i} port={port} />}
+              />
             </SectionCard>
 
             {/* ── 2. CVEs ──────────────────────────────────────────────── */}
-            <SectionCard icon={AlertTriangle} title="CVEs" count={(selectedAsset?.cves ?? []).length}>
-              {(selectedAsset?.cves ?? []).length === 0
-                ? <EmptyState message="No CVEs found" icon={AlertTriangle} />
-                : (
-                  <div className="space-y-2">
-                    {(selectedAsset.cves as any[]).map((cve: any) => {
-                      const sev = (cve.severity ?? "unknown").toLowerCase();
-                      const sevColor = sev === "critical" ? "text-red-400 bg-red-500/10 border-red-500/30"
-                        : sev === "high" ? "text-orange-400 bg-orange-500/10 border-orange-500/30"
-                        : sev === "medium" ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
-                        : "text-muted-foreground bg-muted/30 border-border";
-                      return (
-                        <div key={cve.id} className="flex items-start gap-2 py-1.5 border-b border-border/30 last:border-0">
-                          <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 mt-0.5", sevColor)}>{sev.toUpperCase()}</span>
-                          <div className="flex-1 min-w-0">
-                            <a href={`https://nvd.nist.gov/vuln/detail/${cve.id}`} target="_blank" rel="noopener noreferrer"
-                               className="text-xs font-mono text-primary hover:underline">{cve.id}</a>
-                            {cve.description && <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">{cve.description}</p>}
-                          </div>
-                          {cve.cvss !== undefined && (
-                            <span className="text-[10px] font-bold tabular-nums shrink-0 text-muted-foreground">{Number(cve.cvss).toFixed(1)}</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+            <SectionCard icon={AlertTriangle} title="CVEs" count={(selectedAsset?.cves ?? []).length} fullWidth accent="red">
+              <PaginatedSection
+                items={selectedAsset?.cves ?? []}
+                pageSize={15}
+                emptyMessage="No CVEs found"
+                emptyIcon={AlertTriangle}
+                renderItem={(cve) => {
+                  const sev = (cve.severity ?? "unknown").toLowerCase();
+                  const sevColor = sev === "critical" ? "text-red-400 bg-red-500/10 border-red-500/30"
+                    : sev === "high" ? "text-orange-400 bg-orange-500/10 border-orange-500/30"
+                    : sev === "medium" ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
+                    : "text-muted-foreground bg-muted/30 border-border";
+                  return (
+                    <div key={cve.id} className="flex items-start gap-3 py-3 border-b border-border/30 last:border-0">
+                      <span className={cn("text-[10px] font-bold px-2 py-1 rounded-lg border shrink-0 mt-0.5 uppercase", sevColor)}>{sev}</span>
+                      <div className="flex-1 min-w-0">
+                        <a href={`https://nvd.nist.gov/vuln/detail/${cve.id}`} target="_blank" rel="noopener noreferrer"
+                           className="text-sm font-mono font-semibold text-primary hover:underline">{cve.id}</a>
+                        {cve.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{cve.description}</p>}
+                      </div>
+                      {cve.cvss !== undefined && (
+                        <span className="text-sm font-black tabular-nums shrink-0 text-muted-foreground">{Number(cve.cvss).toFixed(1)}</span>
+                      )}
+                    </div>
+                  );
+                }}
+              />
             </SectionCard>
 
             {/* ── 3. Secrets & Credentials ─────────────────────────────── */}
-            <SectionCard icon={Key} title="Secrets & Credentials" count={secretsCount}>
-              {secretsCount === 0
-                ? <EmptyState message="No secrets found" icon={Key} />
-                : (
-                  <div className="space-y-2">
-                    {(selectedAsset.secrets as any[]).map((s: any, i: number) => (
-                      <div key={i} className="flex items-start gap-2 py-1.5 border-b border-border/30 last:border-0">
-                        <Key className="w-3 h-3 text-yellow-400 shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-yellow-300 truncate">{s.type ?? "Secret"}</p>
-                          {s.value && <p className="text-[10px] font-mono text-muted-foreground mt-0.5 truncate">{s.value}</p>}
-                          {s.file && <p className="text-[10px] text-muted-foreground/60 truncate">{s.file}</p>}
-                        </div>
-                        {s.port && <span className="text-[10px] bg-muted/60 text-muted-foreground rounded px-1 shrink-0">:{s.port}</span>}
-                      </div>
-                    ))}
+            <SectionCard icon={Key} title="Secrets & Credentials" count={secretsCount} fullWidth accent="yellow">
+              <PaginatedSection
+                items={selectedAsset?.secrets ?? []}
+                pageSize={15}
+                emptyMessage="No secrets found"
+                emptyIcon={Key}
+                renderItem={(s, i) => (
+                  <div key={i} className="flex items-start gap-3 py-3 border-b border-border/30 last:border-0">
+                    <div className="w-8 h-8 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
+                      <Key className="w-3.5 h-3.5 text-yellow-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-yellow-300 truncate">{s.type ?? "Secret"}</p>
+                      {s.value && <p className="text-xs font-mono text-muted-foreground mt-0.5 truncate">{s.value}</p>}
+                      {s.file && <p className="text-[10px] text-muted-foreground/60 truncate mt-0.5">{s.file}</p>}
+                    </div>
+                    {s.port && <span className="text-xs bg-muted/60 text-muted-foreground rounded-lg px-2 py-0.5 shrink-0 font-mono">:{s.port}</span>}
                   </div>
                 )}
+              />
             </SectionCard>
 
             {/* ── 4. Screenshots ───────────────────────────────────────── */}
-            <SectionCard icon={Camera} title="Screenshots">
+            <SectionCard icon={Camera} title="Screenshots" fullWidth>
               <ScreenshotsTab assetId={selectedAsset?.assetId} />
             </SectionCard>
 
             {/* ── 5. Technologies ──────────────────────────────────────── */}
-            <SectionCard icon={Cpu} title="Technologies">
+            <SectionCard icon={Cpu} title="Technologies" fullWidth>
               <TechnologiesTab assetId={selectedAsset?.assetId} />
             </SectionCard>
 
@@ -874,44 +980,7 @@ export default function ScanReportPage() {
 
             {/* ── 7. Subdomains (full-width) ────────────────────────────── */}
             <SectionCard icon={Globe} title="Subdomains" count={(selectedAsset?.subdomains ?? []).length} fullWidth>
-              {(selectedAsset?.subdomains ?? []).length === 0
-                ? <EmptyState message="No subdomains discovered" icon={Globe} />
-                : (() => {
-                  const subs: any[] = selectedAsset.subdomains ?? [];
-                  const filtered = subdomainSearch
-                    ? subs.filter((s: any) => {
-                        const name = typeof s === "string" ? s : String(s.subdomain ?? s.name ?? "");
-                        return name.toLowerCase().includes(subdomainSearch.toLowerCase());
-                      })
-                    : subs;
-                  return (
-                    <div className="space-y-3">
-                      <input
-                        value={subdomainSearch}
-                        onChange={e => setSubdomainSearch(e.target.value)}
-                        placeholder="Filter subdomains…"
-                        className="w-full bg-muted/30 border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-primary/50"
-                      />
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                        {filtered.slice(0, 100).map((s: any, i: number) => {
-                          const name = typeof s === "string" ? s : (s.subdomain ?? s.name ?? "");
-                          const ip   = typeof s === "object" ? (s.ip ?? "") : "";
-                          return (
-                            <div key={i} className="flex items-center gap-2 py-1 border-b border-border/20 last:border-0">
-                              <Globe className="w-2.5 h-2.5 text-muted-foreground/50 shrink-0" />
-                              <span className="text-xs font-mono text-foreground/80 truncate">{name}</span>
-                              {ip && <span className="text-[10px] text-muted-foreground/50 font-mono shrink-0">{ip}</span>}
-                            </div>
-                          );
-                        })}
-                        {filtered.length > 100 && (
-                          <p className="text-[10px] text-muted-foreground/50 col-span-2 pt-1">…and {filtered.length - 100} more</p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()
-              }
+              <SubdomainsContent subdomains={selectedAsset?.subdomains ?? []} />
             </SectionCard>
 
             {/* ── 8. HTTP Info (full-width) ─────────────────────────────── */}
@@ -922,15 +991,15 @@ export default function ScanReportPage() {
                 const hasInfo  = Object.keys(httpInfo).length > 0 || Object.keys(headers).length > 0;
                 if (!hasInfo) return <EmptyState message="No HTTP info collected" icon={Wifi} />;
                 return (
-                  <div className="space-y-0.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                     {httpInfo.statusCode   && <InfoRow label="Status Code"    value={String(httpInfo.statusCode)} />}
-                    {httpInfo.title        && <InfoRow label="Title"           value={httpInfo.title} />}
+                    {httpInfo.title        && <InfoRow label="Page Title"      value={httpInfo.title} />}
                     {httpInfo.server       && <InfoRow label="Server"          value={httpInfo.server} mono />}
                     {httpInfo.contentType  && <InfoRow label="Content-Type"    value={httpInfo.contentType} mono />}
-                    {httpInfo.waf          && <InfoRow label="WAF"             value={httpInfo.waf} />}
+                    {httpInfo.waf          && <InfoRow label="WAF / Firewall"  value={httpInfo.waf} />}
                     {httpInfo.cdn          && <InfoRow label="CDN"             value={httpInfo.cdn} />}
                     {httpInfo.ip           && <InfoRow label="Resolved IP"     value={httpInfo.ip} mono />}
-                    {Object.entries(headers).slice(0, 10).map(([k, v]) => (
+                    {Object.entries(headers).slice(0, 12).map(([k, v]) => (
                       <InfoRow key={k} label={k} value={String(v)} mono />
                     ))}
                   </div>
@@ -939,30 +1008,30 @@ export default function ScanReportPage() {
             </SectionCard>
 
             {/* ── 9. Endpoints ─────────────────────────────────────────── */}
-            <SectionCard icon={Search} title="Endpoints" count={(selectedAsset?.endpoints ?? []).length}>
+            <SectionCard icon={Search} title="Endpoints" count={(selectedAsset?.endpoints ?? []).length} fullWidth>
               {(selectedAsset?.endpoints ?? []).length === 0
                 ? <EmptyState message="No endpoints discovered" icon={Search} />
-                : <EndpointsTab endpoints={selectedAsset?.endpoints ?? []} />
+                : <EndpointsTab endpoints={selectedAsset?.endpoints ?? []} isClient={isClient} />
               }
             </SectionCard>
 
             {/* ── 10. Intelligence ─────────────────────────────────────── */}
             <SectionCard icon={Eye} title="Intelligence" count={(selectedAsset?.intelligence ?? []).length}>
-              {(selectedAsset?.intelligence ?? []).length === 0
-                ? <EmptyState message="No intelligence data" icon={Eye} />
-                : (
-                  <div className="space-y-1">
-                    {(selectedAsset.intelligence as any[]).map((item: any, i: number) => (
-                      <div key={i} className="flex items-start gap-2 py-1.5 border-b border-border/30 last:border-0">
-                        <span className="text-[10px] bg-muted/40 text-muted-foreground border border-border rounded px-1.5 py-0.5 shrink-0 whitespace-nowrap">{item.type}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[10px] font-semibold text-foreground/80 truncate">{item.key}</p>
-                          <p className="text-[10px] text-muted-foreground truncate">{item.value}</p>
-                        </div>
-                      </div>
-                    ))}
+              <PaginatedSection
+                items={selectedAsset?.intelligence ?? []}
+                pageSize={20}
+                emptyMessage="No intelligence data"
+                emptyIcon={Eye}
+                renderItem={(item, i) => (
+                  <div key={i} className="flex items-start gap-3 py-2.5 border-b border-border/30 last:border-0">
+                    <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 rounded-lg px-2 py-1 shrink-0 whitespace-nowrap font-semibold">{item.type}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-foreground/80 truncate">{item.key}</p>
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">{item.value}</p>
+                    </div>
                   </div>
                 )}
+              />
             </SectionCard>
 
             {/* ── 11. JavaScript Analysis (full-width) ──────────────────── */}
@@ -1011,8 +1080,9 @@ export default function ScanReportPage() {
             </SectionCard>
 
             {/* ── 16. Nuclei Scan ──────────────────────────────────────── */}
-            <SectionCard icon={ShieldAlert} title="Nuclei Scan"
-              count={((selectedAsset?.vulnScan?.stats?.critical ?? 0) + (selectedAsset?.vulnScan?.stats?.high ?? 0)) || undefined}>
+            <SectionCard icon={ShieldAlert} title="Nuclei Scan" fullWidth
+              count={((selectedAsset?.vulnScan?.stats?.critical ?? 0) + (selectedAsset?.vulnScan?.stats?.high ?? 0)) || undefined}
+              accent={((selectedAsset?.vulnScan?.stats?.critical ?? 0) > 0) ? "red" : "orange"}>
               {!(selectedAsset?.vulnScan)
                 ? <EmptyState message="No Nuclei scan performed" icon={ShieldAlert} />
                 : <NucleiTab vulnScan={selectedAsset?.vulnScan} />
@@ -1344,15 +1414,16 @@ function ScreenshotsTab({ assetId }: { assetId: number }) {
   );
 }
 
-const TECH_CATEGORY_STYLES: Record<string, string> = {
-  "CMS":               "bg-violet-500/15 text-violet-400 border-violet-500/30",
-  "JavaScript frameworks": "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  "Web servers":       "bg-green-500/15 text-green-400 border-green-500/30",
-  "Databases":         "bg-orange-500/15 text-orange-400 border-orange-500/30",
-  "Analytics":         "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
-  "Security":          "bg-red-500/15 text-red-400 border-red-500/30",
-  "CDN":               "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
-  "Programming languages": "bg-pink-500/15 text-pink-400 border-pink-500/30",
+const TECH_CAT_META: Record<string, { color: string; bg: string; border: string; bar: string; label: string }> = {
+  "CMS":                    { color: "text-violet-400", bg: "bg-violet-500/10", border: "border-violet-500/30", bar: "bg-violet-400", label: "CMS" },
+  "JavaScript frameworks":  { color: "text-blue-400",   bg: "bg-blue-500/10",   border: "border-blue-500/30",   bar: "bg-blue-400",   label: "JS Framework" },
+  "Web servers":            { color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30",  bar: "bg-green-400",  label: "Web Server" },
+  "Databases":              { color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/30", bar: "bg-orange-400", label: "Database" },
+  "Analytics":              { color: "text-cyan-400",   bg: "bg-cyan-500/10",   border: "border-cyan-500/30",   bar: "bg-cyan-400",   label: "Analytics" },
+  "Security":               { color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30",    bar: "bg-red-400",    label: "Security" },
+  "CDN":                    { color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/30", bar: "bg-yellow-400", label: "CDN" },
+  "Programming languages":  { color: "text-pink-400",   bg: "bg-pink-500/10",   border: "border-pink-500/30",   bar: "bg-pink-400",   label: "Language" },
+  "Other":                  { color: "text-muted-foreground", bg: "bg-muted/20", border: "border-border", bar: "bg-muted-foreground", label: "Other" },
 };
 
 function TechnologiesTab({ assetId }: { assetId: number }) {
@@ -1364,23 +1435,24 @@ function TechnologiesTab({ assetId }: { assetId: number }) {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-3 gap-3">
-        {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}
       </div>
     );
   }
 
   if (techs.length === 0) {
     return (
-      <div className="text-center py-10 text-muted-foreground">
-        <Cpu className="w-8 h-8 mx-auto mb-2 opacity-40" />
-        <p className="text-sm font-medium">No technologies detected</p>
-        <p className="text-xs mt-1 opacity-70">Technology fingerprinting runs automatically on web assets. Run a scan to detect technologies.</p>
+      <div className="text-center py-14 text-muted-foreground">
+        <div className="w-14 h-14 rounded-2xl bg-muted/30 flex items-center justify-center mx-auto mb-4">
+          <Cpu className="w-7 h-7 opacity-30" />
+        </div>
+        <p className="text-sm font-semibold">No technologies detected</p>
+        <p className="text-xs mt-1.5 opacity-60 max-w-xs mx-auto">Technology fingerprinting runs automatically on web assets during the scan.</p>
       </div>
     );
   }
 
-  // Group by category
   const byCategory = techs.reduce<Record<string, any[]>>((acc, t) => {
     const cat = t.category || "Other";
     (acc[cat] = acc[cat] ?? []).push(t);
@@ -1388,37 +1460,76 @@ function TechnologiesTab({ assetId }: { assetId: number }) {
   }, {});
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Cpu className="w-3.5 h-3.5" />
-        <span>{techs.length} technologies detected</span>
-      </div>
-      {Object.entries(byCategory).map(([cat, items]) => (
-        <div key={cat}>
-          <p className={cn(
-            "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border inline-block mb-2",
-            TECH_CATEGORY_STYLES[cat] ?? "text-muted-foreground bg-muted border-border"
-          )}>{cat}</p>
-          <div className="grid grid-cols-3 gap-2">
-            {items.map((t: any, i: number) => (
-              <div key={i} className="bg-accent/20 border border-border rounded-lg px-3 py-2.5 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold truncate">{t.name}</p>
-                  {t.version && (
-                    <p className="text-[10px] font-mono text-muted-foreground mt-0.5">v{t.version}</p>
-                  )}
-                </div>
-                {t.confidence !== undefined && (
-                  <div className="shrink-0 text-right">
-                    <p className="text-xs font-bold text-primary">{t.confidence}%</p>
-                    <p className="text-[9px] text-muted-foreground">conf.</p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+    <div className="space-y-8">
+      {/* Summary bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-xl">
+          <Cpu className="w-3.5 h-3.5 text-primary" />
+          <span className="text-sm font-bold text-primary">{techs.length}</span>
+          <span className="text-xs text-muted-foreground">technologies</span>
         </div>
-      ))}
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/20 border border-border rounded-xl">
+          <Tag className="w-3 h-3 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">{Object.keys(byCategory).length} categories</span>
+        </div>
+        {Object.entries(byCategory).map(([cat]) => {
+          const meta = TECH_CAT_META[cat] ?? TECH_CAT_META["Other"];
+          return (
+            <span key={cat} className={cn("text-[10px] font-bold px-2 py-1 rounded-lg border uppercase tracking-wide", meta.bg, meta.color, meta.border)}>
+              {meta.label}
+            </span>
+          );
+        })}
+      </div>
+
+      {Object.entries(byCategory).map(([cat, items]) => {
+        const meta = TECH_CAT_META[cat] ?? TECH_CAT_META["Other"];
+        return (
+          <div key={cat}>
+            {/* Category header */}
+            <div className={cn("flex items-center gap-3 px-4 py-2.5 rounded-2xl border mb-4", meta.bg, meta.border)}>
+              <div className={cn("w-6 h-6 rounded-lg flex items-center justify-center shrink-0", meta.bg)}>
+                <Cpu className={cn("w-3.5 h-3.5", meta.color)} />
+              </div>
+              <span className={cn("text-xs font-bold uppercase tracking-wider", meta.color)}>{cat}</span>
+              <span className={cn("ml-auto text-[11px] font-bold px-2 py-0.5 rounded-full", meta.bg, meta.color)}>{items.length}</span>
+            </div>
+            {/* Tech card grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {items.map((t: any, i: number) => {
+                const initial = (t.name || "?")[0].toUpperCase();
+                const conf = t.confidence ?? 100;
+                return (
+                  <div key={i} className="bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-border/80 transition-all group flex flex-col gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-black text-base border", meta.bg, meta.color, meta.border)}>
+                        {initial}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold leading-tight truncate">{t.name}</p>
+                        {t.version && (
+                          <p className="text-[10px] font-mono text-muted-foreground leading-tight mt-0.5">v{t.version}</p>
+                        )}
+                      </div>
+                    </div>
+                    {t.confidence !== undefined && (
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Confidence</span>
+                          <span className={cn("text-[11px] font-black tabular-nums", conf >= 80 ? meta.color : "text-muted-foreground")}>{conf}%</span>
+                        </div>
+                        <div className="h-1.5 bg-muted/40 rounded-full overflow-hidden">
+                          <div className={cn("h-full rounded-full transition-all", meta.bar)} style={{ width: `${conf}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1487,10 +1598,10 @@ const SRC_LABEL: Record<string, string> = {
   probe:        "Feroxbuster",
 };
 
-function EndpointsTab({ endpoints }: { endpoints: any[] }) {
+function EndpointsTab({ endpoints, isClient }: { endpoints: any[]; isClient?: boolean }) {
   const [activeCat, setActiveCat] = useState<EpCat>("all");
   const [search, setSearch] = useState("");
-  const PAGE_SIZE = 200;
+  const PAGE_SIZE = 100;
   const [page, setPage] = useState(0);
 
   if (endpoints.length === 0) return <EmptyState message="No endpoints discovered" icon={Search} />;
@@ -1519,15 +1630,17 @@ function EndpointsTab({ endpoints }: { endpoints: any[] }) {
 
   return (
     <div className="space-y-4">
-      {/* Stats bar */}
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]).map(([src, cnt]) => (
-          <span key={src} className={cn("text-[10px] border rounded px-2 py-0.5 font-medium", SRC_STYLE[src] ?? "bg-accent/60 text-muted-foreground border-border")}>
-            {SRC_LABEL[src] ?? src}: {cnt}
-          </span>
-        ))}
-        <span className="text-[10px] text-muted-foreground self-center ml-auto">{endpoints.length.toLocaleString()} total (deduped)</span>
-      </div>
+      {/* Source stats bar — hidden for clients */}
+      {!isClient && (
+        <div className="flex flex-wrap gap-2 items-center">
+          {Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]).map(([src, cnt]) => (
+            <span key={src} className={cn("text-[10px] border rounded-lg px-2.5 py-1 font-semibold", SRC_STYLE[src] ?? "bg-accent/60 text-muted-foreground border-border")}>
+              {SRC_LABEL[src] ?? src}: {cnt}
+            </span>
+          ))}
+          <span className="text-[10px] text-muted-foreground ml-auto font-medium">{endpoints.length.toLocaleString()} total (deduped)</span>
+        </div>
+      )}
 
       {/* Category filter tabs */}
       <div className="flex flex-wrap gap-1.5">
@@ -1570,7 +1683,7 @@ function EndpointsTab({ endpoints }: { endpoints: any[] }) {
               <tr className="text-left border-b border-border">
                 <th className="pb-2 font-medium text-muted-foreground">URL</th>
                 <th className="pb-2 font-medium text-muted-foreground w-28">Category</th>
-                <th className="pb-2 font-medium text-muted-foreground w-24">Source</th>
+                {!isClient && <th className="pb-2 font-medium text-muted-foreground w-24">Source</th>}
               </tr>
             </thead>
             <tbody>
@@ -1586,15 +1699,17 @@ function EndpointsTab({ endpoints }: { endpoints: any[] }) {
                     </div>
                   </td>
                   <td className="py-1.5 pr-2">
-                    <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-medium capitalize", CAT_STYLE[(e.category as string) ?? "other"] ?? CAT_STYLE.other)}>
+                    <span className={cn("text-[10px] border rounded-lg px-2 py-0.5 font-semibold capitalize", CAT_STYLE[(e.category as string) ?? "other"] ?? CAT_STYLE.other)}>
                       {e.category ?? "other"}
                     </span>
                   </td>
-                  <td className="py-1.5">
-                    <span className={cn("text-[10px] border rounded px-1.5 py-0.5 font-medium", SRC_STYLE[(e.source as string)] ?? SRC_STYLE.probe)}>
-                      {SRC_LABEL[(e.source as string)] ?? e.source ?? "probe"}
-                    </span>
-                  </td>
+                  {!isClient && (
+                    <td className="py-1.5">
+                      <span className={cn("text-[10px] border rounded-lg px-2 py-0.5 font-semibold", SRC_STYLE[(e.source as string)] ?? SRC_STYLE.probe)}>
+                        {SRC_LABEL[(e.source as string)] ?? e.source ?? "probe"}
+                      </span>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
