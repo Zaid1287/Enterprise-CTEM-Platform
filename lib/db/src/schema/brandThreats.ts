@@ -14,6 +14,7 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   phishingRisk:      text("phishing_risk").notNull().default("low"),
   fuzzerBreakdown:   jsonb("fuzzer_breakdown"),
   error:             text("error"),
+  pipelineScanId:    integer("pipeline_scan_id"),
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:       timestamp("completed_at", { withTimezone: true }),
 });

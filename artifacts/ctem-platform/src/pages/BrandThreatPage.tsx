@@ -7,7 +7,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ShieldAlert, Plus, Trash2, Loader2, Globe, AlertTriangle,
-  CheckCircle2, Clock, XCircle, RefreshCw, Eye,
+  CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -199,6 +199,12 @@ export default function BrandThreatPage() {
                   <div className="flex items-center gap-2 mb-0.5">
                     <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     <span className="text-sm font-medium font-mono truncate">{scan.domain}</span>
+                    {scan.pipelineScanId && (
+                      <span className="text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20 px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0">
+                        <Zap className="w-2.5 h-2.5" />
+                        Auto
+                      </span>
+                    )}
                     {scan.status === "done" && scan.liveCount > 0 && (
                       <span className="text-[10px] bg-red-500/15 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-semibold shrink-0">
                         {scan.liveCount} LIVE

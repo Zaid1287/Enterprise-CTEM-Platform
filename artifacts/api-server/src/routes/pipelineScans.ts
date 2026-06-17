@@ -22,6 +22,7 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
+import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -114,6 +115,26 @@ async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> 
         assetCount: entry.configs.length, findingsCount,
       });
       logger.info({ scanId: entry.scanId, findingsCount }, "Scan completed");
+
+      // ── Auto-trigger brand threat scan for every domain asset ───────────────
+      setImmediate(async () => {
+        try {
+          const assetIds = entry.configs.map(c => c.assetId);
+          const assetRows = await db.select({ value: assetsTable.value })
+            .from(assetsTable)
+            .where(inArray(assetsTable.id, assetIds));
+          const uniqueDomains = [...new Set(
+            assetRows
+              .map(a => extractDomain(a.value))
+              .filter(d => d.length > 0 && !isIp(d) && d.includes(".")),
+          )];
+          for (const domain of uniqueDomains) {
+            await triggerBrandThreatScan(entry.tenantId, domain, entry.scanId);
+          }
+        } catch (err) {
+          logger.error({ err, scanId: entry.scanId }, "Failed to auto-trigger brand threat scan");
+        }
+      });
     } catch (err) {
       logger.error({ err, scanId: entry.scanId }, "Pipeline scan execution failed");
       await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
