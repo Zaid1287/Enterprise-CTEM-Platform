@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db, reportsTable, findingsTable, assetsTable, complianceControlsTable, complianceFrameworksTable } from "@workspace/db";
 import { CreateReportBody, GetReportParams, DeleteReportParams } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
@@ -80,20 +80,19 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
       remediation: findingsTable.remediation,
       assetId: findingsTable.assetId,
       createdAt: findingsTable.createdAt,
-    }).from(findingsTable).where(eq(findingsTable.tenantId, tenantId))
-      .orderBy(desc(findingsTable.createdAt));
+    }).from(findingsTable).where(eq(findingsTable.tenantId, tenantId));
 
-    const assets = await db.select({ id: assetsTable.id, name: assetsTable.name, value: assetsTable.value, type: assetsTable.type, riskScore: assetsTable.riskScore })
+    const assets = await db.select({ id: assetsTable.id, name: assetsTable.name, value: assetsTable.value, type: assetsTable.type, riskLevel: assetsTable.riskLevel })
       .from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
     const assetMap = Object.fromEntries(assets.map(a => [a.id, a]));
 
     if (fmt === "json") {
       jsonData = { report: toReportResponse(report), findings: findings.map(f => ({ ...f, asset: assetMap[f.assetId ?? 0] ?? null })), generatedAt: new Date().toISOString() };
     } else {
-      const headers = ["ID", "Title", "Severity", "Status", "CVE", "CVSS", "CWE", "Asset Name", "Asset Value", "Asset Type", "Risk Score", "Description", "Remediation", "Created At"];
+      const headers = ["ID", "Title", "Severity", "Status", "CVE", "CVSS", "CWE", "Asset Name", "Asset Value", "Asset Type", "Risk Level", "Description", "Remediation", "Created At"];
       const rows = findings.map(f => {
         const a = assetMap[f.assetId ?? 0];
-        return [f.id, f.title, f.severity, f.status, f.cve ?? "", f.cvss ?? "", f.cwe ?? "", a?.name ?? "", a?.value ?? "", a?.type ?? "", a?.riskScore ?? "", f.description ?? "", f.remediation ?? "", f.createdAt.toISOString()];
+        return [f.id, f.title, f.severity, f.status, f.cve ?? "", f.cvss ?? "", f.cwe ?? "", a?.name ?? "", a?.value ?? "", a?.type ?? "", a?.riskLevel ?? "", f.description ?? "", f.remediation ?? "", f.createdAt.toISOString()];
       });
       csvContent = toCsv(headers, rows);
     }
@@ -117,15 +116,24 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
       csvContent = toCsv(headers, csvRows);
     }
   } else {
-    const assets = await db.select().from(assetsTable)
-      .where(eq(assetsTable.tenantId, tenantId))
-      .orderBy(desc(assetsTable.createdAt));
+    const assets = await db.select({
+      id: assetsTable.id,
+      name: assetsTable.name,
+      type: assetsTable.type,
+      value: assetsTable.value,
+      verificationStatus: assetsTable.verificationStatus,
+      riskLevel: assetsTable.riskLevel,
+      ipAddress: assetsTable.ipAddress,
+      lastScannedAt: assetsTable.lastScannedAt,
+      createdAt: assetsTable.createdAt,
+    }).from(assetsTable)
+      .where(eq(assetsTable.tenantId, tenantId));
 
     if (fmt === "json") {
       jsonData = { report: toReportResponse(report), assets, generatedAt: new Date().toISOString() };
     } else {
-      const headers = ["ID", "Name", "Type", "Value", "Status", "Risk Score", "IP Address", "Last Scanned", "Created At"];
-      const csvRows = assets.map(a => [a.id, a.name ?? "", a.type, a.value, a.status, a.riskScore ?? "", a.ipAddress ?? "", a.lastScannedAt?.toISOString() ?? "", a.createdAt.toISOString()]);
+      const headers = ["ID", "Name", "Type", "Value", "Verification Status", "Risk Level", "IP Address", "Last Scanned", "Created At"];
+      const csvRows = assets.map(a => [a.id, a.name ?? "", a.type, a.value, a.verificationStatus, a.riskLevel, a.ipAddress ?? "", a.lastScannedAt?.toISOString() ?? "", a.createdAt.toISOString()]);
       csvContent = toCsv(headers, csvRows);
     }
   }
