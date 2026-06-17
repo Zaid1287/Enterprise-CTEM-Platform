@@ -1977,9 +1977,9 @@ async function executePipeline(
         tenantId, scanId, assetId: asset.id,
         toolName: "paramspider", toolCategory: "web_recon",
         rawOutput: [
-          `[ParamSpider + Arjun] Parameter Discovery — ${target}`,
+          `Parameter Discovery — ${target}`,
           `Total params found: ${paramDiscovery.stats.total}  |  Unique param names: ${paramDiscovery.stats.unique}`,
-          `From archive (Wayback): ${paramDiscovery.stats.fromArchive}  |  From crawl: ${paramDiscovery.stats.fromCrawl}  |  From forms: ${paramDiscovery.stats.fromForm}  |  From brute-force: ${paramDiscovery.stats.fromBrute}`,
+          `From archive: ${paramDiscovery.stats.fromArchive}  |  From crawl: ${paramDiscovery.stats.fromCrawl}  |  From forms: ${paramDiscovery.stats.fromForm}  |  From brute-force: ${paramDiscovery.stats.fromBrute}`,
           "",
           "=== BY CATEGORY ===",
           `  SSRF/Redirect:  ${paramDiscovery.stats.ssrf}`,
@@ -2187,11 +2187,11 @@ async function executePipeline(
         tenantId, scanId, assetId: asset.id,
         toolName: "feroxbuster", toolCategory: "web_recon",
         rawOutput: [
-          `[Dir Fuzzer] Feroxbuster + GAU + Katana + Hakrawler — ${target}`,
+          `Directory Fuzzing — ${target}`,
           `Hosts scanned: ${dirFuzz.stats.hostsScanned} (${dirFuzz.stats.hostsLive} live)`,
           `Total unique endpoints: ${dirFuzz.stats.totalUnique}`,
-          `  Feroxbuster hits: ${dirFuzz.stats.fuzzHits}`,
-          `  GAU/Wayback:      ${dirFuzz.stats.waybackFound}`,
+          `  Active scan hits: ${dirFuzz.stats.fuzzHits}`,
+          `  Archive sources:  ${dirFuzz.stats.waybackFound}`,
           `  Crawler:          ${dirFuzz.stats.crawledFound}`,
           `  Interesting:      ${dirFuzz.stats.interestingEndpoints}`,
           `  Live (2xx/3xx):   ${dirFuzz.stats.liveEndpoints}`,
@@ -2226,7 +2226,7 @@ async function executePipeline(
     // ── Nuclei Scan: store result + create findings ───────────────────────────
     if (isWebAsset && vulnScan) {
       const rawLines = [
-        `[Nuclei Scanner] Feroxbuster-style template engine — ${target}`,
+        `Vulnerability Template Scanner — ${target}`,
         `Hosts scanned: ${vulnScan.stats.hostsScanned} | Findings: ${vulnScan.stats.totalFindings} (${vulnScan.stats.critical} critical, ${vulnScan.stats.high} high, ${vulnScan.stats.medium} medium, ${vulnScan.stats.low} low)`,
         `CORS vulnerable: ${vulnScan.stats.corsVulnerable} | Header issues: ${vulnScan.stats.headerIssues} | Avg header score: ${vulnScan.stats.avgHeaderScore}/100`,
         ``,

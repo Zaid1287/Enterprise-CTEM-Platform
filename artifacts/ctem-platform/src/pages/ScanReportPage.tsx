@@ -123,6 +123,24 @@ const PHASE_NAMES: Record<number, string> = {
   5: "SSL/TLS Analysis",
 };
 
+const TOOL_CAT_LABELS: Record<string, string> = {
+  recon:     "Reconnaissance",
+  web_recon: "Web Reconnaissance",
+  port_scan: "Port Scanning",
+  vuln_scan: "Vulnerability Scanning",
+  ssl:       "SSL/TLS Analysis",
+  secrets:   "Secrets Detection",
+};
+
+function toolDisplayLabel(tool: ToolProgress): string {
+  if (tool.detail) {
+    const stripped = tool.detail.replace(/^\[.*?\]\s*/, "").split("—")[0].trim();
+    if (stripped.length > 2) return stripped;
+  }
+  return TOOL_CAT_LABELS[tool.toolCategory] ??
+    tool.toolCategory.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
 const PHASE_COLORS: Record<number, string> = {
   1: "text-violet-400 bg-violet-500/10 border-violet-500/30",
   2: "text-blue-400 bg-blue-500/10 border-blue-500/30",
@@ -307,7 +325,7 @@ function LiveProgressView({
                               tool.status === "failed" ? "text-red-400" :
                               "text-muted-foreground"
                             )}>
-                              {tool.toolName}
+                              {toolDisplayLabel(tool)}
                             </span>
                             {tool.status === "running" && (
                               <span className="text-[10px] bg-blue-500/15 border border-blue-500/30 text-blue-400 px-1.5 py-0.5 rounded animate-pulse">
@@ -1062,12 +1080,12 @@ export default function ScanReportPage() {
               }
             </SectionCard>
 
-            {/* ── 16. Nuclei Scan ──────────────────────────────────────── */}
-            <SectionCard icon={ShieldAlert} title="Nuclei Scan" fullWidth
+            {/* ── 16. Vuln Template Scan ───────────────────────────────── */}
+            <SectionCard icon={ShieldAlert} title="Vulnerability Template Scan" fullWidth
               count={((selectedAsset?.vulnScan?.stats?.critical ?? 0) + (selectedAsset?.vulnScan?.stats?.high ?? 0)) || undefined}
               accent={((selectedAsset?.vulnScan?.stats?.critical ?? 0) > 0) ? "red" : "orange"}>
               {!(selectedAsset?.vulnScan)
-                ? <EmptyState message="No Nuclei scan performed" icon={ShieldAlert} />
+                ? <EmptyState message="No vulnerability template scan performed" icon={ShieldAlert} />
                 : <NucleiTab vulnScan={selectedAsset?.vulnScan} />
               }
             </SectionCard>
@@ -1582,13 +1600,13 @@ const SRC_STYLE: Record<string, string> = {
 };
 
 const SRC_LABEL: Record<string, string> = {
-  wayback:      "Wayback",
-  commoncrawl:  "CommonCrawl",
-  urlscan:      "URLScan",
-  otx:          "OTX",
-  crawl:        "Hakrawler",
-  "js-crawl":   "Katana",
-  probe:        "Feroxbuster",
+  wayback:      "Archive",
+  commoncrawl:  "Web Archive",
+  urlscan:      "Passive Intel",
+  otx:          "Threat Intel",
+  crawl:        "Crawler",
+  "js-crawl":   "JS Crawler",
+  probe:        "Active Scan",
 };
 
 function EndpointsTab({ endpoints, isClient }: { endpoints: any[]; isClient?: boolean }) {
@@ -1955,7 +1973,7 @@ function NucleiTab({ vulnScan }: { vulnScan: any }) {
       <div className="text-center py-10 text-muted-foreground space-y-2">
         <ShieldAlert className="w-8 h-8 mx-auto opacity-30" />
         <p className="text-sm">No vulnerability scan data available</p>
-        <p className="text-xs opacity-70">Nuclei runs automatically on all web assets during scan.</p>
+        <p className="text-xs opacity-70">Vulnerability template scanning runs automatically on all web assets during scan.</p>
       </div>
     );
   }
@@ -2069,7 +2087,7 @@ function NucleiTab({ vulnScan }: { vulnScan: any }) {
             <div className="text-center py-8 text-muted-foreground space-y-1">
               <CheckCircle2 className="w-7 h-7 mx-auto text-green-400 opacity-60" />
               <p className="text-sm">{findings.length === 0 ? "No vulnerabilities detected" : "No results match filter"}</p>
-              {findings.length === 0 && <p className="text-xs opacity-60">All 40+ Nuclei templates ran clean against this target</p>}
+              {findings.length === 0 && <p className="text-xs opacity-60">All vulnerability template checks ran clean against this target</p>}
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -2247,10 +2265,10 @@ function NucleiTab({ vulnScan }: { vulnScan: any }) {
 // ── Directory Fuzz Tab ────────────────────────────────────────────────────────
 
 const DIR_SOURCE_META: Record<string, { label: string; badge: string; tool: string }> = {
-  fuzz:    { label: "Feroxbuster", badge: "bg-purple-500/15 text-purple-400 border-purple-500/30",   tool: "Dir Fuzz" },
-  wayback: { label: "GAU/Wayback", badge: "bg-blue-500/15 text-blue-400 border-blue-500/30",        tool: "GAU" },
-  otx:     { label: "OTX",         badge: "bg-teal-500/15 text-teal-400 border-teal-500/30",        tool: "OTX" },
-  crawl:   { label: "Katana",      badge: "bg-green-500/15 text-green-400 border-green-500/30",     tool: "Crawler" },
+  fuzz:    { label: "Active Scan",  badge: "bg-purple-500/15 text-purple-400 border-purple-500/30",   tool: "Dir Fuzz" },
+  wayback: { label: "Archive",      badge: "bg-blue-500/15 text-blue-400 border-blue-500/30",         tool: "Archive" },
+  otx:     { label: "Threat Intel", badge: "bg-teal-500/15 text-teal-400 border-teal-500/30",         tool: "OTX" },
+  crawl:   { label: "Crawler",      badge: "bg-green-500/15 text-green-400 border-green-500/30",      tool: "Crawler" },
 };
 
 const STATUS_BADGE: Record<number, string> = {
@@ -2325,7 +2343,7 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
         {[
           { label: "Hosts Scanned",  value: `${stats.hostsLive ?? 0}/${stats.hostsScanned ?? 0}`, sub: "live / total",                  color: "text-primary" },
           { label: "Total Unique",   value: stats.totalUnique ?? 0,   sub: `${stats.liveEndpoints ?? 0} live (2xx/3xx)`,                 color: "text-primary" },
-          { label: "Feroxbuster",    value: stats.fuzzHits ?? 0,      sub: "active dir hits",                                           color: stats.fuzzHits > 0 ? "text-purple-400" : "text-muted-foreground" },
+          { label: "Active Scan",     value: stats.fuzzHits ?? 0,      sub: "active dir hits",                                           color: stats.fuzzHits > 0 ? "text-purple-400" : "text-muted-foreground" },
           { label: "Interesting",    value: interestingEndpoints.length, sub: "admin/api/config/backup",                                color: interestingEndpoints.length > 0 ? "text-orange-400" : "text-green-400" },
         ].map(s => (
           <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
@@ -2384,9 +2402,9 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
           <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
             className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
             <option value="all">All sources</option>
-            <option value="fuzz">Feroxbuster</option>
-            <option value="wayback">GAU/Wayback</option>
-            <option value="crawl">Katana</option>
+            <option value="fuzz">Active Scan</option>
+            <option value="wayback">Archive</option>
+            <option value="crawl">Crawler</option>
           </select>
           {/* Status filter */}
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
@@ -2493,7 +2511,7 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
                 <div className="px-3 py-2 flex flex-wrap gap-3 text-[10px] text-muted-foreground border-t border-border bg-accent/5">
                   {[
                     { label: "Fuzz hits",    value: h.stats?.fuzzHits ?? 0,    color: "text-purple-400" },
-                    { label: "GAU/Wayback",  value: h.stats?.waybackFound ?? 0, color: "text-blue-400" },
+                    { label: "Archive",       value: h.stats?.waybackFound ?? 0, color: "text-blue-400" },
                     { label: "Crawled",      value: h.stats?.crawled ?? 0,      color: "text-green-400" },
                     { label: "Live 2xx",     value: h.stats?.live200 ?? 0,      color: "text-green-400" },
                     { label: "3xx",          value: h.stats?.live301 ?? 0,      color: "text-yellow-400" },
@@ -2526,7 +2544,7 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
       {section === "master" && masterList.length > 0 && (
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-accent/10 border border-border rounded-lg px-3 py-2">
           <Info className="w-3 h-3 shrink-0" />
-          <span>all_endpoints_master.txt — {masterList.length.toLocaleString()} unique endpoints merged from Feroxbuster + GAU/Wayback + OTX + Katana. View Raw Output tab for the full text dump.</span>
+          <span>all_endpoints_master.txt — {masterList.length.toLocaleString()} unique endpoints merged from active scanning, archive sources, and web crawling. View Raw Output tab for the full text dump.</span>
         </div>
       )}
     </div>
@@ -3078,10 +3096,10 @@ const PARAM_CAT_META: Record<string, { label: string; color: string; desc: strin
 };
 
 const SOURCE_META: Record<string, { label: string; color: string }> = {
-  archive: { label: "Wayback",  color: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10" },
-  crawl:   { label: "Crawled",  color: "text-green-400 border-green-500/30 bg-green-500/10" },
-  form:    { label: "Form",     color: "text-yellow-400 border-yellow-500/30 bg-yellow-500/10" },
-  brute:   { label: "Arjun",    color: "text-orange-400 border-orange-500/30 bg-orange-500/10" },
+  archive: { label: "Archive",      color: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10" },
+  crawl:   { label: "Crawled",      color: "text-green-400 border-green-500/30 bg-green-500/10" },
+  form:    { label: "Form",         color: "text-yellow-400 border-yellow-500/30 bg-yellow-500/10" },
+  brute:   { label: "Brute-force",  color: "text-orange-400 border-orange-500/30 bg-orange-500/10" },
 };
 
 const CONF_COLORS: Record<string, string> = {
@@ -3122,8 +3140,8 @@ function ParamDiscoveryTab({ paramDiscovery }: { paramDiscovery: any }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
           { label: "Total Params",    value: stats.total,       sub: `${stats.unique} unique names`,  color: "text-primary" },
-          { label: "From Archive",    value: stats.fromArchive, sub: "Wayback Machine URLs",           color: "text-cyan-400" },
-          { label: "From Brute-force",value: stats.fromBrute,   sub: "Arjun detection",               color: "text-orange-400" },
+          { label: "From Archive",    value: stats.fromArchive, sub: "historical archive URLs",        color: "text-cyan-400" },
+          { label: "From Brute-force",value: stats.fromBrute,   sub: "active parameter discovery",    color: "text-orange-400" },
           { label: "High-risk",       value: (stats.ssrf ?? 0) + (stats.idor ?? 0) + (stats.auth ?? 0), sub: "SSRF + IDOR + Auth", color: "text-red-400" },
         ].map(s => (
           <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
