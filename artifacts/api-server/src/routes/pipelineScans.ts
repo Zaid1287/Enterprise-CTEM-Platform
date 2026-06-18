@@ -2559,6 +2559,21 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
   }
   if (configs.length === 0) { res.status(400).json({ error: "At least one asset is required" }); return; }
 
+  // Enforce ownership verification before scanning
+  const scanAssetIds = configs.map(c => c.assetId);
+  const assetRows = await db
+    .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus })
+    .from(assetsTable)
+    .where(and(inArray(assetsTable.id, scanAssetIds), eq(assetsTable.tenantId, tenantId)));
+  const unverified = assetRows.filter(a => a.verificationStatus !== "verified");
+  if (unverified.length > 0) {
+    res.status(422).json({
+      error: "Cannot scan unverified assets. Verify ownership before scanning.",
+      unverifiedAssets: unverified.map(a => ({ id: a.id, name: a.name })),
+    });
+    return;
+  }
+
   const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
   const pipelineSteps = await db.select({ tool: securityToolsTable })
     .from(toolPipelineStepsTable)

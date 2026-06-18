@@ -46,7 +46,15 @@ const emptyForm = {
   assignedAccountManagerId: undefined as number | undefined,
 };
 
-type VerifyStep = "idle" | "token_shown" | "checking" | "verified" | "failed";
+type VerifyStep = "idle" | "method_select" | "token_shown" | "email_sent" | "checking" | "verified" | "failed";
+type VerifyMethod = "dns_txt" | "email" | "http_file" | "cloud";
+
+const VERIFY_METHODS: { value: VerifyMethod; label: string; desc: string }[] = [
+  { value: "dns_txt",   label: "DNS TXT Record",   desc: "Add a TXT record to your domain's DNS — fastest and most reliable." },
+  { value: "http_file", label: "HTTP File",         desc: "Place a verification file on your web server." },
+  { value: "email",     label: "Admin Email",       desc: "Receive a confirmation link at admin@yourdomain.com." },
+  { value: "cloud",     label: "Cloud Resource Tag", desc: "Add a tag to your cloud resource (AWS / GCP / Azure)." },
+];
 
 export default function AssetsPage() {
   const [, navigate] = useLocation();
@@ -65,10 +73,12 @@ export default function AssetsPage() {
   const [selectedToolIds, setSelectedToolIds] = useState<number[]>([]);
   const [runNow, setRunNow] = useState(false);
 
-  // DNS verify state (client flow)
+  // Verify state (client flow — all methods)
   const [verifyStep, setVerifyStep] = useState<VerifyStep>("idle");
+  const [verifyMethod, setVerifyMethod] = useState<VerifyMethod>("dns_txt");
   const [verifyToken, setVerifyToken] = useState("");
   const [verifyMsg, setVerifyMsg] = useState("");
+  const [verifyExtra, setVerifyExtra] = useState<Record<string, any>>({});
   const [pendingAssetId, setPendingAssetId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -145,8 +155,10 @@ export default function AssetsPage() {
     setSelectedToolIds([]);
     setRunNow(false);
     setVerifyStep("idle");
+    setVerifyMethod("dns_txt");
     setVerifyToken("");
     setVerifyMsg("");
+    setVerifyExtra({});
     setPendingAssetId(null);
   }
 
@@ -165,10 +177,10 @@ export default function AssetsPage() {
     await queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
     const newId = (created as any)?.id;
 
-    // For domain/subdomain assets (client), show DNS TXT verify step
-    if (isClient && newId && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url")) {
+    // For domain/subdomain/url/cloud_asset (client), show verify method selection
+    if (isClient && newId && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url" || newAsset.type === "cloud_asset")) {
       setPendingAssetId(newId);
-      await initiateDnsVerify(newId);
+      setVerifyStep("method_select");
       return;
     }
 
@@ -192,21 +204,24 @@ export default function AssetsPage() {
     toast({ title: "Asset added successfully" });
   };
 
-  async function initiateDnsVerify(assetId: number) {
-    setVerifyStep("token_shown");
+  async function initiateVerify(assetId: number, method: VerifyMethod) {
+    setVerifyMethod(method);
+    setVerifyStep(method === "email" ? "email_sent" : "token_shown");
     try {
-      const res = await verifyAsset.mutateAsync({
-        assetId,
-        data: { method: "dns_txt" } as any,
-      });
-      setVerifyToken((res as any).challenge ?? "");
+      const res = await verifyAsset.mutateAsync({ assetId, data: { method } as any });
+      const data = res as any;
+      setVerifyToken(data.challenge ?? "");
+      setVerifyExtra(data);
+      if (method === "email") {
+        toast({ title: "Verification email sent", description: `Check inbox at ${data.emailSentTo}` });
+      }
     } catch {
-      setVerifyStep("idle");
-      toast({ title: "Could not generate verification token", variant: "destructive" });
+      setVerifyStep("method_select");
+      toast({ title: "Could not start verification", variant: "destructive" });
     }
   }
 
-  async function checkDnsVerify() {
+  async function checkVerification() {
     if (!pendingAssetId) return;
     setVerifyStep("checking");
     try {
@@ -217,7 +232,7 @@ export default function AssetsPage() {
         queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
       } else {
         setVerifyStep("failed");
-        setVerifyMsg((res as any).message ?? "TXT record not found yet.");
+        setVerifyMsg((res as any).message ?? "Verification not confirmed yet.");
       }
     } catch {
       setVerifyStep("failed");
@@ -272,29 +287,15 @@ export default function AssetsPage() {
     toast({ title: "Asset deleted" });
   };
 
-  const handleInlineVerify = async (asset: any) => {
-    if (asset.type === "domain" || asset.type === "subdomain" || asset.type === "url") {
-      setVerifyingId(asset.id);
-      setPendingAssetId(asset.id);
-      try {
-        const res = await verifyAsset.mutateAsync({ assetId: asset.id, data: { method: "dns_txt" } as any });
-        setVerifyToken((res as any).challenge ?? "");
-        setVerifyStep("token_shown");
-        setShowCreate(true);
-        setNewAsset(prev => ({ ...prev, name: asset.name, type: asset.type, value: asset.value }));
-      } finally {
-        setVerifyingId(null);
-      }
-    } else {
-      setVerifyingId(asset.id);
-      try {
-        await checkVerify.mutateAsync({ assetId: asset.id });
-        queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
-        toast({ title: "Asset verified" });
-      } finally {
-        setVerifyingId(null);
-      }
-    }
+  const handleInlineVerify = (asset: any) => {
+    setPendingAssetId(asset.id);
+    setNewAsset(prev => ({ ...prev, name: asset.name, type: asset.type, value: asset.value }));
+    setVerifyStep("method_select");
+    setVerifyMethod("dns_txt");
+    setVerifyToken("");
+    setVerifyExtra({});
+    setVerifyMsg("");
+    setShowCreate(true);
   };
 
   const handleStop = async (scanId: number) => {
@@ -322,8 +323,14 @@ export default function AssetsPage() {
       setScanAssetId(null);
       toast({ title: "Scan started", description: `Scanning ${asset.name}` });
       navigate(`/scan-reports/${(result as any).scanId}`);
-    } catch {
-      toast({ title: "Failed to start scan", variant: "destructive" });
+    } catch (err: any) {
+      const body = err?.body ?? err?.data ?? null;
+      if (body?.unverifiedAssets?.length) {
+        const names = body.unverifiedAssets.map((a: any) => a.name).join(", ");
+        toast({ title: "Ownership not verified", description: `Verify these assets first: ${names}`, variant: "destructive" });
+      } else {
+        toast({ title: "Failed to start scan", variant: "destructive" });
+      }
     }
   }
 
@@ -618,17 +625,21 @@ export default function AssetsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          {/* DNS Verify flow (shown after client creates domain asset) */}
+          {/* Verify ownership flow (shown after client creates asset) */}
           {isClient && verifyStep !== "idle" ? (
-            <DnsTxtVerifyPanel
+            <VerifyOwnershipPanel
               step={verifyStep}
+              method={verifyMethod}
               token={verifyToken}
+              extra={verifyExtra}
               message={verifyMsg}
               assetValue={newAsset.value}
+              assetType={newAsset.type}
               copied={copied}
               onCopy={copyToken}
-              onCheck={checkDnsVerify}
-              onRetry={() => setVerifyStep("token_shown")}
+              onMethodSelect={(m) => pendingAssetId && initiateVerify(pendingAssetId, m)}
+              onCheck={checkVerification}
+              onRetry={() => setVerifyStep("method_select")}
               onDone={() => { setShowCreate(false); resetCreateForm(); }}
             />
           ) : (
@@ -759,10 +770,10 @@ export default function AssetsPage() {
               )}
 
               {/* Client info box */}
-              {isClient && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url") && (
+              {isClient && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url" || newAsset.type === "cloud_asset") && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-400 flex items-start gap-2">
                   <Shield className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>After adding, you'll need to verify ownership by adding a DNS TXT record to your domain.</span>
+                  <span>After adding, you'll need to verify ownership. Choose from DNS TXT record, HTTP file, admin email, or cloud resource tag.</span>
                 </div>
               )}
 
@@ -922,45 +933,57 @@ function VerifyBadge({ status }: { status: string }) {
   );
 }
 
-function DnsTxtVerifyPanel({
-  step, token, message, assetValue, copied, onCopy, onCheck, onRetry, onDone,
+function VerifyOwnershipPanel({
+  step, method, token, extra, message, assetValue, assetType, copied,
+  onCopy, onMethodSelect, onCheck, onRetry, onDone,
 }: {
   step: VerifyStep;
+  method: VerifyMethod;
   token: string;
+  extra: Record<string, any>;
   message: string;
   assetValue: string;
+  assetType: string;
   copied: boolean;
   onCopy: () => void;
+  onMethodSelect: (m: VerifyMethod) => void;
   onCheck: () => void;
   onRetry: () => void;
   onDone: () => void;
 }) {
   const domain = assetValue.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
+  const isCloud = assetType === "cloud_asset";
 
+  // ── Verified ────────────────────────────────────────────────────────────────
   if (step === "verified") {
     return (
-      <div className="py-6 text-center space-y-3">
-        <CheckCircle2 className="w-12 h-12 text-green-400 mx-auto" />
-        <p className="font-semibold">Domain Verified!</p>
+      <div className="py-8 text-center space-y-3">
+        <CheckCircle2 className="w-14 h-14 text-green-400 mx-auto" />
+        <p className="font-semibold text-lg">Ownership Verified!</p>
         <p className="text-sm text-muted-foreground">{message}</p>
-        <Button onClick={onDone} className="mt-2">Done</Button>
+        <Button onClick={onDone} className="mt-2">Continue</Button>
       </div>
     );
   }
 
+  // ── Failed ──────────────────────────────────────────────────────────────────
   if (step === "failed") {
     return (
       <div className="py-4 space-y-4">
-        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
-          <XCircle className="w-4 h-4 inline mr-2" />
-          {message}
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400 flex items-start gap-2">
+          <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{message}</span>
         </div>
-        <p className="text-xs text-muted-foreground">DNS changes can take up to 24 hours to propagate. Make sure the TXT record is saved correctly.</p>
+        {method === "dns_txt" && <p className="text-xs text-muted-foreground">DNS propagation can take up to 24 hours.</p>}
+        {method === "http_file" && <p className="text-xs text-muted-foreground">Make sure the file is publicly accessible and has the exact content (no trailing spaces or newlines).</p>}
+        {method === "email" && <p className="text-xs text-muted-foreground">The link in your email is valid for 1 hour. Request a new one if it expired.</p>}
         <div className="flex gap-2">
-          <Button variant="outline" onClick={onRetry}>Show Instructions Again</Button>
-          <Button onClick={onCheck} variant="outline">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Try Again
-          </Button>
+          <Button variant="outline" size="sm" onClick={onRetry}>Choose Different Method</Button>
+          {method !== "cloud" && (
+            <Button variant="outline" size="sm" onClick={onCheck}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Try Again
+            </Button>
+          )}
         </div>
         <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onDone}>
           Skip for now (verify later)
@@ -969,15 +992,191 @@ function DnsTxtVerifyPanel({
     );
   }
 
+  // ── Checking ────────────────────────────────────────────────────────────────
+  if (step === "checking") {
+    return (
+      <div className="py-10 text-center space-y-3">
+        <Loader2 className="w-10 h-10 text-primary mx-auto animate-spin" />
+        <p className="text-sm text-muted-foreground">Checking verification…</p>
+      </div>
+    );
+  }
+
+  // ── Method selection ────────────────────────────────────────────────────────
+  if (step === "method_select") {
+    const available = isCloud
+      ? VERIFY_METHODS
+      : VERIFY_METHODS.filter(m => m.value !== "cloud");
+    return (
+      <div className="space-y-4 py-2">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
+          <p className="font-semibold text-foreground">Verify asset ownership</p>
+          <p className="text-xs text-muted-foreground">
+            Choose a method to prove you own <strong>{domain || assetValue}</strong>. Verified assets can be scanned.
+          </p>
+        </div>
+        <div className="grid gap-2">
+          {available.map(m => (
+            <button
+              key={m.value}
+              type="button"
+              onClick={() => onMethodSelect(m.value)}
+              className="flex items-start gap-3 text-left rounded-lg border border-border hover:border-primary/50 hover:bg-primary/5 p-3 transition-colors"
+            >
+              <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                {m.value === "dns_txt"   && <Globe className="w-4 h-4 text-primary" />}
+                {m.value === "http_file" && <Server className="w-4 h-4 text-primary" />}
+                {m.value === "email"     && <Shield className="w-4 h-4 text-primary" />}
+                {m.value === "cloud"     && <Zap className="w-4 h-4 text-primary" />}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">{m.label}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{m.desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+        <Button variant="ghost" size="sm" className="text-muted-foreground w-full" onClick={onDone}>
+          Skip for now (verify later)
+        </Button>
+      </div>
+    );
+  }
+
+  // ── Email sent ──────────────────────────────────────────────────────────────
+  if (step === "email_sent") {
+    const emailSentTo = extra.emailSentTo ?? `admin@${domain}`;
+    return (
+      <div className="space-y-4 py-2">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
+          <p className="font-semibold text-foreground flex items-center gap-2">
+            <Shield className="w-4 h-4 text-primary" /> Email verification sent
+          </p>
+          <p className="text-xs text-muted-foreground">
+            A verification email has been sent to <strong>{emailSentTo}</strong>. Click the link in the email to confirm ownership.
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-accent/20 p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">What to do:</p>
+          <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
+            <li>Check the inbox at <strong className="text-foreground">{emailSentTo}</strong></li>
+            <li>Open the email from Sentinelware</li>
+            <li>Click <strong className="text-foreground">"Confirm Ownership"</strong></li>
+            <li>Then click the button below to check status</li>
+          </ol>
+        </div>
+        <p className="text-xs text-muted-foreground">The link expires in 1 hour. No Resend API key configured? Contact your platform admin.</p>
+        <div className="flex gap-2">
+          <Button onClick={onCheck} className="flex-1">
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> I clicked the link — Check Status
+          </Button>
+        </div>
+        <Button variant="ghost" size="sm" className="text-muted-foreground w-full" onClick={onRetry}>
+          Choose a different method
+        </Button>
+      </div>
+    );
+  }
+
+  // ── Cloud instructions ──────────────────────────────────────────────────────
+  if (step === "token_shown" && method === "cloud") {
+    const cmds = extra.cloudInstructions ?? {};
+    return (
+      <div className="space-y-4 py-2">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
+          <p className="font-semibold text-foreground">Add verification tag to your cloud resource</p>
+          <p className="text-xs text-muted-foreground">Add the tag below to prove you control this resource. Then click "I've added the tag".</p>
+        </div>
+        <div className="space-y-2">
+          <div className="rounded-lg border border-border bg-accent/20 p-3 space-y-2 text-xs font-mono">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-muted-foreground mb-0.5 font-sans">Tag Key</p>
+                <span className="text-foreground">sentinelware-verify</span>
+              </div>
+              <div>
+                <p className="text-muted-foreground mb-1 font-sans">Tag Value</p>
+                <div className="flex items-center gap-1 bg-background rounded px-2 py-1 border border-border">
+                  <span className="flex-1 truncate text-primary">{token || "Generating…"}</span>
+                  <button type="button" onClick={onCopy} className="text-muted-foreground hover:text-foreground ml-1">
+                    {copied ? <CheckCircle2 className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          {cmds.aws && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground hover:text-foreground mb-1">AWS CLI command</summary>
+              <pre className="bg-accent/20 rounded p-2 text-[10px] font-mono overflow-x-auto whitespace-pre-wrap">{cmds.aws}</pre>
+            </details>
+          )}
+          {cmds.gcp && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground hover:text-foreground mb-1">GCP CLI command</summary>
+              <pre className="bg-accent/20 rounded p-2 text-[10px] font-mono overflow-x-auto whitespace-pre-wrap">{cmds.gcp}</pre>
+            </details>
+          )}
+          {cmds.azure && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground hover:text-foreground mb-1">Azure CLI command</summary>
+              <pre className="bg-accent/20 rounded p-2 text-[10px] font-mono overflow-x-auto whitespace-pre-wrap">{cmds.azure}</pre>
+            </details>
+          )}
+        </div>
+        <Button onClick={onCheck} className="w-full">
+          <ShieldCheck className="w-3.5 h-3.5 mr-1.5" /> I've added the tag — Verify
+        </Button>
+        <Button variant="ghost" size="sm" className="text-muted-foreground w-full" onClick={onRetry}>
+          Choose a different method
+        </Button>
+      </div>
+    );
+  }
+
+  // ── HTTP File instructions ──────────────────────────────────────────────────
+  if (step === "token_shown" && method === "http_file") {
+    const fileUrl = extra.checkUrl ?? `https://${domain}/.well-known/sentinelware-verification.txt`;
+    return (
+      <div className="space-y-4 py-2">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
+          <p className="font-semibold text-foreground">Place a verification file on your server</p>
+          <p className="text-xs text-muted-foreground">Create the file below at your web server root. Then click "Check Verification".</p>
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 1 — File path</p>
+          <div className="rounded border border-border bg-accent/20 px-3 py-2 font-mono text-xs text-foreground">
+            /.well-known/sentinelware-verification.txt
+          </div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 2 — File content (exact)</p>
+          <div className="flex items-center gap-2 bg-accent/20 rounded px-3 py-2 border border-border font-mono text-xs">
+            <span className="flex-1 truncate text-primary">{token || "Generating…"}</span>
+            <button type="button" onClick={onCopy} className="text-muted-foreground hover:text-foreground shrink-0">
+              {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">The file must be accessible at: <strong className="font-mono">{fileUrl}</strong></p>
+        </div>
+        <Button onClick={onCheck} className="w-full">
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Check Verification
+        </Button>
+        <Button variant="ghost" size="sm" className="text-muted-foreground w-full" onClick={onRetry}>
+          Choose a different method
+        </Button>
+      </div>
+    );
+  }
+
+  // ── DNS TXT instructions (default) ─────────────────────────────────────────
   return (
     <div className="space-y-4 py-2">
       <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
-        <p className="font-semibold text-foreground">Verify domain ownership</p>
-        <p className="text-xs text-muted-foreground">Your asset has been created. To enable scanning, verify you own <strong>{domain}</strong> by adding a DNS TXT record.</p>
+        <p className="font-semibold text-foreground">Add a DNS TXT record</p>
+        <p className="text-xs text-muted-foreground">Verify you own <strong>{domain}</strong> by adding a TXT record to your DNS. This usually takes a few minutes.</p>
       </div>
 
       <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 1 — Add this TXT record to your DNS</p>
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">DNS Record to add</p>
         <div className="rounded-lg border border-border bg-accent/20 p-3 space-y-2 text-xs font-mono">
           <div className="grid grid-cols-3 gap-2">
             <div>
@@ -1006,13 +1205,15 @@ function DnsTxtVerifyPanel({
       </div>
 
       <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 2 — Verify the record</p>
         <p className="text-xs text-muted-foreground">After adding the TXT record, click verify. DNS propagation can take a few minutes.</p>
         <div className="flex gap-2">
-          <Button onClick={onCheck} disabled={step === "checking" || !token}>
-            {step === "checking"
-              ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Checking DNS…</>
-              : <><ShieldCheck className="w-4 h-4 mr-1.5" /> Verify Domain</>}
+          <Button onClick={onCheck} disabled={!token}>
+            <ShieldCheck className="w-4 h-4 mr-1.5" /> Verify Domain
+          </Button>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onRetry}>
+            Choose different method
           </Button>
           <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onDone}>
             Skip for now

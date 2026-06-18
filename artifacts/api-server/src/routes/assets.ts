@@ -9,11 +9,18 @@ import {
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 import { detectTechnologies } from "../lib/techDetector";
+import { sendEmail, verificationEmailHtml } from "../lib/email";
 import crypto from "crypto";
 import dns from "dns/promises";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+
+function getPlatformBaseUrl(req: { protocol: string; get: (h: string) => string | undefined }): string {
+  const domains = process.env.REPLIT_DOMAINS;
+  if (domains) return `https://${domains.split(",")[0].trim()}`;
+  return `${req.protocol}://${req.get("host") ?? "localhost:80"}`;
+}
 
 const router = Router();
 
@@ -208,51 +215,140 @@ router.delete("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest,
   res.sendStatus(204);
 });
 
-// Generate a unique DNS TXT token for an asset (client-friendly)
+// ── Email confirm link (no auth — clicked from email inbox) ──────────────────
+router.get("/assets/:assetId/verify/email-confirm", async (req, res): Promise<void> => {
+  const assetId = parseInt(req.params.assetId, 10);
+  const token = req.query.token as string | undefined;
+  if (isNaN(assetId) || !token) {
+    res.status(400).send(confirmHtml("error", "Invalid confirmation link."));
+    return;
+  }
+  const [asset] = await db.select().from(assetsTable).where(eq(assetsTable.id, assetId));
+  if (!asset || asset.verificationEmailToken !== token) {
+    res.status(400).send(confirmHtml("error", "This confirmation link is invalid or has already been used."));
+    return;
+  }
+  if (asset.verificationEmailExpiry && asset.verificationEmailExpiry < new Date()) {
+    res.status(400).send(confirmHtml("error", "This confirmation link has expired. Please request a new verification email."));
+    return;
+  }
+  await db.update(assetsTable)
+    .set({ verificationStatus: "verified", verificationEmailToken: null, verificationEmailExpiry: null })
+    .where(eq(assetsTable.id, assetId));
+  res.send(confirmHtml("success", `Asset <strong>${asset.name}</strong> (${asset.value}) has been successfully verified.`));
+});
+
+function confirmHtml(type: "success" | "error", message: string): string {
+  const color = type === "success" ? "#22c55e" : "#ef4444";
+  const icon = type === "success" ? "✓" : "✗";
+  const title = type === "success" ? "Ownership Verified" : "Verification Failed";
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0a;color:#e5e5e5;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;}
+    .card{background:#111;border:1px solid #222;border-radius:12px;padding:48px;max-width:440px;text-align:center;}
+    .icon{font-size:48px;color:${color};margin-bottom:20px;}
+    h1{font-size:22px;font-weight:700;color:#fff;margin:0 0 12px;}
+    p{font-size:14px;color:#999;line-height:1.6;margin:0 0 24px;}
+    a{display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px;}
+  </style></head><body><div class="card">
+    <div class="icon">${icon}</div>
+    <h1>${title}</h1>
+    <p>${message}</p>
+    <a href="/">Go to Sentinelware &rarr;</a>
+  </div></body></html>`;
+}
+
+// Initiate asset ownership verification (generate token + send email/instructions)
 router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = VerifyAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const body = VerifyAssetBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
 
-  // Fetch existing token or generate a new one
   const [existing] = await db.select().from(assetsTable)
     .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
   if (!existing) { res.status(404).json({ error: "Asset not found" }); return; }
 
+  const method = (body.data as any).method ?? "dns_txt";
+
+  // Generate/reuse main verification token
   let token = existing.verificationToken;
   if (!token || !token.startsWith("sentinelware-")) {
     token = `sentinelware-${crypto.randomBytes(16).toString("hex")}`;
-    await db.update(assetsTable)
-      .set({ verificationToken: token, verificationStatus: "pending" })
-      .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
-  } else if (existing.verificationStatus === "unverified") {
-    await db.update(assetsTable)
-      .set({ verificationStatus: "pending" })
-      .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
   }
 
-  const methodInstructions: Record<string, string> = {
-    dns_txt: `Add a DNS TXT record to your domain with value: ${token}`,
-    email: `Click the verification link sent to admin@<your-domain>`,
-    http_file: `Create a file at /.well-known/sentinelware-verification.txt with content: ${token}`,
-    cloud: `Add tag ctem-verification=${token} to the cloud resource`,
-  };
+  const domain = existing.value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
 
+  if (method === "email") {
+    const emailToken = crypto.randomBytes(32).toString("hex");
+    const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    const baseUrl = getPlatformBaseUrl(req as any);
+    const confirmUrl = `${baseUrl}/api/assets/${existing.id}/verify/email-confirm?token=${emailToken}`;
+    const adminEmail = `admin@${domain}`;
+
+    await db.update(assetsTable)
+      .set({ verificationToken: token, verificationMethod: method, verificationStatus: "pending",
+             verificationEmailToken: emailToken, verificationEmailExpiry: expiry })
+      .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+
+    await sendEmail({
+      to: adminEmail,
+      subject: `Verify ownership of ${domain} — Sentinelware`,
+      html: verificationEmailHtml({ assetName: existing.name, domain, token: emailToken, confirmUrl }),
+    });
+
+    res.json({
+      method,
+      challenge: token,
+      instructions: `A verification email has been sent to ${adminEmail}. Click the link in the email to confirm ownership.`,
+      emailSentTo: adminEmail,
+      expiresIn: "1 hour",
+    });
+    return;
+  }
+
+  // dns_txt / http_file / cloud — generate token, store method
+  await db.update(assetsTable)
+    .set({ verificationToken: token, verificationMethod: method, verificationStatus: "pending" })
+    .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+
+  if (method === "http_file") {
+    res.json({
+      method,
+      challenge: token,
+      instructions: `Create a file at /.well-known/sentinelware-verification.txt on your web server with exactly this content: ${token}`,
+      fileContent: token,
+      filePath: "/.well-known/sentinelware-verification.txt",
+      checkUrl: `https://${domain}/.well-known/sentinelware-verification.txt`,
+    });
+    return;
+  }
+
+  if (method === "cloud") {
+    res.json({
+      method,
+      challenge: token,
+      instructions: `Add the following tag/label to your cloud resource to prove ownership.`,
+      tagKey: "sentinelware-verify",
+      tagValue: token,
+      cloudInstructions: {
+        aws: `aws resourcegroupstaggingapi tag-resources --resource-arn-list <your-resource-arn> --tags sentinelware-verify=${token}`,
+        gcp: `gcloud compute instances add-labels <instance> --labels=sentinelware-verify=${token}`,
+        azure: `az resource tag --ids <resource-id> --tags sentinelware-verify=${token}`,
+      },
+    });
+    return;
+  }
+
+  // dns_txt (default)
   res.json({
-    method: body.data.method,
+    method: "dns_txt",
     challenge: token,
-    instructions: methodInstructions[body.data.method] ?? `Use token: ${token}`,
-    txtRecord: {
-      type: "TXT",
-      host: "sentinelwares",
-      value: token,
-      ttl: 300,
-    },
+    instructions: `Add a DNS TXT record to your domain with value: ${token}`,
+    txtRecord: { type: "TXT", host: "sentinelwares", value: token, ttl: 300 },
   });
 });
 
-// Check DNS TXT record and mark verified if found
+// Check verification status by method
 router.post("/assets/:assetId/verify/check", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = CheckAssetVerificationParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
@@ -261,16 +357,101 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
     .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
-  const token = asset.verificationToken;
+  // Already verified (e.g. email confirm link clicked before this poll)
+  if (asset.verificationStatus === "verified") {
+    res.json({ verified: true, message: "Asset ownership is verified." });
+    return;
+  }
 
-  // If asset is a domain/subdomain/url, do real DNS TXT lookup
-  if (token && (asset.type === "domain" || asset.type === "subdomain" || asset.type === "url")) {
-    const domain = asset.value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
+  const token = asset.verificationToken;
+  if (!token) {
+    res.status(400).json({ error: "No verification in progress. Start verification first." });
+    return;
+  }
+
+  const method = asset.verificationMethod ?? "dns_txt";
+  const domain = asset.value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
+
+  // ── Email: check if the confirm link was clicked (token cleared = verified) ──
+  if (method === "email") {
+    if (asset.verificationEmailToken === null) {
+      // Already handled by email-confirm endpoint — status should already be verified
+      res.json({ verified: true, message: "Email confirmed. Asset ownership verified." });
+    } else {
+      res.json({ verified: false, message: "Email confirmation pending. Check your inbox and click the verification link." });
+    }
+    return;
+  }
+
+  // ── HTTP File: real fetch ─────────────────────────────────────────────────
+  if (method === "http_file") {
+    const fileUrl = `https://${domain}/.well-known/sentinelware-verification.txt`;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const resp = await fetch(fileUrl, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!resp.ok) {
+        res.json({ verified: false, message: `Could not fetch ${fileUrl} (HTTP ${resp.status}). Make sure the file is accessible.` });
+        return;
+      }
+      const text = (await resp.text()).trim();
+      if (text === token) {
+        await db.update(assetsTable)
+          .set({ verificationStatus: "verified" })
+          .where(eq(assetsTable.id, params.data.assetId));
+        await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+        res.json({ verified: true, message: `File found at ${fileUrl}. Asset ownership verified.` });
+      } else {
+        res.json({ verified: false, message: `File found but content does not match. Expected: ${token}` });
+      }
+    } catch (err: any) {
+      const msg = err?.name === "AbortError"
+        ? `Request to ${fileUrl} timed out. Ensure the file is publicly accessible.`
+        : `Could not reach ${fileUrl}. Make sure the file is deployed and publicly accessible.`;
+      res.json({ verified: false, message: msg });
+    }
+    return;
+  }
+
+  // ── Cloud: DNS fallback or admin manual verification ──────────────────────
+  if (method === "cloud") {
+    // Try DNS first (some cloud providers expose domain ownership via DNS)
+    if (asset.type === "domain" || asset.type === "subdomain" || asset.type === "url") {
+      try {
+        const records = await dns.resolveTxt(`sentinelwares.${domain}`);
+        const flat = records.flat();
+        if (flat.some(r => r === token)) {
+          await db.update(assetsTable)
+            .set({ verificationStatus: "verified" })
+            .where(eq(assetsTable.id, params.data.assetId));
+          await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+          res.json({ verified: true, message: "DNS TXT record found. Cloud asset ownership verified." });
+          return;
+        }
+      } catch { /* no DNS record — fall through */ }
+    }
+    // For cloud_asset type and non-domain: trust admin confirmation, or client claim
+    if (req.user!.role === "client") {
+      // Client claims they've added the tag — mark as pending (admin reviews)
+      res.json({ verified: false, message: "Your cloud verification claim has been submitted. An administrator will review and confirm ownership." });
+      return;
+    }
+    // Admin/AM can manually confirm
+    await db.update(assetsTable)
+      .set({ verificationStatus: "verified" })
+      .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+    res.json({ verified: true, message: "Cloud asset ownership confirmed by administrator." });
+    return;
+  }
+
+  // ── DNS TXT (default) ─────────────────────────────────────────────────────
+  if (asset.type === "domain" || asset.type === "subdomain" || asset.type === "url") {
     try {
       const records = await dns.resolveTxt(`sentinelwares.${domain}`);
       const flat = records.flat();
-      const found = flat.some(r => r === token);
-      if (found) {
+      if (flat.some(r => r === token)) {
         await db.update(assetsTable)
           .set({ verificationStatus: "verified" })
           .where(eq(assetsTable.id, params.data.assetId));
@@ -281,21 +462,21 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
       }
       return;
     } catch {
-      res.json({ verified: false, message: `Could not resolve sentinelwares.${domain}. Make sure the TXT record is added and DNS has propagated (can take up to 24h).` });
+      res.json({ verified: false, message: `Could not resolve sentinelwares.${domain}. Make sure the TXT record is added and DNS has propagated (up to 24h).` });
       return;
     }
   }
 
-  // Non-domain assets: allow manual verification by admin/account_manager only
+  // Non-domain, non-specific-method: admin/AM manual confirm, client blocked
   if (req.user!.role === "client") {
-    res.status(403).json({ error: "Only domain assets can be verified via TXT record" });
+    res.status(403).json({ error: "Only domain/URL assets can be self-verified. Contact your account manager." });
     return;
   }
   await db.update(assetsTable)
     .set({ verificationStatus: "verified" })
     .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
   await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
-  res.json({ verified: true, message: "Asset ownership successfully verified" });
+  res.json({ verified: true, message: "Asset ownership successfully verified." });
 });
 
 // ── Technology Detection ─────────────────────────────────────────────────

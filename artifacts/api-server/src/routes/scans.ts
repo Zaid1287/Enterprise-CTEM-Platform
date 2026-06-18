@@ -105,6 +105,24 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
 router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateScanBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
+  // Enforce ownership verification — no scanning unverified assets
+  const assetIds = (parsed.data as any).assetIds as number[] | undefined;
+  if (assetIds && assetIds.length > 0) {
+    const assetRows = await db
+      .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus })
+      .from(assetsTable)
+      .where(and(inArray(assetsTable.id, assetIds), eq(assetsTable.tenantId, req.user!.tenantId)));
+    const unverified = assetRows.filter(a => a.verificationStatus !== "verified");
+    if (unverified.length > 0) {
+      res.status(422).json({
+        error: "Cannot scan unverified assets. Verify ownership before scanning.",
+        unverifiedAssets: unverified.map(a => ({ id: a.id, name: a.name })),
+      });
+      return;
+    }
+  }
+
   const [scan] = await db.insert(scansTable).values({
     ...parsed.data, tenantId: req.user!.tenantId, status: "pending",
     startedAt: new Date(),

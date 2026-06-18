@@ -75,6 +75,46 @@ export function otpEmailHtml(opts: {
 </html>`;
 }
 
+export function verificationEmailHtml(opts: {
+  assetName: string;
+  domain: string;
+  token: string;
+  confirmUrl: string;
+}): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e5e5e5; margin: 0; padding: 40px 20px; }
+    .container { max-width: 520px; margin: 0 auto; background: #111; border: 1px solid #222; border-radius: 12px; padding: 40px; }
+    .brand { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 32px; }
+    h1 { font-size: 22px; font-weight: 700; margin: 0 0 8px; color: #fff; }
+    p { font-size: 14px; color: #999; line-height: 1.6; margin: 0 0 16px; }
+    .asset-box { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px; margin: 24px 0; font-family: monospace; font-size: 13px; color: #7c3aed; }
+    .btn { display: inline-block; background: #7c3aed; color: #fff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; margin: 24px 0; }
+    .footer { font-size: 12px; color: #555; margin-top: 32px; padding-top: 24px; border-top: 1px solid #1e1e1e; }
+    .warning { font-size: 12px; color: #666; background: #1a1a1a; border-radius: 6px; padding: 12px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand">Sentinelware</div>
+    <h1>Verify Asset Ownership</h1>
+    <p>Someone has requested verification of the following asset in Sentinelware:</p>
+    <div class="asset-box">${opts.assetName} &mdash; ${opts.domain}</div>
+    <p>If you are the administrator of <strong>${opts.domain}</strong>, click the button below to confirm ownership. This link expires in 1 hour.</p>
+    <a href="${opts.confirmUrl}" class="btn">Confirm Ownership &rarr;</a>
+    <div class="warning">
+      If you did not request this verification, you can safely ignore this email. No action is required.
+    </div>
+    <div class="footer">&copy; ${new Date().getFullYear()} Sentinelware. All rights reserved.</div>
+  </div>
+</body>
+</html>`;
+}
+
 export interface AlertEmailEvent {
   title: string;
   message: string;
