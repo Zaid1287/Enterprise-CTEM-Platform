@@ -1958,3 +1958,67 @@ export const DeleteBrandThreatScanResponse = zod.object({
 })
 
 
+/**
+ * @summary Run passive discovery for an asset
+ */
+export const TriggerPassiveDiscoveryParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const TriggerPassiveDiscoveryResponse = zod.object({
+  "assetId": zod.number(),
+  "asset": zod.object({
+
+}).passthrough().optional(),
+  "results": zod.array(zod.object({
+  "source": zod.string(),
+  "status": zod.enum(['ok', 'skipped', 'error']),
+  "data": zod.object({
+
+}).passthrough().nullish(),
+  "summary": zod.string()
+})),
+  "savedIds": zod.array(zod.number()).optional()
+})
+
+
+/**
+ * @summary Get historical discovery results for an asset
+ */
+export const ListDiscoveryHistoryParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const ListDiscoveryHistoryResponse = zod.object({
+  "assetId": zod.number(),
+  "asset": zod.object({
+
+}).passthrough().optional(),
+  "totalResults": zod.number(),
+  "bySource": zod.object({
+
+}).passthrough().optional(),
+  "results": zod.array(zod.object({
+
+}).passthrough())
+})
+
+
+/**
+ * @summary Get the most recent discovery result per source for an asset
+ */
+export const ListDiscoveryLatestParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const ListDiscoveryLatestResponse = zod.object({
+  "assetId": zod.number(),
+  "asset": zod.object({
+
+}).passthrough().optional(),
+  "sources": zod.array(zod.object({
+
+}).passthrough())
+})
+
+

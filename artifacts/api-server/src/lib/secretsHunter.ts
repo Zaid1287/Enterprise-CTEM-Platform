@@ -132,16 +132,18 @@ function maskContext(ctx: string, secret: string): string {
   return ctx.replace(secret, maskSecret(secret)).slice(0, 300);
 }
 
+// Module-level GitHub token — set via runSecretsHunt(target, token)
+let _githubToken: string | null = null;
+
 // GitHub API helper — graceful, checks rate limit
 async function ghFetch(path: string, remainingRef: { v: number }): Promise<{ ok: boolean; data: any }> {
   if (remainingRef.v < 3) return { ok: false, data: null };
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 10000);
-    const res = await fetch(`https://api.github.com${path}`, {
-      signal: ctrl.signal,
-      headers: { "User-Agent": UA, "Accept": "application/vnd.github+json" },
-    });
+    const headers: Record<string, string> = { "User-Agent": UA, "Accept": "application/vnd.github+json" };
+    if (_githubToken) headers.Authorization = `Bearer ${_githubToken}`;
+    const res = await fetch(`https://api.github.com${path}`, { signal: ctrl.signal, headers });
     clearTimeout(t);
     remainingRef.v = parseInt(res.headers.get("X-RateLimit-Remaining") ?? "50", 10);
     if (!res.ok) return { ok: false, data: null };
@@ -376,7 +378,8 @@ async function runGitDirChecks(target: string): Promise<GitDirExposure[]> {
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
-export async function runSecretsHunt(target: string): Promise<SecretsHuntResult> {
+export async function runSecretsHunt(target: string, githubToken?: string | null): Promise<SecretsHuntResult> {
+  _githubToken = githubToken ?? null;
   const empty: SecretsHuntResult = {
     githubSecrets: [], gitDirectories: [],
     stats: { reposScanned: 0, filesScanned: 0, commitsScanned: 0, secretsFound: 0, verifiedSecrets: 0, gitDirsChecked: 0, gitDirsExposed: 0, criticalCount: 0, highCount: 0, mediumCount: 0 },

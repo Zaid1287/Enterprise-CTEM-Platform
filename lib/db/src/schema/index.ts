@@ -21,3 +21,4 @@ export * from "./screenshots";
 export * from "./platformSettings";
 export * from "./brandThreats";
 export * from "./sessions";
+export * from "./discoveryResults";

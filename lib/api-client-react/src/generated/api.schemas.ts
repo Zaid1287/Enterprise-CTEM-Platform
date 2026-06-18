@@ -5,6 +5,57 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+export type DiscoveryModuleResultStatus = typeof DiscoveryModuleResultStatus[keyof typeof DiscoveryModuleResultStatus];
+
+
+export const DiscoveryModuleResultStatus = {
+  ok: 'ok',
+  skipped: 'skipped',
+  error: 'error',
+} as const;
+
+export type DiscoveryModuleResultData = { [key: string]: unknown } | null;
+
+export interface DiscoveryModuleResult {
+  source: string;
+  status: DiscoveryModuleResultStatus;
+  data?: DiscoveryModuleResultData;
+  summary: string;
+}
+
+export type DiscoveryRunResultAsset = { [key: string]: unknown };
+
+export interface DiscoveryRunResult {
+  assetId: number;
+  asset?: DiscoveryRunResultAsset;
+  results: DiscoveryModuleResult[];
+  savedIds?: number[];
+}
+
+export type DiscoveryResultsResponseAsset = { [key: string]: unknown };
+
+export type DiscoveryResultsResponseBySource = { [key: string]: unknown };
+
+export type DiscoveryResultsResponseResultsItem = { [key: string]: unknown };
+
+export interface DiscoveryResultsResponse {
+  assetId: number;
+  asset?: DiscoveryResultsResponseAsset;
+  totalResults: number;
+  bySource?: DiscoveryResultsResponseBySource;
+  results: DiscoveryResultsResponseResultsItem[];
+}
+
+export type DiscoveryLatestResponseAsset = { [key: string]: unknown };
+
+export type DiscoveryLatestResponseSourcesItem = { [key: string]: unknown };
+
+export interface DiscoveryLatestResponse {
+  assetId: number;
+  asset?: DiscoveryLatestResponseAsset;
+  sources: DiscoveryLatestResponseSourcesItem[];
+}
+
 export type ScreenshotFindingSeverity = typeof ScreenshotFindingSeverity[keyof typeof ScreenshotFindingSeverity];
 
 

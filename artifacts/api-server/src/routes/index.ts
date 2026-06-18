@@ -28,6 +28,7 @@ import searchRouter from "./search";
 import queuesRouter from "./queues";
 import sessionsRouter from "./sessions";
 import stripeRouter from "./stripe";
+import discoveryRouter from "./discovery";
 
 const router: IRouter = Router();
 
@@ -60,5 +61,6 @@ router.use(searchRouter);
 router.use(queuesRouter);
 router.use(sessionsRouter);
 router.use(stripeRouter);
+router.use(discoveryRouter);
 
 export default router;

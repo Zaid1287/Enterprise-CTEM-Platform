@@ -2,7 +2,7 @@
 - [CTEM auth flow](ctem-auth-flow.md) — JWT tokens via sessionStorage + setAuthTokenGetter; logout mutation takes void params
 - [Express route ordering](express-route-ordering.md) — static sub-paths (e.g. /scans/pipeline-run) must be registered BEFORE param routes (/scans/:scanId) to avoid shadowing.
 - [API server Zod imports](api-zod-imports.md) — API server cannot import zod directly; esbuild can't resolve it. Always use @workspace/api-zod generated schemas.
-- [OpenAPI schema name collision](openapi-schema-collision.md) — Schema names matching auto-generated param type names (e.g. GetXxxParams) cause ambiguous re-export errors in api-zod; remove duplicates.
+- [OpenAPI schema name collision](openapi-schema-collision.md) — Two root causes: (1) schema names matching auto-generated param type names cause ambiguous re-exports; fix by removing query params/bodies from spec. (2) paths added after the last schema inside components: block land INSIDE components — always insert new paths BEFORE the components: key.
 - [TanStack Query queryKey required](tanstack-querykey.md) — Hooks like useGetToolRun require queryKey in query options or TS errors block Vite HMR module reloads.
 - [API server logAudit userId cast](api-server-ts-quirks.md) — logAudit userId arg always needs `as any`; pre-existing TS error in esbuild build that doesn't block runtime.
 - [Real scan implementation](real-scan-impl.md) — pipelineScans.ts uses nmap(-sT), Node dns/promises, fetch, tls.connect, whois, ip-api.com; async background via setImmediate; field is assetToolConfig (no s).

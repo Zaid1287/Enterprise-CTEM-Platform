@@ -38,6 +38,8 @@ tags:
     description: AI Security Copilot
   - name: dashboard
     description: Dashboard and analytics
+  - name: discovery
+    description: Passive discovery engine — CT logs, WHOIS, ASN, DKIM, GitHub, and commercial intel APIs
 paths:
   /healthz:
     get:
@@ -1961,8 +1963,127 @@ paths:
                   success:
                     type: boolean
 
+  /discovery/run/{assetId}:
+    post:
+      operationId: triggerPassiveDiscovery
+      tags: [discovery]
+      summary: Run passive discovery for an asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Discovery results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryRunResult"
+
+  /discovery/results/{assetId}:
+    get:
+      operationId: listDiscoveryHistory
+      tags: [discovery]
+      summary: Get historical discovery results for an asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Historical discovery results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryResultsResponse"
+
+  /discovery/latest/{assetId}:
+    get:
+      operationId: listDiscoveryLatest
+      tags: [discovery]
+      summary: Get the most recent discovery result per source for an asset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Latest discovery results per source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryLatestResponse"
+
 components:
   schemas:
+    DiscoveryModuleResult:
+      type: object
+      required: [source, status, summary]
+      properties:
+        source:
+          type: string
+        status:
+          type: string
+          enum: [ok, skipped, error]
+        data:
+          type: object
+          nullable: true
+        summary:
+          type: string
+
+    DiscoveryRunResult:
+      type: object
+      required: [assetId, results]
+      properties:
+        assetId:
+          type: integer
+        asset:
+          type: object
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiscoveryModuleResult"
+        savedIds:
+          type: array
+          items:
+            type: integer
+
+    DiscoveryResultsResponse:
+      type: object
+      required: [assetId, totalResults, results]
+      properties:
+        assetId:
+          type: integer
+        asset:
+          type: object
+        totalResults:
+          type: integer
+        bySource:
+          type: object
+        results:
+          type: array
+          items:
+            type: object
+
+    DiscoveryLatestResponse:
+      type: object
+      required: [assetId, sources]
+      properties:
+        assetId:
+          type: integer
+        asset:
+          type: object
+        sources:
+          type: array
+          items:
+            type: object
+
     ScreenshotFinding:
       type: object
       required: [type, value, severity]
@@ -3392,4 +3513,3 @@ components:
           type: array
           items:
             type: object
-

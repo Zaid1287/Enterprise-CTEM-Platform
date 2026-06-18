@@ -52,6 +52,9 @@ import type {
   ComplianceSummary,
   DashboardOverview,
   DeleteBrandThreatScan200,
+  DiscoveryLatestResponse,
+  DiscoveryResultsResponse,
+  DiscoveryRunResult,
   ExposureCount,
   Finding,
   FindingComment,
@@ -7430,4 +7433,228 @@ export const useDeleteBrandThreatScan = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getDeleteBrandThreatScanMutationOptions(options));
     }
+
+export const getTriggerPassiveDiscoveryUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/discovery/run/${assetId}`
+}
+
+/**
+ * @summary Run passive discovery for an asset
+ */
+export const triggerPassiveDiscovery = async (assetId: number, options?: RequestInit): Promise<DiscoveryRunResult> => {
+
+  return customFetch<DiscoveryRunResult>(getTriggerPassiveDiscoveryUrl(assetId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getTriggerPassiveDiscoveryMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerPassiveDiscovery>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof triggerPassiveDiscovery>>, TError,{assetId: number}, TContext> => {
+
+const mutationKey = ['triggerPassiveDiscovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof triggerPassiveDiscovery>>, {assetId: number}> = (props) => {
+          const {assetId} = props ?? {};
+
+          return  triggerPassiveDiscovery(assetId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TriggerPassiveDiscoveryMutationResult = NonNullable<Awaited<ReturnType<typeof triggerPassiveDiscovery>>>
+
+    export type TriggerPassiveDiscoveryMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Run passive discovery for an asset
+ */
+export const useTriggerPassiveDiscovery = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerPassiveDiscovery>>, TError,{assetId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof triggerPassiveDiscovery>>,
+        TError,
+        {assetId: number},
+        TContext
+      > => {
+      return useMutation(getTriggerPassiveDiscoveryMutationOptions(options));
+    }
+
+export const getListDiscoveryHistoryUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/discovery/results/${assetId}`
+}
+
+/**
+ * @summary Get historical discovery results for an asset
+ */
+export const listDiscoveryHistory = async (assetId: number, options?: RequestInit): Promise<DiscoveryResultsResponse> => {
+
+  return customFetch<DiscoveryResultsResponse>(getListDiscoveryHistoryUrl(assetId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDiscoveryHistoryQueryKey = (assetId: number,) => {
+    return [
+    `/api/discovery/results/${assetId}`
+    ] as const;
+    }
+
+
+export const getListDiscoveryHistoryQueryOptions = <TData = Awaited<ReturnType<typeof listDiscoveryHistory>>, TError = ErrorType<unknown>>(assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDiscoveryHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDiscoveryHistoryQueryKey(assetId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDiscoveryHistory>>> = ({ signal }) => listDiscoveryHistory(assetId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(assetId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDiscoveryHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDiscoveryHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listDiscoveryHistory>>>
+export type ListDiscoveryHistoryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get historical discovery results for an asset
+ */
+
+export function useListDiscoveryHistory<TData = Awaited<ReturnType<typeof listDiscoveryHistory>>, TError = ErrorType<unknown>>(
+ assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDiscoveryHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDiscoveryHistoryQueryOptions(assetId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListDiscoveryLatestUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/discovery/latest/${assetId}`
+}
+
+/**
+ * @summary Get the most recent discovery result per source for an asset
+ */
+export const listDiscoveryLatest = async (assetId: number, options?: RequestInit): Promise<DiscoveryLatestResponse> => {
+
+  return customFetch<DiscoveryLatestResponse>(getListDiscoveryLatestUrl(assetId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDiscoveryLatestQueryKey = (assetId: number,) => {
+    return [
+    `/api/discovery/latest/${assetId}`
+    ] as const;
+    }
+
+
+export const getListDiscoveryLatestQueryOptions = <TData = Awaited<ReturnType<typeof listDiscoveryLatest>>, TError = ErrorType<unknown>>(assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDiscoveryLatest>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDiscoveryLatestQueryKey(assetId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDiscoveryLatest>>> = ({ signal }) => listDiscoveryLatest(assetId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(assetId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDiscoveryLatest>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDiscoveryLatestQueryResult = NonNullable<Awaited<ReturnType<typeof listDiscoveryLatest>>>
+export type ListDiscoveryLatestQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the most recent discovery result per source for an asset
+ */
+
+export function useListDiscoveryLatest<TData = Awaited<ReturnType<typeof listDiscoveryLatest>>, TError = ErrorType<unknown>>(
+ assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDiscoveryLatest>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDiscoveryLatestQueryOptions(assetId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 

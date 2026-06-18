@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
-import { Key, Save, Eye, EyeOff, CheckCircle2, AlertTriangle, Mail, Bell, Search, Globe } from "lucide-react";
+import { Key, Save, Eye, EyeOff, CheckCircle2, AlertTriangle, Mail, Bell, Search, Globe, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,11 +18,12 @@ interface PlatformSetting {
 }
 
 const CATEGORY_META: Record<string, { label: string; icon: React.ElementType; color: string }> = {
-  email:         { label: "Email & SMTP",       icon: Mail,         color: "text-blue-400" },
-  notifications: { label: "Notifications",       icon: Bell,         color: "text-purple-400" },
-  scanning:      { label: "Scanning APIs",        icon: Search,       color: "text-green-400" },
-  osint:         { label: "OSINT & Intel",        icon: Globe,        color: "text-yellow-400" },
-  general:       { label: "General",              icon: Key,          color: "text-muted-foreground" },
+  email:         { label: "Email & SMTP",              icon: Mail,         color: "text-blue-400" },
+  notifications: { label: "Notifications",              icon: Bell,         color: "text-purple-400" },
+  scanning:      { label: "Scanning APIs",              icon: Search,       color: "text-green-400" },
+  osint:         { label: "OSINT & Intel",              icon: Globe,        color: "text-yellow-400" },
+  intelligence:  { label: "Threat Intelligence APIs",   icon: ShieldAlert,  color: "text-red-400" },
+  general:       { label: "General",                    icon: Key,          color: "text-muted-foreground" },
 };
 
 const AUTH_HEADER = () => ({ Authorization: `Bearer ${sessionStorage.getItem("access_token")}` });
@@ -82,7 +83,7 @@ export default function PlatformSettingsPage() {
     return acc;
   }, {} as Record<string, PlatformSetting[]>);
 
-  const categoryOrder = ["email", "scanning", "notifications", "osint", "general"];
+  const categoryOrder = ["scanning", "intelligence", "osint", "email", "notifications", "general"];
   const orderedGroups = categoryOrder.filter(c => grouped[c]);
 
   const hasPendingEdits = Object.keys(edits).length > 0;

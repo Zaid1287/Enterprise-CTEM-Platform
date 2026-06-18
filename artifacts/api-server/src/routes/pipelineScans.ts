@@ -4,7 +4,7 @@ import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray } from "drizzle-orm";
-import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable } from "@workspace/db";
+import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
@@ -13,6 +13,7 @@ import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
 import { runCloudRecon, type CloudReconResult } from "../lib/cloudRecon";
 import { runSecretsHunt, type SecretsHuntResult } from "../lib/secretsHunter";
+import { runPassiveDiscovery, type PassiveDiscoveryOptions } from "../lib/passiveDiscovery";
 import { runDirFuzz, type DirFuzzResult } from "../lib/dirFuzzer";
 import { runNucleiScan, type VulnScanResult } from "../lib/nucleiScanner";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
@@ -1345,11 +1346,18 @@ async function executePipeline(
     .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
 
   // ── Load platform API keys for this run ──────────────────────────────────
-  const [nvdKey, shodanKey, vtKey, hunterKey] = await Promise.all([
+  const [nvdKey, shodanKey, vtKey, hunterKey, githubToken, fofaEmail, fofaApiKey, censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey] = await Promise.all([
     getPlatformSetting("nvd_api_key"),
     getPlatformSetting("shodan_api_key"),
     getPlatformSetting("virustotal_api_key"),
     getPlatformSetting("hunter_api_key"),
+    getPlatformSetting("github_token"),
+    getPlatformSetting("fofa_email"),
+    getPlatformSetting("fofa_api_key"),
+    getPlatformSetting("censys_api_id"),
+    getPlatformSetting("censys_api_secret"),
+    getPlatformSetting("intelx_api_key"),
+    getPlatformSetting("criminalip_api_key"),
   ]);
   if (nvdKey) setNvdApiKey(nvdKey);
 
@@ -1619,7 +1627,7 @@ async function executePipeline(
           ? (async () => { cloudRecon = await runCloudRecon(target); })()
           : Promise.resolve(),
         isWebAsset
-          ? (async () => { secretsHunt = await runSecretsHunt(target); })()
+          ? (async () => { secretsHunt = await runSecretsHunt(target, githubToken); })()
           : Promise.resolve(),
         isWebAsset
           ? (async () => { dirFuzz = await runDirFuzz(target, dnsResult.subdomains.map(s => s.name)); })()
@@ -2450,6 +2458,29 @@ async function executePipeline(
       await db.insert(findingsTable).values(deduped.slice(i, i + 50));
     }
     findingTotals.push(deduped.length);
+
+    // ── Passive discovery: save results to history (non-blocking) ─────────────
+    // Runs free tools + any configured commercial API tools in the background
+    // so the scan result isn't delayed. Results are stored in discovery_results.
+    setImmediate(async () => {
+      try {
+        const discoveryOpts: PassiveDiscoveryOptions = {
+          githubToken, shodanApiKey, fofaEmail, fofaApiKey,
+          censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey,
+        };
+        const discoveryResults = await runPassiveDiscovery(target, discoveryOpts);
+        for (const result of discoveryResults) {
+          await db.insert(discoveryResultsTable).values({
+            tenantId, assetId: asset.id, scanId,
+            source: result.source, status: result.status,
+            data: result.data as any, summary: result.summary,
+          }).catch(() => {/* ignore single-row errors */});
+        }
+        logger.info({ target, scanId, modules: discoveryResults.map(r => `${r.source}:${r.status}`).join(",") }, "Passive discovery history saved");
+      } catch (err) {
+        logger.warn({ err, target, scanId }, "Passive discovery background save failed (non-fatal)");
+      }
+    });
 
     // Mark all tools done in case any got stuck
     for (const t of toolProgress) {
