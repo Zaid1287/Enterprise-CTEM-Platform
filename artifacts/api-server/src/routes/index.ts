@@ -26,6 +26,8 @@ import platformSettingsRouter from "./platformSettings";
 import brandThreatsRouter from "./brandThreats";
 import searchRouter from "./search";
 import queuesRouter from "./queues";
+import sessionsRouter from "./sessions";
+import stripeRouter from "./stripe";
 
 const router: IRouter = Router();
 
@@ -56,5 +58,7 @@ router.use(platformSettingsRouter);
 router.use(brandThreatsRouter);
 router.use(searchRouter);
 router.use(queuesRouter);
+router.use(sessionsRouter);
+router.use(stripeRouter);
 
 export default router;

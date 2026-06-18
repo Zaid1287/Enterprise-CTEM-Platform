@@ -9,6 +9,7 @@ import {
   CheckCircle2, Mail, Copy, Sparkles, ArrowUpRight, Shield,
   Building2, UserPlus, X, KeyRound, Trash2, ExternalLink,
   Camera, SmartphoneNfc, Send, Clock, Check, Ticket,
+  Monitor, Globe, LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,13 +18,14 @@ import { Badge } from "@/components/ui/badge";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "profile" | "password" | "team" | "billing" | "aikeys";
+type Tab = "profile" | "password" | "team" | "billing" | "aikeys" | "sessions";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "profile",  label: "Profile",       icon: User },
   { id: "password", label: "Password",      icon: Lock },
   { id: "team",     label: "Team Members",  icon: Users },
   { id: "billing",  label: "Billing Plans", icon: CreditCard },
+  { id: "sessions", label: "Sessions",      icon: Monitor },
   { id: "aikeys",   label: "AI Keys",       icon: KeyRound },
 ];
 
@@ -100,6 +102,7 @@ export default function AccountSettingsPage() {
       {tab === "password" && <div className="space-y-5"><PasswordTab /><TwoFactorSection user={user} setUser={setUser} /></div>}
       {tab === "team"     && <TeamTab />}
       {tab === "billing"  && <BillingTab user={user} />}
+      {tab === "sessions" && <SessionsTab />}
       {tab === "aikeys"   && <AiKeysTab />}
     </div>
   );
@@ -860,7 +863,8 @@ function TeamTab() {
 
 function BillingTab({ user }: { user: any }) {
   const { toast } = useToast();
-  const [copied, setCopied] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
 
   const { data: tenantData } = useQuery<any>({
     queryKey: ["tenant-billing"],
@@ -868,60 +872,116 @@ function BillingTab({ user }: { user: any }) {
     enabled: !!user?.tenantId,
   });
 
-  const currentPlan = tenantData?.plan ?? "starter";
-  const adminEmail = "admin@ctemplatform.com";
+  const { data: stripeData } = useQuery({
+    queryKey: ["stripe-products"],
+    queryFn: (): Promise<{ products: any[] }> =>
+      (apiFetch(`${BASE}/api/stripe/products`) as Promise<{ products: any[] }>).catch(() => ({ products: [] })),
+    staleTime: 5 * 60 * 1000,
+  });
 
-  function copyEmail() {
-    navigator.clipboard.writeText(adminEmail).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  const { data: subData } = useQuery({
+    queryKey: ["stripe-subscription"],
+    queryFn: (): Promise<{ subscription: any }> =>
+      (apiFetch(`${BASE}/api/stripe/subscription`) as Promise<{ subscription: any }>).catch(() => ({ subscription: null })),
+    enabled: !!user,
+  });
+
+  const currentPlan = tenantData?.plan ?? "starter";
+  const hasStripeProducts = (stripeData?.products?.length ?? 0) > 0;
+  const activeSub = subData?.subscription;
+
+  async function handleCheckout(priceId: string, planSlug: string) {
+    setCheckoutLoading(planSlug);
+    try {
+      const { url } = await apiFetch(`${BASE}/api/stripe/checkout`, {
+        method: "POST",
+        body: JSON.stringify({ priceId }),
+      }) as any;
+      if (url) window.location.href = url;
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Checkout failed", variant: "destructive" });
+    } finally {
+      setCheckoutLoading(null);
+    }
   }
+
+  async function handlePortal() {
+    setPortalLoading(true);
+    try {
+      const { url } = await apiFetch(`${BASE}/api/stripe/portal`, { method: "POST" }) as any;
+      if (url) window.location.href = url;
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Could not open billing portal", variant: "destructive" });
+    } finally {
+      setPortalLoading(false);
+    }
+  }
+
+  // Build display plan list — prefer Stripe products, fallback to static PLAN_TIERS
+  const displayPlans = hasStripeProducts
+    ? PLAN_TIERS.map(tier => {
+        const product = stripeData!.products.find((p: any) =>
+          p.metadata?.slug === tier.slug || p.name.toLowerCase() === tier.name.toLowerCase()
+        );
+        const monthlyPrice = product?.prices?.find((p: any) => p.recurring?.interval === "month");
+        return {
+          ...tier,
+          stripeProductId: product?.id ?? null,
+          stripePriceId: monthlyPrice?.id ?? null,
+          stripePrice: monthlyPrice
+            ? `$${(monthlyPrice.unitAmount / 100).toFixed(0)}`
+            : tier.price,
+        };
+      })
+    : PLAN_TIERS.map(t => ({ ...t, stripeProductId: null, stripePriceId: null, stripePrice: t.price }));
 
   return (
     <div className="space-y-5">
       {/* Current plan banner */}
       <div className="bg-card border border-border rounded-xl p-5">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Current Plan</p>
             <p className="text-2xl font-bold capitalize">{currentPlan}</p>
             <p className="text-sm text-muted-foreground mt-1">
-              {tenantData?.name ?? "Your workspace"} · {tenantData?.maxAssets ?? "—"} max assets · {tenantData?.maxUsers ?? "—"} max users
+              {tenantData?.name ?? "Your workspace"}
+              {tenantData?.maxAssets && ` · ${tenantData.maxAssets} max assets`}
+              {tenantData?.maxUsers && ` · ${tenantData.maxUsers} max users`}
             </p>
+            {activeSub && (
+              <p className="text-xs text-green-400 mt-1.5 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3 h-3" />
+                Active subscription · renews {new Date((activeSub.current_period_end ?? 0) * 1000).toLocaleDateString()}
+              </p>
+            )}
           </div>
-          <div className="bg-primary/10 border border-primary/20 rounded-lg px-3 py-1.5">
-            <p className="text-xs font-semibold text-primary uppercase tracking-wide">Active</p>
+          <div className="flex flex-col gap-2 items-end shrink-0">
+            <div className="bg-primary/10 border border-primary/20 rounded-lg px-3 py-1.5">
+              <p className="text-xs font-semibold text-primary uppercase tracking-wide">Active</p>
+            </div>
+            {activeSub && (
+              <Button
+                size="sm" variant="outline"
+                className="text-xs"
+                onClick={handlePortal}
+                disabled={portalLoading}
+              >
+                {portalLoading ? <Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> : <ExternalLink className="w-3 h-3 mr-1.5" />}
+                Manage Billing
+              </Button>
+            )}
           </div>
         </div>
-      </div>
-
-      {/* Upgrade notice */}
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3.5 flex items-start gap-3">
-        <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-amber-300">Want to upgrade your plan?</p>
-          <p className="text-xs text-amber-400/80 mt-0.5">
-            Contact our admin team to upgrade, downgrade, or discuss enterprise pricing.
-          </p>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-xs font-mono text-amber-300">{adminEmail}</span>
-            <button onClick={copyEmail} className="text-amber-400 hover:text-amber-300">
-              {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
-          </div>
-        </div>
-        <a href={`mailto:${adminEmail}?subject=Plan Upgrade Request`}>
-          <Button size="sm" variant="outline" className="shrink-0 border-amber-500/40 text-amber-400 hover:bg-amber-500/10">
-            <Mail className="w-3.5 h-3.5 mr-1.5" /> Contact Admin
-          </Button>
-        </a>
       </div>
 
       {/* Plan tiers */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {PLAN_TIERS.map(plan => {
+        {displayPlans.map(plan => {
           const isCurrent = plan.slug === currentPlan;
+          const isEnterprise = plan.slug === "enterprise";
+          const isHigherTier = PLAN_TIERS.findIndex(p => p.slug === plan.slug) > PLAN_TIERS.findIndex(p => p.slug === currentPlan);
+          const loading = checkoutLoading === plan.slug;
+
           return (
             <div
               key={plan.slug}
@@ -945,8 +1005,8 @@ function BillingTab({ user }: { user: any }) {
               <div>
                 <p className="font-semibold text-base">{plan.name}</p>
                 <div className="flex items-baseline gap-1 mt-1">
-                  <span className="text-2xl font-bold">{plan.price}</span>
-                  <span className="text-sm text-muted-foreground">{plan.period}</span>
+                  <span className="text-2xl font-bold">{plan.stripePrice ?? plan.price}</span>
+                  {!isEnterprise && <span className="text-sm text-muted-foreground">/month</span>}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{plan.description}</p>
               </div>
@@ -960,24 +1020,55 @@ function BillingTab({ user }: { user: any }) {
                 ))}
               </ul>
 
-              {!isCurrent && (
-                <a href={`mailto:${adminEmail}?subject=Upgrade to ${plan.name} Plan`} className="block">
-                  <Button size="sm" variant={plan.highlight ? "default" : "outline"} className="w-full">
-                    <ArrowUpRight className="w-3.5 h-3.5 mr-1.5" />
-                    {currentPlan === "enterprise" || (PLAN_TIERS.findIndex(p => p.slug === currentPlan) > PLAN_TIERS.findIndex(p => p.slug === plan.slug))
-                      ? "Downgrade" : "Upgrade"}
-                  </Button>
-                </a>
-              )}
-              {isCurrent && (
+              {isCurrent ? (
                 <Button size="sm" variant="outline" disabled className="w-full">
                   <CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-green-400" /> Active Plan
                 </Button>
+              ) : isEnterprise ? (
+                <a href="mailto:sales@sentinelware.io?subject=Enterprise Plan Enquiry" className="block">
+                  <Button size="sm" variant="outline" className="w-full">
+                    <Mail className="w-3.5 h-3.5 mr-1.5" /> Contact Sales
+                  </Button>
+                </a>
+              ) : plan.stripePriceId ? (
+                <Button
+                  size="sm"
+                  variant={plan.highlight ? "default" : "outline"}
+                  className="w-full"
+                  disabled={loading}
+                  onClick={() => handleCheckout(plan.stripePriceId!, plan.slug)}
+                >
+                  {loading
+                    ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Processing…</>
+                    : <><ArrowUpRight className="w-3.5 h-3.5 mr-1.5" />{isHigherTier ? "Upgrade" : "Switch"}</>
+                  }
+                </Button>
+              ) : (
+                <a href="mailto:sales@sentinelware.io?subject=Plan Change Request" className="block">
+                  <Button size="sm" variant={plan.highlight ? "default" : "outline"} className="w-full">
+                    <ArrowUpRight className="w-3.5 h-3.5 mr-1.5" />
+                    {isHigherTier ? "Upgrade" : "Switch"}
+                  </Button>
+                </a>
               )}
             </div>
           );
         })}
       </div>
+
+      {/* Billing portal shortcut if subscribed */}
+      {activeSub && (
+        <div className="rounded-xl border border-border bg-card px-5 py-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium">Billing Portal</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Manage payment methods, invoices, and subscription details via Stripe.</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={handlePortal} disabled={portalLoading}>
+            {portalLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5 mr-1.5" />}
+            Open Portal
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1236,6 +1327,183 @@ function AiKeysTab() {
         <p className="text-xs text-amber-400/90 leading-relaxed">
           API keys are stored encrypted and are only used for your AI Copilot requests. We never log or share your keys.
           Revoke access by removing the key at any time.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Sessions Tab ────────────────────────────────────────────────────
+
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+function SessionsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [revoking, setRevoking] = useState<number | null>(null);
+  const [revokingAll, setRevokingAll] = useState(false);
+
+  const { data: sessions = [], isLoading } = useQuery<any[]>({
+    queryKey: ["auth-sessions"],
+    queryFn: () => apiFetch(`${BASE}/api/auth/sessions`),
+    refetchInterval: 30_000,
+  });
+
+  async function handleRevoke(sessionId: number) {
+    setRevoking(sessionId);
+    try {
+      await apiFetch(`${BASE}/api/auth/sessions/${sessionId}`, { method: "DELETE" });
+      qc.invalidateQueries({ queryKey: ["auth-sessions"] });
+      toast({ title: "Session revoked" });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to revoke session", variant: "destructive" });
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  async function handleRevokeAll() {
+    setRevokingAll(true);
+    try {
+      await apiFetch(`${BASE}/api/auth/sessions`, { method: "DELETE" });
+      qc.invalidateQueries({ queryKey: ["auth-sessions"] });
+      toast({ title: "All other sessions revoked" });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to revoke sessions", variant: "destructive" });
+    } finally {
+      setRevokingAll(false);
+    }
+  }
+
+  const mostRecent = sessions[0];
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="bg-card border border-border rounded-xl p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+              <Monitor className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <p className="font-medium text-sm">Active Sessions</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {isLoading ? "Loading…" : `${sessions.length} active session${sessions.length !== 1 ? "s" : ""}`}
+              </p>
+            </div>
+          </div>
+          {sessions.length > 1 && (
+            <Button
+              size="sm" variant="outline"
+              className="text-destructive border-destructive/30 hover:bg-destructive/10 shrink-0"
+              onClick={handleRevokeAll}
+              disabled={revokingAll}
+            >
+              {revokingAll ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5 mr-1.5" />}
+              Revoke All Others
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Session list */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="py-10 text-center space-y-2">
+            <Monitor className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+            <p className="text-sm text-muted-foreground">No active sessions found</p>
+            <p className="text-xs text-muted-foreground/60">Sessions are recorded on login. Sign out and back in to see this tab populate.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {sessions.map((s: any, i: number) => {
+              const isMostRecent = s.id === mostRecent?.id;
+              return (
+                <div key={s.id} className="flex items-center gap-4 px-5 py-4">
+                  {/* Device icon */}
+                  <div className={cn(
+                    "w-9 h-9 rounded-lg border flex items-center justify-center shrink-0",
+                    isMostRecent ? "bg-primary/10 border-primary/20" : "bg-muted border-border",
+                  )}>
+                    <Monitor className={cn("w-4 h-4", isMostRecent ? "text-primary" : "text-muted-foreground")} />
+                  </div>
+
+                  {/* Details */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium truncate">
+                        {s.device ?? s.browser ?? "Unknown device"}
+                      </p>
+                      {isMostRecent && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30 font-semibold shrink-0">
+                          Most Recent
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                      {s.ipAddress && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <Globe className="w-3 h-3" />
+                          {s.ipAddress}
+                        </span>
+                      )}
+                      {s.os && (
+                        <span className="text-xs text-muted-foreground">{s.os}</span>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        <Clock className="w-3 h-3 inline mr-0.5" />
+                        {formatRelativeTime(s.lastActiveAt)}
+                      </span>
+                      <span className="text-xs text-muted-foreground/60">
+                        Created {new Date(s.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    {s.userAgent && (
+                      <p className="text-[10px] text-muted-foreground/50 mt-0.5 truncate max-w-xs">
+                        {s.userAgent}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Revoke */}
+                  <Button
+                    size="sm" variant="ghost"
+                    className="h-8 px-3 text-xs text-muted-foreground hover:text-destructive shrink-0"
+                    onClick={() => handleRevoke(s.id)}
+                    disabled={revoking === s.id}
+                  >
+                    {revoking === s.id
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <><X className="w-3.5 h-3.5 mr-1" />Revoke</>
+                    }
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Security tip */}
+      <div className="rounded-xl border border-border bg-card/50 px-4 py-3 flex items-start gap-3">
+        <Shield className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          If you see a session you don't recognise, revoke it immediately and change your password.
+          Sessions expire automatically after 30 days of inactivity.
         </p>
       </div>
     </div>

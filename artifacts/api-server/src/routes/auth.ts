@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
-import { db, tenantsTable, usersTable } from "@workspace/db";
+import { db, tenantsTable, usersTable, sessionsTable } from "@workspace/db";
 import { LoginBody, RegisterBody, RefreshTokenBody, ChangePasswordBody } from "@workspace/api-zod";
 import {
   hashPassword,
@@ -39,6 +39,35 @@ const avatarUpload = multer({
 
 function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function parseBrowser(ua: string): string {
+  if (/Edg\//i.test(ua)) return "Edge";
+  if (/OPR\//i.test(ua) || /Opera/i.test(ua)) return "Opera";
+  if (/Chrome\//i.test(ua)) return "Chrome";
+  if (/Firefox\//i.test(ua)) return "Firefox";
+  if (/Safari\//i.test(ua)) return "Safari";
+  if (/MSIE|Trident/i.test(ua)) return "Internet Explorer";
+  return "Unknown Browser";
+}
+
+function parseOs(ua: string): string {
+  if (/Windows NT 10/i.test(ua)) return "Windows 10/11";
+  if (/Windows NT/i.test(ua)) return "Windows";
+  if (/Mac OS X/i.test(ua)) return "macOS";
+  if (/iPhone/i.test(ua)) return "iOS";
+  if (/iPad/i.test(ua)) return "iPadOS";
+  if (/Android/i.test(ua)) return "Android";
+  if (/Linux/i.test(ua)) return "Linux";
+  return "Unknown OS";
+}
+
+function parseDevice(ua: string): string {
+  if (/iPhone/i.test(ua)) return "iPhone";
+  if (/iPad/i.test(ua)) return "iPad";
+  if (/Android.*Mobile/i.test(ua)) return "Android Phone";
+  if (/Android/i.test(ua)) return "Android Tablet";
+  return "Desktop";
 }
 
 function toUserResponse(user: typeof usersTable.$inferSelect) {
@@ -88,6 +117,21 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     .where(eq(usersTable.id, user.id));
 
   await logAudit(payload, "login", "user", user.id, undefined, req.ip);
+
+  // Record session
+  const ua = req.headers["user-agent"] ?? "";
+  const tokenHash = crypto.createHash("sha256").update(accessToken).digest("hex");
+  await db.insert(sessionsTable).values({
+    userId: user.id,
+    tenantId: user.tenantId,
+    tokenHash,
+    ipAddress: (req.ip ?? req.socket?.remoteAddress ?? "").replace(/^::ffff:/, ""),
+    userAgent: ua.substring(0, 500),
+    device: parseDevice(ua),
+    browser: parseBrowser(ua),
+    os: parseOs(ua),
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+  }).onConflictDoNothing();
 
   // If 2FA is enabled, send OTP and return partial response
   if (user.twoFactorEnabled) {
