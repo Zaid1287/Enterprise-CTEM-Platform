@@ -18,52 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
-import { downloadAsPdf } from "@/lib/generatePdf";
+import { downloadScanReportPdf } from "@/lib/pdfReport";
 import { getToken } from "@/lib/auth";
 
 type AssetTab = "ports" | "vulns" | "subdomains" | "http" | "dns" | "endpoints" | "intel" | "secrets" | "raw" | "screenshots" | "technologies" | "js" | "params" | "cloud" | "secretshunt" | "dirfuzz" | "nuclei";
 
-function downloadScanReportPdf(scan: any, assetReports: any[]) {
-  const ts = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
-  const totalFindings = assetReports.reduce((a: number, r: any) => a + (r.summary?.vulnerabilities ?? 0), 0);
-
-  const sections: { title?: string; lines: string[] }[] = [
-    {
-      lines: [
-        `Report Name: ${scan?.name ?? `Scan #${scan?.id}`}`,
-        `Completed: ${ts}`,
-        `Assets Scanned: ${assetReports.length}`,
-        `Total Findings: ${totalFindings}`,
-        "---",
-      ],
-    },
-  ];
-
-  for (const asset of assetReports) {
-    const s = asset.summary ?? {};
-    const assetLines: string[] = [
-      `Asset: ${asset.assetName} (${asset.assetValue})`,
-      `Open Ports: ${s.openPorts ?? 0}`,
-      `Vulnerabilities: ${s.vulnerabilities ?? 0}  (Critical: ${s.criticalVulns ?? 0}, High: ${s.highVulns ?? 0})`,
-      `Subdomains: ${s.subdomains ?? 0}`,
-      `DNS Records: ${s.dnsRecords ?? 0}`,
-      `Endpoints: ${s.endpoints ?? 0}`,
-    ];
-
-    const cves: any[] = asset.cves ?? [];
-    if (cves.length > 0) {
-      assetLines.push("---", "CVEs Found (top 10):");
-      cves.slice(0, 10).forEach((c: any) => {
-        assetLines.push(`  • ${c.cveId ?? "—"}  [${c.severity?.toUpperCase() ?? "?"}]  CVSS: ${c.cvss ?? "—"}  ${c.title ?? ""}`);
-      });
-    }
-
-    sections.push({ title: `Asset: ${asset.assetName}`, lines: assetLines });
-  }
-
-  const safeName = (scan?.name ?? `scan-${scan?.id}`).replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
-  downloadAsPdf(`${safeName}.pdf`, scan?.name ?? `Scan #${scan?.id}`, sections);
-}
 
 const severityConfig = {
   critical: { cls: "bg-red-500/15 text-red-400 border-red-500/40", icon: XCircle },
@@ -549,6 +508,7 @@ export default function ScanReportPage() {
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(0);
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const { user } = useAuth();
   const isClient = user?.role === "client";
   const queryClient = useQueryClient();
@@ -705,8 +665,15 @@ export default function ScanReportPage() {
           )}
           {scanStatus === "completed" && (
             <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
-              onClick={() => downloadScanReportPdf(scan, assetReports)}>
-              <Download className="w-3.5 h-3.5" /> Download Report
+              disabled={downloading}
+              onClick={async () => {
+                setDownloading(true);
+                try { await downloadScanReportPdf(scan, assetReports); }
+                catch { /* ignore */ }
+                finally { setDownloading(false); }
+              }}>
+              {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {downloading ? "Generating…" : "Download Report"}
             </Button>
           )}
         </div>

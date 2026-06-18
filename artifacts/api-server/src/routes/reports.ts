@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import {
   db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
   complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
@@ -189,6 +189,165 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
       isSuspicious:  r.isSuspicious,
     })),
     generatedAt: new Date().toISOString(),
+  });
+});
+
+// ── PDF data: report (all assets + findings) ─────────────────────────────────
+router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const reportId = parseInt(req.params.reportId, 10);
+  if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
+  const tenantId = req.user!.tenantId;
+
+  const [report] = await db.select().from(reportsTable)
+    .where(and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, tenantId)));
+  if (!report) { res.status(404).json({ error: "Report not found" }); return; }
+
+  const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  const assetIds = assets.map(a => a.id);
+
+  const [allFindings, riskRows] = await Promise.all([
+    db.select().from(findingsTable)
+      .where(eq(findingsTable.tenantId, tenantId))
+      .orderBy(desc(findingsTable.id)),
+    assetIds.length > 0
+      ? db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+      : Promise.resolve([]),
+  ]);
+
+  const assetMap: Record<number, typeof assets[0]> = Object.fromEntries(assets.map(a => [a.id, a]));
+
+  const sevWeight: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+  allFindings.sort((a, b) => (sevWeight[b.severity] ?? 0) - (sevWeight[a.severity] ?? 0));
+
+  const findingCounts = {
+    total:    allFindings.length,
+    open:     allFindings.filter(f => f.status === "open").length,
+    critical: allFindings.filter(f => f.severity === "critical").length,
+    high:     allFindings.filter(f => f.severity === "high").length,
+    medium:   allFindings.filter(f => f.severity === "medium").length,
+    low:      allFindings.filter(f => f.severity === "low").length,
+  };
+
+  res.json({
+    report: toReportResponse(report),
+    assets: assets.map(a => ({
+      id:             a.id,
+      name:           a.name,
+      type:           a.type,
+      value:          a.value,
+      riskLevel:      a.riskLevel,
+      ipAddress:      a.ipAddress ?? null,
+      lastScannedAt:  a.lastScannedAt?.toISOString() ?? null,
+    })),
+    findings: allFindings.map(f => ({
+      id:          f.id,
+      title:       f.title,
+      severity:    f.severity,
+      status:      f.status,
+      cve:         f.cve ?? null,
+      cvss:        f.cvss ?? null,
+      description: f.description ?? null,
+      remediation: f.remediation ?? null,
+      assetId:     f.assetId ?? 0,
+      assetName:   f.assetId ? (assetMap[f.assetId]?.name ?? "Unknown") : "Unknown",
+    })),
+    riskScores: riskRows.map(r => ({
+      assetId: r.assetId,
+      score:   r.score,
+      level:   r.level,
+    })),
+    findingCounts,
+    generatedAt: new Date().toISOString(),
+  });
+});
+
+// ── PDF data: selected assets (findings + brand threats) ─────────────────────
+router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tenantId = req.user!.tenantId;
+  const raw = String(req.query.ids ?? "");
+  const requestedIds = raw.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+  if (requestedIds.length === 0) { res.status(400).json({ error: "No asset IDs provided" }); return; }
+
+  const assets = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, requestedIds)));
+  if (assets.length === 0) { res.status(404).json({ error: "No assets found" }); return; }
+
+  const assetIds   = assets.map(a => a.id);
+  const assetDomains = assets.map(a => a.value).filter(Boolean);
+
+  const [findings, riskRows, brandScans] = await Promise.all([
+    db.select().from(findingsTable)
+      .where(and(eq(findingsTable.tenantId, tenantId), inArray(findingsTable.assetId, assetIds)))
+      .orderBy(desc(findingsTable.id)),
+    db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds)),
+    assetDomains.length > 0
+      ? db.select().from(brandThreatScansTable)
+          .where(and(eq(brandThreatScansTable.tenantId, tenantId), inArray(brandThreatScansTable.domain, assetDomains)))
+          .orderBy(desc(brandThreatScansTable.id))
+      : Promise.resolve([]),
+  ]);
+
+  const brandScanIds = brandScans.map(s => s.id);
+  const brandResults = brandScanIds.length > 0
+    ? await db.select().from(brandThreatResultsTable)
+        .where(inArray(brandThreatResultsTable.scanId, brandScanIds))
+        .orderBy(desc(brandThreatResultsTable.riskScore))
+    : [];
+
+  const assetMap: Record<number, typeof assets[0]> = Object.fromEntries(assets.map(a => [a.id, a]));
+  const riskMap:  Record<number, { score: number; level: string }> = Object.fromEntries(riskRows.map(r => [r.assetId, r]));
+
+  const sevWeight: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+  findings.sort((a, b) => (sevWeight[b.severity] ?? 0) - (sevWeight[a.severity] ?? 0));
+
+  res.json({
+    assets: assets.map(a => ({
+      id:            a.id,
+      name:          a.name,
+      type:          a.type,
+      value:         a.value,
+      riskLevel:     a.riskLevel,
+      ipAddress:     a.ipAddress ?? null,
+      lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
+      riskScore:     riskMap[a.id]?.score ?? null,
+      riskScoreLevel: riskMap[a.id]?.level ?? null,
+    })),
+    findings: findings.map(f => ({
+      id:          f.id,
+      title:       f.title,
+      severity:    f.severity,
+      status:      f.status,
+      cve:         f.cve ?? null,
+      cvss:        f.cvss ?? null,
+      description: f.description ?? null,
+      remediation: f.remediation ?? null,
+      assetId:     f.assetId ?? 0,
+      assetName:   f.assetId ? (assetMap[f.assetId]?.name ?? "Unknown") : "Unknown",
+    })),
+    brandScans: brandScans.map(s => ({
+      id:                 s.id,
+      domain:             s.domain,
+      status:             s.status,
+      totalPermutations:  s.totalPermutations,
+      liveCount:          s.liveCount,
+      registeredCount:    s.registeredCount,
+      phishingRisk:       s.phishingRisk,
+      completedAt:        s.completedAt?.toISOString() ?? null,
+    })),
+    brandResults: brandResults.map(r => ({
+      id:             r.id,
+      scanId:         r.scanId,
+      permutation:    r.permutation,
+      fuzzer:         r.fuzzer,
+      dnsA:           r.dnsA ?? [],
+      dnsMx:          r.dnsMx ?? [],
+      mxSpf:          r.mxSpf ?? null,
+      whoisRegistrar: r.whoisRegistrar ?? null,
+      whoisCreated:   r.whoisCreated ?? null,
+      whoisCountry:   r.whoisCountry ?? null,
+      riskScore:      r.riskScore,
+      isSuspicious:   r.isSuspicious,
+    })),
   });
 });
 

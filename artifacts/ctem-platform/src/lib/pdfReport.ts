@@ -47,6 +47,32 @@ function sevBg(s: string): string {
 const FONT = "'Segoe UI', system-ui, -apple-system, sans-serif";
 const MONO = "'Consolas', 'Cascadia Code', 'Courier New', monospace";
 
+// ── Logo loader ────────────────────────────────────────────────────────
+let _logoPromise: Promise<HTMLImageElement | null> | null = null;
+async function getLogo(): Promise<HTMLImageElement | null> {
+  if (_logoPromise) return _logoPromise;
+  _logoPromise = new Promise(resolve => {
+    const img = new Image();
+    img.onload  = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = "/sentinelware-logo.png";
+  });
+  return _logoPromise;
+}
+
+function drawLogo(
+  ctx: CanvasRenderingContext2D,
+  logo: HTMLImageElement,
+  cx: number, cy: number, w: number,
+) {
+  const aspect = logo.naturalWidth / logo.naturalHeight;
+  const h = w / aspect;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.drawImage(logo, cx - w / 2, cy - h / 2, w, h);
+  ctx.restore();
+}
+
 // ── Low-level drawing helpers ──────────────────────────────────────────
 
 function rr(
@@ -157,6 +183,7 @@ interface CoverData {
   metaPairs: [string, string][];
   riskLabel: string;
   riskColor: string;
+  logo?: HTMLImageElement | null;
 }
 
 function makeCover(d: CoverData): HTMLCanvasElement {
@@ -197,45 +224,49 @@ function makeCover(d: CoverData): HTMLCanvasElement {
   ctx.fillStyle = BLUE;
   ctx.fillRect(0, 0, PW, 5);
 
-  // ── Shield area glow ──
-  const glow = ctx.createRadialGradient(PW / 2, 272, 0, PW / 2, 272, 190);
-  glow.addColorStop(0, "rgba(59,130,246,0.20)");
+  // ── Brand area glow ──
+  const glow = ctx.createRadialGradient(PW / 2, 280, 0, PW / 2, 280, 200);
+  glow.addColorStop(0, "rgba(59,130,246,0.18)");
   glow.addColorStop(1, "rgba(59,130,246,0)");
   ctx.fillStyle = glow;
-  ctx.fillRect(PW / 2 - 190, 82, 380, 380);
+  ctx.fillRect(PW / 2 - 200, 80, 400, 390);
 
-  // Concentric rings
-  [68, 90, 114].forEach((r, i) => {
-    ctx.strokeStyle = `rgba(59,130,246,${0.28 - i * 0.08})`;
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(PW / 2, 272, r, 0, Math.PI * 2); ctx.stroke();
-  });
+  if (d.logo) {
+    // ── Real logo ──
+    drawLogo(ctx, d.logo, PW / 2, 285, 360);
+    tx(ctx, "Continuous Threat Exposure Management", PW / 2, 345, 10.5, GR400, "normal", "center");
+  } else {
+    // ── Fallback: shield + text ──
+    [68, 90, 114].forEach((r, i) => {
+      ctx.strokeStyle = `rgba(59,130,246,${0.28 - i * 0.08})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(PW / 2, 272, r, 0, Math.PI * 2); ctx.stroke();
+    });
+    drawShield(ctx, PW / 2, 272, 84, BLUE);
+    const bw = mw(ctx, "SENTINELWARE", 30, "bold");
+    tx(ctx, "SENTINELWARE", PW / 2 - bw / 2, 365, 30, WHITE, "bold");
+    ctx.fillStyle = AMBER;
+    ctx.beginPath(); ctx.arc(PW / 2 + bw / 2 + 10, 352, 5.5, 0, Math.PI * 2); ctx.fill();
+    tx(ctx, "Continuous Threat Exposure Management", PW / 2, 391, 10.5, GR400, "normal", "center");
+  }
 
-  // ── Shield icon ──
-  drawShield(ctx, PW / 2, 272, 84, BLUE);
-
-  // ── Brand name ──
-  const bw = mw(ctx, "SENTINELWARE", 30, "bold");
-  tx(ctx, "SENTINELWARE", PW / 2 - bw / 2, 365, 30, WHITE, "bold");
-  ctx.fillStyle = AMBER;
-  ctx.beginPath(); ctx.arc(PW / 2 + bw / 2 + 10, 352, 5.5, 0, Math.PI * 2); ctx.fill();
-  tx(ctx, "Continuous Threat Exposure Management", PW / 2, 391, 10.5, GR400, "normal", "center");
+  const divY = d.logo ? 372 : 420;
 
   // ── Gradient divider ──
   {
-    const grd = ctx.createLinearGradient(M, 420, PW - M, 420);
+    const grd = ctx.createLinearGradient(M, divY, PW - M, divY);
     grd.addColorStop(0, "transparent");
     grd.addColorStop(0.25, "rgba(59,130,246,0.55)");
     grd.addColorStop(0.75, "rgba(59,130,246,0.55)");
     grd.addColorStop(1, "transparent");
     ctx.strokeStyle = grd;
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(M, 420); ctx.lineTo(PW - M, 420); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(M, divY); ctx.lineTo(PW - M, divY); ctx.stroke();
   }
 
   // ── Report title ──
   const titleLines = wrapText(ctx, d.title, 26, "bold", CW - 60);
-  let titleY = 462;
+  let titleY = divY + 42;
   for (const line of titleLines.slice(0, 3)) {
     tx(ctx, line, PW / 2, titleY, 26, WHITE, "bold", "center", CW - 40);
     titleY += 38;
@@ -284,9 +315,11 @@ class PdfDoc {
   private pn_ = 0;
   private title_: string;
   private genDate_: string;
+  private logo_: HTMLImageElement | null;
 
-  constructor(title: string) {
+  constructor(title: string, logo?: HTMLImageElement | null) {
     this.title_   = title;
+    this.logo_    = logo ?? null;
     this.genDate_ = new Date().toLocaleString("en-US", {
       year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     });
@@ -315,12 +348,17 @@ class PdfDoc {
     c.fillStyle = NAVY;
     c.fillRect(0, 4, PW, 42);
 
-    // Shield + Logo
-    drawShield(c, M + 11, 25, 22, BLUE);
-    tx(c, "SENTINELWARE", M + 24, 30, 10, WHITE, "bold");
-    const lw = mw(c, "SENTINELWARE", 10, "bold");
-    c.fillStyle = AMBER;
-    c.beginPath(); c.arc(M + 24 + lw + 5, 21.5, 3.5, 0, Math.PI * 2); c.fill();
+    if (this.logo_) {
+      // Real logo in header (screen blend on dark bg)
+      drawLogo(c, this.logo_, M + 70, 25, 140);
+    } else {
+      // Fallback shield + text
+      drawShield(c, M + 11, 25, 22, BLUE);
+      tx(c, "SENTINELWARE", M + 24, 30, 10, WHITE, "bold");
+      const lw = mw(c, "SENTINELWARE", 10, "bold");
+      c.fillStyle = AMBER;
+      c.beginPath(); c.arc(M + 24 + lw + 5, 21.5, 3.5, 0, Math.PI * 2); c.fill();
+    }
 
     // Center: report title
     const short = this.title_.length > 58 ? this.title_.slice(0, 55) + "…" : this.title_;
@@ -472,13 +510,10 @@ class PdfDoc {
     const sbg = sevBg(severity);
     const y   = this.y;
     rr(c, M, y, CW, 28, 5, sbg, `${sc}44`);
-    // Severity pill
     rr(c, M + 8, y + 6, 66, 16, 8, sc);
     tx(c, severity.toUpperCase(), M + 8 + 33, y + 17, 7.5, WHITE, "bold", "center");
-    // Title
     const titleMaxW = CW - 178;
     tx(c, trunc(c, title, 9.5, titleMaxW), M + 84, y + 18, 9.5, NAVY, "bold");
-    // CVE / CVSS right-aligned
     let rx = PW - M - 10;
     if (cvss != null) {
       const str  = `CVSS ${cvss}`;
@@ -500,7 +535,6 @@ class PdfDoc {
 }
 
 // ── PDF binary assembly ──────────────────────────────────────────────────
-// Encodes each canvas as a JPEG and stitches into a multi-page PDF
 
 function buildPdf(canvases: HTMLCanvasElement[]): Blob {
   const ptW = Math.round(PW * 72 / 96);
@@ -588,8 +622,12 @@ function triggerDownload(blob: Blob, filename: string) {
 // ── Asset PDF ──────────────────────────────────────────────────────────
 
 export async function downloadAssetPdf(assetId: number, token: string | null): Promise<void> {
-  const hdrs: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-  const res = await fetch(`/api/reports/pdf-data/asset/${assetId}`, { headers: hdrs });
+  const [logo, res] = await Promise.all([
+    getLogo(),
+    fetch(`/api/reports/pdf-data/asset/${assetId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  ]);
   if (!res.ok) throw new Error("Failed to fetch asset PDF data");
   const d = await res.json() as {
     asset: { name: string; value: string; type: string; ipAddress?: string; port?: number; riskLevel: string; verificationStatus: string; lastScannedAt?: string };
@@ -615,12 +653,12 @@ export async function downloadAssetPdf(assetId: number, token: string | null): P
     ],
     riskLabel:  `Risk Level: ${rLevel.toUpperCase()}`,
     riskColor:  rc,
+    logo,
   });
 
-  const doc = new PdfDoc(`${d.asset.name} — Security Assessment`);
+  const doc = new PdfDoc(`${d.asset.name} — Security Assessment`, logo);
   doc.newPage();
 
-  // ── Executive Summary ──
   doc.sectionHeader("Executive Summary");
   doc.gap(4);
   doc.statCards([
@@ -637,7 +675,6 @@ export async function downloadAssetPdf(assetId: number, token: string | null): P
   ]);
   doc.gap(8);
 
-  // ── Asset Details ──
   doc.sectionHeader("Asset Details");
   doc.gap(4);
   doc.keyValue([
@@ -652,7 +689,6 @@ export async function downloadAssetPdf(assetId: number, token: string | null): P
   ], 4);
   doc.gap(8);
 
-  // ── Findings Table ──
   if (d.findings.length > 0) {
     doc.sectionHeader("Vulnerability Findings");
     doc.gap(4);
@@ -664,13 +700,12 @@ export async function downloadAssetPdf(assetId: number, token: string | null): P
     );
     doc.gap(8);
 
-    // ── Finding Details ──
     doc.sectionHeader("Finding Details");
     doc.gap(4);
     for (const f of d.findings.slice(0, 25)) {
       doc.findingCard(f.title, f.severity, f.cve, f.cvss);
-      if (f.description)  doc.text(f.description,               { size: 9, color: TEXT2, indent: 12 });
-      if (f.remediation)  doc.text(`Fix: ${f.remediation}`,    { size: 9, color: LOW,   indent: 12 });
+      if (f.description)  doc.text(f.description,            { size: 9, color: TEXT2, indent: 12 });
+      if (f.remediation)  doc.text(`Fix: ${f.remediation}`, { size: 9, color: LOW,   indent: 12 });
       doc.gap(6);
     }
   } else {
@@ -679,7 +714,6 @@ export async function downloadAssetPdf(assetId: number, token: string | null): P
     doc.gap(8);
   }
 
-  // ── Technology Stack ──
   if (d.technologies.length > 0) {
     doc.sectionHeader("Technology Stack");
     doc.gap(4);
@@ -697,8 +731,12 @@ export async function downloadAssetPdf(assetId: number, token: string | null): P
 // ── Brand Threat PDF ───────────────────────────────────────────────────
 
 export async function downloadBrandThreatPdf(scanId: number, token: string | null): Promise<void> {
-  const hdrs: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-  const res = await fetch(`/api/reports/pdf-data/brand-threat/${scanId}`, { headers: hdrs });
+  const [logo, res] = await Promise.all([
+    getLogo(),
+    fetch(`/api/reports/pdf-data/brand-threat/${scanId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  ]);
   if (!res.ok) throw new Error("Failed to fetch brand threat PDF data");
   const d = await res.json() as {
     scan: {
@@ -729,12 +767,12 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
     ],
     riskLabel:  `Phishing Risk: ${phishRisk.toUpperCase()}`,
     riskColor:  rc,
+    logo,
   });
 
-  const doc = new PdfDoc(`${d.scan.domain} — Brand Threat Report`);
+  const doc = new PdfDoc(`${d.scan.domain} — Brand Threat Report`, logo);
   doc.newPage();
 
-  // ── Scan Summary ──
   doc.sectionHeader("Scan Summary");
   doc.gap(4);
   const suspCount = d.topResults.filter(r => r.isSuspicious).length;
@@ -746,7 +784,6 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
   ]);
   doc.gap(8);
 
-  // ── Domain Intelligence ──
   doc.sectionHeader("Domain Intelligence");
   doc.gap(4);
   doc.keyValue([
@@ -759,7 +796,6 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
   ], 3);
   doc.gap(8);
 
-  // ── Favicon Intelligence ──
   if (d.scan.favihunterStatus === "done" && d.scan.faviconMd5) {
     doc.sectionHeader("Favicon Intelligence", "#8b5cf6");
     doc.gap(4);
@@ -782,7 +818,6 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
     doc.gap(8);
   }
 
-  // ── Fuzzer Breakdown ──
   if (d.scan.fuzzerBreakdown) {
     doc.sectionHeader("Permutation Type Breakdown");
     doc.gap(4);
@@ -801,7 +836,6 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
     doc.gap(8);
   }
 
-  // ── Notable Domains ──
   const live    = d.liveResults;
   const susp    = d.topResults.filter(r => r.isSuspicious);
   const notable = [
@@ -836,4 +870,622 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
 
   const filename = `${d.scan.domain.replace(/\./g, "_")}_brand_threat_report.pdf`;
   triggerDownload(buildPdf([cover, ...doc.finalize()]), filename);
+}
+
+// ── Scan Report PDF ────────────────────────────────────────────────────
+
+function computeAsmScore(asset: any): number {
+  let score = 100;
+  score -= Math.min((asset.summary?.criticalVulns ?? 0) * 15, 40);
+  score -= Math.min((asset.summary?.highVulns ?? 0) * 6, 20);
+  score -= Math.min((asset.secrets ?? []).length * 8, 20);
+  score -= Math.min((asset.vulnScan?.stats?.critical ?? 0) * 12, 30);
+  score -= Math.min((asset.vulnScan?.stats?.high ?? 0) * 4, 15);
+  score -= Math.min((asset.secretsHunt?.stats?.secretsFound ?? 0) * 5, 15);
+  if ((asset.secretsHunt?.stats?.gitDirsExposed ?? 0) > 0) score -= 10;
+  const waf = asset.httpInfo?.waf;
+  if (!waf || waf === "none" || waf === "None") score -= 5;
+  if ((asset.summary?.openPorts ?? 0) > 20) score -= 5;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+export async function downloadScanReportPdf(scan: any, assetReports: any[]): Promise<void> {
+  const logo = await getLogo();
+
+  const totalVulns    = assetReports.reduce((a, r) => a + (r.summary?.vulnerabilities ?? 0), 0);
+  const totalCritical = assetReports.reduce((a, r) => a + (r.summary?.criticalVulns ?? 0) + (r.vulnScan?.stats?.critical ?? 0), 0);
+  const totalHigh     = assetReports.reduce((a, r) => a + (r.summary?.highVulns ?? 0) + (r.vulnScan?.stats?.high ?? 0), 0);
+  const totalMedium   = assetReports.reduce((a, r) => a + (r.cves ?? []).filter((c: any) => c.severity === "medium").length, 0);
+  const totalSecrets  = assetReports.reduce((a, r) => a + (r.secrets ?? []).length + (r.secretsHunt?.stats?.secretsFound ?? 0), 0);
+  const avgAsm        = assetReports.length > 0
+    ? Math.round(assetReports.map(computeAsmScore).reduce((a, b) => a + b, 0) / assetReports.length)
+    : 100;
+  const worstSeverity = totalCritical > 0 ? "critical" : totalHigh > 0 ? "high" : "medium";
+  const rc            = sevColor(worstSeverity);
+  const ts            = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
+
+  const cover = makeCover({
+    title:      `${scan?.name ?? `Scan #${scan?.id}`} — Full Scan Report`,
+    reportKind: "Pipeline Vulnerability Scan Report",
+    metaPairs:  [
+      ["Scan Name",       scan?.name ?? `Scan #${scan?.id}`],
+      ["Completed",       ts],
+      ["Assets Scanned",  String(assetReports.length)],
+      ["Total Findings",  String(totalVulns)],
+      ["Critical / High", `${totalCritical} / ${totalHigh}`],
+      ["Secrets Found",   String(totalSecrets)],
+    ],
+    riskLabel:  `Threat Level: ${worstSeverity.toUpperCase()}`,
+    riskColor:  rc,
+    logo,
+  });
+
+  const doc = new PdfDoc(`${scan?.name ?? `Scan #${scan?.id}`} — Scan Report`, logo);
+  doc.newPage();
+
+  // ── Executive Summary ──
+  doc.sectionHeader("Executive Summary");
+  doc.gap(4);
+  doc.statCards([
+    { label: "ASM Score",      value: avgAsm,       color: avgAsm >= 70 ? LOW : avgAsm >= 40 ? MED : CRIT },
+    { label: "Assets Scanned", value: assetReports.length, color: NAVY },
+    { label: "Critical",       value: totalCritical, color: CRIT },
+    { label: "High",           value: totalHigh,     color: HIGH },
+  ]);
+  doc.statCards([
+    { label: "Medium",       value: totalMedium,  color: MED  },
+    { label: "Total Vulns",  value: totalVulns,   color: INFO_C },
+    { label: "Secrets",      value: totalSecrets, color: MED  },
+    { label: "Threat Level", value: worstSeverity.toUpperCase(), color: rc },
+  ]);
+  doc.gap(8);
+
+  // ── Scan Details ──
+  doc.sectionHeader("Scan Information");
+  doc.gap(4);
+  doc.keyValue([
+    ["Scan Name",      scan?.name ?? `Scan #${scan?.id}`],
+    ["Scan ID",        String(scan?.id ?? "—")],
+    ["Status",         (scan?.status ?? "—").toUpperCase()],
+    ["Completed At",   ts],
+    ["Assets in Scan", String(assetReports.length)],
+    ["Scan Type",      scan?.type ?? "full"],
+  ], 3);
+  doc.gap(8);
+
+  // ── Asset Summary Table ──
+  if (assetReports.length > 0) {
+    doc.sectionHeader("Asset Overview");
+    doc.gap(4);
+    doc.table(
+      ["Asset", "Target", "Open Ports", "Vulns", "Critical", "Secrets"],
+      [160, 175, 60, 55, 60, 60],
+      assetReports.map(r => [
+        r.assetName ?? "—",
+        r.assetValue ?? "—",
+        String(r.summary?.openPorts ?? 0),
+        String(r.summary?.vulnerabilities ?? 0),
+        String((r.summary?.criticalVulns ?? 0) + (r.vulnScan?.stats?.critical ?? 0)),
+        String((r.secrets ?? []).length + (r.secretsHunt?.stats?.secretsFound ?? 0)),
+      ]),
+    );
+    doc.gap(8);
+  }
+
+  // ── Per-Asset Sections ──
+  for (const asset of assetReports) {
+    const cves: any[] = asset.cves ?? [];
+    const secrets: any[] = asset.secrets ?? [];
+    const ports: any[] = asset.ports ?? [];
+    const asmScore = computeAsmScore(asset);
+
+    doc.sectionHeader(`Asset: ${asset.assetName ?? "Unknown"}`, BLUE);
+    doc.gap(4);
+
+    doc.keyValue([
+      ["Target",       asset.assetValue ?? "—"],
+      ["ASM Score",    String(asmScore)],
+      ["Open Ports",   String(asset.summary?.openPorts ?? 0)],
+      ["Subdomains",   String(asset.summary?.subdomains ?? 0)],
+      ["Endpoints",    String(asset.summary?.endpoints ?? 0)],
+      ["DNS Records",  String(asset.summary?.dnsRecords ?? 0)],
+    ], 3);
+    doc.gap(6);
+
+    if (asset.httpInfo?.waf && asset.httpInfo.waf !== "none") {
+      doc.text(`WAF/CDN Detected: ${asset.httpInfo.waf}`, { size: 9, color: LOW, weight: "bold" });
+      doc.gap(4);
+    }
+
+    // CVEs / Vulnerabilities
+    if (cves.length > 0) {
+      doc.text(`Vulnerability Findings (${cves.length} total):`, { size: 9, color: TEXT, weight: "bold" });
+      doc.gap(4);
+      const topCves = cves.slice(0, 20);
+      doc.table(
+        ["CVE / ID", "Title", "Severity", "CVSS"],
+        [130, 280, 78, 60],
+        topCves.map(c => [
+          c.cve ?? c.cveId ?? c.id ?? "—",
+          c.title ?? c.description ?? "—",
+          c.severity ?? "—",
+          c.cvss != null ? String(c.cvss) : "—",
+        ]),
+        { severityCol: 2, monoCol: [0] },
+      );
+      if (cves.length > 20) {
+        doc.text(`…and ${cves.length - 20} more findings not shown`, { size: 8, color: TEXT2 });
+      }
+      doc.gap(6);
+    }
+
+    // Nuclei / VulnScan stats
+    const vs = asset.vulnScan?.stats;
+    if (vs && (vs.critical + vs.high + vs.medium + vs.low > 0)) {
+      doc.text("Template Scan Results:", { size: 9, color: TEXT, weight: "bold" });
+      doc.gap(4);
+      doc.statCards([
+        { label: "Critical", value: vs.critical ?? 0, color: CRIT },
+        { label: "High",     value: vs.high ?? 0,     color: HIGH },
+        { label: "Medium",   value: vs.medium ?? 0,   color: MED  },
+        { label: "Low",      value: vs.low ?? 0,      color: LOW  },
+      ]);
+    }
+
+    // Secrets
+    if (secrets.length > 0) {
+      doc.text(`Exposed Secrets (${secrets.length}):`, { size: 9, color: MED, weight: "bold" });
+      doc.gap(4);
+      doc.table(
+        ["Type", "File / Location", "Value (truncated)"],
+        [130, 220, 198],
+        secrets.slice(0, 15).map((s: any) => [
+          s.type ?? "Secret",
+          s.file ?? "—",
+          s.value ? String(s.value).slice(0, 40) : "—",
+        ]),
+        { monoCol: [2] },
+      );
+      doc.gap(6);
+    }
+
+    // Open ports (top 10)
+    if (ports.length > 0) {
+      const openPorts = ports.filter((p: any) => p.state === "open" || !p.state).slice(0, 15);
+      if (openPorts.length > 0) {
+        doc.text(`Open Ports (${openPorts.length} shown):`, { size: 9, color: TEXT, weight: "bold" });
+        doc.gap(4);
+        doc.table(
+          ["Port", "Protocol", "Service", "Version / Banner"],
+          [50, 60, 90, 348],
+          openPorts.map((p: any) => [
+            String(p.port ?? "—"),
+            p.protocol ?? "tcp",
+            p.service ?? "unknown",
+            p.version ?? p.banner ?? "—",
+          ]),
+          { monoCol: [0, 1] },
+        );
+        doc.gap(6);
+      }
+    }
+
+    doc.gap(4);
+  }
+
+  const safeName = (scan?.name ?? `scan-${scan?.id}`).replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
+  triggerDownload(buildPdf([cover, ...doc.finalize()]), `${safeName}_report.pdf`);
+}
+
+// ── Reports Page PDF ───────────────────────────────────────────────────
+
+export async function downloadReportPdf(reportId: number, token: string | null): Promise<void> {
+  const [logo, res] = await Promise.all([
+    getLogo(),
+    fetch(`/api/reports/pdf-data/report/${reportId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  ]);
+  if (!res.ok) throw new Error("Failed to fetch report PDF data");
+  const d = await res.json() as {
+    report: { id: number; title: string; type: string; format: string; generatedAt?: string };
+    assets: { id: number; name: string; type: string; value: string; riskLevel: string; ipAddress?: string; lastScannedAt?: string }[];
+    findings: { id: number; title: string; severity: string; status: string; cve?: string; cvss?: number; description?: string; remediation?: string; assetId: number; assetName: string }[];
+    riskScores: { assetId: number; score: number; level: string }[];
+    findingCounts: { total: number; critical: number; high: number; medium: number; low: number; open: number };
+  };
+
+  const rpt     = d.report;
+  const fc      = d.findingCounts;
+  const worstSev = fc.critical > 0 ? "critical" : fc.high > 0 ? "high" : fc.medium > 0 ? "medium" : "low";
+  const rc       = sevColor(worstSev);
+
+  const riskMap: Record<number, { score: number; level: string }> = {};
+  for (const rs of d.riskScores) riskMap[rs.assetId] = rs;
+
+  const cover = makeCover({
+    title:      rpt.title,
+    reportKind: `${rpt.type.replace(/_/g, " ")} Report`.toUpperCase(),
+    metaPairs:  [
+      ["Report Type",    rpt.type.replace(/_/g, " ").toUpperCase()],
+      ["Generated",      rpt.generatedAt ? new Date(rpt.generatedAt).toLocaleDateString() : new Date().toLocaleDateString()],
+      ["Total Assets",   String(d.assets.length)],
+      ["Total Findings", String(fc.total)],
+      ["Critical / High", `${fc.critical} / ${fc.high}`],
+      ["Open Findings",  String(fc.open)],
+    ],
+    riskLabel:  `Overall Risk: ${worstSev.toUpperCase()}`,
+    riskColor:  rc,
+    logo,
+  });
+
+  const doc = new PdfDoc(rpt.title, logo);
+  doc.newPage();
+
+  // ── Executive Summary ──
+  doc.sectionHeader("Executive Summary");
+  doc.gap(4);
+  doc.statCards([
+    { label: "Total Assets",   value: d.assets.length, color: NAVY },
+    { label: "Total Findings", value: fc.total,        color: INFO_C },
+    { label: "Critical",       value: fc.critical,     color: CRIT },
+    { label: "High",           value: fc.high,         color: HIGH },
+  ]);
+  doc.statCards([
+    { label: "Medium",        value: fc.medium, color: MED },
+    { label: "Low",           value: fc.low,    color: LOW },
+    { label: "Open",          value: fc.open,   color: HIGH },
+    { label: "Remediated",    value: fc.total - fc.open, color: LOW },
+  ]);
+  doc.gap(8);
+
+  // ── Asset Inventory ──
+  doc.sectionHeader("Asset Inventory");
+  doc.gap(4);
+  const riskScoreForSort = (a: any) => {
+    const rs = riskMap[a.id];
+    return rs ? rs.score : 0;
+  };
+  const sortedAssets = [...d.assets].sort((a, b) => riskScoreForSort(b) - riskScoreForSort(a));
+  doc.table(
+    ["Asset Name", "Type", "Target / Value", "Risk Level", "Risk Score", "Last Scanned"],
+    [140, 65, 165, 70, 65, 93],
+    sortedAssets.map(a => {
+      const rs = riskMap[a.id];
+      return [
+        a.name,
+        a.type,
+        a.value,
+        (rs?.level ?? a.riskLevel ?? "—").toUpperCase(),
+        rs ? String(rs.score) : "—",
+        a.lastScannedAt ? new Date(a.lastScannedAt).toLocaleDateString() : "Never",
+      ];
+    }),
+  );
+  doc.gap(8);
+
+  // ── All Findings Table ──
+  if (d.findings.length > 0) {
+    doc.sectionHeader("All Vulnerability Findings");
+    doc.gap(4);
+    doc.table(
+      ["Severity", "Title", "Asset", "CVE", "Status"],
+      [70, 200, 130, 110, 68],
+      d.findings.slice(0, 200).map(f => [
+        f.severity,
+        f.title,
+        f.assetName,
+        f.cve ?? "—",
+        f.status,
+      ]),
+      { severityCol: 0, monoCol: [3] },
+    );
+    doc.gap(8);
+  }
+
+  // ── Per-Asset Finding Details ──
+  const findingsByAsset: Record<number, typeof d.findings> = {};
+  for (const f of d.findings) {
+    (findingsByAsset[f.assetId] = findingsByAsset[f.assetId] ?? []).push(f);
+  }
+
+  for (const asset of sortedAssets) {
+    const af = findingsByAsset[asset.id] ?? [];
+    if (af.length === 0) continue;
+
+    doc.sectionHeader(`${asset.name} — Finding Details`, BLUE);
+    doc.gap(4);
+    doc.keyValue([
+      ["Asset",      asset.name],
+      ["Target",     asset.value],
+      ["Type",       asset.type],
+      ["Risk Level", (riskMap[asset.id]?.level ?? asset.riskLevel ?? "—").toUpperCase()],
+      ["Risk Score", riskMap[asset.id] ? String(riskMap[asset.id].score) : "—"],
+      ["Findings",   String(af.length)],
+    ], 3);
+    doc.gap(6);
+
+    for (const f of af.slice(0, 15)) {
+      doc.findingCard(f.title, f.severity, f.cve, f.cvss);
+      if (f.description) doc.text(f.description,            { size: 9, color: TEXT2, indent: 12 });
+      if (f.remediation) doc.text(`Fix: ${f.remediation}`, { size: 9, color: LOW,   indent: 12 });
+      doc.gap(4);
+    }
+    if (af.length > 15) {
+      doc.text(`…and ${af.length - 15} more findings for this asset`, { size: 8, color: TEXT2 });
+    }
+    doc.gap(8);
+  }
+
+  const safeName = rpt.title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
+  triggerDownload(buildPdf([cover, ...doc.finalize()]), `${safeName}_${rpt.type}.pdf`);
+}
+
+// ── Selected-Assets PDF ─────────────────────────────────────────────────────
+// Generates a focused PDF for one or more hand-picked assets, including all
+// findings (severity-sorted) and every brand-threat scan for that asset's domain.
+
+type AssetPdfAsset = {
+  id: number; name: string; type: string; value: string;
+  riskLevel: string; riskScore: number | null; riskScoreLevel: string | null;
+  ipAddress: string | null; lastScannedAt: string | null;
+};
+type AssetPdfFinding = {
+  id: number; title: string; severity: string; status: string;
+  cve: string | null; cvss: number | null;
+  description: string | null; remediation: string | null;
+  assetId: number; assetName: string;
+};
+type AssetPdfBrandScan = {
+  id: number; domain: string; status: string;
+  totalPermutations: number; liveCount: number; registeredCount: number;
+  phishingRisk: string; completedAt: string | null;
+};
+type AssetPdfBrandResult = {
+  id: number; scanId: number; permutation: string; fuzzer: string;
+  dnsA: string[]; dnsMx: string[]; mxSpf: string | null;
+  whoisRegistrar: string | null; whoisCreated: string | null; whoisCountry: string | null;
+  riskScore: number; isSuspicious: boolean;
+};
+
+export async function downloadSelectedAssetsPdf(
+  title: string,
+  type: string,
+  assetIds: number[],
+  token: string | null,
+): Promise<void> {
+  const idsParam = assetIds.join(",");
+  const [logo, res] = await Promise.all([
+    getLogo(),
+    fetch(`/api/reports/pdf-data/assets?ids=${idsParam}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  ]);
+  if (!res.ok) throw new Error("Failed to fetch asset PDF data");
+
+  const d = await res.json() as {
+    assets:       AssetPdfAsset[];
+    findings:     AssetPdfFinding[];
+    brandScans:   AssetPdfBrandScan[];
+    brandResults: AssetPdfBrandResult[];
+  };
+
+  // Pre-group data
+  const findingsByAsset: Record<number, AssetPdfFinding[]> = {};
+  for (const f of d.findings) {
+    (findingsByAsset[f.assetId] ??= []).push(f);
+  }
+  const brandScansByDomain: Record<string, AssetPdfBrandScan[]> = {};
+  for (const s of d.brandScans) {
+    (brandScansByDomain[s.domain] ??= []).push(s);
+  }
+  const brandResultsByScanId: Record<number, AssetPdfBrandResult[]> = {};
+  for (const r of d.brandResults) {
+    (brandResultsByScanId[r.scanId] ??= []).push(r);
+  }
+
+  const totalFindings = d.findings.length;
+  const critCount = d.findings.filter(f => f.severity === "critical").length;
+  const highCount = d.findings.filter(f => f.severity === "high").length;
+  const medCount  = d.findings.filter(f => f.severity === "medium").length;
+  const lowCount  = d.findings.filter(f => f.severity === "low").length;
+  const openCount = d.findings.filter(f => f.status === "open").length;
+
+  const worstSev = critCount > 0 ? "critical" : highCount > 0 ? "high" : medCount > 0 ? "medium" : "low";
+  const riskColor = sevColor(worstSev);
+
+  const cover = makeCover({
+    title,
+    reportKind: `${type.replace(/_/g, " ")} REPORT`.toUpperCase(),
+    metaPairs: [
+      ["Report Type",    type.replace(/_/g, " ").toUpperCase()],
+      ["Generated",      new Date().toLocaleDateString()],
+      ["Assets Covered", String(d.assets.length)],
+      ["Total Findings", String(totalFindings)],
+      ["Critical / High", `${critCount} / ${highCount}`],
+      ["Brand Threat Scans", String(d.brandScans.length)],
+    ],
+    riskLabel:  `Overall Risk: ${worstSev.toUpperCase()}`,
+    riskColor,
+    logo,
+  });
+
+  const doc = new PdfDoc(title, logo);
+  doc.newPage();
+
+  // ── Executive Summary ──
+  doc.sectionHeader("Executive Summary");
+  doc.gap(4);
+  doc.statCards([
+    { label: "Assets",   value: d.assets.length, color: NAVY },
+    { label: "Findings", value: totalFindings,    color: INFO_C },
+    { label: "Critical", value: critCount,        color: CRIT },
+    { label: "High",     value: highCount,        color: HIGH },
+  ]);
+  doc.statCards([
+    { label: "Medium",       value: medCount,                    color: MED },
+    { label: "Low",          value: lowCount,                    color: LOW },
+    { label: "Open",         value: openCount,                   color: HIGH },
+    { label: "Brand Threats", value: d.brandScans.length,        color: BLUE },
+  ]);
+  doc.gap(10);
+
+  // ── Asset overview table ──
+  if (d.assets.length > 1) {
+    doc.sectionHeader("Assets Selected");
+    doc.gap(4);
+    doc.table(
+      ["Asset Name", "Type", "Target / Value", "Risk Level", "Score", "Findings"],
+      [140, 65, 165, 75, 55, 58],
+      d.assets.map(a => [
+        a.name,
+        a.type,
+        a.value,
+        (a.riskScoreLevel ?? a.riskLevel ?? "—").toUpperCase(),
+        a.riskScore !== null ? String(a.riskScore) : "—",
+        String((findingsByAsset[a.id] ?? []).length),
+      ]),
+    );
+    doc.gap(10);
+  }
+
+  // ── Per-asset deep-dive ──
+  for (const asset of d.assets) {
+    const af = findingsByAsset[asset.id] ?? [];
+    const assetBrandScans = brandScansByDomain[asset.value] ?? [];
+
+    // Asset header block
+    doc.ensureSpace(60);
+    doc.sectionHeader(`${asset.name}`, BLUE);
+    doc.gap(4);
+    doc.keyValue([
+      ["Target / Value",  asset.value],
+      ["Asset Type",      asset.type],
+      ["Risk Level",      (asset.riskScoreLevel ?? asset.riskLevel ?? "—").toUpperCase()],
+      ["Risk Score",      asset.riskScore !== null ? String(asset.riskScore) : "—"],
+      ["IP Address",      asset.ipAddress ?? "—"],
+      ["Last Scanned",    asset.lastScannedAt ? new Date(asset.lastScannedAt).toLocaleDateString() : "Never"],
+    ], 3);
+    doc.gap(8);
+
+    // ── Findings for this asset ──
+    if (af.length > 0) {
+      doc.sectionHeader(`Vulnerability Findings (${af.length})`, CRIT);
+      doc.gap(4);
+
+      // Summary counts for this asset
+      const aCrit = af.filter(f => f.severity === "critical").length;
+      const aHigh = af.filter(f => f.severity === "high").length;
+      const aMed  = af.filter(f => f.severity === "medium").length;
+      const aLow  = af.filter(f => f.severity === "low").length;
+      doc.statCards([
+        { label: "Critical", value: aCrit, color: CRIT },
+        { label: "High",     value: aHigh, color: HIGH },
+        { label: "Medium",   value: aMed,  color: MED },
+        { label: "Low",      value: aLow,  color: LOW },
+      ]);
+      doc.gap(6);
+
+      // Findings overview table (all findings)
+      doc.table(
+        ["Severity", "Title", "CVE", "CVSS", "Status"],
+        [70, 270, 130, 55, 73],
+        af.slice(0, 200).map(f => [
+          f.severity,
+          f.title,
+          f.cve ?? "—",
+          f.cvss !== null ? String(f.cvss) : "—",
+          f.status,
+        ]),
+        { severityCol: 0, monoCol: [2] },
+      );
+      doc.gap(8);
+
+      // Detailed cards for Critical + High (up to 30)
+      const detailFindings = af.filter(f => f.severity === "critical" || f.severity === "high").slice(0, 30);
+      if (detailFindings.length > 0) {
+        doc.sectionHeader("Critical & High — Detail", CRIT);
+        doc.gap(4);
+        for (const f of detailFindings) {
+          doc.findingCard(f.title, f.severity, f.cve, f.cvss);
+          if (f.description) doc.text(f.description, { size: 9, color: TEXT2, indent: 12 });
+          if (f.remediation) doc.text(`Remediation: ${f.remediation}`, { size: 9, color: LOW, indent: 12 });
+          doc.gap(5);
+        }
+      }
+      doc.gap(8);
+    } else {
+      doc.text("No findings recorded for this asset.", { size: 10, color: TEXT2 });
+      doc.gap(8);
+    }
+
+    // ── Brand Threat section ──
+    if (assetBrandScans.length > 0) {
+      doc.sectionHeader(`Brand Threat Intelligence — ${asset.value}`, AMBER);
+      doc.gap(4);
+
+      for (const scan of assetBrandScans) {
+        doc.keyValue([
+          ["Domain Monitored",   scan.domain],
+          ["Phishing Risk",      scan.phishingRisk.toUpperCase()],
+          ["Total Permutations", String(scan.totalPermutations)],
+          ["Live Domains",       String(scan.liveCount)],
+          ["Registered Domains", String(scan.registeredCount)],
+          ["Scan Completed",     scan.completedAt ? new Date(scan.completedAt).toLocaleDateString() : "In progress"],
+        ], 3);
+        doc.gap(6);
+
+        const results = brandResultsByScanId[scan.id] ?? [];
+        const suspicious = results.filter(r => r.isSuspicious);
+        const live       = results.filter(r => (r.dnsA?.length ?? 0) > 0);
+
+        if (suspicious.length > 0) {
+          doc.text(`Suspicious Domains (${suspicious.length}):`, { size: 9, color: CRIT, weight: "bold" });
+          doc.gap(3);
+          doc.table(
+            ["Permutation", "Fuzzer", "DNS A", "Risk Score", "Registrar"],
+            [180, 70, 120, 70, 158],
+            suspicious.slice(0, 40).map(r => [
+              r.permutation,
+              r.fuzzer,
+              (r.dnsA ?? []).slice(0, 2).join(", ") || "—",
+              String(r.riskScore),
+              r.whoisRegistrar ?? "—",
+            ]),
+            { monoCol: [0, 2] },
+          );
+          doc.gap(6);
+        }
+
+        if (live.length > 0 && live.length !== suspicious.length) {
+          const nonSuspiciousLive = live.filter(r => !r.isSuspicious);
+          if (nonSuspiciousLive.length > 0) {
+            doc.text(`Other Live Domains (${nonSuspiciousLive.length}):`, { size: 9, color: TEXT, weight: "bold" });
+            doc.gap(3);
+            doc.table(
+              ["Permutation", "Fuzzer", "DNS A", "Country"],
+              [200, 80, 140, 178],
+              nonSuspiciousLive.slice(0, 20).map(r => [
+                r.permutation,
+                r.fuzzer,
+                (r.dnsA ?? []).slice(0, 2).join(", ") || "—",
+                r.whoisCountry ?? "—",
+              ]),
+              { monoCol: [0, 2] },
+            );
+            doc.gap(6);
+          }
+        }
+
+        if (results.length === 0) {
+          doc.text("No domain permutation results found for this scan.", { size: 9, color: TEXT2 });
+          doc.gap(4);
+        }
+      }
+      doc.gap(6);
+    }
+  }
+
+  const safeName = title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
+  triggerDownload(buildPdf([cover, ...doc.finalize()]), `${safeName}_asset_report.pdf`);
 }
