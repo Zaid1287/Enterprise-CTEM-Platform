@@ -288,6 +288,7 @@ export const ListAssetsResponseItem = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
+  "businessImpact": zod.number().optional().describe('Business impact rating 1 (minimal) to 10 (mission-critical). Factors into risk score calculation.'),
   "createdAt": zod.string(),
   "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
@@ -305,6 +306,7 @@ export const CreateAssetBody = zod.object({
   "tags": zod.array(zod.string()).optional(),
   "ipAddress": zod.string().optional(),
   "port": zod.number().optional(),
+  "businessImpact": zod.number().optional().describe('Business impact 1 (minimal) to 10 (mission-critical)'),
   "assignedClientId": zod.number().optional(),
   "assignedAccountManagerId": zod.number().optional(),
   "metadata": zod.record(zod.string(), zod.unknown()).optional()
@@ -336,6 +338,7 @@ export const GetAssetResponse = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
+  "businessImpact": zod.number().optional().describe('Business impact rating 1 (minimal) to 10 (mission-critical). Factors into risk score calculation.'),
   "createdAt": zod.string(),
   "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
@@ -355,6 +358,7 @@ export const UpdateAssetBody = zod.object({
   "isActive": zod.boolean().optional(),
   "riskLevel": zod.string().optional(),
   "verificationStatus": zod.string().optional(),
+  "businessImpact": zod.number().optional().describe('Business impact 1 (minimal) to 10 (mission-critical)'),
   "assignedClientId": zod.number().nullish(),
   "assignedAccountManagerId": zod.number().nullish(),
   "metadata": zod.record(zod.string(), zod.unknown()).nullish()
@@ -378,6 +382,7 @@ export const UpdateAssetResponse = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
+  "businessImpact": zod.number().optional().describe('Business impact rating 1 (minimal) to 10 (mission-critical). Factors into risk score calculation.'),
   "createdAt": zod.string(),
   "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
@@ -627,6 +632,7 @@ export const GetAssetGroupMembersResponseItem = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
+  "businessImpact": zod.number().optional().describe('Business impact rating 1 (minimal) to 10 (mission-critical). Factors into risk score calculation.'),
   "createdAt": zod.string(),
   "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })

@@ -85,6 +85,51 @@ function discordPayload(event: NotificationEvent): object {
   };
 }
 
+function telegramText(event: NotificationEvent): string {
+  const severityEmoji: Record<string, string> = {
+    critical: "🔴", high: "🟠", medium: "🟡", low: "🟢", info: "⚪",
+  };
+  const emoji = severityEmoji[event.severity] ?? "⚪";
+  const lines = [
+    `${emoji} <b>${escapeHtml(event.title)}</b>`,
+    `<i>${escapeHtml(event.message)}</i>`,
+    "",
+  ];
+  if (event.findingsCount !== undefined) lines.push(`📋 Findings: <b>${event.findingsCount}</b>`);
+  if (event.criticalCount !== undefined) lines.push(`🔴 Critical: <b>${event.criticalCount}</b>`);
+  if ((event.highCount ?? 0) > 0) lines.push(`🟠 High: <b>${event.highCount}</b>`);
+  if (event.assetName) lines.push(`🎯 Asset: <b>${escapeHtml(event.assetName)}</b>`);
+  if (event.scanId) lines.push(`🔍 Scan: <b>#${event.scanId}</b>`);
+  lines.push("", `<i>Sentinelware CTEM • ${new Date().toUTCString()}</i>`);
+  return lines.join("\n");
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function sendTelegram(destination: string, event: NotificationEvent): Promise<void> {
+  const parts = destination.split(":");
+  if (parts.length < 2) throw new Error("Telegram destination must be botToken:chatId");
+  const chatId = parts.pop()!;
+  const botToken = parts.join(":");
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), 8000);
+  const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: telegramText(event), parse_mode: "HTML" }),
+    signal: ctrl.signal,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Telegram API error ${res.status}: ${body}`);
+  }
+}
+
 async function postWebhook(url: string, body: object): Promise<void> {
   const ctrl = new AbortController();
   setTimeout(() => ctrl.abort(), 8000);
@@ -95,6 +140,25 @@ async function postWebhook(url: string, body: object): Promise<void> {
     signal: ctrl.signal,
   });
   if (!res.ok) throw new Error(`Webhook POST failed: HTTP ${res.status}`);
+}
+
+function genericWebhookPayload(event: NotificationEvent): object {
+  return {
+    source: "sentinelware",
+    eventType: event.eventType,
+    title: event.title,
+    message: event.message,
+    severity: event.severity,
+    tenantId: event.tenantId,
+    scanId: event.scanId,
+    findingsCount: event.findingsCount,
+    criticalCount: event.criticalCount,
+    highCount: event.highCount,
+    assetName: event.assetName,
+    relatedAssetId: event.relatedAssetId,
+    relatedFindingId: event.relatedFindingId,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 async function insertAlertRecord(event: NotificationEvent): Promise<void> {
@@ -138,8 +202,9 @@ export async function dispatchNotifications(event: NotificationEvent): Promise<v
 
       const dest = rule.destination ||
         await getPlatformSetting(
-          rule.channel === "slack"   ? "slack_webhook_url" :
-          rule.channel === "discord" ? "discord_webhook_url" : ""
+          rule.channel === "slack"    ? "slack_webhook_url" :
+          rule.channel === "discord"  ? "discord_webhook_url" :
+          rule.channel === "telegram" ? "telegram_bot_token" : ""
         );
       if (!dest) continue;
 
@@ -159,27 +224,50 @@ export async function dispatchNotifications(event: NotificationEvent): Promise<v
           await sendEmail({ to: dest, subject: `[Sentinelware] ${event.title}`, html: alertEmailHtml(event) });
           firedKeys.add(key);
           logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "email" }, "Alert email sent");
+        } else if (rule.channel === "telegram") {
+          const chatId = rule.destination
+            ? dest
+            : `${dest}:${await getPlatformSetting("telegram_chat_id") ?? ""}`;
+          await sendTelegram(chatId, event);
+          firedKeys.add(key);
+          logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "telegram" }, "Telegram notification sent");
+        } else if (rule.channel === "webhook") {
+          await postWebhook(dest, genericWebhookPayload(event));
+          firedKeys.add(key);
+          logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "webhook" }, "Webhook notification sent");
         }
       } catch (err) {
         logger.warn({ err, channel: rule.channel, ruleId: rule.id }, "Notification delivery failed");
       }
     }
 
-    const [platformSlack, platformDiscord] = await Promise.all([
+    const [platformSlack, platformDiscord, platformTelegramToken, platformTelegramChat] = await Promise.all([
       getPlatformSetting("slack_webhook_url"),
       getPlatformSetting("discord_webhook_url"),
+      getPlatformSetting("telegram_bot_token"),
+      getPlatformSetting("telegram_chat_id"),
     ]);
+
     if (platformSlack && !firedKeys.has(`slack:${platformSlack}`)) {
       try {
         await postWebhook(platformSlack, slackPayload(event));
-        logger.info({ tenantId: event.tenantId, channel: "slack" }, "Platform-level Slack notification sent");
+        logger.info({ tenantId: event.tenantId }, "Platform-level Slack notification sent");
       } catch (err) { logger.warn({ err }, "Platform Slack webhook failed"); }
     }
     if (platformDiscord && !firedKeys.has(`discord:${platformDiscord}`)) {
       try {
         await postWebhook(platformDiscord, discordPayload(event));
-        logger.info({ tenantId: event.tenantId, channel: "discord" }, "Platform-level Discord notification sent");
+        logger.info({ tenantId: event.tenantId }, "Platform-level Discord notification sent");
       } catch (err) { logger.warn({ err }, "Platform Discord webhook failed"); }
+    }
+    if (platformTelegramToken && platformTelegramChat) {
+      const tKey = `telegram:${platformTelegramToken}:${platformTelegramChat}`;
+      if (!firedKeys.has(tKey)) {
+        try {
+          await sendTelegram(`${platformTelegramToken}:${platformTelegramChat}`, event);
+          logger.info({ tenantId: event.tenantId }, "Platform-level Telegram notification sent");
+        } catch (err) { logger.warn({ err }, "Platform Telegram notification failed"); }
+      }
     }
   } catch (err) {
     logger.error({ err, tenantId: event.tenantId }, "dispatchNotifications failed");

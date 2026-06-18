@@ -133,6 +133,68 @@ router.post(
   },
 );
 
+router.get(
+  "/compliance/controls/:controlId/evidence/:filename",
+  requireAuth,
+  async (req: AuthenticatedRequest, res): Promise<void> => {
+    const controlId = parseInt(req.params.controlId, 10);
+    const filename = req.params.filename;
+    if (isNaN(controlId) || !filename || filename.includes("..") || filename.includes("/")) {
+      res.status(400).json({ error: "Invalid request" });
+      return;
+    }
+    const [row] = await db.select({ control: complianceControlsTable })
+      .from(complianceControlsTable)
+      .where(and(eq(complianceControlsTable.id, controlId), eq(complianceControlsTable.tenantId, req.user!.tenantId)));
+    if (!row) { res.status(404).json({ error: "Control not found" }); return; }
+
+    let files: { name: string; path: string }[] = [];
+    try { if (row.control.evidence) files = JSON.parse(row.control.evidence); } catch {}
+    const fileEntry = files.find(f => f.path === filename);
+    if (!fileEntry) { res.status(404).json({ error: "File not found" }); return; }
+
+    const filePath = path.join(EVIDENCE_DIR, filename);
+    if (!fs.existsSync(filePath)) { res.status(404).json({ error: "File missing on disk" }); return; }
+    res.download(filePath, fileEntry.name);
+  },
+);
+
+router.delete(
+  "/compliance/controls/:controlId/evidence/:filename",
+  requireAuth,
+  async (req: AuthenticatedRequest, res): Promise<void> => {
+    const controlId = parseInt(req.params.controlId, 10);
+    const filename = req.params.filename;
+    if (isNaN(controlId) || !filename || filename.includes("..") || filename.includes("/")) {
+      res.status(400).json({ error: "Invalid request" });
+      return;
+    }
+    const [row] = await db.select({
+      control: complianceControlsTable,
+      frameworkName: complianceFrameworksTable.name,
+    }).from(complianceControlsTable)
+      .leftJoin(complianceFrameworksTable, eq(complianceControlsTable.frameworkId, complianceFrameworksTable.id))
+      .where(and(eq(complianceControlsTable.id, controlId), eq(complianceControlsTable.tenantId, req.user!.tenantId)));
+    if (!row) { res.status(404).json({ error: "Control not found" }); return; }
+
+    let files: { name: string; path: string; size: number; uploadedAt: string }[] = [];
+    try { if (row.control.evidence) files = JSON.parse(row.control.evidence); } catch {}
+    const idx = files.findIndex(f => f.path === filename);
+    if (idx === -1) { res.status(404).json({ error: "File not found in control" }); return; }
+
+    files.splice(idx, 1);
+    const filePath = path.join(EVIDENCE_DIR, filename);
+    try { fs.unlinkSync(filePath); } catch {}
+
+    const [updated] = await db.update(complianceControlsTable)
+      .set({ evidence: JSON.stringify(files) })
+      .where(eq(complianceControlsTable.id, controlId))
+      .returning();
+    await logAudit(req.user!, "delete_compliance_evidence", "compliance", controlId, `${filename} deleted`);
+    res.json(toControlResponse(updated, row.frameworkName));
+  },
+);
+
 router.get("/compliance/summary", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const frameworks = await db.select().from(complianceFrameworksTable);
   const controls = await db.select().from(complianceControlsTable)

@@ -25,6 +25,8 @@ const PLATFORM_KEYS = [
   { key: "smtp_user",            label: "SMTP Username",         description: "SMTP authentication username",                                                    category: "email" },
   { key: "smtp_pass",            label: "SMTP Password",         description: "SMTP authentication password",                                                    category: "email" },
   { key: "smtp_from",            label: "SMTP From Address",     description: "The from email address used for outgoing emails",                                  category: "email" },
+  { key: "telegram_bot_token",   label: "Telegram Bot Token",    description: "Token for your Telegram bot (from @BotFather). Used to send alert notifications via Telegram.", category: "notifications" },
+  { key: "telegram_chat_id",     label: "Telegram Chat ID",      description: "Telegram chat/group/channel ID to receive platform-level alert notifications.",                category: "notifications" },
 ];
 
 function isSuperAdmin(req: AuthenticatedRequest): boolean {

@@ -14,6 +14,8 @@ export interface AssetUpdate {
   isActive?: boolean;
   riskLevel?: string;
   verificationStatus?: string;
+  /** Business impact 1 (minimal) to 10 (mission-critical) */
+  businessImpact?: number;
   /** @nullable */
   assignedClientId?: number | null;
   /** @nullable */

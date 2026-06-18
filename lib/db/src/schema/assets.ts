@@ -24,6 +24,7 @@ export const assetsTable = pgTable("assets", {
   assignedClientId: integer("assigned_client_id").references(() => usersTable.id),
   assignedAccountManagerId: integer("assigned_account_manager_id").references(() => usersTable.id),
   scanFrequency: text("scan_frequency").notNull().default("manual"),
+  businessImpact: integer("business_impact").notNull().default(5),
   metadata: jsonb("metadata").$type<Record<string, any>>(),
   lastScannedAt: timestamp("last_scanned_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

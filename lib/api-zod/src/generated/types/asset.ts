@@ -34,6 +34,8 @@ export interface Asset {
   assignedAccountManagerName?: string | null;
   /** @nullable */
   lastScannedAt?: string | null;
+  /** Business impact rating 1 (minimal) to 10 (mission-critical). Factors into risk score calculation. */
+  businessImpact?: number;
   createdAt: string;
   metadata?: AssetMetadata;
 }

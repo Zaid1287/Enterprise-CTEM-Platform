@@ -196,16 +196,31 @@ export default function AlertsPage() {
               <Select value={ruleForm.channel} onValueChange={v => setRuleForm(p => ({ ...p, channel: v }))}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="email">Email</SelectItem>
-                  <SelectItem value="slack">Slack</SelectItem>
-                  <SelectItem value="discord">Discord</SelectItem>
-                  <SelectItem value="webhook">Webhook</SelectItem>
+                  <SelectItem value="email">📧 Email</SelectItem>
+                  <SelectItem value="slack">💬 Slack</SelectItem>
+                  <SelectItem value="discord">🎮 Discord</SelectItem>
+                  <SelectItem value="telegram">✈️ Telegram</SelectItem>
+                  <SelectItem value="webhook">🔗 Webhook (Generic HTTP)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Destination</Label>
-              <Input value={ruleForm.destination} onChange={e => setRuleForm(p => ({ ...p, destination: e.target.value }))} placeholder="Email address or webhook URL" className="h-9" />
+              <Input
+                value={ruleForm.destination}
+                onChange={e => setRuleForm(p => ({ ...p, destination: e.target.value }))}
+                placeholder={
+                  ruleForm.channel === "email"    ? "alerts@company.com" :
+                  ruleForm.channel === "slack"    ? "https://hooks.slack.com/services/…" :
+                  ruleForm.channel === "discord"  ? "https://discord.com/api/webhooks/…" :
+                  ruleForm.channel === "telegram" ? "botToken:chatId  (e.g. 123456:AAH…:-1001234567)" :
+                  "https://your-server.com/webhook"
+                }
+                className="h-9"
+              />
+              {ruleForm.channel === "telegram" && (
+                <p className="text-[11px] text-muted-foreground">Format: <code>BOT_TOKEN:CHAT_ID</code>. Get a token from @BotFather and find your chat ID from @userinfobot.</p>
+              )}
             </div>
             <DialogFooter className="mt-4">
               <Button variant="outline" type="button" onClick={() => setShowCreateRule(false)}>Cancel</Button>

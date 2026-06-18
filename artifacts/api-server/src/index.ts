@@ -73,7 +73,7 @@ app.listen(port, (err) => {
   }
 
   // Beat scheduler replaces the legacy startScanScheduler when Redis is available
-  startBeatScheduler().catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
+  startBeatScheduler(port).catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
   if (!process.env.REDIS_URL) {
     startScanScheduler();
   }

@@ -35,6 +35,12 @@ export async function finalizeScannedAssets(assetIds: number[]) {
     byAsset.get(f.assetId!)!.push(f);
   }
 
+  const assetRows = await db
+    .select({ id: assetsTable.id, businessImpact: assetsTable.businessImpact })
+    .from(assetsTable)
+    .where(inArray(assetsTable.id, assetIds));
+  const biMap = new Map(assetRows.map(a => [a.id, a.businessImpact ?? 5]));
+
   for (const assetId of assetIds) {
     const all = byAsset.get(assetId) ?? [];
     const open = all.filter(f => f.status !== "mitigated" && f.status !== "resolved");
@@ -51,6 +57,8 @@ export async function finalizeScannedAssets(assetIds: number[]) {
     score += maxEpss * 15;
     const kevCount = open.filter(f => f.isKev).length;
     score += kevCount * 8;
+    const businessImpact = biMap.get(assetId) ?? 5;
+    score += Math.round((businessImpact / 10) * 20);
     score = Math.round(Math.min(100, Math.max(0, score)));
     const level = scoreToLevel(score);
 

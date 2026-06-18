@@ -16,6 +16,8 @@ export interface AssetInput {
   tags?: string[];
   ipAddress?: string;
   port?: number;
+  /** Business impact 1 (minimal) to 10 (mission-critical) */
+  businessImpact?: number;
   assignedClientId?: number;
   assignedAccountManagerId?: number;
   metadata?: AssetInputMetadata;

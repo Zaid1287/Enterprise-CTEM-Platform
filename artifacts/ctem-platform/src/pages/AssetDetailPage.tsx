@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import {
   useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
   useListAssetTechnologies, useRunTechScan, useListAssetScreenshots, useRunScreenshotScan,
+  useUpdateAsset,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
   getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey,
 } from "@workspace/api-client-react";
@@ -71,6 +72,10 @@ export default function AssetDetailPage() {
   const [downloading, setDownloading]         = useState(false);
   const [expandedShot, setExpandedShot]       = useState<any | null>(null);
   const [findingsPage, setFindingsPage]       = useState(0);
+  const [businessImpact, setBusinessImpact]   = useState<number>(5);
+  const [savingImpact, setSavingImpact]       = useState(false);
+
+  const updateAsset = useUpdateAsset();
 
   const { data: asset, isLoading } = useGetAsset(id, {
     query: { enabled: !!id, queryKey: getGetAssetQueryKey(id) },
@@ -132,6 +137,25 @@ export default function AssetDetailPage() {
 
   const a     = asset as any;
   const rs    = riskScore as any;
+
+  // Sync local businessImpact state when asset loads
+  useEffect(() => {
+    if (a?.businessImpact != null) setBusinessImpact(a.businessImpact);
+  }, [a?.businessImpact]);
+
+  const handleSaveBusinessImpact = async (val: number) => {
+    setSavingImpact(true);
+    try {
+      await updateAsset.mutateAsync({ assetId: id, data: { businessImpact: val } });
+      queryClient.invalidateQueries({ queryKey: getGetAssetQueryKey(id) });
+      queryClient.invalidateQueries({ queryKey: getGetAssetRiskScoreQueryKey(id) });
+      toast({ title: "Business impact updated", description: `Set to ${val}/10 — risk score will reflect this on next calculation.` });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to save", variant: "destructive" });
+    } finally {
+      setSavingImpact(false);
+    }
+  };
   const techs = (technologies as any[]) ?? [];
   const shots = (screenshots as any[]) ?? [];
 
@@ -220,6 +244,42 @@ export default function AssetDetailPage() {
               <p className="text-xs font-medium font-mono mt-0.5">{m.value}</p>
             </div>
           ))}
+        </div>
+
+        {/* Business Impact */}
+        <div className="bg-accent/40 rounded-lg p-3 mt-3">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Business Impact</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">How critical is this asset to business operations? (1 = low, 10 = critical)</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-bold tabular-nums text-primary">{businessImpact}<span className="text-xs text-muted-foreground font-normal">/10</span></span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[11px] px-2"
+                disabled={savingImpact || businessImpact === (a.businessImpact ?? 5)}
+                onClick={() => handleSaveBusinessImpact(businessImpact)}
+              >
+                {savingImpact ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
+              </Button>
+            </div>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            step={1}
+            value={businessImpact}
+            onChange={e => setBusinessImpact(Number(e.target.value))}
+            className="w-full accent-primary h-1.5"
+          />
+          <div className="flex justify-between mt-1">
+            {[1,2,3,4,5,6,7,8,9,10].map(n => (
+              <span key={n} className={cn("text-[10px] tabular-nums", n === businessImpact ? "text-primary font-bold" : "text-muted-foreground")}>{n}</span>
+            ))}
+          </div>
         </div>
 
         {(a.assignedClientName || a.assignedAccountManagerName) && (

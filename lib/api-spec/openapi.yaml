@@ -2370,6 +2370,9 @@ components:
           type: ["string", "null"]
         lastScannedAt:
           type: ["string", "null"]
+        businessImpact:
+          type: integer
+          description: Business impact rating 1 (minimal) to 10 (mission-critical). Factors into risk score calculation.
         createdAt:
           type: string
         metadata:
@@ -2398,6 +2401,9 @@ components:
           type: string
         port:
           type: integer
+        businessImpact:
+          type: integer
+          description: Business impact 1 (minimal) to 10 (mission-critical)
         assignedClientId:
           type: integer
         assignedAccountManagerId:
@@ -2423,6 +2429,9 @@ components:
           type: string
         verificationStatus:
           type: string
+        businessImpact:
+          type: integer
+          description: Business impact 1 (minimal) to 10 (mission-critical)
         assignedClientId:
           type: ["integer", "null"]
         assignedAccountManagerId:

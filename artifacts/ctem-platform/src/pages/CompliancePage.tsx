@@ -4,7 +4,7 @@ import {
   getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Paperclip, Upload, FileText, X } from "lucide-react";
+import { Paperclip, Upload, FileText, X, Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -32,17 +32,60 @@ async function uploadEvidence(controlId: number, files: FileList): Promise<void>
   if (!res.ok) throw new Error(await res.text());
 }
 
-function EvidenceFiles({ evidence }: { evidence: string | null }) {
+async function deleteEvidence(controlId: number, filename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/compliance/controls/${controlId}/evidence/${encodeURIComponent(filename)}`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+function EvidenceFiles({
+  evidence,
+  controlId,
+  onDeleted,
+}: {
+  evidence: string | null;
+  controlId: number;
+  onDeleted: () => void;
+}) {
+  const [deletingIdx, setDeletingIdx] = useState<number | null>(null);
   if (!evidence) return null;
-  let files: { name: string; size: number }[] = [];
+  let files: { name: string; path: string; size: number }[] = [];
   try { files = JSON.parse(evidence); } catch { return null; }
   if (!files.length) return null;
+
+  const handleDelete = async (idx: number, path: string) => {
+    setDeletingIdx(idx);
+    try {
+      await deleteEvidence(controlId, path);
+      onDeleted();
+    } catch {}
+    setDeletingIdx(null);
+  };
+
   return (
     <div className="flex flex-wrap gap-1 mt-1">
       {files.map((f, i) => (
-        <span key={i} className="flex items-center gap-1 text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded border border-primary/20">
-          <FileText className="w-2.5 h-2.5" />
-          {f.name}
+        <span key={i} className="flex items-center gap-1 text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded border border-primary/20 group">
+          <FileText className="w-2.5 h-2.5 shrink-0" />
+          <a
+            href={`/api/compliance/controls/${controlId}/evidence/${encodeURIComponent(f.path)}`}
+            download={f.name}
+            className="hover:underline truncate max-w-[120px]"
+            title={f.name}
+          >
+            {f.name}
+          </a>
+          <button
+            onClick={() => handleDelete(i, f.path)}
+            disabled={deletingIdx === i}
+            className="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive/80"
+            title="Delete evidence"
+          >
+            {deletingIdx === i ? <X className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}
+          </button>
         </span>
       ))}
     </div>
@@ -204,7 +247,11 @@ export default function CompliancePage() {
                   <td className="px-4 py-2.5 text-xs font-mono font-medium text-primary">{c.controlId}</td>
                   <td className="px-4 py-2.5 text-xs max-w-xs">
                     <p className="font-medium">{c.title}</p>
-                    <EvidenceFiles evidence={c.evidenceFiles} />
+                    <EvidenceFiles
+                      evidence={c.evidenceFiles}
+                      controlId={c.id}
+                      onDeleted={() => queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() })}
+                    />
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.frameworkName}</td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.assignedTo ?? "—"}</td>
