@@ -5,11 +5,13 @@ import {
   ArrowLeft, Globe, AlertTriangle, CheckCircle2, XCircle,
   Loader2, Mail, Server, ChevronDown, ChevronUp, RefreshCw,
   ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
-  Hash, Search, ChevronRight,
+  Hash, Search, ChevronRight, Download,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
+import { downloadBrandThreatPdf } from "@/lib/pdfReport";
+import { getToken } from "@/lib/auth";
 
 const RISK_META: Record<string, { label: string; color: string; bg: string; border: string; bar: string }> = {
   critical: { label: "Critical",  color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30",    bar: "#f87171" },
@@ -232,6 +234,7 @@ export default function BrandThreatDetailPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
+  const [downloading, setDownloading] = useState(false);
   const PAGE_SIZE = 50;
 
   const { data: scan, isLoading, refetch } = useGetBrandThreatScan(id, {
@@ -330,6 +333,23 @@ export default function BrandThreatDetailPage() {
             </span>
           )}
           <div className="flex-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 gap-1.5"
+            disabled={downloading || s.status !== "done"}
+            onClick={async () => {
+              setDownloading(true);
+              try { await downloadBrandThreatPdf(id, getToken()); }
+              catch { /* ignore */ }
+              finally { setDownloading(false); }
+            }}
+          >
+            {downloading
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Download className="w-3.5 h-3.5" />}
+            {downloading ? "Generating…" : "Download PDF"}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8 shrink-0">
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
           </Button>

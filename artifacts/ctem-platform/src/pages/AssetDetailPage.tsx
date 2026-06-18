@@ -9,13 +9,15 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw, Camera, AlertTriangle, X,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
 import { cn, severityBgColor, statusBadgeClass, riskLevelBg, capitalize, formatDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { downloadAssetPdf } from "@/lib/pdfReport";
+import { getToken } from "@/lib/auth";
 
 const CATEGORY_COLOR: Record<string, string> = {
   "Web Server":           "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -66,6 +68,7 @@ export default function AssetDetailPage() {
   const [verifying, setVerifying]             = useState(false);
   const [scanning, setScanning]               = useState(false);
   const [screenshotting, setScreenshotting]   = useState(false);
+  const [downloading, setDownloading]         = useState(false);
   const [expandedShot, setExpandedShot]       = useState<any | null>(null);
   const [findingsPage, setFindingsPage]       = useState(0);
 
@@ -148,9 +151,26 @@ export default function AssetDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2">
         <Button variant="ghost" size="sm" onClick={() => navigate("/assets")}>
           <ArrowLeft className="w-4 h-4 mr-1" /> Assets
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          disabled={downloading || isLoading || !a}
+          onClick={async () => {
+            setDownloading(true);
+            try { await downloadAssetPdf(id, getToken()); }
+            catch { /* ignore */ }
+            finally { setDownloading(false); }
+          }}
+        >
+          {downloading
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <Download className="w-3.5 h-3.5" />}
+          {downloading ? "Generating…" : "Download PDF"}
         </Button>
       </div>
 

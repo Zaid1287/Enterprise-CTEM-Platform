@@ -1,6 +1,10 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
-import { db, reportsTable, findingsTable, assetsTable, complianceControlsTable, complianceFrameworksTable } from "@workspace/db";
+import { eq, and, desc } from "drizzle-orm";
+import {
+  db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
+  complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
+  riskScoresTable, technologyDetectionsTable,
+} from "@workspace/db";
 import { CreateReportBody, GetReportParams, DeleteReportParams } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
@@ -49,6 +53,143 @@ router.post("/reports", requireAuth, async (req: AuthenticatedRequest, res): Pro
   }, 2000);
   await logAudit(req.user!, "create_report", "report", report.id);
   res.status(201).json(toReportResponse(report));
+});
+
+// ── PDF data: asset ──────────────────────────────────────────────────────────
+router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const assetId  = parseInt(req.params.assetId, 10);
+  if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
+  const tenantId = req.user!.tenantId;
+
+  const [asset] = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  const [findings, technologies, riskRows] = await Promise.all([
+    db.select().from(findingsTable)
+      .where(and(eq(findingsTable.assetId, assetId), eq(findingsTable.tenantId, tenantId)))
+      .orderBy(
+        desc(findingsTable.severity === "critical" ? findingsTable.id : findingsTable.id),
+      ),
+    db.select().from(technologyDetectionsTable)
+      .where(eq(technologyDetectionsTable.assetId, assetId)),
+    db.select().from(riskScoresTable)
+      .where(eq(riskScoresTable.assetId, assetId))
+      .limit(1),
+  ]);
+
+  const riskScore = riskRows[0] ?? null;
+
+  // Sort findings by severity weight
+  const sevWeight: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+  findings.sort((a, b) => (sevWeight[b.severity] ?? 0) - (sevWeight[a.severity] ?? 0));
+
+  const findingCounts = {
+    total:    findings.length,
+    open:     findings.filter(f => f.status === "open").length,
+    critical: findings.filter(f => f.severity === "critical").length,
+    high:     findings.filter(f => f.severity === "high").length,
+    medium:   findings.filter(f => f.severity === "medium").length,
+    low:      findings.filter(f => f.severity === "low").length,
+  };
+
+  res.json({
+    asset: {
+      id:                 asset.id,
+      name:               asset.name,
+      type:               asset.type,
+      value:              asset.value,
+      ipAddress:          asset.ipAddress ?? null,
+      port:               asset.port ?? null,
+      riskLevel:          asset.riskLevel,
+      verificationStatus: asset.verificationStatus,
+      lastScannedAt:      asset.lastScannedAt?.toISOString() ?? null,
+      createdAt:          asset.createdAt.toISOString(),
+    },
+    riskScore: riskScore
+      ? { score: riskScore.score, level: riskScore.level }
+      : null,
+    findings: findings.map(f => ({
+      id:          f.id,
+      title:       f.title,
+      severity:    f.severity,
+      status:      f.status,
+      cve:         f.cve ?? null,
+      cvss:        f.cvss ?? null,
+      cwe:         f.cwe ?? null,
+      description: f.description ?? null,
+      remediation: f.remediation ?? null,
+      createdAt:   f.createdAt.toISOString(),
+    })),
+    technologies: technologies.map(t => ({
+      id:         t.id,
+      technology: t.technology,
+      version:    t.version ?? null,
+      confidence: t.confidence ?? null,
+      category:   t.category ?? null,
+    })),
+    findingCounts,
+    generatedAt: new Date().toISOString(),
+  });
+});
+
+// ── PDF data: brand threat ────────────────────────────────────────────────────
+router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const scanId   = parseInt(req.params.scanId, 10);
+  if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scanId" }); return; }
+  const tenantId = req.user!.tenantId;
+
+  const [scan] = await db.select().from(brandThreatScansTable)
+    .where(and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, tenantId)));
+  if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+
+  const allResults = await db.select().from(brandThreatResultsTable)
+    .where(eq(brandThreatResultsTable.scanId, scanId))
+    .orderBy(desc(brandThreatResultsTable.riskScore))
+    .limit(200);
+
+  const liveResults = allResults.filter(r => r.dnsA && r.dnsA.length > 0);
+  const topResults  = allResults.slice(0, 100);
+
+  res.json({
+    scan: {
+      id:                scan.id,
+      domain:            scan.domain,
+      status:            scan.status,
+      totalPermutations: scan.totalPermutations,
+      liveCount:         scan.liveCount,
+      registeredCount:   scan.registeredCount,
+      phishingRisk:      scan.phishingRisk,
+      fuzzerBreakdown:   scan.fuzzerBreakdown ?? null,
+      faviconUrl:        scan.faviconUrl ?? null,
+      faviconMmh3:       scan.faviconMmh3 ?? null,
+      faviconMd5:        scan.faviconMd5 ?? null,
+      faviconSha256:     scan.faviconSha256 ?? null,
+      faviconSearchUrls: scan.faviconSearchUrls ?? null,
+      favihunterStatus:  scan.favihunterStatus ?? null,
+      createdAt:         scan.createdAt.toISOString(),
+      completedAt:       scan.completedAt?.toISOString() ?? null,
+    },
+    topResults: topResults.map(r => ({
+      permutation:   r.permutation,
+      fuzzer:        r.fuzzer,
+      dnsA:          r.dnsA ?? null,
+      dnsMx:         r.dnsMx ?? null,
+      mxSpf:         r.mxSpf ?? null,
+      riskScore:     r.riskScore,
+      isSuspicious:  r.isSuspicious,
+    })),
+    liveResults: liveResults.slice(0, 100).map(r => ({
+      permutation:   r.permutation,
+      fuzzer:        r.fuzzer,
+      dnsA:          r.dnsA ?? null,
+      dnsMx:         r.dnsMx ?? null,
+      mxSpf:         r.mxSpf ?? null,
+      riskScore:     r.riskScore,
+      isSuspicious:  r.isSuspicious,
+    })),
+    generatedAt: new Date().toISOString(),
+  });
 });
 
 router.get("/reports/:reportId/download", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
