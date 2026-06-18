@@ -13,7 +13,12 @@ import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
 import { runCloudRecon, type CloudReconResult } from "../lib/cloudRecon";
 import { runSecretsHunt, type SecretsHuntResult } from "../lib/secretsHunter";
-import { runPassiveDiscovery, type PassiveDiscoveryOptions } from "../lib/passiveDiscovery";
+import {
+  runPassiveDiscovery,
+  runDkimCheck, runGithubExposure,
+  runFofaSearch, runCensysSearch, runIntelxSearch, runCriminalIpSearch,
+  type PassiveDiscoveryOptions,
+} from "../lib/passiveDiscovery";
 import { runDirFuzz, type DirFuzzResult } from "../lib/dirFuzzer";
 import { runNucleiScan, type VulnScanResult } from "../lib/nucleiScanner";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
@@ -1470,12 +1475,153 @@ async function executePipeline(
     let whoisIntel: IntelItem[] = [];
     let cloudIntel: IntelItem[] = [];
 
+    // ── PHASE 1 parallel: all independent OSINT/recon/intel tools fire together ─
+    // DNS recon, CT logs, geo/ASN, WHOIS, cloud surface, VirusTotal, Hunter.io,
+    // DKIM/SPF/DMARC, GitHub exposure, and all commercial intel sources (Fofa,
+    // Censys, IntelX, CriminalIP) all start simultaneously with Promise.allSettled.
     await Promise.allSettled([
-      needsDns   && (async () => { dnsResult     = await runDnsRecon(target); })(),
+      // ── Core recon ──────────────────────────────────────────────────────────
+      needsDns   && (async () => { dnsResult   = await runDnsRecon(target); })(),
       needsCt    && !isIp(domain) && (async () => { ctSubdomains = await runCtLogLookup(domain); })(),
-      needsGeo   && (async () => { geoIntel      = await runGeoIntel(target); })(),
-      needsWhois && !isIp(domain) && (async () => { whoisIntel   = await runWhoisIntel(target); })(),
-      needsCloud && (async () => { cloudIntel    = await runCloudSurfaceScan(target); })(),
+      needsGeo   && (async () => { geoIntel    = await runGeoIntel(target); })(),
+      needsWhois && !isIp(domain) && (async () => { whoisIntel  = await runWhoisIntel(target); })(),
+      needsCloud && (async () => { cloudIntel  = await runCloudSurfaceScan(target); })(),
+
+      // ── VirusTotal domain reputation (parallel with recon) ──────────────────
+      vtKey && domain && !isIp(domain) && (async () => {
+        try {
+          const vtResult = await getVirusTotalDomain(domain, vtKey!);
+          if (vtResult) {
+            geoIntel.push({ type: "VirusTotal", key: "Reputation score",  value: String(vtResult.reputation) });
+            geoIntel.push({ type: "VirusTotal", key: "Detection summary", value: `${vtResult.malicious} malicious, ${vtResult.suspicious} suspicious, ${vtResult.harmless} clean` });
+            if (vtResult.categories.length > 0)
+              geoIntel.push({ type: "VirusTotal", key: "Categories", value: vtResult.categories.slice(0, 5).join(", ") });
+            if (vtResult.registrar)
+              geoIntel.push({ type: "VirusTotal", key: "Registrar", value: vtResult.registrar });
+            if (vtResult.lastAnalysisDate)
+              geoIntel.push({ type: "VirusTotal", key: "Last analysis", value: vtResult.lastAnalysisDate });
+            logger.info({ domain, malicious: vtResult.malicious, suspicious: vtResult.suspicious }, "VirusTotal scan complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "VirusTotal lookup failed (non-fatal)"); }
+      })(),
+
+      // ── Hunter.io employee email OSINT (parallel with recon) ────────────────
+      hunterKey && domain && !isIp(domain) && (async () => {
+        try {
+          const hunterResult = await hunterDomainSearch(domain, hunterKey!);
+          if (hunterResult && hunterResult.emails.length > 0) {
+            if (hunterResult.organization)
+              geoIntel.push({ type: "Hunter.io", key: "Organization",  value: hunterResult.organization });
+            if (hunterResult.pattern)
+              geoIntel.push({ type: "Hunter.io", key: "Email pattern", value: hunterResult.pattern });
+            geoIntel.push({ type: "Hunter.io", key: "Emails found", value: String(hunterResult.emails.length) });
+            for (const e of hunterResult.emails.slice(0, 25)) {
+              const label = [e.firstName, e.lastName, e.position, e.department].filter(Boolean).join(", ")
+                || `Confidence: ${e.confidence}%`;
+              geoIntel.push({ type: "Hunter.io", key: e.email, value: label });
+            }
+            logger.info({ domain, emailCount: hunterResult.emails.length }, "Hunter.io OSINT complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "Hunter.io OSINT failed (non-fatal)"); }
+      })(),
+
+      // ── DKIM / SPF / DMARC email security check ──────────────────────────────
+      domain && !isIp(domain) && (async () => {
+        try {
+          const result = await runDkimCheck(domain);
+          if (result.status === "ok" && result.data) {
+            const d = result.data as any;
+            if (d.spf)   whoisIntel.push({ type: "Email Security", key: "SPF record",    value: d.spf });
+            if (d.dmarc) whoisIntel.push({ type: "Email Security", key: "DMARC policy",  value: d.dmarc });
+            if (d.hasDkim) whoisIntel.push({ type: "Email Security", key: "DKIM selectors found", value: String((d.dkimSelectors as any[]).length) });
+            if (!d.hasSpf)   whoisIntel.push({ type: "Email Security", key: "SPF missing",   value: "No SPF record — spoofing risk" });
+            if (!d.hasDmarc) whoisIntel.push({ type: "Email Security", key: "DMARC missing", value: "No DMARC record — spoofing risk" });
+            logger.info({ domain, hasDkim: d.hasDkim, hasSpf: d.hasSpf, hasDmarc: d.hasDmarc }, "DKIM/SPF/DMARC check complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "DKIM check failed (non-fatal)"); }
+      })(),
+
+      // ── GitHub code & repo exposure ───────────────────────────────────────────
+      domain && !isIp(domain) && (async () => {
+        try {
+          const result = await runGithubExposure(domain, githubToken ?? null);
+          if (result.status === "ok" && result.data) {
+            const d = result.data as any;
+            if (d.totalExposures > 0)
+              geoIntel.push({ type: "GitHub", key: "Total exposures",      value: String(d.totalExposures) });
+            if (d.codeReferences?.length)
+              geoIntel.push({ type: "GitHub", key: "Code references",      value: String(d.codeReferences.length) });
+            if (d.relatedRepos?.length)
+              geoIntel.push({ type: "GitHub", key: "Related repositories", value: String(d.relatedRepos.length) });
+            if (d.orgInfo)
+              geoIntel.push({ type: "GitHub", key: "GitHub org",           value: `${d.orgInfo.login} (${d.orgInfo.publicRepos} public repos)` });
+            logger.info({ domain, exposures: d.totalExposures }, "GitHub exposure scan complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "GitHub exposure scan failed (non-fatal)"); }
+      })(),
+
+      // ── Fofa internet scanner (commercial intel) ──────────────────────────────
+      fofaEmail && fofaApiKey && domain && !isIp(domain) && (async () => {
+        try {
+          const result = await runFofaSearch(domain, fofaEmail!, fofaApiKey!);
+          if (result.status === "ok" && result.data) {
+            const d = result.data as any;
+            geoIntel.push({ type: "Fofa", key: "Hosts indexed", value: String(d.total ?? d.results?.length ?? 0) });
+            if (d.results?.length) {
+              const sample = (d.results as any[]).slice(0, 5).map((r: any) => `${r.host}:${r.port}`).join(", ");
+              geoIntel.push({ type: "Fofa", key: "Sample hosts", value: sample });
+            }
+            logger.info({ domain, total: d.total }, "Fofa search complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "Fofa search failed (non-fatal)"); }
+      })(),
+
+      // ── Censys host search (commercial intel) ─────────────────────────────────
+      censysApiId && censysApiSecret && domain && !isIp(domain) && (async () => {
+        try {
+          const result = await runCensysSearch(domain, censysApiId!, censysApiSecret!);
+          if (result.status === "ok" && result.data) {
+            const d = result.data as any;
+            geoIntel.push({ type: "Censys", key: "Hosts indexed", value: String(d.total ?? d.results?.length ?? 0) });
+            if (d.results?.length) {
+              const services = (d.results as any[]).flatMap((r: any) => r.services ?? [])
+                .map((s: any) => `${s.port}/${s.name}`).slice(0, 8).join(", ");
+              if (services) geoIntel.push({ type: "Censys", key: "Exposed services", value: services });
+            }
+            logger.info({ domain, total: d.total }, "Censys search complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "Censys search failed (non-fatal)"); }
+      })(),
+
+      // ── Intelligence X breach & dark-web search (commercial intel) ────────────
+      intelxApiKey && domain && !isIp(domain) && (async () => {
+        try {
+          const result = await runIntelxSearch(domain, intelxApiKey!);
+          if (result.status === "ok" && result.data) {
+            const d = result.data as any;
+            if ((d.totalFound ?? 0) > 0)
+              geoIntel.push({ type: "IntelX", key: "Records in breach/dark-web DBs", value: String(d.totalFound) });
+            else
+              geoIntel.push({ type: "IntelX", key: "Breach exposure", value: "No records found in IntelX" });
+            logger.info({ domain, total: d.totalFound }, "IntelX search complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "IntelX search failed (non-fatal)"); }
+      })(),
+
+      // ── CriminalIP threat intelligence (commercial intel) ─────────────────────
+      criminalIpApiKey && domain && !isIp(domain) && (async () => {
+        try {
+          const result = await runCriminalIpSearch(domain, criminalIpApiKey!);
+          if (result.status === "ok" && result.data) {
+            const d = result.data as any;
+            if (d.report?.summary?.score !== undefined)
+              geoIntel.push({ type: "CriminalIP", key: "Threat score",    value: String(d.report.summary.score) });
+            if (d.report?.ip_count)
+              geoIntel.push({ type: "CriminalIP", key: "Associated IPs",  value: String(d.report.ip_count) });
+            logger.info({ domain }, "CriminalIP threat intel complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "CriminalIP search failed (non-fatal)"); }
+      })(),
     ].filter(Boolean));
 
     // Merge CT with DNS subdomains
@@ -1494,48 +1640,6 @@ async function executePipeline(
       else if (t.name === "gau") detail = `${dnsResult.subdomains.length} attack surface entries`;
       else                        detail = `${subs} subdomains, ${recs} DNS records`;
       doneTool(t.name, subs + recs, detail, p1Start);
-    }
-
-    // ── VirusTotal domain reputation ─────────────────────────────────────────
-    if (vtKey && domain && !isIp(domain)) {
-      try {
-        const vtResult = await getVirusTotalDomain(domain, vtKey);
-        if (vtResult) {
-          geoIntel.push({ type: "VirusTotal", key: "Reputation score",  value: String(vtResult.reputation) });
-          geoIntel.push({ type: "VirusTotal", key: "Detection summary", value: `${vtResult.malicious} malicious, ${vtResult.suspicious} suspicious, ${vtResult.harmless} clean` });
-          if (vtResult.categories.length > 0)
-            geoIntel.push({ type: "VirusTotal", key: "Categories", value: vtResult.categories.slice(0, 5).join(", ") });
-          if (vtResult.registrar)
-            geoIntel.push({ type: "VirusTotal", key: "Registrar", value: vtResult.registrar });
-          if (vtResult.lastAnalysisDate)
-            geoIntel.push({ type: "VirusTotal", key: "Last analysis", value: vtResult.lastAnalysisDate });
-          logger.info({ domain, malicious: vtResult.malicious, suspicious: vtResult.suspicious }, "VirusTotal scan complete");
-        }
-      } catch (err) {
-        logger.warn({ err, domain }, "VirusTotal lookup failed (non-fatal)");
-      }
-    }
-
-    // ── Hunter.io employee email OSINT ────────────────────────────────────────
-    if (hunterKey && domain && !isIp(domain)) {
-      try {
-        const hunterResult = await hunterDomainSearch(domain, hunterKey);
-        if (hunterResult && hunterResult.emails.length > 0) {
-          if (hunterResult.organization)
-            geoIntel.push({ type: "Hunter.io", key: "Organization",  value: hunterResult.organization });
-          if (hunterResult.pattern)
-            geoIntel.push({ type: "Hunter.io", key: "Email pattern", value: hunterResult.pattern });
-          geoIntel.push({ type: "Hunter.io", key: "Emails found", value: String(hunterResult.emails.length) });
-          for (const e of hunterResult.emails.slice(0, 25)) {
-            const label = [e.firstName, e.lastName, e.position, e.department].filter(Boolean).join(", ")
-              || `Confidence: ${e.confidence}%`;
-            geoIntel.push({ type: "Hunter.io", key: e.email, value: label });
-          }
-          logger.info({ domain, emailCount: hunterResult.emails.length }, "Hunter.io OSINT complete");
-        }
-      } catch (err) {
-        logger.warn({ err, domain }, "Hunter.io OSINT failed (non-fatal)");
-      }
     }
 
     // ── PHASE 2: Port Scanning — always runs (Naabu + Nmap + Shodan) ──────────
