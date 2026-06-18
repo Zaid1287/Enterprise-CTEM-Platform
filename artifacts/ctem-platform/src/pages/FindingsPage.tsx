@@ -1,12 +1,16 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { useListFindings, useUpdateFinding, getListFindingsQueryKey } from "@workspace/api-client-react";
+import {
+  useListFindings, useUpdateFinding, getListFindingsQueryKey,
+  useListFindingComments, useCreateFindingComment, getListFindingCommentsQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, ExternalLink, ChevronLeft, ChevronRight, X,
   ShieldAlert, Globe, Network, Server, Cpu, Smartphone,
   FileText, Code2, Camera, AlignLeft, Tag, Info,
   CheckCircle2, Clock, AlertCircle, XCircle, Minus,
+  MessageSquare, Send, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,12 +93,114 @@ function ScoreBadge({ score, label }: { score: number | null; label?: string }) 
   );
 }
 
+// ── Comments panel ─────────────────────────────────────────────────────────
+
+function CommentsPanel({ findingId }: { findingId: number }) {
+  const [text, setText] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const qc = useQueryClient();
+
+  const { data: comments = [], isLoading } = useListFindingComments(findingId, {
+    query: { queryKey: getListFindingCommentsQueryKey(findingId) },
+  });
+  const create = useCreateFindingComment();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!text.trim() || create.isPending) return;
+    await create.mutateAsync({ findingId, data: { content: text.trim() } });
+    setText("");
+    qc.invalidateQueries({ queryKey: getListFindingCommentsQueryKey(findingId) });
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="flex gap-3">
+            <div className="w-7 h-7 rounded-full bg-muted animate-pulse shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3 w-24 bg-muted rounded animate-pulse" />
+              <div className="h-8 bg-muted rounded animate-pulse" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 space-y-4 overflow-y-auto">
+        {(comments as any[]).length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <MessageSquare className="w-10 h-10 text-muted-foreground/20 mb-3" />
+            <p className="text-sm font-medium text-muted-foreground">No comments yet</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">Add a comment to document analysis notes or remediation status.</p>
+          </div>
+        ) : (
+          (comments as any[]).map((c: any) => (
+            <div key={c.id} className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0 text-[10px] font-bold text-primary">
+                {(c.authorName ?? "?").charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-2 mb-1">
+                  <span className="text-xs font-semibold">{c.authorName ?? "Unknown"}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+                <div className="bg-card border border-border rounded-lg px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+                  {c.content}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Comment input */}
+      <form onSubmit={submit} className="mt-4 flex gap-2 items-end shrink-0">
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e as any); }}
+          placeholder="Add a comment… (⌘+Enter to send)"
+          className="flex-1 resize-none rounded-lg border border-border bg-card px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary min-h-[60px] max-h-28"
+          rows={2}
+        />
+        <Button type="submit" size="icon" disabled={!text.trim() || create.isPending} className="h-9 w-9 shrink-0">
+          {create.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 // ── Metadata Drawer ────────────────────────────────────────────────────────
 
-type DrawerMode = "metadata" | "headers" | "screenshots" | null;
+type DrawerMode = "metadata" | "headers" | "screenshots" | "comments" | null;
 
-function FindingDrawer({ finding, mode, onClose }: { finding: any; mode: DrawerMode; onClose: () => void }) {
-  if (!mode || !finding) return null;
+type DrawerTab = "metadata" | "headers" | "screenshots" | "comments";
+
+const DRAWER_TABS: { key: DrawerTab; label: string; icon: React.ElementType }[] = [
+  { key: "metadata",    label: "Details",     icon: FileText },
+  { key: "headers",     label: "Headers",     icon: AlignLeft },
+  { key: "screenshots", label: "Screenshots", icon: Camera },
+  { key: "comments",    label: "Comments",    icon: MessageSquare },
+];
+
+function FindingDrawer({ finding, mode: initialMode, onClose }: { finding: any; mode: DrawerMode; onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<DrawerTab>(initialMode ?? "metadata");
+
+  useEffect(() => {
+    if (initialMode) setActiveTab(initialMode);
+  }, [finding?.id, initialMode]);
+
+  if (!initialMode || !finding) return null;
 
   let parsedEvidence: Record<string, any> | null = null;
   try {
@@ -112,15 +218,11 @@ function FindingDrawer({ finding, mode, onClose }: { finding: any; mode: DrawerM
       {/* Drawer */}
       <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-sidebar border-l border-sidebar-border flex flex-col shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-sidebar-border">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-sidebar-border">
           <div className="flex items-center gap-2">
-            {mode === "metadata"    && <FileText className="w-4 h-4 text-primary" />}
-            {mode === "headers"     && <AlignLeft className="w-4 h-4 text-primary" />}
-            {mode === "screenshots" && <Camera className="w-4 h-4 text-primary" />}
-            <h2 className="text-sm font-semibold">
-              {mode === "metadata"    && "Finding Metadata"}
-              {mode === "headers"     && "HTTP Headers"}
-              {mode === "screenshots" && "Screenshots"}
+            <FileText className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-semibold truncate max-w-[220px]" title={finding.title}>
+              {finding.title}
             </h2>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
@@ -128,8 +230,30 @@ function FindingDrawer({ finding, mode, onClose }: { finding: any; mode: DrawerM
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
-          {mode === "metadata" && (
+        {/* Tab bar */}
+        <div className="flex border-b border-sidebar-border bg-sidebar/60">
+          {DRAWER_TABS.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-px flex-1 justify-center",
+                activeTab === key
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/40",
+              )}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className={cn(
+          "flex-1 overflow-y-auto text-sm",
+          activeTab === "comments" ? "flex flex-col px-5 py-4" : "px-5 py-4 space-y-4",
+        )}>
+          {activeTab === "metadata" && (
             <>
               {/* Title */}
               <div>
@@ -246,7 +370,7 @@ function FindingDrawer({ finding, mode, onClose }: { finding: any; mode: DrawerM
             </>
           )}
 
-          {mode === "headers" && (
+          {activeTab === "headers" && (
             headers ? (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">HTTP response headers captured during scan.</p>
@@ -268,7 +392,7 @@ function FindingDrawer({ finding, mode, onClose }: { finding: any; mode: DrawerM
             )
           )}
 
-          {mode === "screenshots" && (
+          {activeTab === "screenshots" && (
             screenshots.length > 0 ? (
               <div className="space-y-3">
                 {screenshots.map((src: string, i: number) => (
@@ -282,6 +406,10 @@ function FindingDrawer({ finding, mode, onClose }: { finding: any; mode: DrawerM
                 <p className="text-xs text-muted-foreground/60 mt-1">Screenshots are captured when a web screenshot tool is run against this asset.</p>
               </div>
             )
+          )}
+
+          {activeTab === "comments" && (
+            <CommentsPanel findingId={finding.id} />
           )}
         </div>
       </div>

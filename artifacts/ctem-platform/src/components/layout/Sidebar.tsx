@@ -69,6 +69,7 @@ const navGroups: NavGroup[] = [
       { label: "Scans", href: "/scans", icon: Radar },
       { label: "Passive Discovery", href: "/discovery", icon: ScanSearch },
       { label: "Findings", href: "/findings", icon: Bug },
+      { label: "Exposure Management", href: "/exposure", icon: ShieldAlert },
       { label: "Risk Scoring", href: "/risk", icon: TrendingUp },
       { label: "Security Tools", href: "/tools", icon: GitBranch, onlyFor: ["admin", "super_admin", "account_manager"] },
       { label: "Scan Reports", href: "/scan-reports", icon: ScanSearch },

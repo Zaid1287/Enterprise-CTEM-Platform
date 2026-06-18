@@ -24,6 +24,7 @@ import { logAudit } from "../lib/audit";
 import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
 import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
+import { enrichFindingsWithEpssKev } from "../lib/epssKev";
 import { getPlatformSetting } from "./platformSettings";
 import { setNvdApiKey } from "../lib/nvdLookup";
 import { getVirusTotalDomain } from "../lib/virusTotal";
@@ -1917,6 +1918,56 @@ async function executePipeline(
       } catch { /* non-fatal — VT findings are bonus data */ }
     }
 
+    // ── Exposed Dangerous Services — port scan findings ───────────────────────
+    if (portScanReport && portScanReport.ports.length > 0) {
+      type PortRisk = "critical" | "high" | "medium";
+      const DANGER: Record<number, { service: string; risk: PortRisk; cwe: string; reason: string; cvss: number }> = {
+        21:    { service: "FTP",               risk: "high",     cwe: "CWE-319", reason: "Unencrypted file transfer protocol",               cvss: 7.5 },
+        23:    { service: "Telnet",            risk: "critical", cwe: "CWE-319", reason: "Plaintext remote access — no encryption",           cvss: 9.1 },
+        135:   { service: "RPC",               risk: "high",     cwe: "CWE-284", reason: "Windows RPC endpoint exposed to internet",          cvss: 7.3 },
+        139:   { service: "NetBIOS",           risk: "critical", cwe: "CWE-284", reason: "Windows NetBIOS file sharing exposed",              cvss: 9.0 },
+        161:   { service: "SNMP",              risk: "high",     cwe: "CWE-200", reason: "Network management data accessible externally",      cvss: 7.5 },
+        389:   { service: "LDAP",              risk: "high",     cwe: "CWE-284", reason: "Directory service exposed to internet",              cvss: 7.3 },
+        445:   { service: "SMB",               risk: "critical", cwe: "CWE-284", reason: "EternalBlue/ransomware target — file sharing exposed", cvss: 9.8 },
+        1433:  { service: "MSSQL",             risk: "critical", cwe: "CWE-284", reason: "Database server directly exposed to internet",       cvss: 9.8 },
+        1521:  { service: "Oracle DB",         risk: "critical", cwe: "CWE-284", reason: "Database server directly exposed to internet",       cvss: 9.8 },
+        2379:  { service: "etcd",              risk: "critical", cwe: "CWE-284", reason: "Kubernetes config store exposed to internet",        cvss: 9.8 },
+        3306:  { service: "MySQL",             risk: "critical", cwe: "CWE-284", reason: "Database server directly exposed to internet",       cvss: 9.8 },
+        3389:  { service: "RDP",               risk: "critical", cwe: "CWE-284", reason: "Remote Desktop — brute-force & ransomware target",  cvss: 9.8 },
+        4243:  { service: "Docker API",        risk: "critical", cwe: "CWE-284", reason: "Docker remote API exposed — container escape risk",  cvss: 9.8 },
+        5432:  { service: "PostgreSQL",        risk: "critical", cwe: "CWE-284", reason: "Database server directly exposed to internet",       cvss: 9.8 },
+        5900:  { service: "VNC",               risk: "critical", cwe: "CWE-319", reason: "Remote desktop without encryption",                 cvss: 9.0 },
+        5984:  { service: "CouchDB",           risk: "high",     cwe: "CWE-284", reason: "Database may be publicly accessible without auth",  cvss: 7.5 },
+        6379:  { service: "Redis",             risk: "critical", cwe: "CWE-306", reason: "No auth by default — remote code execution risk",   cvss: 9.8 },
+        6443:  { service: "Kubernetes API",    risk: "critical", cwe: "CWE-284", reason: "Kubernetes API server exposed to internet",         cvss: 9.8 },
+        8080:  { service: "HTTP-Alt",          risk: "medium",   cwe: "CWE-200", reason: "Development HTTP server exposed externally",        cvss: 5.3 },
+        9200:  { service: "Elasticsearch",     risk: "critical", cwe: "CWE-306", reason: "No auth by default — full data exposure risk",      cvss: 9.8 },
+        9300:  { service: "Elasticsearch",     risk: "critical", cwe: "CWE-284", reason: "Elasticsearch cluster communication exposed",       cvss: 9.0 },
+        11211: { service: "Memcached",         risk: "high",     cwe: "CWE-284", reason: "Cache exposed — DDoS amplification attack vector",  cvss: 7.5 },
+        27017: { service: "MongoDB",           risk: "critical", cwe: "CWE-306", reason: "No auth by default — full database exposure risk",  cvss: 9.8 },
+        27018: { service: "MongoDB",           risk: "critical", cwe: "CWE-284", reason: "MongoDB shard server exposed to internet",          cvss: 9.0 },
+        50070: { service: "HDFS NameNode",     risk: "high",     cwe: "CWE-284", reason: "Hadoop NameNode UI exposed externally",             cvss: 7.3 },
+      };
+      for (const p of portScanReport.ports) {
+        const info = DANGER[p.port];
+        if (!info) continue;
+        const slug  = (asset.value || "").replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 20);
+        const cveId = `EXP-PORT-${p.port}-${slug}`;
+        findingInserts.push({
+          tenantId, assetId: asset.id, scanId,
+          title: `Exposed ${info.service} (Port ${p.port}/${(p.protocol ?? "tcp")})`,
+          cve: cveId,
+          severity: info.risk,
+          cvssScore: String(info.cvss),
+          cwe: info.cwe,
+          status: "open" as const,
+          description: `Port ${p.port}/${(p.protocol ?? "tcp")} (${p.service || info.service}) is directly accessible from the internet on ${asset.name} (${asset.value}). ${info.reason}. Detected service version: ${p.version || "unknown"}.`,
+          remediation: `Restrict access to port ${p.port} using network firewall rules (iptables/Security Groups/NSGs). If this service must be accessible, place it behind a VPN or reverse proxy with strict authentication and rate limiting. Disable the service entirely if not required.`,
+          evidence: JSON.stringify({ port: p.port, protocol: p.protocol, service: p.service, version: p.version }),
+        });
+      }
+    }
+
     // Insert findings once (not per-tool, to avoid duplicates)
     for (const v of cveFindings) {
       if (!v.cve.startsWith("HDR-") && !v.cve.startsWith("SEC-")) {
@@ -2460,17 +2511,23 @@ async function executePipeline(
       }
     }
 
-    // Deduplicate and insert findings
+    // Deduplicate by CVE+asset, enrich with EPSS/KEV, then insert
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
       const key = `${f.cve ?? ""}-${f.assetId}`;
       if (!uniqueFindings.has(key)) uniqueFindings.set(key, f);
     }
     const deduped = Array.from(uniqueFindings.values());
-    for (let i = 0; i < deduped.length; i += 50) {
-      await db.insert(findingsTable).values(deduped.slice(i, i + 50));
+    let enriched = deduped;
+    try {
+      enriched = await enrichFindingsWithEpssKev(deduped) as typeof deduped;
+    } catch (err) {
+      logger.warn({ err }, "EPSS/KEV enrichment failed — inserting without enrichment (non-fatal)");
     }
-    findingTotals.push(deduped.length);
+    for (let i = 0; i < enriched.length; i += 50) {
+      await db.insert(findingsTable).values(enriched.slice(i, i + 50));
+    }
+    findingTotals.push(enriched.length);
 
     // ── Passive discovery: save results to history (non-blocking) ─────────────
     // Runs free tools + any configured commercial API tools in the background
