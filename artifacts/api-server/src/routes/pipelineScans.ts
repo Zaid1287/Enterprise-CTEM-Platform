@@ -1540,11 +1540,24 @@ async function executePipeline(
 
       portScanReport = await scanPorts(target, shodanKey ?? undefined);
       realPorts = portScanReport.ports as PortFinding[];
+
+      const masscanSection = portScanReport.masscan.available
+        ? [
+            `=== MASSCAN — Ultra-fast SYN Port Discovery (${portScanReport.masscan.ports.length} ports, method: ${portScanReport.scanMethod}) ===`,
+            portScanReport.masscan.raw.slice(0, 3000) || "(no output)",
+          ]
+        : [
+            `=== MASSCAN — Not available (${portScanReport.masscan.failReason ?? "unavailable"}) ===`,
+            portScanReport.masscan.raw || "(install masscan: apt-get install masscan, requires CAP_NET_RAW)",
+          ];
+
       nmapRaw = [
-        `=== NAABU — Full Port Discovery (${portScanReport.naabuPorts.length} ports found, 1–65535) ===`,
+        `=== NAABU — Full TCP Port Discovery (${portScanReport.naabuPorts.length} ports found, 1–65535) ===`,
         portScanReport.naabuRaw.slice(0, 3000) || "(no output)",
         "",
-        `=== NMAP — Service Detection + NSE Scripts (${portScanReport.scanMethod}) ===`,
+        ...masscanSection,
+        "",
+        `=== NMAP — Service Detection + NSE Scripts (method: ${portScanReport.scanMethod}) ===`,
         portScanReport.nmapRaw.slice(0, 8000) || "(no output)",
         "",
         portScanReport.shodan

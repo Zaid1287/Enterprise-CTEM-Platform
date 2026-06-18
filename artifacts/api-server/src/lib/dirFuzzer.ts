@@ -10,8 +10,10 @@ export interface FuzzedEndpoint {
   contentLength?: number;
   contentType?: string;
   redirectTo?: string;
-  source: "fuzz" | "wayback" | "crawl" | "otx";
+  source: "fuzz" | "recursive" | "wayback" | "crawl" | "otx";
   isInteresting: boolean;
+  depth: number;
+  parentPath: string;
 }
 
 export interface HostFuzzResult {
@@ -22,12 +24,14 @@ export interface HostFuzzResult {
   endpoints: FuzzedEndpoint[];
   stats: {
     fuzzHits: number;
+    recursiveHits: number;
     waybackFound: number;
     crawled: number;
     live200: number;
     live301: number;
     live401403: number;
     interesting: number;
+    maxDepthReached: number;
   };
 }
 
@@ -40,15 +44,16 @@ export interface DirFuzzResult {
     totalUnique: number;
     liveEndpoints: number;
     fuzzHits: number;
+    recursiveHits: number;
     waybackFound: number;
     crawledFound: number;
     interestingEndpoints: number;
+    maxDepthReached: number;
   };
 }
 
-// ── Wordlist ───────────────────────────────────────────────────────────────────
+// ── Wordlist: root-level (~240 paths) ─────────────────────────────────────────
 
-// Full wordlist for primary target (~240 paths)
 const WORDLIST: string[] = [
   // Admin panels
   "admin","administrator","admin.php","admin/login","admin/index.php",
@@ -93,9 +98,8 @@ const WORDLIST: string[] = [
   // Node / Kubernetes
   "node_modules/.package-lock.json",".npmrc","package.json","yarn.lock","package-lock.json",
   ".kube/config","kubernetes/config",
-  // Docker
+  // Docker / CI
   "docker-compose.yml","docker-compose.yaml","Dockerfile",
-  // CI / build
   ".travis.yml","Jenkinsfile",".github/workflows",".gitlab-ci.yml",
   "Makefile","build.gradle","pom.xml","requirements.txt","Gemfile","composer.json",
   // Static
@@ -122,7 +126,7 @@ const WORDLIST: string[] = [
   "bucket","storage","cdn","s3","blob",
 ];
 
-// Mini wordlist for subdomain fuzzing (~85 paths — highest value only)
+// Mini wordlist for subdomain fuzzing (~85 paths)
 const WORDLIST_MINI: string[] = [
   "admin","administrator","wp-admin","phpmyadmin","panel","cpanel","webmin",
   "api","api/v1","api/v2","graphql","swagger","swagger-ui","api-docs","openapi.json",
@@ -138,12 +142,71 @@ const WORDLIST_MINI: string[] = [
   "xmlrpc.php","wp-json/wp/v2/users",
 ];
 
+// Recursive wordlist — directory exploration within discovered directories
+const WORDLIST_RECURSIVE: string[] = [
+  // Sub-directories of known panels/APIs
+  "login","logout","register","signup","users","user","profile","settings","config",
+  "admin","manage","dashboard","console","panel",
+  "api","v1","v2","v3","graphql","rest",
+  "list","index","search","export","import","data","report","reports",
+  "create","new","add","edit","update","delete","remove",
+  "backup","backups","dump","export.sql","export.csv","data.json",
+  // Files
+  "index.php","index.html","index.js","index.asp","index.aspx","default.asp","default.aspx",
+  "config.php","config.json","config.yml","settings.php","settings.json",
+  ".env","env.php","credentials.json","secrets.json","secrets.php",
+  "README.md","readme.txt","CHANGELOG.md","INSTALL.md","TODO.md",
+  // Debug / info
+  "phpinfo.php","info.php","debug","test.php","test","tmp","temp",
+  "server-status","health","healthz","status","ping",
+  // Uploads / media
+  "uploads","files","images","img","media","static","assets","content",
+  "download","downloads","attachment","attachments",
+  // Auth sub-paths
+  "token","refresh","logout","callback","authorize","verify","confirm",
+  "forgot","reset","change","mfa","2fa","otp",
+  // Common sub-resources
+  "log","logs","error.log","access.log","debug.log",
+  "metrics","stats","statistics","monitor","monitoring",
+];
+
 const INTERESTING_KEYWORDS = [
   "admin","login","password","secret","key","token","auth","config","backup",
   "database","debug","swagger","graphql","actuator","env","git","private","internal",
 ];
 
 const UA = "Mozilla/5.0 (compatible; CTEM-DirFuzzer/1.0; +https://sentinelware.io)";
+
+// ── Extensions that indicate a file (not a directory for recursion) ───────────
+const FILE_EXTENSIONS = new Set([
+  ".php",".asp",".aspx",".html",".htm",".js",".css",".json",".yaml",".yml",
+  ".xml",".txt",".sql",".zip",".tar",".gz",".log",".csv",".pdf",".png",".jpg",
+  ".jpeg",".gif",".ico",".svg",".woff",".woff2",".ttf",".eot",".map",
+  ".config",".properties",".env",".md",".sh",".py",".rb",".go",".rs",
+]);
+
+const KNOWN_FILE_PATHS = new Set([
+  ".env",".env.local",".env.backup",".env.prod",".env.staging",
+  "config.json","config.yaml","config.yml","config.xml",
+  "settings.json","settings.yaml","secrets.json","credentials.json",
+  "wp-config.php","web.config","app.config","application.properties",
+  "backup.sql","backup.zip","database.sql","db.sql","dump.sql","data.sql",
+  ".aws/credentials",".htpasswd","id_rsa","id_rsa.pub",
+  "robots.txt","sitemap.xml","sitemap_index.xml","sitemap.txt",
+  "humans.txt","ads.txt","app-ads.txt","security.txt",
+  ".git/HEAD",".git/config",".gitignore",".dockerignore",
+  "phpinfo.php","info.php","php-info.php",
+  "node_modules/.package-lock.json",".npmrc","package.json","yarn.lock","package-lock.json",
+  ".kube/config","kubernetes/config",
+  "docker-compose.yml","docker-compose.yaml","Dockerfile",
+  ".travis.yml","Jenkinsfile",".github/workflows",".gitlab-ci.yml",
+  "Makefile","build.gradle","pom.xml","requirements.txt","Gemfile","composer.json",
+  "export.json","export.csv","data.json","data.csv",
+  "error.log","access.log","debug.log","error_log","php_error.log",
+  "xmlrpc.php","wp-json/wp/v2/users",
+  "manifest.json","manifest.webmanifest","service-worker.js","sw.js",
+  "crossdomain.xml","browserconfig.xml","favicon.ico",
+]);
 
 // ── Concurrency semaphore ─────────────────────────────────────────────────────
 
@@ -205,7 +268,7 @@ async function fetchWayback(host: string): Promise<string[]> {
     const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } });
     clearTimeout(t);
     if (!res.ok) return [];
-    const data: string[][] = await res.json().catch(() => []);
+    const data = await res.json().catch(() => []) as string[][];
     return data.slice(1).map(row => row[0]).filter(Boolean);
   } catch { return []; }
 }
@@ -218,33 +281,26 @@ async function fetchOtx(host: string): Promise<string[]> {
     const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } });
     clearTimeout(t);
     if (!res.ok) return [];
-    const data = await res.json().catch(() => null);
+    const data = await res.json().catch(() => null) as any;
     if (!data?.url_list) return [];
     return (data.url_list as Array<{ url: string }>).map(u => u.url).filter(Boolean);
   } catch { return []; }
 }
 
-// ── Crawler (Katana/Hakrawler equivalent) ─────────────────────────────────────
+// ── Crawler ───────────────────────────────────────────────────────────────────
 
 async function crawlHost(baseUrl: string): Promise<string[]> {
   const html = await getHtml(baseUrl);
   if (!html) return [];
-
   const base = new URL(baseUrl);
   const urls = new Set<string>();
-
-  // Extract href, src, action, data-url
-  const attrRe = /(?:href|src|action|data-url|data-href|data-endpoint)\s*=\s*["']([^"'#\s]+)/gi;
-  // Extract JS string paths like "/api/v1/users"
+  const attrRe  = /(?:href|src|action|data-url|data-href|data-endpoint)\s*=\s*["']([^"'#\s]+)/gi;
   const jsPathRe = /["'`](\/[a-zA-Z0-9_\-./]{3,100})["'`]/g;
-
   let m: RegExpExecArray | null;
   while ((m = attrRe.exec(html)) !== null) {
     try {
       const u = new URL(m[1], baseUrl);
-      if (u.hostname === base.hostname && u.pathname !== "/" && u.pathname !== "") {
-        urls.add(u.href);
-      }
+      if (u.hostname === base.hostname && u.pathname !== "/" && u.pathname !== "") urls.add(u.href);
     } catch {}
   }
   while ((m = jsPathRe.exec(html)) !== null) {
@@ -253,33 +309,101 @@ async function crawlHost(baseUrl: string): Promise<string[]> {
       if (u.hostname === base.hostname) urls.add(u.href);
     } catch {}
   }
-
   return [...urls].slice(0, 300);
 }
 
-// ── Interesting path heuristic ────────────────────────────────────────────────
+// ── Path heuristics ───────────────────────────────────────────────────────────
 
 function isInterestingPath(path: string, status: number): boolean {
   const p = path.toLowerCase();
   if (status >= 200 && status < 300) return true;
-  if (status === 401 || status === 403) {
-    return INTERESTING_KEYWORDS.some(kw => p.includes(kw));
-  }
+  if (status === 401 || status === 403) return INTERESTING_KEYWORDS.some(kw => p.includes(kw));
   return false;
 }
 
-// ── Per-host fuzzer ───────────────────────────────────────────────────────────
+/** Returns true if a path looks like a browseable directory (not a file) */
+function isDirectoryLike(word: string, status: number): boolean {
+  if (![200, 201, 301, 302, 307, 308, 403].includes(status)) return false;
+  // Known file paths are not directories
+  if (KNOWN_FILE_PATHS.has(word)) return false;
+  // Check last segment for a file extension
+  const lastSegment = word.split("/").pop() ?? word;
+  const dotIdx = lastSegment.lastIndexOf(".");
+  if (dotIdx > 0) {
+    const ext = lastSegment.slice(dotIdx).toLowerCase();
+    if (FILE_EXTENSIONS.has(ext)) return false;
+  }
+  return true;
+}
+
+// ── Core fuzzer: probes a wordlist under a base URL ──────────────────────────
+
+async function probeWordlist(
+  baseUrl: string,
+  host: string,
+  wordlist: string[],
+  visited: Set<string>,
+  sem: Semaphore,
+  depth: number,
+  parentPath: string,
+  source: "fuzz" | "recursive",
+  maxEndpoints: number,
+  accumulator: FuzzedEndpoint[],
+): Promise<string[]> {
+  const directoriesFound: string[] = [];
+
+  const tasks = wordlist.map(async (word) => {
+    if (accumulator.length >= maxEndpoints) return;
+    const url = `${baseUrl}/${word}`;
+    if (visited.has(url)) return;
+    visited.add(url);
+
+    await sem.acquire();
+    try {
+      const r = await headProbe(url, 5000);
+      if (!r) return;
+      // Skip 404 and server errors
+      if (r.status === 404 || r.status === 0 || r.status >= 500) return;
+
+      const endpoint: FuzzedEndpoint = {
+        url,
+        path: `/${word}`,
+        host,
+        statusCode:    r.status,
+        contentLength: r.length,
+        contentType:   r.type,
+        redirectTo:    r.redirect,
+        source,
+        isInteresting: isInterestingPath(word, r.status),
+        depth,
+        parentPath,
+      };
+      accumulator.push(endpoint);
+
+      // Flag directory-like paths for recursion
+      if (isDirectoryLike(word, r.status)) {
+        directoriesFound.push(word);
+      }
+    } finally { sem.release(); }
+  });
+
+  await Promise.allSettled(tasks);
+  return directoriesFound;
+}
+
+// ── Per-host fuzzer with recursive BFS ───────────────────────────────────────
+
+const MAX_DEPTH    = 3;
+const MAX_ENDPOINTS = 2000;
+const SEM_SIZE     = 25;
 
 async function fuzzHost(baseUrl: string, isFull: boolean): Promise<HostFuzzResult> {
   let host: string;
   try { host = new URL(baseUrl).hostname; } catch { return emptyHost(baseUrl, "unknown", false, 0); }
 
-  // Quick liveness check first
   const liveness = await headProbe(baseUrl, 8000);
   if (!liveness || liveness.status === 0) {
-    // Try HTTP fallback if HTTPS failed
-    const httpBase = baseUrl.startsWith("https://")
-      ? baseUrl.replace("https://", "http://") : null;
+    const httpBase = baseUrl.startsWith("https://") ? baseUrl.replace("https://", "http://") : null;
     if (httpBase) {
       const fallback = await headProbe(httpBase, 6000);
       if (!fallback || fallback.status === 0) return emptyHost(baseUrl, host, false, 0);
@@ -287,25 +411,28 @@ async function fuzzHost(baseUrl: string, isFull: boolean): Promise<HostFuzzResul
     }
     return emptyHost(baseUrl, host, false, 0);
   }
-
   return fuzzLiveHost(baseUrl, host, liveness.status, isFull);
 }
 
 function emptyHost(baseUrl: string, host: string, isLive: boolean, code: number): HostFuzzResult {
-  return { host, baseUrl, isLive, liveStatusCode: code, endpoints: [], stats: { fuzzHits: 0, waybackFound: 0, crawled: 0, live200: 0, live301: 0, live401403: 0, interesting: 0 } };
+  return {
+    host, baseUrl, isLive, liveStatusCode: code, endpoints: [],
+    stats: { fuzzHits: 0, recursiveHits: 0, waybackFound: 0, crawled: 0, live200: 0, live301: 0, live401403: 0, interesting: 0, maxDepthReached: 0 },
+  };
 }
 
 async function fuzzLiveHost(baseUrl: string, host: string, liveStatus: number, isFull: boolean): Promise<HostFuzzResult> {
-  const sem = new Semaphore(25); // 25 concurrent requests
+  const sem     = new Semaphore(SEM_SIZE);
+  const visited = new Set<string>();
   const all: FuzzedEndpoint[] = [];
 
-  // 1. Passive sources (Wayback + OTX) — run in parallel
+  // 1. Passive sources (Wayback + OTX)
   const [wbUrls, otxUrls] = await Promise.allSettled([
     fetchWayback(host),
     isFull ? fetchOtx(host) : Promise.resolve<string[]>([]),
   ]);
   const passiveRaw = [
-    ...(wbUrls.status === "fulfilled" ? wbUrls.value : []),
+    ...(wbUrls.status  === "fulfilled" ? wbUrls.value  : []),
     ...(otxUrls.status === "fulfilled" ? otxUrls.value : []),
   ];
   const passiveSeen = new Set<string>();
@@ -314,46 +441,69 @@ async function fuzzLiveHost(baseUrl: string, host: string, liveStatus: number, i
       const u = new URL(raw);
       if (!passiveSeen.has(u.href)) {
         passiveSeen.add(u.href);
-        all.push({ url: u.href, path: u.pathname, host, statusCode: 200, source: "wayback", isInteresting: false });
+        all.push({ url: u.href, path: u.pathname, host, statusCode: 200, source: "wayback", isInteresting: false, depth: 0, parentPath: "" });
       }
     } catch {}
   }
 
-  // 2. Crawl (Katana/Hakrawler equivalent) — full scan only
+  // 2. Crawl
   if (isFull) {
     const crawled = await crawlHost(baseUrl);
     for (const u of crawled) {
       if (!passiveSeen.has(u)) {
         try {
           const pu = new URL(u);
-          all.push({ url: u, path: pu.pathname, host, statusCode: 200, source: "crawl", isInteresting: false });
+          all.push({ url: u, path: pu.pathname, host, statusCode: 200, source: "crawl", isInteresting: false, depth: 0, parentPath: "" });
         } catch {}
       }
     }
   }
 
-  // 3. Directory fuzzing (Feroxbuster equivalent) — active probing
-  const wordlist = isFull ? WORDLIST : WORDLIST_MINI;
-  const fuzzResults = await Promise.allSettled(
-    wordlist.map(async (word) => {
-      await sem.acquire();
-      try {
-        const url = `${baseUrl}/${word}`;
-        const r = await headProbe(url, 5000);
-        if (!r) return null;
-        // Record 200-399, 401, 403 — skip 404 and errors
-        if (r.status === 404 || r.status === 0 || r.status >= 500) return null;
-        return {
-          url, path: `/${word}`, host,
-          statusCode: r.status, contentLength: r.length, contentType: r.type, redirectTo: r.redirect,
-          source: "fuzz" as const,
-          isInteresting: isInterestingPath(word, r.status),
-        } satisfies FuzzedEndpoint;
-      } finally { sem.release(); }
-    })
+  // 3. Root-level active fuzz (depth 0)
+  const rootWordlist = isFull ? WORDLIST : WORDLIST_MINI;
+  const depth0Dirs = await probeWordlist(
+    baseUrl, host, rootWordlist, visited, sem, 0, "", "fuzz", MAX_ENDPOINTS, all
   );
-  for (const r of fuzzResults) {
-    if (r.status === "fulfilled" && r.value) all.push(r.value);
+
+  // 4. Recursive BFS — fuzz inside discovered directories
+  let maxDepthReached = 0;
+
+  interface BFSEntry { base: string; depth: number; parentPath: string; dirs: string[] }
+  const bfsQueue: BFSEntry[] = depth0Dirs.map(d => ({
+    base: `${baseUrl}/${d}`,
+    depth: 1,
+    parentPath: `/${d}`,
+    dirs: [],
+  }));
+
+  while (bfsQueue.length > 0 && all.length < MAX_ENDPOINTS) {
+    const batch = bfsQueue.splice(0, 5); // process up to 5 dirs per wave
+    const waveResults = await Promise.allSettled(
+      batch.map(async ({ base, depth, parentPath }) => {
+        if (depth > MAX_DEPTH || all.length >= MAX_ENDPOINTS) return [];
+        const discovered = await probeWordlist(
+          base, host, WORDLIST_RECURSIVE, visited, sem,
+          depth, parentPath, "recursive", MAX_ENDPOINTS, all
+        );
+        return discovered.map(d => ({
+          base: `${base}/${d}`,
+          depth: depth + 1,
+          parentPath: `${parentPath}/${d}`,
+          dirs: [],
+        }));
+      })
+    );
+
+    for (const result of waveResults) {
+      if (result.status === "fulfilled") {
+        for (const entry of result.value) {
+          if (entry.depth <= MAX_DEPTH) {
+            bfsQueue.push(entry);
+            if (entry.depth > maxDepthReached) maxDepthReached = entry.depth;
+          }
+        }
+      }
+    }
   }
 
   // Deduplicate by URL
@@ -365,16 +515,18 @@ async function fuzzLiveHost(baseUrl: string, host: string, liveStatus: number, i
   });
 
   const stats = {
-    fuzzHits:    deduped.filter(e => e.source === "fuzz").length,
-    waybackFound: deduped.filter(e => e.source === "wayback" || e.source === "otx").length,
-    crawled:     deduped.filter(e => e.source === "crawl").length,
-    live200:     deduped.filter(e => e.statusCode >= 200 && e.statusCode < 300).length,
-    live301:     deduped.filter(e => e.statusCode >= 300 && e.statusCode < 400).length,
-    live401403:  deduped.filter(e => e.statusCode === 401 || e.statusCode === 403).length,
-    interesting: deduped.filter(e => e.isInteresting).length,
+    fuzzHits:      deduped.filter(e => e.source === "fuzz").length,
+    recursiveHits: deduped.filter(e => e.source === "recursive").length,
+    waybackFound:  deduped.filter(e => e.source === "wayback" || e.source === "otx").length,
+    crawled:       deduped.filter(e => e.source === "crawl").length,
+    live200:       deduped.filter(e => e.statusCode >= 200 && e.statusCode < 300).length,
+    live301:       deduped.filter(e => e.statusCode >= 300 && e.statusCode < 400).length,
+    live401403:    deduped.filter(e => e.statusCode === 401 || e.statusCode === 403).length,
+    interesting:   deduped.filter(e => e.isInteresting).length,
+    maxDepthReached,
   };
 
-  return { host, baseUrl, isLive: true, liveStatusCode: liveStatus, endpoints: deduped.slice(0, 2000), stats };
+  return { host, baseUrl, isLive: true, liveStatusCode: liveStatus, endpoints: deduped.slice(0, MAX_ENDPOINTS), stats };
 }
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────
@@ -382,7 +534,7 @@ async function fuzzLiveHost(baseUrl: string, host: string, liveStatus: number, i
 export async function runDirFuzz(target: string, subdomainNames: string[] = []): Promise<DirFuzzResult> {
   const empty: DirFuzzResult = {
     hosts: [], masterList: [],
-    stats: { hostsScanned: 0, hostsLive: 0, totalUnique: 0, liveEndpoints: 0, fuzzHits: 0, waybackFound: 0, crawledFound: 0, interestingEndpoints: 0 },
+    stats: { hostsScanned: 0, hostsLive: 0, totalUnique: 0, liveEndpoints: 0, fuzzHits: 0, recursiveHits: 0, waybackFound: 0, crawledFound: 0, interestingEndpoints: 0, maxDepthReached: 0 },
   };
 
   let primaryBase: string;
@@ -393,7 +545,6 @@ export async function runDirFuzz(target: string, subdomainNames: string[] = []):
 
   const domain = new URL(primaryBase).hostname.replace(/^www\./, "");
 
-  // Build host list: primary + up to 12 unique subdomains
   const extraBases = [...new Set(
     subdomainNames
       .filter(n => n && !n.includes("*") && n !== domain && n !== `www.${domain}`)
@@ -401,18 +552,18 @@ export async function runDirFuzz(target: string, subdomainNames: string[] = []):
       .map(n => `https://${n}`)
   )];
 
-  logger.info({ target, extraHosts: extraBases.length }, "Dir fuzz starting");
+  logger.info({ target, extraHosts: extraBases.length }, "Dir fuzz starting (recursive enabled)");
 
-  // Run primary (full) + subdomains (mini) in parallel — cap to 4 minutes total
   const results: HostFuzzResult[] = await Promise.race([
     Promise.allSettled([
       fuzzHost(primaryBase, true),
       ...extraBases.map(b => fuzzHost(b, false)),
-    ]).then(settled => settled.filter(r => r.status === "fulfilled").map(r => (r as PromiseFulfilledResult<HostFuzzResult>).value)),
-    new Promise<HostFuzzResult[]>(r => setTimeout(() => r([]), 4 * 60 * 1000)),
+    ]).then(settled =>
+      settled.filter(r => r.status === "fulfilled").map(r => (r as PromiseFulfilledResult<HostFuzzResult>).value)
+    ),
+    new Promise<HostFuzzResult[]>(r => setTimeout(() => r([]), 5 * 60 * 1000)),
   ]);
 
-  // Build master list: all unique URLs across all hosts, deduplicated
   const masterSeen = new Set<string>();
   const masterList: string[] = [];
   for (const hr of results) {
@@ -421,9 +572,10 @@ export async function runDirFuzz(target: string, subdomainNames: string[] = []):
     }
   }
 
-  const liveHosts = results.filter(r => r.isLive);
+  const liveHosts      = results.filter(r => r.isLive);
   const totalEndpoints = results.reduce((s, r) => s + r.endpoints.length, 0);
-  const liveEndpoints = results.reduce((s, r) => s + r.stats.live200 + r.stats.live301, 0);
+  const liveEndpoints  = results.reduce((s, r) => s + r.stats.live200 + r.stats.live301, 0);
+  const overallMaxDepth = results.reduce((m, r) => Math.max(m, r.stats.maxDepthReached), 0);
 
   const stats = {
     hostsScanned:        results.length,
@@ -431,16 +583,14 @@ export async function runDirFuzz(target: string, subdomainNames: string[] = []):
     totalUnique:         masterList.length,
     liveEndpoints,
     fuzzHits:            results.reduce((s, r) => s + r.stats.fuzzHits, 0),
+    recursiveHits:       results.reduce((s, r) => s + r.stats.recursiveHits, 0),
     waybackFound:        results.reduce((s, r) => s + r.stats.waybackFound, 0),
     crawledFound:        results.reduce((s, r) => s + r.stats.crawled, 0),
     interestingEndpoints: results.reduce((s, r) => s + r.stats.interesting, 0),
+    maxDepthReached:     overallMaxDepth,
   };
 
   logger.info({ target, ...stats }, "Dir fuzz complete");
 
-  return {
-    hosts: results,
-    masterList: masterList.slice(0, 5000), // cap for DB storage
-    stats,
-  };
+  return { hosts: results, masterList: masterList.slice(0, 5000), stats };
 }

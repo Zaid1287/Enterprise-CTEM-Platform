@@ -2384,10 +2384,11 @@ function NucleiTab({ vulnScan }: { vulnScan: any }) {
 // ── Directory Fuzz Tab ────────────────────────────────────────────────────────
 
 const DIR_SOURCE_META: Record<string, { label: string; badge: string; tool: string }> = {
-  fuzz:    { label: "Active Scan",  badge: "bg-purple-500/15 text-purple-400 border-purple-500/30",   tool: "Dir Fuzz" },
-  wayback: { label: "Archive",      badge: "bg-blue-500/15 text-blue-400 border-blue-500/30",         tool: "Archive" },
-  otx:     { label: "Threat Intel", badge: "bg-teal-500/15 text-teal-400 border-teal-500/30",         tool: "OTX" },
-  crawl:   { label: "Crawler",      badge: "bg-green-500/15 text-green-400 border-green-500/30",      tool: "Crawler" },
+  fuzz:      { label: "Active Scan",  badge: "bg-purple-500/15 text-purple-400 border-purple-500/30",   tool: "Dir Fuzz" },
+  recursive: { label: "Recursive",    badge: "bg-violet-500/15 text-violet-400 border-violet-500/30",   tool: "Recursive" },
+  wayback:   { label: "Archive",      badge: "bg-blue-500/15 text-blue-400 border-blue-500/30",         tool: "Archive" },
+  otx:       { label: "Threat Intel", badge: "bg-teal-500/15 text-teal-400 border-teal-500/30",         tool: "OTX" },
+  crawl:     { label: "Crawler",      badge: "bg-green-500/15 text-green-400 border-green-500/30",      tool: "Crawler" },
 };
 
 const STATUS_BADGE: Record<number, string> = {
@@ -2408,6 +2409,7 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
   const [hostFilter, setHostFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [depthFilter, setDepthFilter] = useState("all");
   const [showAll, setShowAll] = useState(false);
 
   if (!dirFuzz) {
@@ -2441,6 +2443,7 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
       if (statusFilter === "2xx" && !(e.statusCode >= 200 && e.statusCode < 300)) return false;
       if (statusFilter === "3xx" && !(e.statusCode >= 300 && e.statusCode < 400)) return false;
       if (statusFilter === "auth" && ![401, 403].includes(e.statusCode)) return false;
+      if (depthFilter !== "all" && String(e.depth ?? 0) !== depthFilter) return false;
       if (search && !e.url?.toLowerCase().includes(search.toLowerCase()) && !e.path?.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
@@ -2460,10 +2463,10 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
       {/* Stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { label: "Hosts Scanned",  value: `${stats.hostsLive ?? 0}/${stats.hostsScanned ?? 0}`, sub: "live / total",                  color: "text-primary" },
-          { label: "Total Unique",   value: stats.totalUnique ?? 0,   sub: `${stats.liveEndpoints ?? 0} live (2xx/3xx)`,                 color: "text-primary" },
-          { label: "Active Scan",     value: stats.fuzzHits ?? 0,      sub: "active dir hits",                                           color: stats.fuzzHits > 0 ? "text-purple-400" : "text-muted-foreground" },
-          { label: "Interesting",    value: interestingEndpoints.length, sub: "admin/api/config/backup",                                color: interestingEndpoints.length > 0 ? "text-orange-400" : "text-green-400" },
+          { label: "Hosts Scanned",  value: `${stats.hostsLive ?? 0}/${stats.hostsScanned ?? 0}`, sub: "live / total",                                         color: "text-primary" },
+          { label: "Total Unique",   value: stats.totalUnique ?? 0,       sub: `${stats.liveEndpoints ?? 0} live (2xx/3xx)`,                                   color: "text-primary" },
+          { label: "Active + Recursive", value: (stats.fuzzHits ?? 0) + (stats.recursiveHits ?? 0), sub: `${stats.fuzzHits ?? 0} root · ${stats.recursiveHits ?? 0} recursive (depth ${stats.maxDepthReached ?? 0})`, color: (stats.fuzzHits ?? 0) + (stats.recursiveHits ?? 0) > 0 ? "text-purple-400" : "text-muted-foreground" },
+          { label: "Interesting",    value: interestingEndpoints.length,  sub: "admin/api/config/backup",                                                        color: interestingEndpoints.length > 0 ? "text-orange-400" : "text-green-400" },
         ].map(s => (
           <div key={s.label} className="bg-accent/20 border border-border rounded-lg p-3">
             <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide block mb-1">{s.label}</span>
@@ -2474,11 +2477,12 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
       </div>
 
       {/* Source breakdown */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         {[
-          { key: "fuzz",    count: stats.fuzzHits    ?? 0 },
-          { key: "wayback", count: stats.waybackFound ?? 0 },
-          { key: "crawl",   count: stats.crawledFound ?? 0 },
+          { key: "fuzz",      count: stats.fuzzHits      ?? 0 },
+          { key: "recursive", count: stats.recursiveHits ?? 0 },
+          { key: "wayback",   count: stats.waybackFound  ?? 0 },
+          { key: "crawl",     count: stats.crawledFound  ?? 0 },
         ].map(({ key, count }) => {
           const meta = DIR_SOURCE_META[key];
           return (
@@ -2522,6 +2526,7 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
             className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
             <option value="all">All sources</option>
             <option value="fuzz">Active Scan</option>
+            <option value="recursive">Recursive</option>
             <option value="wayback">Archive</option>
             <option value="crawl">Crawler</option>
           </select>
@@ -2532,6 +2537,15 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
             <option value="2xx">2xx (OK)</option>
             <option value="3xx">3xx (Redirect)</option>
             <option value="auth">401/403 (Auth)</option>
+          </select>
+          {/* Depth filter */}
+          <select value={depthFilter} onChange={e => setDepthFilter(e.target.value)}
+            className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+            <option value="all">All depths</option>
+            <option value="0">Depth 0 (root)</option>
+            <option value="1">Depth 1</option>
+            <option value="2">Depth 2</option>
+            <option value="3">Depth 3</option>
           </select>
           {/* Search */}
           <div className="flex items-center gap-1.5 bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 ml-auto">
@@ -2557,6 +2571,8 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
             {displayed.map((e: any, i: number) => {
               const srcMeta = DIR_SOURCE_META[e.source] ?? DIR_SOURCE_META.wayback;
               const statusBadge = STATUS_BADGE[e.statusCode] ?? "bg-accent/40 text-muted-foreground border-border";
+              const depth = e.depth ?? 0;
+              const depthColors = ["", "text-violet-400", "text-indigo-400", "text-cyan-400"];
               return (
                 <div key={i} className={cn("flex items-center gap-2 rounded-lg px-3 py-2 border text-xs group",
                   e.isInteresting && e.statusCode === 200
@@ -2571,8 +2587,16 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
                   <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1.5 py-0.5", srcMeta.badge)}>
                     {srcMeta.label}
                   </span>
-                  {/* URL */}
-                  <span className="font-mono text-xs text-foreground flex-1 truncate">{e.url}</span>
+                  {/* Depth badge (only for depth > 0) */}
+                  {depth > 0 && (
+                    <span className={cn("shrink-0 text-[10px] font-mono border rounded px-1 py-0.5 bg-accent/30 border-border", depthColors[depth] ?? "text-muted-foreground")}>
+                      d{depth}
+                    </span>
+                  )}
+                  {/* URL (indent recursive paths) */}
+                  <span className="font-mono text-xs text-foreground flex-1 truncate" style={{ paddingLeft: depth > 0 ? `${depth * 6}px` : undefined }}>
+                    {e.url}
+                  </span>
                   {/* Redirect info */}
                   {e.redirectTo && (
                     <span className="text-[10px] text-muted-foreground truncate max-w-32 hidden sm:block">→ {e.redirectTo}</span>
@@ -2629,20 +2653,22 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
               {h.isLive && (
                 <div className="px-3 py-2 flex flex-wrap gap-3 text-[10px] text-muted-foreground border-t border-border bg-accent/5">
                   {[
-                    { label: "Fuzz hits",    value: h.stats?.fuzzHits ?? 0,    color: "text-purple-400" },
-                    { label: "Archive",       value: h.stats?.waybackFound ?? 0, color: "text-blue-400" },
-                    { label: "Crawled",      value: h.stats?.crawled ?? 0,      color: "text-green-400" },
-                    { label: "Live 2xx",     value: h.stats?.live200 ?? 0,      color: "text-green-400" },
-                    { label: "3xx",          value: h.stats?.live301 ?? 0,      color: "text-yellow-400" },
-                    { label: "401/403",      value: h.stats?.live401403 ?? 0,   color: "text-orange-400" },
-                    { label: "Interesting",  value: h.stats?.interesting ?? 0,  color: "text-red-400" },
+                    { label: "Fuzz",       value: h.stats?.fuzzHits      ?? 0, color: "text-purple-400" },
+                    { label: "Recursive",  value: h.stats?.recursiveHits ?? 0, color: "text-violet-400" },
+                    { label: "Archive",    value: h.stats?.waybackFound  ?? 0, color: "text-blue-400" },
+                    { label: "Crawled",    value: h.stats?.crawled       ?? 0, color: "text-green-400" },
+                    { label: "Live 2xx",   value: h.stats?.live200       ?? 0, color: "text-green-400" },
+                    { label: "3xx",        value: h.stats?.live301       ?? 0, color: "text-yellow-400" },
+                    { label: "401/403",    value: h.stats?.live401403    ?? 0, color: "text-orange-400" },
+                    { label: "Interesting",value: h.stats?.interesting   ?? 0, color: "text-red-400" },
+                    { label: `Depth`,      value: `≤${h.stats?.maxDepthReached ?? 0}`, color: "text-cyan-400" },
                   ].map(s => (
                     <span key={s.label}><span className={cn("font-bold", s.color)}>{s.value}</span> {s.label}</span>
                   ))}
                 </div>
               )}
               {/* Sample endpoints for this host */}
-              {h.isLive && (h.endpoints ?? []).filter((e: any) => e.isInteresting || (e.source === "fuzz" && e.statusCode === 200)).slice(0, 5).map((e: any, j: number) => {
+              {h.isLive && (h.endpoints ?? []).filter((e: any) => e.isInteresting || ((e.source === "fuzz" || e.source === "recursive") && e.statusCode === 200)).slice(0, 5).map((e: any, j: number) => {
                 const srcMeta = DIR_SOURCE_META[e.source] ?? DIR_SOURCE_META.wayback;
                 const statusBadge = STATUS_BADGE[e.statusCode] ?? "bg-accent/40 text-muted-foreground border-border";
                 return (
