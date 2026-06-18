@@ -2646,7 +2646,7 @@ async function executePipeline(
     setImmediate(async () => {
       try {
         const discoveryOpts: PassiveDiscoveryOptions = {
-          githubToken, shodanApiKey, fofaEmail, fofaApiKey,
+          githubToken, shodanApiKey: shodanKey, fofaEmail, fofaApiKey,
           censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey,
         };
         const discoveryResults = await runPassiveDiscovery(target, discoveryOpts);

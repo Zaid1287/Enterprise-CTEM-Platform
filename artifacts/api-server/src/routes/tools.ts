@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { eq, and, desc } from "drizzle-orm";
 import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable } from "@workspace/db";
 import {
@@ -14,58 +16,81 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 
 const router = Router();
+const execAsync = promisify(exec);
 
-const TOOL_STEPS: Record<string, string[]> = {
-  recon: ["Initializing reconnaissance scan", "Resolving DNS records", "Enumerating subdomains", "Checking WHOIS data", "Probing HTTP headers"],
-  vuln_scan: ["Loading vulnerability signatures", "Scanning open ports", "Fingerprinting service versions", "Checking CVE database", "Running exploit checks"],
-  port_scan: ["Initiating port scan", "Scanning common ports (1-1024)", "Probing UDP ports", "Scanning high ports", "Fingerprinting services"],
-  ssl_check: ["Checking SSL certificate validity", "Verifying certificate chain", "Testing cipher suites", "Checking for weak protocols", "Validating HSTS policy"],
-  web_recon: ["Crawling web application", "Discovering endpoints", "Checking security headers", "Testing for information disclosure", "Enumerating directories"],
-  osint: ["Gathering OSINT data", "Querying threat intelligence feeds", "Checking breach databases", "Analyzing exposed credentials", "Cross-referencing dark web data"],
-};
-
-function simulateToolOutput(tool: typeof securityToolsTable.$inferSelect, assetValue: string): string {
-  const steps = TOOL_STEPS[tool.category] ?? TOOL_STEPS["recon"]!;
+// ── Real tool execution (replaces all simulated output) ───────────────────────
+// Attempts to run the tool's configured runCommand against the target.
+// Returns real stdout/stderr, or a clear install message if the binary is absent.
+async function runToolCommand(
+  tool: typeof securityToolsTable.$inferSelect,
+  target: string,
+): Promise<string> {
+  const runCmd = tool.runCommand ?? "";
   const timestamp = new Date().toISOString();
-  const rand = (n: number) => Math.floor(Math.random() * n);
 
-  const lines: string[] = [
-    `[INFO] Starting ${tool.name} v2.3.1`,
-    `[INFO] Target: ${assetValue}`,
-    `[INFO] GitHub: ${tool.githubUrl}`,
-    `[INFO] Command: ${tool.runCommand ?? `python main.py --target ${assetValue}`}`,
+  if (!runCmd) {
+    return [
+      `[INFO] Tool: ${tool.name}`,
+      `[INFO] Target: ${target}`,
+      `[INFO] Started: ${timestamp}`,
+      `[WARN] No run command configured for this tool.`,
+      `[HINT] Open Tool Library → Edit → set a run command (e.g. nmap -sV {target}).`,
+    ].join("\n");
+  }
+
+  // Sanitize target and substitute {target}, {domain}, {company}, {output}
+  const safeTarget = target.replace(/[;&|`$(){}<>!]/g, "").slice(0, 512);
+  const domain     = safeTarget.replace(/^https?:\/\//, "").split("/")[0] ?? safeTarget;
+  const company    = domain.split(".")[0] ?? domain;
+  const outFile    = `/tmp/${tool.name.replace(/[^a-z0-9]/gi, "-")}-${Date.now()}.txt`;
+
+  const cmd = runCmd
+    .replace(/\{target\}/g,  safeTarget)
+    .replace(/\{domain\}/g,  domain)
+    .replace(/\{company\}/g, company)
+    .replace(/\{output\}/g,  outFile);
+
+  const header = [
+    `[INFO] Tool: ${tool.name}`,
+    `[INFO] Target: ${safeTarget}`,
+    `[INFO] Command: ${cmd}`,
+    `[INFO] Started: ${timestamp}`,
     "",
-    ...steps.map((s, i) => `[${String(i + 1).padStart(2, "0")}] ${s}...`),
-    "",
-    `[RESULT] Scan completed at ${timestamp}`,
-  ];
+  ].join("\n");
 
-  if (tool.category === "vuln_scan" || tool.category === "port_scan") {
-    lines.push(`[FINDING] Port 80/tcp  open  http    nginx 1.21.6`);
-    lines.push(`[FINDING] Port 443/tcp open  https   nginx 1.21.6`);
-    lines.push(`[FINDING] Port 22/tcp  open  ssh     OpenSSH 8.4p1`);
-  }
-  if (tool.category === "ssl_check") {
-    lines.push(`[FINDING] Certificate: valid (expires 2026-01-15)`);
-    lines.push(`[FINDING] Issuer: Let's Encrypt Authority X3`);
-    lines.push(`[FINDING] Cipher: TLS_AES_256_GCM_SHA384 (TLSv1.3)`);
-    lines.push(`[WARNING] Missing HSTS header`);
-  }
-  if (tool.category === "recon" || tool.category === "osint") {
-    lines.push(`[FINDING] Domain registered: 2018-03-14`);
-    lines.push(`[FINDING] Registrar: GoDaddy.com LLC`);
-    lines.push(`[FINDING] IP: 104.21.${rand(256)}.${rand(256)}`);
-  }
-  if (tool.category === "web_recon") {
-    lines.push(`[FINDING] /admin/ — 403 Forbidden (directory exists)`);
-    lines.push(`[FINDING] /api/v1/ — 200 OK`);
-    lines.push(`[FINDING] X-Frame-Options header missing`);
-    lines.push(`[FINDING] Server: nginx/1.21.6 (version disclosure)`);
-  }
+  try {
+    const { stdout, stderr } = await execAsync(cmd, { timeout: 60_000 });
+    const body = [stdout, stderr].filter(Boolean).join("\n").trim();
+    return `${header}${body || "(no output)"}\n\n[DONE] ${tool.name} completed at ${new Date().toISOString()}`;
+  } catch (err: any) {
+    const msg  = String(err.message ?? "");
+    const sErr = String(err.stderr ?? "");
+    const notInstalled =
+      err.code === "ENOENT" ||
+      msg.includes("not found") ||
+      msg.includes("command not found") ||
+      sErr.includes("command not found");
 
-  lines.push("");
-  lines.push(`[DONE] ${tool.name} finished. ${rand(5) + 1} finding(s) recorded.`);
-  return lines.join("\n");
+    if (notInstalled) {
+      return [
+        header.trimEnd(),
+        `\n[NOT INSTALLED] "${tool.name}" binary was not found on this server.`,
+        `[INSTALL]  ${tool.installCommand ?? "See the tool's GitHub page for install instructions."}`,
+        `[UPDATE]   ${tool.updateCommand  ?? "N/A"}`,
+        `[GITHUB]   ${tool.githubUrl      ?? "N/A"}`,
+        `\n[NOTE] Once installed, this tool integrates with the automated scan pipeline.`,
+        `[NOTE] Run manually on your workstation: ${cmd}`,
+      ].join("\n");
+    }
+
+    const errOut = [err.stdout, err.stderr].filter(Boolean).join("\n").trim();
+    return [
+      header.trimEnd(),
+      `\n[ERROR] Exit code ${err.code ?? "unknown"}: ${msg}`,
+      errOut ? `\n[OUTPUT]\n${errOut}` : "",
+      `\n[DONE] ${tool.name} failed at ${new Date().toISOString()}`,
+    ].join("\n");
+  }
 }
 
 async function enrichRuns(runs: (typeof toolRunsTable.$inferSelect)[]) {
@@ -314,14 +339,15 @@ router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest,
 
   if (targetIds.length === 0) {
     const startedAt = new Date();
+    const output = await runToolCommand(tool, "");
     const [run] = await db.insert(toolRunsTable).values({
       tenantId: req.user!.tenantId,
       toolId: tool.id,
       status: "completed",
-      output: simulateToolOutput(tool, "all-assets"),
+      output,
       triggeredBy: req.user!.id,
       startedAt,
-      completedAt: new Date(startedAt.getTime() + 1200),
+      completedAt: new Date(),
     }).returning();
     runs.push(run);
   } else {
@@ -329,15 +355,18 @@ router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest,
       const [asset] = await db.select().from(assetsTable)
         .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
       const startedAt = new Date();
+      const output = asset
+        ? await runToolCommand(tool, asset.value)
+        : `[ERROR] Asset not found: ${assetId}`;
       const [run] = await db.insert(toolRunsTable).values({
         tenantId: req.user!.tenantId,
         toolId: tool.id,
         assetId,
         status: "completed",
-        output: asset ? simulateToolOutput(tool, asset.value) : `[ERROR] Asset not found: ${assetId}`,
+        output,
         triggeredBy: req.user!.id,
         startedAt,
-        completedAt: new Date(startedAt.getTime() + Math.floor(Math.random() * 2000) + 500),
+        completedAt: new Date(),
       }).returning();
       runs.push(run);
     }
@@ -366,22 +395,20 @@ router.post("/assets/:assetId/run-pipeline", requireAuth, async (req: Authentica
   const toolMap = new Map(tools.map(t => [t.id, t]));
 
   const runs: (typeof toolRunsTable.$inferSelect)[] = [];
-  let offset = 0;
   for (const step of steps) {
     const tool = toolMap.get(step.toolId);
     if (!tool || !tool.isActive) continue;
-    const startedAt = new Date(Date.now() + offset);
-    const completedAt = new Date(startedAt.getTime() + Math.floor(Math.random() * 1500) + 300);
-    offset += completedAt.getTime() - startedAt.getTime() + 100;
+    const startedAt = new Date();
+    const output = await runToolCommand(tool, asset.value);
     const [run] = await db.insert(toolRunsTable).values({
       tenantId: req.user!.tenantId,
       toolId: tool.id,
       assetId: asset.id,
       status: "completed",
-      output: simulateToolOutput(tool, asset.value),
+      output,
       triggeredBy: req.user!.id,
       startedAt,
-      completedAt,
+      completedAt: new Date(),
     }).returning();
     runs.push(run);
   }

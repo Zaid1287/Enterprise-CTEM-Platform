@@ -118,6 +118,7 @@ function toAssetResponse(
     assignedAccountManagerId: a.assignedAccountManagerId ?? null,
     assignedAccountManagerName: (a.assignedAccountManagerId && userMap) ? (userMap.get(a.assignedAccountManagerId) ?? null) : null,
     scanFrequency: a.scanFrequency ?? "manual",
+    businessImpact: a.businessImpact ?? 5,
     lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
     createdAt: a.createdAt.toISOString(),
     vulnerabilities: {

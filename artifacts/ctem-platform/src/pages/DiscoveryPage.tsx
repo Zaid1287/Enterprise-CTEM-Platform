@@ -146,7 +146,7 @@ export default function DiscoveryPage() {
   const qc = useQueryClient();
 
   const { data: assetsData } = useListAssets();
-  const assets = assetsData?.assets ?? [];
+  const assets = assetsData ?? [];
 
   const { data: latestData, isLoading: loadingLatest } = useListDiscoveryLatest(
     selectedAssetId ?? 0,
