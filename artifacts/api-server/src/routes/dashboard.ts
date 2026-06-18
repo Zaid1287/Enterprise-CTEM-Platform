@@ -254,22 +254,38 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
   }
 
   const clientTenantIds = assignments.map(a => a.clientTenantId);
-  const [clients, allAssets, allFindings, allScans] = await Promise.all([
+  const [clients, rawAssets, allScans] = await Promise.all([
     db.select().from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds)),
-    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, clientTenantIds)),
-    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, clientTenantIds)),
+    db.select().from(assetsTable).where(
+      and(
+        inArray(assetsTable.tenantId, clientTenantIds),
+        eq(assetsTable.assignedAccountManagerId, amUserId),
+      ),
+    ),
     db.select().from(scansTable).where(inArray(scansTable.tenantId, clientTenantIds)),
   ]);
 
-  const clientMetrics = clients.map(t => ({
-    id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
-    assetCount: allAssets.filter(a => a.tenantId === t.id).length,
-    findingCount: allFindings.filter(f => f.tenantId === t.id).length,
-    criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
-    openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
-    activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
-    assignedAt: assignments.find(a => a.clientTenantId === t.id)?.assignedAt?.toISOString() ?? null,
-  }));
+  const assignedAssetIds = rawAssets.map(a => a.id);
+  const allFindings = assignedAssetIds.length > 0
+    ? await db.select().from(findingsTable).where(inArray(findingsTable.assetId, assignedAssetIds))
+    : [];
+
+  const allAssets = rawAssets;
+
+  const clientMetrics = clients.map(t => {
+    const clientAssets = allAssets.filter(a => a.tenantId === t.id);
+    const clientAssetIds = clientAssets.map(a => a.id);
+    const clientFindings = allFindings.filter(f => clientAssetIds.includes(f.assetId));
+    return {
+      id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
+      assetCount: clientAssets.length,
+      findingCount: clientFindings.length,
+      criticalCount: clientFindings.filter(f => f.severity === "critical").length,
+      openFindingCount: clientFindings.filter(f => f.status === "open").length,
+      activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
+      assignedAt: assignments.find(a => a.clientTenantId === t.id)?.assignedAt?.toISOString() ?? null,
+    };
+  });
 
   res.json({
     clientCount: clients.length,

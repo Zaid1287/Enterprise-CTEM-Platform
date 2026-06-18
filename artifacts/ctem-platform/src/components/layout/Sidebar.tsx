@@ -193,8 +193,8 @@ export function Sidebar() {
         </button>
       )}
 
-      {/* Role badge — hidden for client role */}
-      {!collapsed && role !== "client" && (
+      {/* Role badge — hidden for client and account_manager roles */}
+      {!collapsed && role !== "client" && role !== "account_manager" && (
         <div className="px-4 py-2 border-b border-sidebar-border">
           <span className={cn(
             "text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider",

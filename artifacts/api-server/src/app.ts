@@ -9,6 +9,10 @@ import { WebhookHandlers } from "./lib/webhookHandlers";
 
 const app: Express = express();
 
+// Replit runs behind a reverse proxy — trust the first hop so
+// express-rate-limit can read the real client IP from X-Forwarded-For
+app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,

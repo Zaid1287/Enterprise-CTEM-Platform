@@ -110,6 +110,9 @@ export default function AssetsPage() {
   const [newMetadata, setNewMetadata] = useState<Record<string, string>>({});
   const [editMetadata, setEditMetadata] = useState<Record<string, string>>({});
 
+  // Dedicated verify ownership dialog (separate from Add Asset)
+  const [showVerify, setShowVerify] = useState(false);
+
   // Inline verify
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
   const [stoppingId, setStoppingId] = useState<number | null>(null);
@@ -324,7 +327,7 @@ export default function AssetsPage() {
     setVerifyToken("");
     setVerifyExtra({});
     setVerifyMsg("");
-    setShowCreate(true);
+    setShowVerify(true);
   };
 
   const handleStop = async (scanId: number) => {
@@ -904,6 +907,39 @@ export default function AssetsPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Verify Ownership Dialog ── */}
+      <Dialog open={showVerify} onOpenChange={v => {
+        if (!v) { setShowVerify(false); setVerifyStep("idle"); setPendingAssetId(null); }
+      }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-amber-400" /> Verify Asset Ownership
+            </DialogTitle>
+            <DialogDescription>
+              Prove you own <strong>{newAsset.value || "this asset"}</strong> to enable scanning.
+            </DialogDescription>
+          </DialogHeader>
+          {verifyStep !== "idle" && (
+            <VerifyOwnershipPanel
+              step={verifyStep}
+              method={verifyMethod}
+              token={verifyToken}
+              extra={verifyExtra}
+              message={verifyMsg}
+              assetValue={newAsset.value}
+              assetType={newAsset.type}
+              copied={copied}
+              onCopy={copyToken}
+              onMethodSelect={(m) => pendingAssetId && initiateVerify(pendingAssetId, m)}
+              onCheck={checkVerification}
+              onRetry={() => setVerifyStep("method_select")}
+              onDone={() => { setShowVerify(false); setVerifyStep("idle"); setPendingAssetId(null); }}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
