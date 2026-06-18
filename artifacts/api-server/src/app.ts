@@ -1,5 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
@@ -24,6 +26,15 @@ app.use(
         };
       },
     },
+  }),
+);
+
+// ── Secure headers ─────────────────────────────────────────────────────────────
+app.use(
+  helmet({
+    contentSecurityPolicy: false,       // managed by Vite / CDN
+    crossOriginEmbedderPolicy: false,   // allows iframe embeds in the proxy
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
 
@@ -52,6 +63,32 @@ app.post(
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ── Rate limiting ──────────────────────────────────────────────────────────────
+// Stricter limit for auth endpoints (brute-force protection)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many authentication attempts — please try again in 15 minutes." },
+  skip: (req) => process.env.NODE_ENV === "test",
+});
+
+// Broad API limit — generous enough for legitimate heavy use
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests — please try again later." },
+  skip: (req) => process.env.NODE_ENV === "test",
+});
+
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/register", authLimiter);
+app.use("/api/auth/forgot-password", authLimiter);
+app.use("/api", globalLimiter);
 
 app.use("/api", router);
 
