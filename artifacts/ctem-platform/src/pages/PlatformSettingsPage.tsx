@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/apiFetch";
 
 interface PlatformSetting {
   key: string;
@@ -26,7 +27,7 @@ const CATEGORY_META: Record<string, { label: string; icon: React.ElementType; co
   general:       { label: "General",                    icon: Key,          color: "text-muted-foreground" },
 };
 
-const AUTH_HEADER = () => ({ Authorization: `Bearer ${sessionStorage.getItem("access_token")}` });
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function PlatformSettingsPage() {
   const { user } = useAuth();
@@ -42,9 +43,9 @@ export default function PlatformSettingsPage() {
 
   useEffect(() => {
     if (user?.role !== "super_admin") { navigate("/dashboard"); return; }
-    fetch("/api/platform/settings", { headers: AUTH_HEADER() })
-      .then(r => r.json())
-      .then(data => { setSettings(data); setLoading(false); });
+    apiFetch<PlatformSetting[]>(`${BASE}/api/platform/settings`)
+      .then(data => { setSettings(data); setLoading(false); })
+      .catch(() => setLoading(false));
   }, [user?.role]);
 
   const handleReveal = async (key: string) => {
@@ -52,8 +53,7 @@ export default function PlatformSettingsPage() {
       setShowKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
       return;
     }
-    const res = await fetch(`/api/platform/settings/raw/${key}`, { headers: AUTH_HEADER() });
-    const { value } = await res.json();
+    const { value } = await apiFetch<{ value: string }>(`${BASE}/api/platform/settings/raw/${key}`);
     setRevealed(prev => ({ ...prev, [key]: value }));
     setShowKeys(prev => { const n = new Set(prev); n.add(key); return n; });
   };
@@ -61,18 +61,20 @@ export default function PlatformSettingsPage() {
   const handleSave = async () => {
     if (Object.keys(edits).length === 0) return;
     setSaving(true);
-    await fetch("/api/platform/settings", {
-      method: "PUT",
-      headers: { ...AUTH_HEADER(), "Content-Type": "application/json" },
-      body: JSON.stringify(edits),
-    });
-    setSaving(false);
+    try {
+      await apiFetch(`${BASE}/api/platform/settings`, {
+        method: "PUT",
+        body: JSON.stringify(edits),
+      });
+    } finally {
+      setSaving(false);
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
     setEdits({});
     setRevealed({});
     setShowKeys(new Set());
-    const data = await fetch("/api/platform/settings", { headers: AUTH_HEADER() }).then(r => r.json());
+    const data = await apiFetch<PlatformSetting[]>(`${BASE}/api/platform/settings`);
     setSettings(data);
   };
 

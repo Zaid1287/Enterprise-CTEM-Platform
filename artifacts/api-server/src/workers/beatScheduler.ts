@@ -255,8 +255,8 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
 
   setTimeout(async () => {
     await dispatchDueScans();
-    _intervalHandle = setInterval(dispatchDueScans, 60 * 60 * 1_000);
-    logger.info("Beat scheduler polling started (1 h interval)");
+    _intervalHandle = setInterval(dispatchDueScans, 60 * 1_000);
+    logger.info("Beat scheduler polling started (60 s interval)");
   }, 30_000);
 }
 

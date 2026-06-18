@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Building2, Users, Server, Bug, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -109,8 +109,8 @@ export default function TenantsPage() {
             </thead>
             <tbody>
               {tenants.map(t => (
-                <>
-                  <tr key={t.id} className={cn("border-b border-border/50 hover:bg-accent/30 cursor-pointer",
+                <Fragment key={t.id}>
+                  <tr className={cn("border-b border-border/50 hover:bg-accent/30 cursor-pointer",
                     expandedId === t.id && "bg-accent/20")} onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}>
                     <td className="px-4 py-2.5">
                       <div className="font-medium">{t.name}</div>
@@ -121,7 +121,7 @@ export default function TenantsPage() {
                     </td>
                     <td className="px-4 py-2.5">{t.userCount}</td>
                     <td className="px-4 py-2.5">{t.assetCount}</td>
-                    <td className="px-4 py-2.5">{t.openFindingCount}</td>
+                    <td className="px-4 py-2.5">{t.openFindingCount ?? t.findingCount}</td>
                     <td className="px-4 py-2.5">
                       {t.criticalCount > 0
                         ? <span className="text-red-400 font-semibold">{t.criticalCount}</span>
@@ -138,7 +138,7 @@ export default function TenantsPage() {
                     </td>
                   </tr>
                   {expandedId === t.id && (
-                    <tr key={`${t.id}-expand`} className="border-b border-border/50 bg-accent/10">
+                    <tr className="border-b border-border/50 bg-accent/10">
                       <td colSpan={8} className="px-6 py-3">
                         <div className="text-xs space-y-1">
                           <p className="font-medium text-muted-foreground mb-1.5">Account Managers</p>
@@ -158,7 +158,7 @@ export default function TenantsPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
               {tenants.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground text-sm">No client tenants yet</td></tr>

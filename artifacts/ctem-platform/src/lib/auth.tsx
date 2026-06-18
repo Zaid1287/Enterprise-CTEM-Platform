@@ -8,7 +8,13 @@ interface AuthContextType {
   token: string | null;
   login: (token: string, user: User) => void;
   logout: () => void;
+  setUser: (user: User | null) => void;
   isLoading: boolean;
+}
+
+/** Read the current access token from localStorage — used by apiFetch and QueueMonitorPage. */
+export function getToken(): string | null {
+  return localStorage.getItem("auth_token");
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -56,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, setUser, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

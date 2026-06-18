@@ -19,7 +19,7 @@ export default function AlertsPage() {
   const [, navigate] = useLocation();
   const [severityFilter, setSeverityFilter] = useState("");
   const [showCreateRule, setShowCreateRule] = useState(false);
-  const [ruleForm, setRuleForm] = useState({ name: "", triggerType: "new_vulnerability", channel: "email", destination: "" });
+  const [ruleForm, setRuleForm] = useState({ name: "", triggerType: "new_finding", channel: "email", destination: "" });
   const queryClient = useQueryClient();
 
   const alertParams = { severity: severityFilter || undefined };
@@ -42,7 +42,7 @@ export default function AlertsPage() {
     await createRule.mutateAsync({ data: ruleForm } as any);
     queryClient.invalidateQueries({ queryKey: getListAlertRulesQueryKey() });
     setShowCreateRule(false);
-    setRuleForm({ name: "", triggerType: "new_vulnerability", channel: "email", destination: "" });
+    setRuleForm({ name: "", triggerType: "new_finding", channel: "email", destination: "" });
   };
 
   const alertList = alerts as any[] ?? [];
@@ -183,11 +183,12 @@ export default function AlertsPage() {
               <Select value={ruleForm.triggerType} onValueChange={v => setRuleForm(p => ({ ...p, triggerType: v }))}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="new_vulnerability">New Vulnerability</SelectItem>
-                  <SelectItem value="critical_exposure">Critical Exposure</SelectItem>
-                  <SelectItem value="ssl_expiry">SSL Expiry</SelectItem>
-                  <SelectItem value="new_asset">New Asset</SelectItem>
-                  <SelectItem value="compliance_failure">Compliance Failure</SelectItem>
+                  <SelectItem value="any">Any Event</SelectItem>
+                  <SelectItem value="new_finding">New Finding</SelectItem>
+                  <SelectItem value="critical_finding">Critical Finding</SelectItem>
+                  <SelectItem value="high_finding">High Finding</SelectItem>
+                  <SelectItem value="scan_complete">Scan Complete</SelectItem>
+                  <SelectItem value="brand_threat">Brand Threat Detected</SelectItem>
                 </SelectContent>
               </Select>
             </div>
