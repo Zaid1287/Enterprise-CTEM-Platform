@@ -13,4 +13,5 @@
 - [Email circular import avoidance](email-circular-import.md) — email.ts imports platformSettings.ts; notifier.ts imports email.ts. Break the loop: define AlertEmailEvent inline in email.ts rather than importing NotificationEvent from notifier.ts.
 - [Findings table cvss column](findings-schema.md) — DB column is `cvss` (real/float), not `cvssScore` (string). findingInserts must use `cvss: 7.5` not `cvssScore: "7.5"`.
 - [Drizzle undefined column crash](drizzle-undefined-column.md) — Passing undefined column refs to db.select({}) causes Object.entries(null) crash in orderSelectedFields; assetsTable has no `status` or `riskScore` — use verificationStatus and riskLevel instead.
+- [Favihunter Python subprocess](favihunter-integration.md) — Never set PYTHONPATH in subprocess env; the wrapper script adds sys.path internally. Setting PYTHONPATH externally breaks urllib3 resolution and silently fails.
 - [NVD rate limit upgrade](nvd-rate-limit.md) — Without API key: 5 req/30s → use 6500ms delay. With key: 50 req/30s → use 650ms delay. Pass key as `apiKey` header (not Authorization). Stored in platform settings as nvd_api_key.

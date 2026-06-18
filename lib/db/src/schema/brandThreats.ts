@@ -15,6 +15,16 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   fuzzerBreakdown:   jsonb("fuzzer_breakdown"),
   error:             text("error"),
   pipelineScanId:    integer("pipeline_scan_id"),
+
+  favihunterStatus:  text("favihunter_status"),
+  favihunterError:   text("favihunter_error"),
+  faviconUrl:        text("favicon_url"),
+  faviconMmh3:       integer("favicon_mmh3"),
+  faviconMmh3Hex:    text("favicon_mmh3_hex"),
+  faviconMd5:        text("favicon_md5"),
+  faviconSha256:     text("favicon_sha256"),
+  faviconSearchUrls: jsonb("favicon_search_urls"),
+
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:       timestamp("completed_at", { withTimezone: true }),
 });

@@ -4,7 +4,8 @@ import { useGetBrandThreatScan, getGetBrandThreatScanQueryKey } from "@workspace
 import {
   ArrowLeft, Globe, AlertTriangle, CheckCircle2, XCircle,
   Loader2, Mail, Server, ChevronDown, ChevronUp, RefreshCw,
-  ShieldAlert, Eye, Activity, Zap,
+  ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
+  Hash, Search, ChevronRight,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,19 @@ const FUZZER_META: Record<string, { label: string; color: string; bg: string; ch
   "bitsquatting":  { label: "Bitsquatting", color: "text-orange-400", bg: "bg-orange-500/10", chartColor: "#fb923c" },
 };
 
+const ENGINE_META: Record<string, { color: string; bg: string; border: string }> = {
+  "Shodan":       { color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/25" },
+  "Censys":       { color: "text-blue-400",   bg: "bg-blue-500/10",   border: "border-blue-500/25" },
+  "FOFA":         { color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/25" },
+  "Netlas":       { color: "text-teal-400",   bg: "bg-teal-500/10",   border: "border-teal-500/25" },
+  "Hunter-How":   { color: "text-amber-400",  bg: "bg-amber-500/10",  border: "border-amber-500/25" },
+  "Criminal IP":  { color: "text-rose-400",   bg: "bg-rose-500/10",   border: "border-rose-500/25" },
+  "Zoomeye":      { color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/25" },
+  "Silent Push":  { color: "text-cyan-400",   bg: "bg-cyan-500/10",   border: "border-cyan-500/25" },
+  "ODIN":         { color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/25" },
+  "Validin":      { color: "text-violet-400", bg: "bg-violet-500/10", border: "border-violet-500/25" },
+};
+
 type FilterMode = "all" | "live" | "mx" | "suspicious";
 
 function RiskScoreBar({ score }: { score: number }) {
@@ -49,6 +63,162 @@ function RiskScoreBar({ score }: { score: number }) {
       <span className="text-xs font-bold tabular-nums w-6 text-right" style={{ color: SCORE_COLOR(score) }}>
         {score}
       </span>
+    </div>
+  );
+}
+
+function HashChip({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    void navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <button
+      onClick={copy}
+      title="Click to copy"
+      className="flex flex-col gap-0.5 text-left group hover:bg-muted/60 rounded-lg px-2.5 py-2 transition-colors w-full"
+    >
+      <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-semibold">{label}</span>
+      <span className="font-mono text-[11px] text-foreground/80 break-all leading-snug group-hover:text-foreground transition-colors">
+        {copied ? <span className="text-green-400">Copied!</span> : value}
+      </span>
+    </button>
+  );
+}
+
+function FaviconIntelPanel({ scan }: { scan: any }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const status: string = scan.favihunterStatus ?? "pending";
+  const searchUrls: Record<string, { url: string; hash_type: string }> = scan.faviconSearchUrls ?? {};
+
+  if (status === "pending" || status === "running") {
+    return (
+      <div className="mx-6 mt-4 bg-violet-500/5 border border-violet-500/20 rounded-xl p-4 flex items-center gap-3">
+        <Loader2 className="w-4 h-4 animate-spin text-violet-400 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-violet-400">Favicon intelligence scan in progress</p>
+          <p className="text-xs text-muted-foreground">
+            favihunter is computing favicon hashes and generating search engine pivot URLs…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "skipped" || status === "error" || !scan.faviconMd5) {
+    return (
+      <div className="mx-6 mt-4 bg-muted/30 border border-border rounded-xl p-4 flex items-center gap-3">
+        <Fingerprint className="w-4 h-4 text-muted-foreground/40 shrink-0" />
+        <p className="text-xs text-muted-foreground">
+          {status === "error"
+            ? `Favicon intelligence unavailable: ${scan.favihunterError ?? "unknown error"}`
+            : "No favicon found for this domain — skipping favicon intelligence."}
+        </p>
+      </div>
+    );
+  }
+
+  const engines = Object.entries(searchUrls).filter(([k]) => k !== "_error");
+
+  return (
+    <div className="mx-6 mt-4 border border-violet-500/20 rounded-xl overflow-hidden bg-violet-500/3">
+      {/* Header */}
+      <button
+        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-violet-500/5 transition-colors"
+        onClick={() => setCollapsed(c => !c)}
+      >
+        <Fingerprint className="w-4 h-4 text-violet-400 shrink-0" />
+        <span className="text-sm font-semibold text-violet-300">Favicon Intelligence</span>
+        <span className="text-[10px] text-violet-400/60 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full font-mono ml-1">
+          powered by favihunter
+        </span>
+        <div className="flex-1" />
+        <span className="text-xs text-muted-foreground mr-1">{engines.length} search engines</span>
+        {collapsed
+          ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+          : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+        }
+      </button>
+
+      {!collapsed && (
+        <div className="border-t border-violet-500/15 px-5 py-4">
+          <div className="flex gap-6 flex-wrap">
+            {/* Favicon preview */}
+            <div className="flex flex-col items-center gap-2 shrink-0">
+              <div className="w-12 h-12 rounded-xl border border-border bg-background flex items-center justify-center overflow-hidden">
+                <img
+                  src={scan.faviconUrl}
+                  alt="favicon"
+                  className="w-10 h-10 object-contain"
+                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              </div>
+              <p className="text-[9px] text-muted-foreground text-center max-w-[60px] break-all leading-tight font-mono">
+                favicon.ico
+              </p>
+            </div>
+
+            {/* Hash values */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Hash className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+                  Favicon Hashes
+                </span>
+                <span className="text-[9px] text-muted-foreground/50">(click to copy)</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5">
+                <HashChip label="MMH3 (Shodan / FOFA)" value={String(scan.faviconMmh3)} />
+                <HashChip label="MMH3-HEX (Criminal IP)" value={scan.faviconMmh3Hex} />
+                <HashChip label="MD5 (Censys / Hunter-How / ODIN / Validin)" value={scan.faviconMd5} />
+                <HashChip label="SHA256 (Netlas)" value={scan.faviconSha256} />
+              </div>
+            </div>
+          </div>
+
+          {/* Search engine pivot links */}
+          {engines.length > 0 && (
+            <div className="mt-4">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Search className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+                  Search Engine Pivots
+                </span>
+                <span className="text-[9px] text-muted-foreground/50 ml-1">
+                  — click to find hosts using the same favicon
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {engines.map(([name, { url, hash_type }]) => {
+                  const meta = ENGINE_META[name] ?? { color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" };
+                  return (
+                    <a
+                      key={name}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all",
+                        "hover:scale-105 hover:shadow-sm",
+                        meta.color, meta.bg, meta.border,
+                      )}
+                      title={`Search ${name} using ${hash_type} hash`}
+                    >
+                      {name}
+                      <ExternalLink className="w-3 h-3 opacity-60" />
+                    </a>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-muted-foreground/40 mt-2">
+                These links pivot on the domain's actual favicon fingerprint to find clones, phishing infrastructure, or related assets across internet scan databases.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -68,15 +238,17 @@ export default function BrandThreatDetailPage() {
     query: {
       enabled: !!id,
       queryKey: getGetBrandThreatScanQueryKey(id),
-      refetchInterval: (query: any) =>
-        (query?.state?.data?.status === "running" || query?.state?.data?.status === "pending") ? 3000 : false,
+      refetchInterval: (query: any) => {
+        const d = query?.state?.data as any;
+        if (d?.status === "running" || d?.status === "pending") return 3000;
+        if (d?.favihunterStatus === "running" || d?.favihunterStatus === "pending") return 4000;
+        return false;
+      },
     },
   });
 
   const s = scan as any;
   const results: any[] = s?.results ?? [];
-
-  const fuzzers = Array.from(new Set(results.map((r: any) => r.fuzzer))).sort();
 
   const filtered = results.filter((r: any) => {
     if (filter === "live"       && !(r.dnsA?.length > 0)) return false;
@@ -123,6 +295,13 @@ export default function BrandThreatDetailPage() {
       count: count as number,
       color: FUZZER_META[fuzzer]?.chartColor ?? "#94a3b8",
     }));
+
+  const showFaviPanel = s.status !== "pending" && (
+    s.favihunterStatus === "running" ||
+    s.favihunterStatus === "done" ||
+    s.favihunterStatus === "skipped" ||
+    s.favihunterStatus === "error"
+  );
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -207,7 +386,7 @@ export default function BrandThreatDetailPage() {
             <p className="text-xs text-muted-foreground">
               {s.totalPermutations > 0
                 ? `Resolving DNS for ${s.totalPermutations} domain permutations…`
-                : "Generating permutations via dnstwist…"}
+                : "Generating permutations via dnstwist + running favihunter favicon analysis…"}
             </p>
           </div>
         </div>
@@ -222,9 +401,12 @@ export default function BrandThreatDetailPage() {
         </div>
       )}
 
+      {/* ── Favicon Intelligence panel (favihunter) ───────────────────── */}
+      {showFaviPanel && <FaviconIntelPanel scan={s} />}
+
       {/* ── Main two-column layout ────────────────────────────────────── */}
       {results.length > 0 && (
-        <div className="flex-1 min-h-0 flex gap-0 overflow-hidden">
+        <div className="flex-1 min-h-0 flex gap-0 overflow-hidden mt-4">
           {/* ── Left sidebar ── */}
           <div className="w-64 shrink-0 border-r border-border overflow-y-auto p-4 space-y-4 bg-card/50">
             {/* Fuzzer breakdown chart */}
@@ -310,7 +492,7 @@ export default function BrandThreatDetailPage() {
                   className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none"
                 >
                   <option value="all">All types</option>
-                  {fuzzers.map((f: string) => (
+                  {Array.from(new Set(results.map((r: any) => r.fuzzer))).sort().map((f: string) => (
                     <option key={f} value={f}>{FUZZER_META[f]?.label ?? f}</option>
                   ))}
                 </select>
@@ -363,15 +545,12 @@ export default function BrandThreatDetailPage() {
                       )}
                       onClick={() => setExpandedId(isExpanded ? null : r.id)}
                     >
-                      {/* Threat indicator */}
                       <div className="flex items-center justify-center">
                         {r.isSuspicious
                           ? <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
                           : <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground/20" />
                         }
                       </div>
-
-                      {/* Domain */}
                       <div className="flex items-center gap-2 min-w-0 pr-2">
                         <span className="text-sm font-mono truncate">{r.permutation}</span>
                         {isExpanded
@@ -379,8 +558,6 @@ export default function BrandThreatDetailPage() {
                           : <ChevronDown className="w-3 h-3 text-muted-foreground/40 shrink-0" />
                         }
                       </div>
-
-                      {/* Fuzzer */}
                       <div className="flex justify-center">
                         <span className={cn(
                           "text-[10px] px-2 py-0.5 rounded-full font-medium",
@@ -389,8 +566,6 @@ export default function BrandThreatDetailPage() {
                           {fm?.label ?? r.fuzzer}
                         </span>
                       </div>
-
-                      {/* DNS A */}
                       <div className="flex justify-center">
                         {r.dnsA?.length > 0 ? (
                           <span className="flex items-center gap-1 text-[11px] text-red-400 font-mono font-medium">
@@ -401,8 +576,6 @@ export default function BrandThreatDetailPage() {
                           <span className="text-xs text-muted-foreground/30">—</span>
                         )}
                       </div>
-
-                      {/* MX */}
                       <div className="flex justify-center">
                         {r.dnsMx?.length > 0 ? (
                           <span className="flex items-center gap-1 text-[11px] text-orange-400 font-medium">
@@ -412,8 +585,6 @@ export default function BrandThreatDetailPage() {
                           <span className="text-xs text-muted-foreground/30">—</span>
                         )}
                       </div>
-
-                      {/* Risk score bar */}
                       <div className="px-2">
                         <RiskScoreBar score={r.riskScore} />
                       </div>

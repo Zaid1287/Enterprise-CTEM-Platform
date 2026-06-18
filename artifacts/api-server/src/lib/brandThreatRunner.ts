@@ -1,11 +1,61 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
+import { fileURLToPath } from "url";
+import path from "path";
 import dns from "node:dns/promises";
 import { eq, and } from "drizzle-orm";
 import { db, brandThreatScansTable, brandThreatResultsTable } from "@workspace/db";
 import { logger } from "./logger";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+// Resolve wrapper script path relative to this bundle (dist/index.mjs → ../scripts/)
+const WRAPPER_SCRIPT = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../scripts/favihunter_wrapper.py",
+);
+
+// ── Favihunter integration ─────────────────────────────────────────────────────
+
+interface FaviHunterResult {
+  faviconUrl: string;
+  hashes: {
+    mmh3: number;
+    mmh3Hex: string;
+    md5: string;
+    sha256: string;
+  };
+  searchUrls: Record<string, { url: string; hash_type: string }>;
+}
+
+async function runFaviHunter(domain: string): Promise<FaviHunterResult | null> {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "python3",
+      [WRAPPER_SCRIPT, domain],
+      {
+        timeout: 60_000,
+        maxBuffer: 2 * 1024 * 1024,
+        env: process.env,
+      },
+    );
+    if (stderr) logger.debug({ domain, stderr }, "favihunter stderr");
+
+    const raw = JSON.parse(stdout.trim()) as { error?: string; favicon_url?: string; hashes?: FaviHunterResult["hashes"]; search_urls?: FaviHunterResult["searchUrls"] };
+    if (raw.error) {
+      logger.warn({ domain, error: raw.error }, "favihunter reported no favicon or error");
+      return null;
+    }
+    if (!raw.favicon_url || !raw.hashes || !raw.search_urls) {
+      logger.warn({ domain }, "favihunter returned incomplete data");
+      return null;
+    }
+    return { faviconUrl: raw.favicon_url, hashes: raw.hashes, searchUrls: raw.search_urls };
+  } catch (err: unknown) {
+    logger.warn({ err, domain, wrapper: WRAPPER_SCRIPT }, "favihunter subprocess failed");
+    return null;
+  }
+}
 
 // ── dnstwist binary runner ─────────────────────────────────────────────────────
 
@@ -16,8 +66,14 @@ interface PermResult {
   dnsMx: string[];
 }
 
+const execAsync = promisify(
+  (cmd: string, opts: Parameters<typeof import("child_process").exec>[1], cb: Parameters<typeof import("child_process").exec>[2]) =>
+    import("child_process").then(m => m.exec(cmd, opts, cb)),
+);
+
 async function runDnstwistBinary(domain: string): Promise<PermResult[]> {
-  const { stdout } = await execAsync(
+  const cp = await import("child_process");
+  const { stdout } = await promisify(cp.exec)(
     `dnstwist --format json --threads 20 ${domain}`,
     { timeout: 180_000, maxBuffer: 20 * 1024 * 1024 },
   );
@@ -153,7 +209,7 @@ async function checkDNS(domain: string): Promise<{ dnsA: string[]; dnsMx: string
   ]);
   return {
     dnsA: a as string[],
-    dnsMx: (mx as any[]).map((m: any) => String(m.exchange)),
+    dnsMx: (mx as { exchange: string }[]).map((m) => m.exchange),
   };
 }
 
@@ -206,10 +262,42 @@ function computeRisk(dnsA: string[], dnsMx: string[], fuzzer: string): number {
 export async function runBrandThreatScan(scanId: number, domain: string): Promise<void> {
   try {
     await db.update(brandThreatScansTable)
-      .set({ status: "running" })
+      .set({ status: "running", favihunterStatus: "running" })
       .where(eq(brandThreatScansTable.id, scanId));
 
-    const permResults = await scanPermutations(domain);
+    logger.info({ scanId, domain }, "Starting brand threat scan (permutations + favihunter in parallel)");
+
+    // ── Phase 1 & 2 run in parallel ──────────────────────────────────────────
+    const [permResults, faviResult] = await Promise.all([
+      scanPermutations(domain),
+      runFaviHunter(domain).then(async result => {
+        if (result) {
+          await db.update(brandThreatScansTable).set({
+            favihunterStatus: "done",
+            faviconUrl:       result.faviconUrl,
+            faviconMmh3:      result.hashes.mmh3,
+            faviconMmh3Hex:   result.hashes.mmh3Hex,
+            faviconMd5:       result.hashes.md5,
+            faviconSha256:    result.hashes.sha256,
+            faviconSearchUrls: result.searchUrls as unknown as Record<string, unknown>,
+          }).where(eq(brandThreatScansTable.id, scanId));
+          logger.info({ scanId, domain, faviconUrl: result.faviconUrl }, "Favihunter completed");
+        } else {
+          await db.update(brandThreatScansTable).set({
+            favihunterStatus: "skipped",
+          }).where(eq(brandThreatScansTable.id, scanId));
+          logger.info({ scanId, domain }, "Favihunter: no favicon found or error — skipped");
+        }
+        return result;
+      }).catch(async (err: unknown) => {
+        logger.error({ err, scanId }, "Favihunter phase failed");
+        await db.update(brandThreatScansTable).set({
+          favihunterStatus: "error",
+          favihunterError: String(err),
+        }).where(eq(brandThreatScansTable.id, scanId));
+        return null;
+      }),
+    ]);
 
     await db.update(brandThreatScansTable)
       .set({ totalPermutations: permResults.length })
@@ -258,7 +346,10 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       completedAt: new Date(),
     }).where(eq(brandThreatScansTable.id, scanId));
 
-    logger.info({ scanId, domain, liveCount, registeredCount }, "Brand threat scan completed");
+    logger.info(
+      { scanId, domain, liveCount, registeredCount, faviconFound: !!faviResult },
+      "Brand threat scan completed",
+    );
   } catch (err) {
     logger.error({ err, scanId }, "Brand threat scan failed");
     await db.update(brandThreatScansTable).set({
@@ -269,7 +360,7 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
   }
 }
 
-// ── Auto-trigger helper (used by pipeline scans) ──────────────────────────────
+// ── Auto-trigger helper (used by pipeline scans & asset scans) ────────────────
 
 export async function triggerBrandThreatScan(
   tenantId: number,
