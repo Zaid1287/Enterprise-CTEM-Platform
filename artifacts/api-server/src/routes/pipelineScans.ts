@@ -24,6 +24,7 @@ import { logAudit } from "../lib/audit";
 import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
 import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
+import { finalizeScannedAssets } from "../lib/scanScheduler";
 import { enrichFindingsWithEpssKev } from "../lib/epssKev";
 import { getPlatformSetting } from "./platformSettings";
 import { setNvdApiKey } from "../lib/nvdLookup";
@@ -122,6 +123,12 @@ async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> 
         assetCount: entry.configs.length, findingsCount,
       });
       logger.info({ scanId: entry.scanId, findingsCount }, "Scan completed");
+
+      // Recompute risk scores and lastScannedAt for all scanned assets (includes businessImpact)
+      const pipelineAssetIds = entry.configs.map(c => c.assetId);
+      finalizeScannedAssets(pipelineAssetIds).catch(err =>
+        logger.warn({ err, scanId: entry.scanId }, "finalizeScannedAssets failed"),
+      );
 
       // ── Auto-trigger brand threat scan for every domain asset ───────────────
       setImmediate(async () => {

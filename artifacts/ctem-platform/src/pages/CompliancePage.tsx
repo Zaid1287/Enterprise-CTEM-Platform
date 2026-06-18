@@ -248,7 +248,7 @@ export default function CompliancePage() {
                   <td className="px-4 py-2.5 text-xs max-w-xs">
                     <p className="font-medium">{c.title}</p>
                     <EvidenceFiles
-                      evidence={c.evidenceFiles}
+                      evidence={c.evidence}
                       controlId={c.id}
                       onDeleted={() => queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() })}
                     />

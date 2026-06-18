@@ -1,7 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
-import { startScanScheduler } from "./lib/scanScheduler";
 import { getRedis } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
 import { startAlertWorker } from "./workers/alertWorker";
@@ -72,9 +71,6 @@ app.listen(port, (err) => {
     logger.info("No REDIS_URL — BullMQ workers disabled, using in-process fallback");
   }
 
-  // Beat scheduler replaces the legacy startScanScheduler when Redis is available
+  // Beat scheduler handles asset-frequency and schedule-based scans (BullMQ or inline with retry)
   startBeatScheduler(port).catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
-  if (!process.env.REDIS_URL) {
-    startScanScheduler();
-  }
 });
