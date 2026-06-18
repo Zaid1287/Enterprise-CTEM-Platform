@@ -141,11 +141,30 @@ export interface TenantUpdate {
   maxUsers?: number;
 }
 
+export type AssetType = typeof AssetType[keyof typeof AssetType];
+
+
+export const AssetType = {
+  domain: 'domain',
+  subdomain: 'subdomain',
+  url: 'url',
+  ip: 'ip',
+  cidr: 'cidr',
+  api: 'api',
+  ssl_cert: 'ssl_cert',
+  cloud_asset: 'cloud_asset',
+  host: 'host',
+  mobile_app: 'mobile_app',
+  sentinelware: 'sentinelware',
+} as const;
+
+export type AssetMetadata = { [key: string]: unknown } | null;
+
 export interface Asset {
   id: number;
   tenantId: number;
   name: string;
-  type: string;
+  type: AssetType;
   value: string;
   verificationStatus: string;
   riskLevel: string;
@@ -168,11 +187,31 @@ export interface Asset {
   /** @nullable */
   lastScannedAt?: string | null;
   createdAt: string;
+  metadata?: AssetMetadata;
 }
+
+export type AssetInputType = typeof AssetInputType[keyof typeof AssetInputType];
+
+
+export const AssetInputType = {
+  domain: 'domain',
+  subdomain: 'subdomain',
+  url: 'url',
+  ip: 'ip',
+  cidr: 'cidr',
+  api: 'api',
+  ssl_cert: 'ssl_cert',
+  cloud_asset: 'cloud_asset',
+  host: 'host',
+  mobile_app: 'mobile_app',
+  sentinelware: 'sentinelware',
+} as const;
+
+export type AssetInputMetadata = { [key: string]: unknown };
 
 export interface AssetInput {
   name: string;
-  type: string;
+  type: AssetInputType;
   value: string;
   description?: string;
   tags?: string[];
@@ -180,7 +219,10 @@ export interface AssetInput {
   port?: number;
   assignedClientId?: number;
   assignedAccountManagerId?: number;
+  metadata?: AssetInputMetadata;
 }
+
+export type AssetUpdateMetadata = { [key: string]: unknown } | null;
 
 export interface AssetUpdate {
   name?: string;
@@ -193,6 +235,7 @@ export interface AssetUpdate {
   assignedClientId?: number | null;
   /** @nullable */
   assignedAccountManagerId?: number | null;
+  metadata?: AssetUpdateMetadata;
 }
 
 export interface VerificationInput {

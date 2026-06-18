@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { tenantsTable } from "./tenants";
@@ -24,6 +24,7 @@ export const assetsTable = pgTable("assets", {
   assignedClientId: integer("assigned_client_id").references(() => usersTable.id),
   assignedAccountManagerId: integer("assigned_account_manager_id").references(() => usersTable.id),
   scanFrequency: text("scan_frequency").notNull().default("manual"),
+  metadata: jsonb("metadata").$type<Record<string, any>>(),
   lastScannedAt: timestamp("last_scanned_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

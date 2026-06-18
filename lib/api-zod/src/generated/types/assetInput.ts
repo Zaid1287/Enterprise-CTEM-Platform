@@ -5,10 +5,12 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+import type { AssetInputMetadata } from './assetInputMetadata';
+import type { AssetInputType } from './assetInputType';
 
 export interface AssetInput {
   name: string;
-  type: string;
+  type: AssetInputType;
   value: string;
   description?: string;
   tags?: string[];
@@ -16,4 +18,5 @@ export interface AssetInput {
   port?: number;
   assignedClientId?: number;
   assignedAccountManagerId?: number;
+  metadata?: AssetInputMetadata;
 }

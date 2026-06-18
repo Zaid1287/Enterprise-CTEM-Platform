@@ -5,6 +5,7 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+import type { AssetUpdateMetadata } from './assetUpdateMetadata';
 
 export interface AssetUpdate {
   name?: string;
@@ -17,4 +18,5 @@ export interface AssetUpdate {
   assignedClientId?: number | null;
   /** @nullable */
   assignedAccountManagerId?: number | null;
+  metadata?: AssetUpdateMetadata;
 }

@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck,
   Zap, Square, Loader2, Pencil, Copy, CheckCircle2, XCircle, AlertTriangle, Globe,
-  Shield, Server, Filter,
+  Shield, Server, Filter, Cloud, Lock, Smartphone, Network, Code2, Cpu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiFetch } from "@/lib/apiFetch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "sentinelware", "mobile_app"];
+const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "host", "mobile_app", "sentinelware"];
 const RISK_LEVELS = ["critical", "high", "medium", "low"];
 
 const SCAN_FREQUENCIES = [
@@ -38,6 +38,25 @@ const SCAN_FREQUENCIES = [
   { value: "weekly",  label: "Weekly" },
   { value: "monthly", label: "Monthly" },
 ];
+
+const TYPE_CONFIG: Record<string, { label: string; valueLabel: string; valuePlaceholder: string; needsVerify: boolean }> = {
+  domain:       { label: "Domain",           valueLabel: "Domain",             valuePlaceholder: "example.com",                needsVerify: true  },
+  subdomain:    { label: "Subdomain",         valueLabel: "Subdomain",          valuePlaceholder: "app.example.com",            needsVerify: true  },
+  url:          { label: "URL",               valueLabel: "URL",                valuePlaceholder: "https://example.com",         needsVerify: true  },
+  ip:           { label: "IP Address",        valueLabel: "IP Address",         valuePlaceholder: "203.0.113.10",               needsVerify: false },
+  cidr:         { label: "CIDR / IP Range",   valueLabel: "CIDR Range",         valuePlaceholder: "10.0.0.0/8",                 needsVerify: false },
+  api:          { label: "API Endpoint",      valueLabel: "Base URL",           valuePlaceholder: "https://api.example.com/v1", needsVerify: true  },
+  ssl_cert:     { label: "SSL Certificate",   valueLabel: "Hostname",           valuePlaceholder: "example.com",                needsVerify: false },
+  cloud_asset:  { label: "Cloud Asset",       valueLabel: "Resource ID / ARN",  valuePlaceholder: "arn:aws:ec2:us-east-1:…",    needsVerify: true  },
+  host:         { label: "Host",              valueLabel: "Hostname / IP",      valuePlaceholder: "server01.internal",          needsVerify: false },
+  mobile_app:   { label: "Mobile App",        valueLabel: "Bundle ID / App ID", valuePlaceholder: "com.example.app",            needsVerify: false },
+  sentinelware: { label: "Sentinelware",      valueLabel: "Value",              valuePlaceholder: "",                           needsVerify: false },
+};
+
+function typeLabel(t: string) { return TYPE_CONFIG[t]?.label ?? t.replace(/_/g, " "); }
+function typeValueLabel(t: string) { return TYPE_CONFIG[t]?.valueLabel ?? "Value"; }
+function typeValuePlaceholder(t: string) { return TYPE_CONFIG[t]?.valuePlaceholder ?? ""; }
+function typeNeedsVerify(t: string) { return TYPE_CONFIG[t]?.needsVerify ?? false; }
 
 const emptyForm = {
   name: "", type: "domain", value: "", description: "",
@@ -86,6 +105,10 @@ export default function AssetsPage() {
   const [showEdit, setShowEdit] = useState(false);
   const [editingAsset, setEditingAsset] = useState<any>(null);
   const [editForm, setEditForm] = useState({ ...emptyForm });
+
+  // Type-specific metadata for create/edit forms
+  const [newMetadata, setNewMetadata] = useState<Record<string, string>>({});
+  const [editMetadata, setEditMetadata] = useState<Record<string, string>>({});
 
   // Inline verify
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
@@ -152,6 +175,7 @@ export default function AssetsPage() {
 
   function resetCreateForm() {
     setNewAsset({ ...emptyForm });
+    setNewMetadata({});
     setSelectedToolIds([]);
     setRunNow(false);
     setVerifyStep("idle");
@@ -164,10 +188,12 @@ export default function AssetsPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanMeta = Object.fromEntries(Object.entries(newMetadata).filter(([, v]) => v !== ""));
     const payload: any = {
       name: newAsset.name, type: newAsset.type, value: newAsset.value,
       scanFrequency: newAsset.scanFrequency,
       description: newAsset.description || undefined,
+      metadata: Object.keys(cleanMeta).length > 0 ? cleanMeta : undefined,
     };
     if (!isClient) {
       if (newAsset.assignedClientId) payload.assignedClientId = newAsset.assignedClientId;
@@ -177,8 +203,8 @@ export default function AssetsPage() {
     await queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
     const newId = (created as any)?.id;
 
-    // For domain/subdomain/url/cloud_asset (client), show verify method selection
-    if (isClient && newId && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url" || newAsset.type === "cloud_asset")) {
+    // For verifiable types (client role), show verification method selection
+    if (isClient && newId && typeNeedsVerify(newAsset.type)) {
       setPendingAssetId(newId);
       setVerifyStep("method_select");
       return;
@@ -250,10 +276,12 @@ export default function AssetsPage() {
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAsset) return;
+    const cleanMeta = Object.fromEntries(Object.entries(editMetadata).filter(([, v]) => v !== ""));
     const payload: any = {
       name: editForm.name, type: editForm.type, value: editForm.value,
       description: editForm.description || undefined,
       scanFrequency: editForm.scanFrequency,
+      metadata: Object.keys(cleanMeta).length > 0 ? cleanMeta : editingAsset.metadata ?? null,
     };
     if (!isClient) {
       if (editForm.assignedClientId) payload.assignedClientId = editForm.assignedClientId;
@@ -277,6 +305,7 @@ export default function AssetsPage() {
       assignedClientId: asset.assignedClientId,
       assignedAccountManagerId: asset.assignedAccountManagerId,
     });
+    setEditMetadata(asset.metadata ?? {});
     setShowEdit(true);
   }
 
@@ -371,7 +400,7 @@ export default function AssetsPage() {
           <SelectTrigger className="w-34 h-8 text-sm"><SelectValue placeholder="All types" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="_all_">All types</SelectItem>
-            {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t.replace(/_/g, " "))}</SelectItem>)}
+            {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{typeLabel(t)}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={riskFilter || "_all_"} onValueChange={v => setRiskFilter(v === "_all_" ? "" : v)}>
@@ -656,25 +685,27 @@ export default function AssetsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Type *</Label>
-                  <Select value={newAsset.type} onValueChange={v => setNewAsset(p => ({ ...p, type: v }))}>
+                  <Select value={newAsset.type} onValueChange={v => { setNewAsset(p => ({ ...p, type: v, value: "" })); setNewMetadata({}); }}>
                     <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t.replace(/_/g, " "))}</SelectItem>)}
+                      {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{typeLabel(t)}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">
-                    {newAsset.type === "ip" ? "IP Address" : newAsset.type === "url" ? "URL" : "Domain / Value"} *
-                  </Label>
+                  <Label className="text-xs">{typeValueLabel(newAsset.type)} *</Label>
                   <Input
                     value={newAsset.value}
                     onChange={e => setNewAsset(p => ({ ...p, value: e.target.value }))}
-                    placeholder={newAsset.type === "ip" ? "1.2.3.4" : newAsset.type === "url" ? "https://…" : "example.com"}
+                    placeholder={typeValuePlaceholder(newAsset.type)}
                     required className="h-9 font-mono text-sm"
                   />
                 </div>
               </div>
+
+              {/* Type-specific metadata fields */}
+              <AssetMetadataFields type={newAsset.type} metadata={newMetadata} onChange={setNewMetadata} />
+
               <div className="space-y-1.5">
                 <Label className="text-xs">Description (optional)</Label>
                 <Input
@@ -770,10 +801,10 @@ export default function AssetsPage() {
               )}
 
               {/* Client info box */}
-              {isClient && (newAsset.type === "domain" || newAsset.type === "subdomain" || newAsset.type === "url" || newAsset.type === "cloud_asset") && (
+              {isClient && typeNeedsVerify(newAsset.type) && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-400 flex items-start gap-2">
                   <Shield className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>After adding, you'll need to verify ownership. Choose from DNS TXT record, HTTP file, admin email, or cloud resource tag.</span>
+                  <span>After adding, you'll need to verify ownership of this {typeLabel(newAsset.type).toLowerCase()}. Choose from DNS TXT, HTTP file, email, or cloud tag.</span>
                 </div>
               )}
 
@@ -804,15 +835,19 @@ export default function AssetsPage() {
                 <Select value={editForm.type} onValueChange={v => setEditForm(p => ({ ...p, type: v }))}>
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t.replace(/_/g, " "))}</SelectItem>)}
+                    {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{typeLabel(t)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Value</Label>
-                <Input value={editForm.value} onChange={e => setEditForm(p => ({ ...p, value: e.target.value }))} required className="h-9 font-mono text-sm" />
+                <Label className="text-xs">{typeValueLabel(editForm.type)}</Label>
+                <Input value={editForm.value} onChange={e => setEditForm(p => ({ ...p, value: e.target.value }))} required className="h-9 font-mono text-sm" placeholder={typeValuePlaceholder(editForm.type)} />
               </div>
             </div>
+
+            {/* Type-specific metadata fields */}
+            <AssetMetadataFields type={editForm.type} metadata={editMetadata} onChange={setEditMetadata} />
+
             <div className="space-y-1.5">
               <Label className="text-xs">Description</Label>
               <Input value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} className="h-9" />
@@ -903,17 +938,208 @@ export default function AssetsPage() {
 
 // ── Sub-components ──
 
+function AssetMetadataFields({
+  type, metadata, onChange,
+}: {
+  type: string;
+  metadata: Record<string, string>;
+  onChange: (m: Record<string, string>) => void;
+}) {
+  const set = (key: string, value: string) => onChange({ ...metadata, [key]: value });
+
+  if (type === "api") {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">HTTP Method</Label>
+          <Select value={metadata.method ?? "any"} onValueChange={v => set("method", v)}>
+            <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {["any", "GET", "POST", "PUT", "PATCH", "DELETE"].map(m => (
+                <SelectItem key={m} value={m}>{m === "any" ? "All methods" : m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Auth Type</Label>
+          <Select value={metadata.authType ?? "none"} onValueChange={v => set("authType", v)}>
+            <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {[
+                { value: "none",    label: "None / Public" },
+                { value: "api_key", label: "API Key" },
+                { value: "oauth2",  label: "OAuth 2.0" },
+                { value: "jwt",     label: "JWT Bearer" },
+                { value: "basic",   label: "Basic Auth" },
+              ].map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5 col-span-2">
+          <Label className="text-xs">API Version (optional)</Label>
+          <Input
+            value={metadata.apiVersion ?? ""}
+            onChange={e => set("apiVersion", e.target.value)}
+            placeholder="v1, v2, 2024-01-01…"
+            className="h-9 text-xs"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (type === "ssl_cert") {
+    return (
+      <div className="space-y-1.5">
+        <Label className="text-xs">Port (default 443)</Label>
+        <Input
+          type="number"
+          value={metadata.port ?? "443"}
+          onChange={e => set("port", e.target.value)}
+          placeholder="443"
+          className="h-9 text-xs w-32"
+        />
+        <p className="text-xs text-muted-foreground">The scanner will connect on this port to inspect the SSL/TLS certificate.</p>
+      </div>
+    );
+  }
+
+  if (type === "cloud_asset") {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Cloud Provider</Label>
+          <Select value={metadata.cloudProvider ?? ""} onValueChange={v => set("cloudProvider", v)}>
+            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select provider" /></SelectTrigger>
+            <SelectContent>
+              {[
+                { value: "aws",   label: "Amazon Web Services" },
+                { value: "gcp",   label: "Google Cloud Platform" },
+                { value: "azure", label: "Microsoft Azure" },
+                { value: "other", label: "Other / On-prem" },
+              ].map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Resource Type</Label>
+          <Input
+            value={metadata.cloudResourceType ?? ""}
+            onChange={e => set("cloudResourceType", e.target.value)}
+            placeholder="ec2, s3, gke, vm…"
+            className="h-9 text-xs"
+          />
+        </div>
+        <div className="space-y-1.5 col-span-2">
+          <Label className="text-xs">Region (optional)</Label>
+          <Input
+            value={metadata.cloudRegion ?? ""}
+            onChange={e => set("cloudRegion", e.target.value)}
+            placeholder="us-east-1, europe-west1, eastus…"
+            className="h-9 text-xs"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (type === "host") {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Host Type</Label>
+          <Select value={metadata.hostType ?? ""} onValueChange={v => set("hostType", v)}>
+            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select type" /></SelectTrigger>
+            <SelectContent>
+              {[
+                { value: "physical",  label: "Physical Server" },
+                { value: "virtual",   label: "Virtual Machine" },
+                { value: "container", label: "Container" },
+                { value: "cloud",     label: "Cloud Instance" },
+              ].map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Operating System</Label>
+          <Select value={metadata.os ?? ""} onValueChange={v => set("os", v)}>
+            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select OS" /></SelectTrigger>
+            <SelectContent>
+              {[
+                { value: "linux",   label: "Linux" },
+                { value: "windows", label: "Windows" },
+                { value: "macos",   label: "macOS" },
+                { value: "unknown", label: "Unknown" },
+              ].map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === "mobile_app") {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Platform</Label>
+          <Select value={metadata.platform ?? ""} onValueChange={v => set("platform", v)}>
+            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select platform" /></SelectTrigger>
+            <SelectContent>
+              {[
+                { value: "ios",     label: "iOS (Apple App Store)" },
+                { value: "android", label: "Android (Google Play)" },
+                { value: "both",    label: "Cross-platform" },
+              ].map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Bundle ID</Label>
+          <Input
+            value={metadata.bundleId ?? ""}
+            onChange={e => set("bundleId", e.target.value)}
+            placeholder="com.example.myapp"
+            className="h-9 text-xs font-mono"
+          />
+        </div>
+        <div className="space-y-1.5 col-span-2">
+          <Label className="text-xs">App Store URL (optional)</Label>
+          <Input
+            value={metadata.appStoreUrl ?? ""}
+            onChange={e => set("appStoreUrl", e.target.value)}
+            placeholder="https://apps.apple.com/app/…"
+            className="h-9 text-xs"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (type === "cidr") {
+    return (
+      <div className="rounded-lg border border-border bg-accent/20 px-3 py-2.5 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground mb-1">CIDR Range</p>
+        <p>Use standard notation like <code className="font-mono bg-background px-1 rounded">10.0.0.0/8</code> (Class A) or <code className="font-mono bg-background px-1 rounded">192.168.1.0/24</code> (subnet). The scanner will enumerate live hosts within this range.</p>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 function TypeBadge({ type }: { type: string }) {
   const icons: Record<string, React.ElementType> = {
     domain: Globe, subdomain: Globe, url: Globe, ip: Server,
-    sentinelware: Server, host: Server, cidr: Server, cloud_asset: Shield, api: Zap,
+    cidr: Network, api: Code2, ssl_cert: Lock,
+    cloud_asset: Cloud, host: Cpu, mobile_app: Smartphone, sentinelware: Shield,
   };
   const Icon = icons[type] ?? Globe;
-  const label = type === "sentinelware" ? "sentinelware" : type.replace(/_/g, " ");
   return (
     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-accent/50 px-2 py-0.5 rounded">
       <Icon className="w-3 h-3" />
-      {label}
+      {typeLabel(type)}
     </span>
   );
 }

@@ -2220,6 +2220,7 @@ components:
           type: string
         type:
           type: string
+          enum: [domain, subdomain, url, ip, cidr, api, ssl_cert, cloud_asset, host, mobile_app, sentinelware]
         value:
           type: string
         verificationStatus:
@@ -2250,6 +2251,10 @@ components:
           type: ["string", "null"]
         createdAt:
           type: string
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
 
     AssetInput:
       type: object
@@ -2259,6 +2264,7 @@ components:
           type: string
         type:
           type: string
+          enum: [domain, subdomain, url, ip, cidr, api, ssl_cert, cloud_asset, host, mobile_app, sentinelware]
         value:
           type: string
         description:
@@ -2275,6 +2281,9 @@ components:
           type: integer
         assignedAccountManagerId:
           type: integer
+        metadata:
+          type: object
+          additionalProperties: true
 
     AssetUpdate:
       type: object
@@ -2297,6 +2306,10 @@ components:
           type: ["integer", "null"]
         assignedAccountManagerId:
           type: ["integer", "null"]
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
 
     VerificationInput:
       type: object

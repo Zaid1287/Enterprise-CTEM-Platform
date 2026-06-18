@@ -274,7 +274,7 @@ export const ListAssetsResponseItem = zod.object({
   "id": zod.number(),
   "tenantId": zod.number(),
   "name": zod.string(),
-  "type": zod.string(),
+  "type": zod.enum(['domain', 'subdomain', 'url', 'ip', 'cidr', 'api', 'ssl_cert', 'cloud_asset', 'host', 'mobile_app', 'sentinelware']),
   "value": zod.string(),
   "verificationStatus": zod.string(),
   "riskLevel": zod.string(),
@@ -288,7 +288,8 @@ export const ListAssetsResponseItem = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
 export const ListAssetsResponse = zod.array(ListAssetsResponseItem)
 
@@ -298,14 +299,15 @@ export const ListAssetsResponse = zod.array(ListAssetsResponseItem)
  */
 export const CreateAssetBody = zod.object({
   "name": zod.string(),
-  "type": zod.string(),
+  "type": zod.enum(['domain', 'subdomain', 'url', 'ip', 'cidr', 'api', 'ssl_cert', 'cloud_asset', 'host', 'mobile_app', 'sentinelware']),
   "value": zod.string(),
   "description": zod.string().optional(),
   "tags": zod.array(zod.string()).optional(),
   "ipAddress": zod.string().optional(),
   "port": zod.number().optional(),
   "assignedClientId": zod.number().optional(),
-  "assignedAccountManagerId": zod.number().optional()
+  "assignedAccountManagerId": zod.number().optional(),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
 })
 
 
@@ -320,7 +322,7 @@ export const GetAssetResponse = zod.object({
   "id": zod.number(),
   "tenantId": zod.number(),
   "name": zod.string(),
-  "type": zod.string(),
+  "type": zod.enum(['domain', 'subdomain', 'url', 'ip', 'cidr', 'api', 'ssl_cert', 'cloud_asset', 'host', 'mobile_app', 'sentinelware']),
   "value": zod.string(),
   "verificationStatus": zod.string(),
   "riskLevel": zod.string(),
@@ -334,7 +336,8 @@ export const GetAssetResponse = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
 
 
@@ -353,14 +356,15 @@ export const UpdateAssetBody = zod.object({
   "riskLevel": zod.string().optional(),
   "verificationStatus": zod.string().optional(),
   "assignedClientId": zod.number().nullish(),
-  "assignedAccountManagerId": zod.number().nullish()
+  "assignedAccountManagerId": zod.number().nullish(),
+  "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
 
 export const UpdateAssetResponse = zod.object({
   "id": zod.number(),
   "tenantId": zod.number(),
   "name": zod.string(),
-  "type": zod.string(),
+  "type": zod.enum(['domain', 'subdomain', 'url', 'ip', 'cidr', 'api', 'ssl_cert', 'cloud_asset', 'host', 'mobile_app', 'sentinelware']),
   "value": zod.string(),
   "verificationStatus": zod.string(),
   "riskLevel": zod.string(),
@@ -374,7 +378,8 @@ export const UpdateAssetResponse = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
 
 
@@ -608,7 +613,7 @@ export const GetAssetGroupMembersResponseItem = zod.object({
   "id": zod.number(),
   "tenantId": zod.number(),
   "name": zod.string(),
-  "type": zod.string(),
+  "type": zod.enum(['domain', 'subdomain', 'url', 'ip', 'cidr', 'api', 'ssl_cert', 'cloud_asset', 'host', 'mobile_app', 'sentinelware']),
   "value": zod.string(),
   "verificationStatus": zod.string(),
   "riskLevel": zod.string(),
@@ -622,7 +627,8 @@ export const GetAssetGroupMembersResponseItem = zod.object({
   "assignedAccountManagerId": zod.number().nullish(),
   "assignedAccountManagerName": zod.string().nullish(),
   "lastScannedAt": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "metadata": zod.record(zod.string(), zod.unknown()).nullish()
 })
 export const GetAssetGroupMembersResponse = zod.array(GetAssetGroupMembersResponseItem)
 

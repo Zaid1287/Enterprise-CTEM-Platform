@@ -112,6 +112,7 @@ function toAssetResponse(
     ipAddress: a.ipAddress,
     port: a.port,
     isActive: a.isActive,
+    metadata: (a as any).metadata ?? null,
     assignedClientId: a.assignedClientId ?? null,
     assignedClientName: (a.assignedClientId && userMap) ? (userMap.get(a.assignedClientId) ?? null) : null,
     assignedAccountManagerId: a.assignedAccountManagerId ?? null,
