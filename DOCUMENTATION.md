@@ -1,7 +1,7 @@
 # Sentinelware CTEM Platform — Complete Technical Documentation
 
-> **Version:** 1.0  
-> **Last Updated:** June 2026  
+> **Version:** 2.0  
+> **Last Updated:** June 18, 2026  
 > **Classification:** Internal Engineering Reference
 
 ---
@@ -36,6 +36,12 @@
    - 8.18 Screenshots
    - 8.19 Technology Detections
    - 8.20 Platform Settings (Super Admin)
+   - 8.21 Brand Threat Detection
+   - 8.22 Attack Surface Graph / Topology
+   - 8.23 Queue Monitor
+   - 8.24 Session Management
+   - 8.25 Exposure Management
+   - 8.26 Two-Factor Authentication (2FA)
 9. [Scan Engine — Deep Dive](#9-scan-engine--deep-dive)
    - 9.1 Scan Phases
    - 9.2 Phase 1: Reconnaissance
@@ -96,22 +102,57 @@ Scoping → Discovery → Prioritisation → Validation → Mobilisation
                             │  HTTPS  (path-based routing)
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     REVERSE PROXY (Nginx)                       │
+│                 REVERSE PROXY (Nginx / Replit)                  │
 │         /          → port 23203   (React SPA / Vite)            │
 │         /api       → port 8080    (Express API)                 │
 └────────────────────┬────────────────────┬───────────────────────┘
                      │                    │
-          ┌──────────▼──────┐   ┌─────────▼────────┐
-          │  Frontend (Vite) │   │  API Server       │
-          │  React 19 + TS   │   │  Express 5 + TS   │
-          │  Port: 23203     │   │  Port: 8080       │
-          └──────────────────┘   └─────────┬─────────┘
+          ┌──────────▼──────┐   ┌─────────▼────────────────────┐
+          │  Frontend (Vite) │   │  API Server (Express 5 + TS) │
+          │  React 19 + TS   │   │  Port: 8080                  │
+          │  Port: 23203     │   │                              │
+          └──────────────────┘   │  Middleware stack:           │
+                                 │  Helmet → CORS → JSON →      │
+                                 │  Auth rate limiter →         │
+                                 │  Global rate limiter →       │
+                                 │  requireAuth → Routes        │
+                                 └─────────┬────────────────────┘
                                            │
-                                 ┌─────────▼─────────┐
-                                 │  PostgreSQL DB     │
-                                 │  Drizzle ORM       │
-                                 │  21 tables         │
-                                 └───────────────────┘
+                    ┌──────────────────────┼──────────────────────┐
+                    │                      │                      │
+          ┌─────────▼─────────┐  ┌────────▼────────┐  ┌─────────▼────────┐
+          │  PostgreSQL DB     │  │  Background      │  │  External APIs   │
+          │  Drizzle ORM       │  │  Workers         │  │                  │
+          │  30+ tables        │  │                  │  │  NVD, Shodan,    │
+          │  RLS on all        │  │  beatScheduler   │  │  Censys, IntelX, │
+          │  tenant tables     │  │  scanWorker      │  │  VirusTotal,     │
+          └───────────────────┘  │  alertWorker     │  │  Hunter.io,      │
+                                 │  SSE manager     │  │  crt.sh, CISA    │
+                                 └─────────────────┘  └──────────────────┘
+```
+
+### Background Worker Architecture
+
+```
+API Server startup (index.ts)
+  │
+  ├── initBeatScheduler()        ← beatScheduler.ts
+  │     ├── Every 60s: dispatchDueSchedules()
+  │     │     └── SELECT scan_schedules WHERE nextRunAt <= NOW()
+  │     │           └── enqueueOrRun(assetId) → pipelineScans
+  │     └── Every 60s: asset-frequency dispatch
+  │           └── SELECT assets WHERE nextScanAt <= NOW()
+  │                 └── enqueueOrRun(assetId)
+  │
+  ├── initScanWorker()           ← scanWorker.ts
+  │     └── BullMQ queue (Redis) or in-process queue fallback
+  │         MAX_CONCURRENT_SCANS = 5
+  │         MAX_PARALLEL_ASSETS  = 3
+  │         3-attempt retry with exponential backoff (5s→10s→20s)
+  │
+  └── initAlertWorker()          ← alertWorker.ts
+        └── Processes notification dispatch jobs
+              └── Email / Slack / Discord / Telegram / Webhook / SSE
 ```
 
 ### Key Design Principles
@@ -257,45 +298,110 @@ workspace/
 
 ## 5. Database Schema
 
-All 21 tables and their purpose:
+All 30+ tables and their purpose:
 
-| Table | Purpose |
-|---|---|
-| `tenants` | One row per organisation. All data scoped by `tenant_id`. |
-| `users` | Platform users. Roles: `super_admin`, `admin`, `user`, `account_manager`. Password stored as bcrypt hash. |
-| `assets` | Discovered/registered assets. Types: `domain`, `ip`, `url`, `host`, `cloud`, `mobile`, `api`, `iot`. |
-| `asset_groups` | Named groups of assets for bulk scanning and reporting. |
-| `scans` | Scan sessions — one row per scan run, holds status, config, result summary. |
-| `scan_asset_results` | Per-asset results within a scan. Stores JSON blobs: ports, subdomains, endpoints, DNS records, HTTP headers, SSL cert, screenshots, CVEs, secrets. |
-| `findings` | Vulnerability findings. Each row: CVE ID, CVSS, EPSS, KEV flag, title, description, remediation, status, affected asset. |
-| `risk_scores` | Time-series risk scores per asset and aggregate per tenant. |
-| `compliance` | Per-tenant compliance controls across 7 frameworks. Each row: framework, control ID, status (pass/fail/partial). |
-| `alerts` | Security alerts. Types: new_vulnerability, critical_exposure, ssl_expiry, new_asset, compliance_failure, scan_complete. |
-| `audit_logs` | Immutable write-append audit trail. Every mutating API call writes a row. |
-| `reports` | Generated report metadata (type, created_at, config). |
-| `security_tools` | Tool catalog — 35+ built-in tools + user-added tools. |
-| `tool_pipeline_steps` | Ordered pipeline — which tools run in which sequence per tenant. |
-| `scan_schedules` | Cron-based recurring scan configurations. |
-| `packages` | Software package inventory per asset (name, version, vendor). |
-| `takedown_requests` | Infrastructure takedown tracking (phishing domains, malicious IPs). |
-| `account_manager_clients` | Maps account_manager users to the tenants they manage. |
-| `invitations` | Email invitation tokens for new user onboarding. |
-| `user_ai_settings` | Per-user AI model preferences (model, temperature, system prompt). |
-| `technology_detections` | Technologies detected per asset (framework, version, confidence). |
-| `screenshots` | Headless browser screenshots captured per URL during scans. |
-| `platform_settings` | Super-admin key-value store for third-party API credentials. |
+### Core / Auth Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `tenants` | id, name, domain, plan, stripeCustomerId | One row per organisation. All data scoped by `tenant_id`. |
+| `users` | id, tenantId, email, passwordHash, role, twoFactorEnabled, avatarUrl | Roles: `super_admin`, `admin`, `manager`, `client`. bcrypt hash (cost 12). |
+| `sessions` | id, userId, tenantId, tokenHash, userAgent, ip, expiresAt | SHA-256 of access token. Used for session listing and revocation. |
+| `invitations` | id, tenantId, email, role, token, expiresAt | Pre-registration invite tokens. Email sent on creation. |
+
+### Asset Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `assets` | id, tenantId, name, type, domain, ip, url, status, verificationStatus, riskLevel, businessImpact (1–10), tags[], lastScannedAt | All internet-facing assets. businessImpact factored into risk score. |
+| `asset_groups` | id, tenantId, name, description | Named logical groups for bulk scanning and reporting. |
+| `asset_group_members` | groupId, assetId | Join table linking assets to groups. |
+| `technology_detections` | id, tenantId, assetId, scanId, name, category, version, confidence | Per-scan technology fingerprints. Replaced on every scan. |
+| `screenshots` | id, tenantId, assetId, scanId, url, data (base64 PNG), title, statusCode | Stored as base64. No MinIO dependency. |
+| `discovery_results` | id, tenantId, assetId, source, data (jsonb), createdAt | Historical passive discovery output per source. |
+
+### Scan Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `scans` | id, tenantId, assetId, status, type, startedAt, completedAt | One row per scan session. Statuses: pending/running/completed/failed/cancelled. |
+| `scan_jobs` | id, scanId, assetId, tenantId, status, result | Per-asset job within a scan. |
+| `scan_asset_results` | id, scanId, assetId, tenantId, raw (jsonb) | Full raw pipeline output including ports, subdomains, DNS, endpoints, SSL, CVEs. |
+| `scan_schedules` | id, tenantId, assetId, frequency, nextRunAt, lastRunAt, isActive | Recurring scan schedule. Dispatched by beatScheduler every 60s. |
+| `security_tools` | id, tenantId, name, category, installCommand, runCommand, outputFormat | Tool registry — 40+ built-in tools. |
+| `tool_pipeline_steps` | id, tenantId, toolName, phase, isEnabled, order | Which tools run in which order per tenant. |
+| `tool_runs` | id, tenantId, toolName, assetId, scanId, status, output, exitCode, startedAt | Tool execution history with real stdout/stderr. |
+
+### Vulnerability Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `findings` | id, tenantId, assetId, scanId, title, severity, status, cveId, cvss, epss, cwe, isKev, description, remediation | status: open/in_progress/accepted_risk/false_positive/mitigated. |
+| `finding_comments` | id, findingId, tenantId, userId, text, createdAt | Threaded comments on findings. |
+
+### Compliance Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `compliance_frameworks` | id, tenantId, name, version | ISO 27001, SOC 2, PCI DSS, HIPAA, CIS Controls. |
+| `compliance_controls` | id, tenantId, frameworkId, controlId, title, status, evidence (json-encoded file list), assignee, dueDate | evidence stores filenames; files served via `/compliance/controls/:id/evidence/:filename`. |
+
+### Risk Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `risk_scores` | id, tenantId, assetId, score, level, factors (jsonb), calculatedAt | Multi-factor: CVSS + EPSS + KEV + criticality + exposure + businessImpact. |
+
+### Alerting Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `alerts` | id, tenantId, title, severity, type, assetId, findingId, status, seenAt | Triggered on scan events. Delivered via SSE stream. |
+| `alert_rules` | id, tenantId, name, triggerType, channel, channelConfig (jsonb), isActive | channelConfig holds webhook URL, Telegram chatId, etc. |
+
+### Reporting Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `reports` | id, tenantId, title, type, format, status, filePath, createdAt | type: executive/technical/compliance/inventory. |
+
+### Brand Threat Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `brand_threat_scans` | id, tenantId, brandName, status, permutationCount | One per brand threat scan run. |
+| `brand_threat_results` | id, scanId, tenantId, domain, type, risk, registrar, registeredAt | Individual suspicious domain results. |
+| `takedown_requests` | id, tenantId, domain, brandScanResultId, status, reason, notes | Formal takedown workflow for malicious domains. |
+
+### Platform / Admin Tables
+
+| Table | Key Columns | Purpose |
+|---|---|---|
+| `audit_logs` | id, tenantId, userId, action, resourceType, resourceId, metadata, ip, createdAt | **Immutable** — PostgreSQL trigger blocks all UPDATE/DELETE. |
+| `platform_settings` | id, tenantId, key, value | Tenant-scoped key-value store for API keys and config. |
+| `user_ai_settings` | id, userId, tenantId, provider, apiKey, model, systemPrompt | Per-user LLM preferences. |
+| `packages` | id, tenantId, name, price, features, maxAssets, maxUsers | Pricing tiers for the SaaS product. |
+| `account_manager_clients` | managerId, clientId, tenantId | Account manager ↔ client organization assignments. |
 
 ### Key Relationships
 
 ```
-tenants ──< users
+tenants ──< users ──< sessions
 tenants ──< assets ──< scan_asset_results >── scans
-tenants ──< findings >── assets
-tenants ──< compliance
+                   ──< findings ──< finding_comments
+                   ──< technology_detections
+                   ──< screenshots
+                   ──< discovery_results
+                   ──< risk_scores
+tenants ──< compliance_frameworks ──< compliance_controls
 tenants ──< alerts
-tenants ──< security_tools
+tenants ──< alert_rules
+tenants ──< security_tools ──< tool_pipeline_steps
+                           ──< tool_runs
+tenants ──< brand_threat_scans ──< brand_threat_results ──< takedown_requests
 tenants ──< reports
-audit_logs >── users (actor)
+tenants ──< audit_logs
+tenants ──< platform_settings
 ```
 
 ---
@@ -534,10 +640,12 @@ Central vulnerability management view.
 **Page:** `/risk`  
 **Route file:** `routes/risk.ts`
 
-Risk score calculation per asset, aggregated to tenant level:
+Risk score calculation per asset — multi-factor, NOT only CVSS:
 
 ```
-Asset Risk Score = Σ (finding.cvssScore × epssWeight × kevMultiplier)
+Asset Risk Score = Σ (finding.cvss × epssWeight × kevMultiplier)
+                  + exposurePenalty (dangerous exposed ports)
+                  + (businessImpact / 10) × 20
 
 where:
   epssWeight    = 1 + (finding.epssScore × 2)     // boosts high-exploitation probability
@@ -574,19 +682,37 @@ Compliance percentage = `pass_count / (total - not_applicable)`.
 ### 8.8 Alerting
 
 **Page:** `/alerts`  
-**Route file:** `routes/alerts.ts`
+**Route file:** `routes/alerts.ts`  
+**Engine:** `lib/notifier.ts`
 
-**Alert Types:**
-- `new_vulnerability` — new critical/high finding discovered
-- `critical_exposure` — asset exposed with critical vulnerability
-- `ssl_expiry` — SSL certificate expiring within 30 days
-- `new_asset` — new asset discovered by scan
-- `compliance_failure` — compliance control dropped to fail
-- `scan_complete` — scan finished (with summary)
+**Alert Channels (all fully implemented):**
 
-**Alert Detail Page (`/alerts/:id`):** Shows full alert message, severity badge, type label, received timestamp, auto-marks read on load, links to related asset or finding.
+| Channel | Delivery Method | Config Required |
+|---|---|---|
+| **Email** | Resend API (HTML template) | `resend_api_key` in Platform Settings |
+| **Slack** | Block Kit formatted webhook POST | `slack_webhook_url` per alert rule |
+| **Discord** | Embed webhook POST | `discord_webhook_url` per alert rule |
+| **Telegram** | Bot API `sendMessage` (HTML parse mode) | `telegram_bot_token` + `telegram_chat_id` per alert rule |
+| **Webhook (Generic)** | Raw JSON POST to any URL | Webhook URL per alert rule |
+| **SSE (Browser)** | Server-Sent Events stream | Built-in — no config needed |
 
-**Alert Rules:** Configurable rules that auto-create alerts based on triggers. Channel options: email, slack, webhook.
+**Alert Trigger Types (fired from `dispatchNotifications()`):**
+
+| Trigger | When It Fires |
+|---|---|
+| `scan_complete` | Every scan finishes (success or failure) |
+| `critical_finding` | Scan results contain one or more critical-severity findings |
+| `high_finding` | Scan results contain high or critical findings |
+| `new_finding` | Any finding discovered during a scan |
+| `brand_threat` | Brand threat scan completes with suspicious domains found |
+
+> **Note:** `new_asset`, `ssl_expiry`, and `compliance_failure` are selectable in the UI alert rule builder but are not yet auto-dispatched — see Section 17.
+
+**Alert Rules:** Configurable per-tenant rules that map trigger types to channels. Multiple rules can target the same trigger. Each rule has its own `channelConfig` JSON (webhook URL, Telegram chatId, etc.).
+
+**Real-time delivery:** `GET /alerts/stream` returns a persistent SSE connection. The browser receives new alerts instantly without polling. `sseManager.ts` holds active connections by userId and pushes on every `dispatchNotifications()` call.
+
+**Alert Detail Page (`/alerts/:id`):** Full alert message, severity badge, type, timestamp, auto-marks read on load, deep links to related asset or finding.
 
 ---
 
@@ -780,16 +906,171 @@ Accessible only to `super_admin` role. Stores third-party API credentials in the
 
 | Key | Category | Purpose |
 |---|---|---|
-| `resend_api_key` | Email | Resend.com API key for transactional emails |
-| `smtp_host` / `smtp_port` / `smtp_user` / `smtp_pass` / `smtp_from` | Email | Custom SMTP configuration |
-| `slack_webhook_url` | Notifications | Slack incoming webhook for alerts |
-| `discord_webhook_url` | Notifications | Discord webhook for alerts |
-| `shodan_api_key` | Scanning | Enables full Shodan API (CVE enrichment, CPEs, ports) |
-| `nvd_api_key` | Scanning | Increases NVD rate limit from 5 to 50 req/30s |
-| `virustotal_api_key` | Scanning | Domain/IP reputation lookups |
+| `resend_api_key` | Email | Resend.com API key for transactional email alerts and invitations |
+| `smtp_host` / `smtp_port` / `smtp_user` / `smtp_pass` / `smtp_from` | Email | Custom SMTP server as alternative to Resend |
+| `slack_webhook_url` | Notifications | Slack incoming webhook for default Slack alerts |
+| `discord_webhook_url` | Notifications | Discord webhook for default Discord alerts |
+| `telegram_bot_token` | Notifications | Telegram Bot API token |
+| `telegram_chat_id` | Notifications | Default Telegram chat/channel ID |
+| `shodan_api_key` | Scanning | Full Shodan API — CVE enrichment, CPEs, banner data, port history |
+| `nvd_api_key` | Scanning | NVD rate limit: 5 req/30s (no key) → 50 req/30s (with key) |
+| `virustotal_api_key` | Scanning | Domain/IP reputation + passive DNS lookups |
 | `hunter_api_key` | OSINT | Employee email enumeration via Hunter.io |
+| `censys_api_id` / `censys_api_secret` | OSINT | Censys internet-wide scan data |
+| `intelx_api_key` | OSINT | IntelligenceX historical data, darkweb, pastes |
+| `github_token` | OSINT | GitHub secret scanning — authenticated = higher rate limits |
+| `fofa_email` / `fofa_api_key` | OSINT | Fofa.info internet exposure search |
+| `criminalip_api_key` | OSINT | CriminalIP threat intelligence lookups |
+| `nvd_api_key` | Vuln | NVD API key for enhanced CVE enrichment rate |
+| `stripe_secret_key` | Billing | Stripe payments integration |
+| `stripe_webhook_secret` | Billing | Stripe webhook signature verification |
 
 Values are masked in the UI. The "reveal" button fetches the real value from `/platform/settings/raw/:key`.
+
+---
+
+### 8.21 Brand Threat Detection
+
+**Page:** `/brand-threats`, `/brand-threats/:id`  
+**Route file:** `routes/brandThreats.ts`  
+**Engine:** `lib/brandThreatRunner.ts`
+
+Detects typosquatting, phishing domains, and brand impersonation:
+
+**How it works:**
+1. Takes the brand name and generates 4,000+ domain permutations using dnstwist-style algorithms (homoglyphs, transpositions, vowel swaps, hyphen insertion, TLD variations, bit-flipping)
+2. Resolves each permutation — marks registered ones as suspicious
+3. Captures favicons from suspicious domains and compares favicon hashes (favihunter integration)
+4. Assigns risk levels: Critical / High / Medium / Low
+5. Screenshots suspicious domains
+6. Fires `brand_threat` alert rule if high-risk domains found
+
+**Result fields:** domain, permutation type, registration status, registrar, registration date, risk level, favicon hash match, screenshot.
+
+**Takedown integration:** Each brand threat result can be escalated to a Takedown Request directly from the detail page.
+
+---
+
+### 8.22 Attack Surface Graph / Topology
+
+**Page:** `/topology`  
+**Route file:** `routes/graph.ts`  
+**Engine:** `GET /graph/attack-surface`
+
+Visual force-directed graph of the organisation's attack surface.
+
+**Graph data format (Neo4j-style):**
+```json
+{
+  "nodes": [
+    { "id": "org-1",    "type": "organization", "label": "Example Corp" },
+    { "id": "asset-42", "type": "asset",         "label": "example.com" },
+    { "id": "port-443", "type": "port",          "label": "443/HTTPS" },
+    { "id": "finding-7","type": "finding",       "label": "CVE-2024-1234" },
+    { "id": "cve-1234", "type": "cve",           "label": "CVE-2024-1234" }
+  ],
+  "relationships": [
+    { "source": "org-1",    "target": "asset-42", "type": "OWNS" },
+    { "source": "asset-42", "target": "port-443", "type": "EXPOSES" },
+    { "source": "asset-42", "target": "finding-7","type": "HAS_VULNERABILITY" },
+    { "source": "finding-7","target": "cve-1234", "type": "REFERENCES_CVE" }
+  ]
+}
+```
+
+**Relationship types:** `OWNS`, `SUBDOMAIN_OF`, `RESOLVES_TO`, `EXPOSES`, `HAS_VULNERABILITY`, `REFERENCES_CVE`
+
+**Frontend:** D3.js force simulation with zoom, pan, drag, and click-through to asset/finding detail pages. Node colour-coded by type. Neo4j-ready — data format is compatible with a future Neo4j integration.
+
+---
+
+### 8.23 Queue Monitor
+
+**Page:** `/queue-monitor`  
+**Route file:** `routes/queues.ts`  
+**Access:** `super_admin` only
+
+Displays BullMQ queue metrics:
+- Active / waiting / completed / failed job counts
+- Per-queue breakdown (scan-queue, alert-queue)
+- Job list with status, payload preview, timestamps
+- Manual retry of failed jobs
+
+When Redis is unavailable, shows in-process queue state instead.
+
+---
+
+### 8.24 Session Management
+
+**Page:** `/settings/account` (Sessions tab)  
+**Route file:** `routes/sessions.ts`
+
+Every login creates a `sessions` row with:
+- `tokenHash` — SHA-256 of the access token (never stores the raw token)
+- `userAgent` — parsed browser/OS from User-Agent header
+- `ip` — client IP from `X-Forwarded-For` or `req.socket.remoteAddress`
+- `expiresAt` — matches refresh token TTL (7 days)
+
+Users can view all active sessions and revoke any individual session from Account Settings. Revoking a session invalidates the corresponding refresh token, forcing logout on that device.
+
+---
+
+### 8.25 Exposure Management
+
+**Page:** `/exposure`  
+**Powered by:** `pipelineScans.ts` DANGER port map + `nucleiScanner.ts`
+
+Detects and catalogues exposed services that should not be internet-facing:
+
+**Exposed ports that generate findings (26 ports):**
+
+| Port | Service | Risk |
+|---|---|---|
+| 21 | FTP | High — unencrypted file transfer |
+| 23 | Telnet | Critical — plaintext remote access |
+| 139 | NetBIOS | Critical — Windows file sharing |
+| 161 | SNMP | High — network management data |
+| 389 | LDAP | High — directory service |
+| 445 | SMB | Critical — EternalBlue/ransomware target |
+| 1433 | MSSQL | Critical — database exposed |
+| 1521 | Oracle DB | Critical — database exposed |
+| 2375/2376 | Docker API | Critical — container escape risk |
+| 2379 | etcd | Critical — Kubernetes config store |
+| 3306 | MySQL | Critical — database exposed |
+| 3389 | RDP | Critical — remote desktop brute-force target |
+| 5432 | PostgreSQL | Critical — database exposed |
+| 5900 | VNC | Critical — remote desktop |
+| 6379 | Redis | Critical — no auth by default |
+| 8080/8443 | HTTP Alt | Medium — admin panels |
+| 9200/9300 | Elasticsearch | Critical — full data exposure |
+| 27017 | MongoDB | Critical — no auth by default |
+| 50000 | SAP | High — enterprise system |
+
+**Admin panel exposure (via Nuclei templates):** Jenkins, Grafana, Kibana, phpMyAdmin, Adminer, cPanel, Plesk, WHM, Traefik, Portainer, and 30+ others.
+
+---
+
+### 8.26 Two-Factor Authentication (2FA)
+
+**Route file:** `routes/auth.ts` (2FA endpoints)  
+**Page:** `/settings/account` (Security tab)
+
+Email OTP-based 2FA flow:
+
+```
+Enable 2FA:
+  POST /auth/2fa/enable   → generates OTP, sends to email
+  POST /auth/2fa/confirm  → validates OTP, marks twoFactorEnabled=true in DB
+
+Login with 2FA active:
+  POST /auth/login        → 200 OK but with { requires2fa: true }
+  POST /auth/2fa/verify   → validates OTP, issues full JWT tokens
+
+Disable 2FA:
+  POST /auth/2fa/disable  → validates OTP, clears twoFactorEnabled
+```
+
+OTP codes are 6-digit numeric, expire in 10 minutes, stored temporarily in the users table. Email delivery via Resend (`resend_api_key` required).
 
 ---
 
@@ -1628,41 +1909,51 @@ node -e "const b=require('bcryptjs'); b.hash('your-password', 12).then(console.l
 
 ## 17. Pending / Roadmap Items
 
-### High Priority
-
-| Item | Description |
-|---|---|
-| **Email delivery wiring** | Resend API key is stored in Platform Settings but email is not yet sent for invitations, password resets, or alert notifications |
-| **Slack/Discord notifications** | Webhook URLs stored but alert rules don't fire real HTTP POSTs to webhooks yet |
-| **NVD API key usage** | Key stored but not passed as `apiKey` header in NVD requests yet — will unlock 50 req/30s rate limit |
-| **VirusTotal lookups** | API key stored; no implementation exists for domain/IP reputation |
-| **Hunter.io OSINT** | API key stored; no implementation for employee email enumeration |
-
-### Medium Priority
-
-| Item | Description |
-|---|---|
-| **Compliance evidence upload** | Controls can be set pass/fail but no file attachment for evidence |
-| **Report PDF/CSV export** | Reports page exists but no download/export of generated reports |
-| **Real-time alerts via WebSocket** | Alerts are polled every 30s; no push delivery |
-| **Bulk finding actions** | No bulk-close, bulk-assign, or bulk-export of findings |
-| **Scheduled report delivery** | No automated email delivery of scheduled reports |
-| **Invitation email** | Token generated in DB but no email sent to the invitee |
-| **Password reset email** | Reset token generated but no email sent |
-
-### Lower Priority
-
-| Item | Description |
-|---|---|
-| **2FA / MFA** | No TOTP or WebAuthn second factor |
-| **SSO / SAML** | No enterprise SSO integration |
-| **Personal API tokens** | No programmatic API access for CI/CD integration |
-| **Generic outbound webhooks** | No custom webhook delivery per alert rule |
-| **Dark/light theme toggle** | Currently dark-only |
-| **Mobile responsive layout** | Sidebar and tables not optimised for small screens |
-| **Audit log export** | Can view but not download as CSV |
-| **Asset map / topology view** | No visual network graph of asset relationships |
+> Items previously listed here that are now **complete** (removed from pending):
+> Email delivery ✅ · Slack/Discord notifications ✅ · NVD API key rate-limit fix ✅ · VirusTotal lookups ✅ · Hunter.io OSINT ✅ · Compliance evidence upload/download/delete ✅ · Report PDF/CSV/JSON export ✅ · Real-time SSE alerts ✅ · Password reset email ✅ · Invitation email ✅ · 2FA email OTP ✅ · Asset topology graph ✅ · Telegram + Webhook alert channels ✅ · businessImpact in risk engine ✅ · Session management ✅ · Brand Threat Detection ✅ · Takedown Requests ✅ · Security Tools real execution ✅
 
 ---
 
-*End of Sentinelware CTEM Platform Documentation*
+### Not Started (Requires New Development)
+
+| Item | Priority | Description |
+|---|---|---|
+| **Module 8 — Go Agent** | High | The entire internal agent system was never built. Requires a Go binary (Windows/Linux/macOS) that collects host info, installed software, running processes, open ports, and patch levels, then securely communicates with the API. Needs a new `agents` DB table, registration endpoint, and token-based auth. |
+| **XLSX report export** | Medium | Reports page supports PDF, CSV, JSON. Excel (`.xlsx`) format not implemented. Would require `exceljs` or similar on the backend. |
+| **Custom cron expressions** | Medium | Scan scheduling supports hourly/daily/weekly/monthly. No support for arbitrary cron syntax (e.g. `0 */6 * * *`). Would require `cron-parser` library and updates to `beatScheduler.ts` and `scan_schedules` schema. |
+| **API version prefix `/api/v1/`** | Low | All routes use `/api/` without versioning. A breaking change to add versioning requires updating the OpenAPI spec, all frontend hooks, and the Nginx/proxy config simultaneously. |
+| **DB table partitioning** | Low | No partitioning strategy on `findings` or `audit_logs`. Required at scale (millions of rows). Would use PostgreSQL range partitioning by `created_at`. |
+| **SSO / SAML** | Low | No enterprise SSO. Would require `passport-saml` or an external IdP integration (Okta, Azure AD). |
+| **Personal API tokens** | Low | No programmatic API access. CI/CD pipelines cannot trigger scans or query findings without a browser session. Needs a `api_tokens` table and a separate auth path. |
+
+---
+
+### Partially Implemented (Needs Completion)
+
+| Item | Status | What's Missing |
+|---|---|---|
+| **3 alert triggers not wired** | UI exists, backend missing | `new_asset` — no dispatch when an asset is created. `ssl_expiry` — no scheduled SSL cert expiry check. `compliance_failure` — no event fired when control status changes. These require calling `dispatchNotifications()` from the respective create/update handlers. |
+| **Finding evidence file uploads** | Compliance has it, Findings don't | Findings support comments but not file attachments. Compliance controls have full evidence upload/download/delete. Findings need the same pattern. |
+| **Cloud account verification** | Basic only | DNS TXT, Email, HTTP file verification are fully implemented. Cloud verification (`cloud` asset type) is implemented at the API level but does not integrate with AWS/Azure/GCP IAM APIs to confirm account ownership. |
+| **Reverse WHOIS** | Basic only | WHOIS lookups are implemented. Reverse WHOIS (find all domains registered by the same org) has no dedicated service integration — no DomainTools, WhoisXML API, or SecurityTrails call. |
+| **Platform analytics (Super Admin)** | Queue monitor only | Super admins can view the queue monitor. No dedicated cross-tenant analytics dashboard (total users, scan volumes, revenue, tenant health). |
+| **Docker / containerisation** | Not done | No Dockerfiles or Docker Compose in the repo. Deployment runs on Replit workflows. A production Docker setup would need multi-stage Dockerfiles for API + frontend + Nginx, plus a compose file for the full stack. |
+| **Redis as required service** | Optional fallback | Redis is optional. When `REDIS_URL` is not set, the platform uses an in-memory queue. For production multi-instance deployments, Redis must be required to share job state across processes. |
+| **Separate RBAC permissions table** | Role column only | Role is a string column on the `users` table. There is no fine-grained permissions table. All access control is code-level via `requireRole()`. For enterprise deployments, a `permissions` table with per-resource ACLs would be needed. |
+
+---
+
+### Known Limitations
+
+| Limitation | Impact | Notes |
+|---|---|---|
+| Screenshots stored as base64 in PostgreSQL | DB size grows large with many assets | MinIO was the original spec target. At 100+ assets with 5 screenshots each, the `screenshots` table can reach several GB. Offloading to S3/MinIO is a future migration. |
+| Gowitness not used | Minor | Puppeteer/Chromium used instead. Same quality output, easier to install. Functionally equivalent. |
+| OpenSearch not used | Minor for current scale | PostgreSQL `tsvector` full-text search implemented instead. Sufficient for single-tenant or small multi-tenant deployments. At millions of documents, OpenSearch would be needed for better search performance and faceting. |
+| tenant_id is integer, not UUID | Schema decision | Original spec required UUID tenant IDs. Integer was used. Not a functional issue but would require a schema migration to change. |
+| No DB partitioning | Risk at scale | `findings` and `audit_logs` tables grow unbounded. No partitioning by date range. At millions of rows, query performance will degrade without partitioning. |
+| In-process queue fallback | Single-instance only | Without Redis, the scan queue lives in Node.js memory. If the API server restarts mid-scan, the queue state is lost. For production, Redis must be configured. |
+
+---
+
+*End of Sentinelware CTEM Platform Documentation — Version 2.0, June 18, 2026*
