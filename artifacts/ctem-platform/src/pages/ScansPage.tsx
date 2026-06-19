@@ -4,7 +4,10 @@ import {
   useListAssets, getListScansQueryKey, getListAssetsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock } from "lucide-react";
+import {
+  Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock,
+  ShieldAlert, ShieldCheck,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, statusBadgeClass, capitalize, formatDateTime } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 const SCAN_TYPES = ["passive", "active", "vulnerability", "full"];
 const PAGE_SIZE = 10;
@@ -40,8 +44,10 @@ export default function ScansPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [customName, setCustomName] = useState("");
   const [form, setForm] = useState({ type: "full", assetIds: [] as number[] });
+  const [createError, setCreateError] = useState<{ message: string; unverified?: { id: number; name: string }[] } | null>(null);
   const [page, setPage] = useState(1);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: scans, isLoading } = useListScans({} as any, {
     query: { queryKey: getListScansQueryKey({} as any) },
@@ -55,7 +61,6 @@ export default function ScansPage() {
   const assetsList = (assets as any[]) ?? [];
   const allScans = (scans as any[]) ?? [];
 
-  // auto-generated name whenever selection changes
   const autoName = useMemo(
     () => buildScanName(form.assetIds, assetsList),
     [form.assetIds, assetsList],
@@ -67,28 +72,59 @@ export default function ScansPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateError(null);
     if (!form.assetIds.length) {
-      alert("Select at least one asset");
+      setCreateError({ message: "Select at least one asset to scan." });
       return;
     }
-    await createScan.mutateAsync({ data: { name: effectiveName, ...form } } as any);
-    queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
-    setShowCreate(false);
-    setForm({ type: "full", assetIds: [] });
-    setCustomName("");
+    try {
+      await createScan.mutateAsync({ data: { name: effectiveName, ...form } } as any);
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+      setShowCreate(false);
+      setForm({ type: "full", assetIds: [] });
+      setCustomName("");
+      setCreateError(null);
+      toast({ title: "Scan started", description: effectiveName });
+    } catch (err: any) {
+      // Try to extract structured error from API response
+      let msg = "Failed to start scan. Please try again.";
+      let unverified: { id: number; name: string }[] | undefined;
+      try {
+        const body = err?.response ? await err.response.json() : err;
+        if (body?.error) msg = body.error;
+        if (body?.unverifiedAssets) unverified = body.unverifiedAssets;
+      } catch {}
+      setCreateError({ message: msg, unverified });
+    }
   };
 
   const handleCancel = async (id: number) => {
-    await cancelScan.mutateAsync({ scanId: id });
-    queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+    try {
+      await cancelScan.mutateAsync({ scanId: id });
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+      toast({ title: "Scan cancelled" });
+    } catch {
+      toast({ title: "Could not cancel scan", variant: "destructive" });
+    }
   };
 
-  const toggleAsset = (id: number) => {
+  const toggleAsset = (id: number, verified: boolean) => {
+    if (!verified) {
+      toast({
+        title: "Asset not verified",
+        description: "You must verify ownership of this asset before scanning it. Go to Assets → Verify.",
+        variant: "destructive",
+      });
+      return;
+    }
     setForm(prev => ({
       ...prev,
       assetIds: prev.assetIds.includes(id) ? prev.assetIds.filter(a => a !== id) : [...prev.assetIds, id],
     }));
   };
+
+  const verifiedAssets = assetsList.filter((a: any) => a.verificationStatus === "verified");
+  const unverifiedAssets = assetsList.filter((a: any) => a.verificationStatus !== "verified");
 
   return (
     <div className="space-y-4">
@@ -101,7 +137,7 @@ export default function ScansPage() {
           <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: getListScansQueryKey() })}>
             <RefreshCw className="w-3.5 h-3.5" />
           </Button>
-          <Button size="sm" onClick={() => setShowCreate(true)}>
+          <Button size="sm" onClick={() => { setCreateError(null); setShowCreate(true); }}>
             <Plus className="w-4 h-4 mr-1.5" /> New Scan
           </Button>
         </div>
@@ -155,7 +191,6 @@ export default function ScansPage() {
         )}
       </div>
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between pt-1">
           <p className="text-xs text-muted-foreground">
@@ -171,7 +206,10 @@ export default function ScansPage() {
         </div>
       )}
 
-      <Dialog open={showCreate} onOpenChange={v => { setShowCreate(v); if (!v) { setForm({ type: "full", assetIds: [] }); setCustomName(""); } }}>
+      <Dialog open={showCreate} onOpenChange={v => {
+        setShowCreate(v);
+        if (!v) { setForm({ type: "full", assetIds: [] }); setCustomName(""); setCreateError(null); }
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Create Scan</DialogTitle></DialogHeader>
           <form onSubmit={handleCreate} className="space-y-3 mt-2">
@@ -187,6 +225,7 @@ export default function ScansPage() {
                 <p className="text-[10px] text-muted-foreground">Auto-generated: {autoName}</p>
               )}
             </div>
+
             <div className="space-y-1.5">
               <Label className="text-xs">Scan Type</Label>
               <Select value={form.type} onValueChange={v => setForm(p => ({ ...p, type: v }))}>
@@ -196,21 +235,78 @@ export default function ScansPage() {
                 </SelectContent>
               </Select>
             </div>
+
             <div className="space-y-1.5">
-              <Label className="text-xs">Assets ({form.assetIds.length} selected)</Label>
-              <div className="border border-border rounded-lg max-h-40 overflow-y-auto">
-                {assetsList.map((a: any) => (
-                  <label key={a.id} className="flex items-center gap-2 px-3 py-2 hover:bg-accent/30 cursor-pointer">
-                    <input type="checkbox" checked={form.assetIds.includes(a.id)} onChange={() => toggleAsset(a.id)} className="rounded" />
-                    <span className="text-sm">{a.value ?? a.name}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">{a.type}</span>
+              <Label className="text-xs">
+                Assets ({form.assetIds.length} selected)
+                {verifiedAssets.length === 0 && assetsList.length > 0 && (
+                  <span className="ml-2 text-red-400 font-normal">— no verified assets</span>
+                )}
+              </Label>
+              <div className="border border-border rounded-lg max-h-52 overflow-y-auto divide-y divide-border/40">
+                {assetsList.length === 0 && (
+                  <p className="text-xs text-muted-foreground px-3 py-4 text-center">No assets found. Add assets first.</p>
+                )}
+                {/* Verified assets */}
+                {verifiedAssets.map((a: any) => (
+                  <label key={a.id} className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-accent/30 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.assetIds.includes(a.id)}
+                      onChange={() => toggleAsset(a.id, true)}
+                      className="rounded shrink-0"
+                    />
+                    <ShieldCheck className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                    <span className="text-sm flex-1 truncate">{a.value ?? a.name}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">{a.type}</span>
                   </label>
                 ))}
+                {/* Unverified assets — greyed out with tooltip */}
+                {unverifiedAssets.map((a: any) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center gap-2.5 px-3 py-2.5 opacity-50 cursor-not-allowed"
+                    title="Verify ownership before scanning"
+                    onClick={() => toggleAsset(a.id, false)}
+                  >
+                    <input type="checkbox" disabled className="rounded shrink-0" />
+                    <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span className="text-sm flex-1 truncate">{a.value ?? a.name}</span>
+                    <span className="text-[10px] text-amber-400 shrink-0 border border-amber-500/30 rounded px-1 py-0.5">Unverified</span>
+                  </div>
+                ))}
               </div>
+              {unverifiedAssets.length > 0 && (
+                <p className="text-[10px] text-amber-400/80 flex items-start gap-1">
+                  <ShieldAlert className="w-3 h-3 mt-0.5 shrink-0" />
+                  {unverifiedAssets.length} asset{unverifiedAssets.length !== 1 ? "s" : ""} need ownership verification before scanning.
+                  Go to <strong>Assets</strong> → select the asset → <strong>Verify</strong>.
+                </p>
+              )}
             </div>
+
+            {/* Error banner */}
+            {createError && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2.5 space-y-1.5">
+                <p className="text-xs text-red-400 font-medium">{createError.message}</p>
+                {createError.unverified && createError.unverified.length > 0 && (
+                  <ul className="text-[11px] text-red-300/80 space-y-0.5 list-disc list-inside">
+                    {createError.unverified.map(u => (
+                      <li key={u.id}>{u.name ?? `Asset #${u.id}`}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
             <DialogFooter className="mt-4">
               <Button variant="outline" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
-              <Button type="submit" disabled={createScan.isPending}>{createScan.isPending ? "Creating..." : "Start Scan"}</Button>
+              <Button
+                type="submit"
+                disabled={createScan.isPending || form.assetIds.length === 0}
+              >
+                {createScan.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Starting…</> : "Start Scan"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

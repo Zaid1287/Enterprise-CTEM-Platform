@@ -80,13 +80,19 @@ const authLimiter = rateLimit({
 });
 
 // Broad API limit — generous enough for legitimate heavy use
+// Skip localhost entirely — internal beat-scheduler HTTP calls must never be rate-limited.
+function isLocalhost(req: express.Request): boolean {
+  const ip = req.ip ?? "";
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests — please try again later." },
-  skip: (req) => process.env.NODE_ENV === "test",
+  skip: (req) => process.env.NODE_ENV === "test" || isLocalhost(req),
 });
 
 app.use("/api/auth/login", authLimiter);

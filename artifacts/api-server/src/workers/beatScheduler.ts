@@ -141,6 +141,7 @@ async function dispatchDueAssets(): Promise<void> {
     .where(
       and(
         eq(assetsTable.isActive, true),
+        eq(assetsTable.verificationStatus, "verified"),
         sql`${assetsTable.scanFrequency} != 'manual'`,
       ),
     );
@@ -195,8 +196,25 @@ async function dispatchDueSchedules(): Promise<void> {
     try {
       const config = schedule.assetToolConfig as { assetId: number }[] | null;
       if (!config || !Array.isArray(config) || config.length === 0) continue;
-      const assetIds = config.map((c) => c.assetId).filter(Boolean);
-      if (assetIds.length === 0) continue;
+      const rawIds = config.map((c) => c.assetId).filter(Boolean);
+      if (rawIds.length === 0) continue;
+
+      // Only scan assets that have been verified — avoids 422 from pipeline-run
+      const verifiedRows = await db
+        .select({ id: assetsTable.id })
+        .from(assetsTable)
+        .where(
+          and(
+            eq(assetsTable.verificationStatus, "verified"),
+            eq(assetsTable.tenantId, schedule.tenantId),
+          ),
+        );
+      const verifiedSet = new Set(verifiedRows.map((r) => r.id));
+      const assetIds = rawIds.filter((id) => verifiedSet.has(id));
+      if (assetIds.length === 0) {
+        logger.warn({ scheduleId: schedule.id }, "Beat: schedule skipped — no verified assets");
+        continue;
+      }
 
       const [scan] = await db
         .insert(scansTable)
