@@ -103,11 +103,11 @@ type ActiveTab = "managers" | "assets";
 // Isolated component so each tenant's assets have their own query/cache.
 function TenantAssetsPanel({
   tenantId, tenantName,
-  onAddAsset, onDeleteAsset,
+  onAddAsset, onRemoveAsset,
 }: {
   tenantId: number; tenantName: string;
   onAddAsset: () => void;
-  onDeleteAsset: (assetId: number) => void;
+  onRemoveAsset: (assetId: number) => void;
 }) {
   const { data: assets = [], isLoading } = useQuery<AssetRow[]>({
     queryKey: ["tenant-assets", tenantId],
@@ -180,11 +180,11 @@ function TenantAssetsPanel({
                 </td>
                 <td className="px-3 py-2">
                   <button
-                    onClick={e => { e.stopPropagation(); onDeleteAsset(a.id); }}
-                    className="p-1 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400 transition-colors"
-                    title="Remove asset"
+                    onClick={e => { e.stopPropagation(); onRemoveAsset(a.id); }}
+                    className="p-1 rounded hover:bg-amber-500/15 text-muted-foreground hover:text-amber-400 transition-colors"
+                    title="Remove from this tenant (asset is kept in your pool)"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <ArrowRightLeft className="w-3.5 h-3.5" />
                   </button>
                 </td>
               </tr>
@@ -331,13 +331,14 @@ export default function TenantsPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const deleteAssetMutation = useMutation({
+  const unassignAssetMutation = useMutation({
     mutationFn: ({ tenantId, assetId }: { tenantId: number; assetId: number }) =>
-      apiFetch(`${BASE}/api/tenants/${tenantId}/assets/${assetId}`, { method: "DELETE" }),
+      apiFetch(`${BASE}/api/tenants/${tenantId}/assets/${assetId}/unassign`, { method: "POST" }),
     onSuccess: (_, { tenantId }) => {
       queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
-      toast({ title: "Asset removed" });
+      queryClient.invalidateQueries({ queryKey: ["assets-pool"] });
+      toast({ title: "Asset removed from tenant", description: "The asset has been returned to your pool and can be reassigned." });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -632,7 +633,7 @@ export default function TenantsPage() {
                               tenantId={t.id}
                               tenantName={t.name}
                               onAddAsset={() => { setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
-                              onDeleteAsset={assetId => deleteAssetMutation.mutate({ tenantId: t.id, assetId })}
+                              onRemoveAsset={assetId => unassignAssetMutation.mutate({ tenantId: t.id, assetId })}
                             />
                           </div>
                         )}

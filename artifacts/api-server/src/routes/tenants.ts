@@ -312,19 +312,35 @@ router.post("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin",
   res.status(201).json(asset);
 });
 
-router.delete("/tenants/:tenantId/assets/:assetId", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+// ── Remove asset from tenant (unassign only — asset is NOT deleted) ───────────
+// Moves the asset back to the caller's own tenant so it can be re-assigned later.
+router.post("/tenants/:tenantId/assets/:assetId/unassign", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = Number(req.params.tenantId);
   const aid = Number(req.params.assetId);
   if (isNaN(tid) || isNaN(aid)) { res.status(400).json({ error: "Invalid IDs" }); return; }
+
+  // Admins can only manage their own child tenants
   if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tid))) {
     res.status(403).json({ error: "Forbidden" }); return;
   }
-  // Verify asset belongs to this tenant before cascading
-  const [asset] = await db.select({ id: assetsTable.id })
+
+  // Cannot unassign from your own tenant — nothing to move
+  if (tid === req.user!.tenantId) {
+    res.status(400).json({ error: "Cannot remove an asset from your own tenant" }); return;
+  }
+
+  // Verify asset belongs to the target tenant
+  const [asset] = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
     .from(assetsTable).where(and(eq(assetsTable.id, aid), eq(assetsTable.tenantId, tid)));
-  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
-  await cascadeDeleteAsset(aid, tid);
-  res.sendStatus(204);
+  if (!asset) { res.status(404).json({ error: "Asset not found in this tenant" }); return; }
+
+  // Move asset back to the caller's own tenant (their pool)
+  const [updated] = await db.update(assetsTable)
+    .set({ tenantId: req.user!.tenantId })
+    .where(eq(assetsTable.id, aid))
+    .returning({ id: assetsTable.id, tenantId: assetsTable.tenantId });
+
+  res.json({ id: updated.id, movedToTenantId: updated.tenantId });
 });
 
 // ── Delete tenant ─────────────────────────────────────────────────────────────
