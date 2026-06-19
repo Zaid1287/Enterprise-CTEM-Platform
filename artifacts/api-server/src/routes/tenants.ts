@@ -98,6 +98,80 @@ router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async 
   res.status(201).json(toTenantResponse(tenant));
 });
 
+// ── Pool: all assets across every tenant the caller manages ──────────────────
+// MUST be registered before /tenants/:tenantId to avoid the param shadowing "assets".
+router.get("/tenants/assets/pool", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+  const myTenantId = req.user!.tenantId;
+
+  let tenantIds: number[];
+  if (role === "super_admin") {
+    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+    tenantIds = rows.map(r => r.id);
+  } else {
+    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable)
+      .where(and(eq(tenantsTable.isPlatform, false),
+        or(eq(tenantsTable.id, myTenantId), eq(tenantsTable.parentTenantId, myTenantId))));
+    tenantIds = rows.map(r => r.id);
+  }
+
+  if (tenantIds.length === 0) { res.json([]); return; }
+
+  const [assets, tenants] = await Promise.all([
+    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, tenantIds)),
+    db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable)
+      .where(inArray(tenantsTable.id, tenantIds)),
+  ]);
+
+  const nameMap = new Map(tenants.map(t => [t.id, t.name]));
+  res.json(assets.map(a => ({
+    id: a.id, name: a.name, type: a.type, value: a.value,
+    tenantId: a.tenantId, tenantName: nameMap.get(a.tenantId) ?? "Unknown",
+    verificationStatus: a.verificationStatus, riskLevel: a.riskLevel,
+    businessImpact: a.businessImpact, scanFrequency: a.scanFrequency,
+    lastScannedAt: a.lastScannedAt?.toISOString() ?? null, isActive: a.isActive,
+  })));
+});
+
+// ── Bulk-move (reassign) assets to a target tenant ────────────────────────────
+router.post("/tenants/:tenantId/assets/assign", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (isNaN(targetTenantId)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
+
+  const { assetIds } = req.body ?? {};
+  if (!Array.isArray(assetIds) || assetIds.length === 0) {
+    res.status(400).json({ error: "assetIds must be a non-empty array" }); return;
+  }
+  const ids = (assetIds as unknown[]).map(Number).filter(n => !isNaN(n));
+  if (ids.length === 0) { res.status(400).json({ error: "No valid asset IDs" }); return; }
+
+  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, targetTenantId))) {
+    res.status(403).json({ error: "Forbidden: cannot access target tenant" }); return;
+  }
+
+  const [targetTenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, targetTenantId));
+  if (!targetTenant) { res.status(404).json({ error: "Target tenant not found" }); return; }
+
+  // For admin: verify they also own the source tenant of every selected asset
+  if (req.user!.role === "admin") {
+    const sourceAssets = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
+      .from(assetsTable).where(inArray(assetsTable.id, ids));
+    const sourceTenantIds = [...new Set(sourceAssets.map(a => a.tenantId))];
+    for (const srcTid of sourceTenantIds) {
+      if (!(await adminCanAccessTenant(req.user!.tenantId, srcTid))) {
+        res.status(403).json({ error: `Forbidden: cannot move assets from tenant ${srcTid}` }); return;
+      }
+    }
+  }
+
+  const updated = await db.update(assetsTable)
+    .set({ tenantId: targetTenantId })
+    .where(inArray(assetsTable.id, ids))
+    .returning({ id: assetsTable.id, tenantId: assetsTable.tenantId });
+
+  res.json({ moved: updated.length, targetTenantId, assetIds: updated.map(a => a.id) });
+});
+
 // ── Get single tenant ─────────────────────────────────────────────────────────
 router.get("/tenants/:tenantId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetTenantParams.safeParse(req.params);

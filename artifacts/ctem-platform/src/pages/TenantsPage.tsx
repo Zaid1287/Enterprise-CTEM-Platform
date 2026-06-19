@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp,
   UserCheck, X, Globe, Shield, Cpu, Network, Code2, Cloud, Smartphone,
-  Lock, Trash2, Loader2, Pencil, MoreHorizontal,
+  Lock, Trash2, Loader2, Pencil, MoreHorizontal, ArrowRightLeft,
+  Search, CheckSquare, Square, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +46,13 @@ interface AssetRow {
 interface PkgData {
   id: number; name: string; price: number;
   maxAssets: number | null; maxUsers: number | null; isActive: boolean;
+}
+interface PoolAsset {
+  id: number; name: string; type: string; value: string;
+  tenantId: number; tenantName: string;
+  verificationStatus: string; riskLevel: string;
+  businessImpact: number | null; scanFrequency: string;
+  lastScannedAt: string | null; isActive: boolean;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -218,6 +226,12 @@ export default function TenantsPage() {
   const [assetTarget, setAssetTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
   const [assetForm, setAssetForm] = useState({ ...emptyAssetForm });
 
+  // Asset picker dialog — assign existing assets to a tenant
+  const [pickerTarget, setPickerTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [poolSearch, setPoolSearch] = useState("");
+  const [poolTenantFilter, setPoolTenantFilter] = useState("__all__");
+
   // ── Queries ──────────────────────────────────────────────────────────────────
   const { data: tenants = [], isLoading } = useQuery<TenantRow[]>({
     queryKey: ["platform-tenants"],
@@ -233,6 +247,14 @@ export default function TenantsPage() {
   const { data: packages = [] } = useQuery<PkgData[]>({
     queryKey: ["packages"],
     queryFn: () => apiFetch(`${BASE}/api/packages`),
+  });
+
+  // Pool of all assets across all managed tenants — only loaded when picker is open
+  const { data: poolAssets = [], isLoading: poolLoading } = useQuery<PoolAsset[]>({
+    queryKey: ["assets-pool"],
+    queryFn: () => apiFetch(`${BASE}/api/tenants/assets/pool`),
+    enabled: !!pickerTarget,
+    staleTime: 0, // always fresh when picker opens
   });
 
   const amUsers = allUsers.filter(u => u.role === "account_manager");
@@ -316,6 +338,28 @@ export default function TenantsPage() {
       queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       toast({ title: "Asset removed" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const assignAssetsMutation = useMutation({
+    mutationFn: ({ tenantId, assetIds }: { tenantId: number; assetIds: number[] }) =>
+      apiFetch(`${BASE}/api/tenants/${tenantId}/assets/assign`, {
+        method: "POST", body: JSON.stringify({ assetIds }),
+      }),
+    onSuccess: (data: any, { tenantId }) => {
+      // Refresh pool, all tenant asset lists, and tenant row counts
+      queryClient.invalidateQueries({ queryKey: ["assets-pool"] });
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      // Invalidate the target tenant's panel
+      queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
+      // Invalidate source tenant panels (we don't know which ones, so invalidate all)
+      queryClient.invalidateQueries({ queryKey: ["tenant-assets"] });
+      setPickerTarget(null);
+      setSelectedIds(new Set());
+      setPoolSearch("");
+      setPoolTenantFilter("__all__");
+      toast({ title: `${data?.moved ?? 0} asset${data?.moved === 1 ? "" : "s"} moved successfully` });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -559,16 +603,30 @@ export default function TenantsPage() {
                         {/* Assets tab */}
                         {getTab(t.id) === "assets" && (
                           <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs text-muted-foreground">
-                                Assets from this tenant's inventory — same as their Asset Inventory page.
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs text-muted-foreground flex-1">
+                                Assets belonging to this tenant. Use <strong>Assign Existing</strong> to move assets from other tenants here.
                               </p>
-                              <Button
-                                size="sm" variant="outline" className="text-xs h-8 shrink-0"
-                                onClick={e => { e.stopPropagation(); setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
-                              >
-                                <Plus className="w-3.5 h-3.5 mr-1" /> Add Asset
-                              </Button>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <Button
+                                  size="sm" variant="outline" className="text-xs h-8"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setPickerTarget({ tenantId: t.id, tenantName: t.name });
+                                    setSelectedIds(new Set());
+                                    setPoolSearch("");
+                                    setPoolTenantFilter("__all__");
+                                  }}
+                                >
+                                  <ArrowRightLeft className="w-3.5 h-3.5 mr-1" /> Assign Existing
+                                </Button>
+                                <Button
+                                  size="sm" variant="outline" className="text-xs h-8"
+                                  onClick={e => { e.stopPropagation(); setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
+                                >
+                                  <Plus className="w-3.5 h-3.5 mr-1" /> New Asset
+                                </Button>
+                              </div>
                             </div>
                             <TenantAssetsPanel
                               tenantId={t.id}
@@ -881,6 +939,284 @@ export default function TenantsPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Asset Picker Dialog — assign existing assets to a tenant ───────── */}
+      <Dialog
+        open={!!pickerTarget}
+        onOpenChange={v => {
+          if (!v) {
+            setPickerTarget(null);
+            setSelectedIds(new Set());
+            setPoolSearch("");
+            setPoolTenantFilter("__all__");
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
+          {/* Header */}
+          <div className="px-6 pt-6 pb-4 border-b border-border shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="w-4 h-4 text-primary" />
+              Assign Assets to {pickerTarget?.tenantName}
+            </DialogTitle>
+            <DialogDescription className="mt-1">
+              Select assets from any tenant you manage and move them here. Each asset can only belong to one tenant at a time.
+            </DialogDescription>
+          </div>
+
+          {/* Filters row */}
+          <div className="px-6 py-3 border-b border-border shrink-0 flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                value={poolSearch}
+                onChange={e => setPoolSearch(e.target.value)}
+                placeholder="Search by name or value…"
+                className="h-8 pl-8 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <Select value={poolTenantFilter} onValueChange={setPoolTenantFilter}>
+                <SelectTrigger className="h-8 text-xs w-44">
+                  <SelectValue placeholder="All tenants" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All tenants</SelectItem>
+                  {[...new Set(poolAssets.map(a => a.tenantId))].map(tid => {
+                    const name = poolAssets.find(a => a.tenantId === tid)?.tenantName ?? tid;
+                    return <SelectItem key={tid} value={String(tid)}>{name}</SelectItem>;
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Asset list — scrollable */}
+          <div className="flex-1 overflow-y-auto px-6 py-3 min-h-0">
+            {(() => {
+              if (poolLoading) {
+                return (
+                  <div className="space-y-2">
+                    {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
+                  </div>
+                );
+              }
+
+              // Filter out assets already belonging to target tenant, then apply search/tenant filter
+              const available = poolAssets.filter(a => {
+                if (a.tenantId === pickerTarget?.tenantId) return false; // already here
+                if (poolTenantFilter !== "__all__" && String(a.tenantId) !== poolTenantFilter) return false;
+                if (poolSearch) {
+                  const q = poolSearch.toLowerCase();
+                  return a.name.toLowerCase().includes(q) || a.value.toLowerCase().includes(q);
+                }
+                return true;
+              });
+
+              // Assets already in the target tenant (shown separately as "already assigned")
+              const alreadyHere = poolAssets.filter(a => a.tenantId === pickerTarget?.tenantId);
+
+              if (available.length === 0 && alreadyHere.length === 0 && !poolLoading) {
+                return (
+                  <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+                    <Server className="w-8 h-8 mb-2 opacity-30" />
+                    <p className="text-sm">No assets found across your managed tenants.</p>
+                    <p className="text-xs mt-1 opacity-60">Create assets first using the "New Asset" button.</p>
+                  </div>
+                );
+              }
+
+              if (available.length === 0 && !poolLoading) {
+                return (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p className="text-sm">All managed assets are already in {pickerTarget?.tenantName}.</p>
+                  </div>
+                );
+              }
+
+              // Group available assets by source tenant
+              const grouped = new Map<string, PoolAsset[]>();
+              for (const a of available) {
+                const key = `${a.tenantId}::${a.tenantName}`;
+                if (!grouped.has(key)) grouped.set(key, []);
+                grouped.get(key)!.push(a);
+              }
+
+              // Select-all / deselect-all for visible assets
+              const allVisibleIds = available.map(a => a.id);
+              const allSelected = allVisibleIds.length > 0 && allVisibleIds.every(id => selectedIds.has(id));
+
+              return (
+                <div className="space-y-4">
+                  {/* Select all row */}
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
+                    <button
+                      className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={() => {
+                        if (allSelected) {
+                          setSelectedIds(prev => {
+                            const next = new Set(prev);
+                            allVisibleIds.forEach(id => next.delete(id));
+                            return next;
+                          });
+                        } else {
+                          setSelectedIds(prev => new Set([...prev, ...allVisibleIds]));
+                        }
+                      }}
+                    >
+                      {allSelected
+                        ? <CheckSquare className="w-4 h-4 text-primary" />
+                        : <Square className="w-4 h-4" />}
+                      {allSelected ? "Deselect all" : `Select all ${available.length} visible`}
+                    </button>
+                    {selectedIds.size > 0 && (
+                      <span className="text-xs font-medium text-primary">
+                        {selectedIds.size} selected
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Grouped by source tenant */}
+                  {[...grouped.entries()].map(([key, assets]) => {
+                    const [, tenantName] = key.split("::");
+                    return (
+                      <div key={key}>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                          <Building2 className="w-3 h-3" /> Currently in: {tenantName}
+                        </p>
+                        <div className="rounded-lg border border-border overflow-hidden">
+                          {assets.map((a, idx) => {
+                            const Icon = TYPE_ICONS[a.type] ?? Globe;
+                            const isChecked = selectedIds.has(a.id);
+                            return (
+                              <div
+                                key={a.id}
+                                className={cn(
+                                  "flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-accent/30 transition-colors",
+                                  idx < assets.length - 1 && "border-b border-border/40",
+                                  isChecked && "bg-primary/5",
+                                )}
+                                onClick={() => {
+                                  setSelectedIds(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(a.id)) next.delete(a.id);
+                                    else next.add(a.id);
+                                    return next;
+                                  });
+                                }}
+                              >
+                                {/* Checkbox */}
+                                <div className={cn(
+                                  "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                                  isChecked ? "bg-primary border-primary" : "border-border",
+                                )}>
+                                  {isChecked && <svg viewBox="0 0 10 10" className="w-2.5 h-2.5 text-primary-foreground fill-current"><path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                                </div>
+
+                                {/* Icon */}
+                                <div className="w-7 h-7 rounded bg-muted/50 border border-border flex items-center justify-center shrink-0">
+                                  <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                                </div>
+
+                                {/* Info */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-medium truncate">{a.name}</div>
+                                  <div className="text-xs text-muted-foreground font-mono truncate">{a.value}</div>
+                                </div>
+
+                                {/* Type badge */}
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground border border-border/40 shrink-0">
+                                  {typeLabel(a.type)}
+                                </span>
+
+                                {/* Risk badge */}
+                                <span className={cn(
+                                  "text-[10px] px-1.5 py-0.5 rounded font-medium capitalize shrink-0",
+                                  RISK_COLORS[a.riskLevel] ?? RISK_COLORS.info,
+                                )}>
+                                  {a.riskLevel}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Already-in-target section */}
+                  {alreadyHere.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-green-400/70 mb-1.5 flex items-center gap-1.5">
+                        <CheckSquare className="w-3 h-3" /> Already in {pickerTarget?.tenantName} ({alreadyHere.length})
+                      </p>
+                      <div className="rounded-lg border border-green-500/20 bg-green-500/5 overflow-hidden">
+                        {alreadyHere.map((a, idx) => {
+                          const Icon = TYPE_ICONS[a.type] ?? Globe;
+                          return (
+                            <div key={a.id} className={cn(
+                              "flex items-center gap-3 px-3 py-2 opacity-60",
+                              idx < alreadyHere.length - 1 && "border-b border-green-500/10",
+                            )}>
+                              <div className="w-4 h-4 rounded border border-green-500/30 bg-green-500/20 flex items-center justify-center shrink-0">
+                                <svg viewBox="0 0 10 10" className="w-2.5 h-2.5 text-green-400 fill-current"><path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              </div>
+                              <div className="w-7 h-7 rounded bg-muted/50 border border-border flex items-center justify-center shrink-0">
+                                <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium truncate">{a.name}</div>
+                                <div className="text-[10px] text-muted-foreground font-mono truncate">{a.value}</div>
+                              </div>
+                              <span className="text-[10px] text-green-400 font-medium shrink-0">Assigned</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 py-4 border-t border-border shrink-0 flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              {selectedIds.size === 0
+                ? "Select assets above to assign them"
+                : `${selectedIds.size} asset${selectedIds.size === 1 ? "" : "s"} will be moved to ${pickerTarget?.tenantName}`}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline" size="sm"
+                onClick={() => {
+                  setPickerTarget(null);
+                  setSelectedIds(new Set());
+                  setPoolSearch("");
+                  setPoolTenantFilter("__all__");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={selectedIds.size === 0 || assignAssetsMutation.isPending}
+                onClick={() => pickerTarget && assignAssetsMutation.mutate({
+                  tenantId: pickerTarget.tenantId,
+                  assetIds: [...selectedIds],
+                })}
+              >
+                {assignAssetsMutation.isPending
+                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Moving…</>
+                  : <><ArrowRightLeft className="w-3.5 h-3.5 mr-1.5" /> Move {selectedIds.size > 0 ? selectedIds.size : ""} to {pickerTarget?.tenantName}</>
+                }
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
