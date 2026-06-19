@@ -6,8 +6,8 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { getScanQueue } from "../queues/scanQueue";
 import { getAlertQueue } from "../queues/alertQueue";
 import { isRedisAvailable } from "../lib/redis";
-import { db, scansTable, assetsTable } from "@workspace/db";
-import { eq, count, sql, desc } from "drizzle-orm";
+import { db, scansTable } from "@workspace/db";
+import { count, sql, desc } from "drizzle-orm";
 
 const router = Router();
 
@@ -44,54 +44,54 @@ async function getDbScanStats() {
 }
 
 async function getActiveScans() {
-  const active = await db
+  const rows = await db
     .select({
-      id: scansTable.id,
-      status: scansTable.status,
+      id:        scansTable.id,
+      name:      scansTable.name,
+      type:      scansTable.type,
+      status:    scansTable.status,
       startedAt: scansTable.startedAt,
-      assetId: scansTable.assetId,
-      assetName: assetsTable.name,
-      assetValue: assetsTable.value,
+      assetIds:  scansTable.assetIds,
     })
     .from(scansTable)
-    .leftJoin(assetsTable, eq(assetsTable.id, scansTable.assetId))
     .where(sql`${scansTable.status} IN ('running','pending')`)
     .orderBy(desc(scansTable.startedAt))
     .limit(20);
 
-  return active.map(s => ({
-    id: s.id,
-    status: s.status,
-    startedAt: s.startedAt?.toISOString() ?? null,
-    assetId: s.assetId,
-    assetName: s.assetName ?? `Asset #${s.assetId}`,
-    assetValue: s.assetValue ?? "",
+  return rows.map(s => ({
+    id:         s.id,
+    name:       s.name,
+    type:       s.type,
+    status:     s.status,
+    startedAt:  s.startedAt?.toISOString() ?? null,
+    assetCount: s.assetIds?.length ?? 0,
   }));
 }
 
 async function getRecentScans() {
-  const recent = await db
+  const rows = await db
     .select({
-      id: scansTable.id,
-      status: scansTable.status,
-      startedAt: scansTable.startedAt,
+      id:          scansTable.id,
+      name:        scansTable.name,
+      type:        scansTable.type,
+      status:      scansTable.status,
+      startedAt:   scansTable.startedAt,
       completedAt: scansTable.completedAt,
-      assetId: scansTable.assetId,
-      assetName: assetsTable.name,
+      assetIds:    scansTable.assetIds,
     })
     .from(scansTable)
-    .leftJoin(assetsTable, eq(assetsTable.id, scansTable.assetId))
     .where(sql`${scansTable.status} IN ('completed','failed','cancelled')`)
     .orderBy(desc(scansTable.completedAt))
-    .limit(10);
+    .limit(15);
 
-  return recent.map(s => ({
-    id: s.id,
-    status: s.status,
-    startedAt: s.startedAt?.toISOString() ?? null,
+  return rows.map(s => ({
+    id:          s.id,
+    name:        s.name,
+    type:        s.type,
+    status:      s.status,
+    startedAt:   s.startedAt?.toISOString() ?? null,
     completedAt: s.completedAt?.toISOString() ?? null,
-    assetId: s.assetId,
-    assetName: s.assetName ?? `Asset #${s.assetId}`,
+    assetCount:  s.assetIds?.length ?? 0,
   }));
 }
 
@@ -145,15 +145,15 @@ router.get("/queues/jobs", requireAuth, async (req: AuthenticatedRequest, res): 
   const jobs = await queue.getJobs([safeType], 0, 50);
   res.json({
     jobs: jobs.map((j) => ({
-      id:          j.id,
-      name:        j.name,
-      data:        j.data,
-      progress:    j.progress,
+      id:           j.id,
+      name:         j.name,
+      data:         j.data,
+      progress:     j.progress,
       attemptsMade: j.attemptsMade,
       failedReason: j.failedReason,
-      timestamp:   j.timestamp,
-      processedOn: j.processedOn,
-      finishedOn:  j.finishedOn,
+      timestamp:    j.timestamp,
+      processedOn:  j.processedOn,
+      finishedOn:   j.finishedOn,
     })),
     redis: true,
   });
