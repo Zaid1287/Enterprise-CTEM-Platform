@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, inArray, and } from "drizzle-orm";
+import { eq, inArray, and, or } from "drizzle-orm";
 import { db, tenantsTable, usersTable, assetsTable, findingsTable, accountManagerClientsTable } from "@workspace/db";
 import { CreateTenantBody, UpdateTenantBody, GetTenantParams, UpdateTenantParams } from "@workspace/api-zod";
 import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
@@ -9,7 +9,8 @@ const router = Router();
 function toTenantResponse(t: typeof tenantsTable.$inferSelect) {
   return {
     id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
-    isPlatform: t.isPlatform, maxAssets: t.maxAssets, maxUsers: t.maxUsers,
+    isPlatform: t.isPlatform, parentTenantId: t.parentTenantId,
+    maxAssets: t.maxAssets, maxUsers: t.maxUsers,
     createdAt: t.createdAt.toISOString(),
   };
 }
@@ -44,32 +45,65 @@ async function buildRichTenantList(tenantIds: number[]) {
   }));
 }
 
-// Super admin: all client tenants. Admin: their own tenant.
+/**
+ * Check whether an admin can access a given target tenant.
+ * Admins can access: (1) their own tenant, (2) any tenant they created (parentTenantId = admin's tenantId).
+ */
+async function adminCanAccessTenant(adminTenantId: number, targetTenantId: number): Promise<boolean> {
+  if (adminTenantId === targetTenantId) return true;
+  const [row] = await db.select({ id: tenantsTable.id })
+    .from(tenantsTable)
+    .where(and(eq(tenantsTable.id, targetTenantId), eq(tenantsTable.parentTenantId, adminTenantId)));
+  return !!row;
+}
+
+// ── List tenants ──────────────────────────────────────────────────────────────
+// Super admin: all client tenants. Admin: own tenant + all child tenants they created.
 router.get("/tenants", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;
-  if (role === "admin") {
-    const result = await buildRichTenantList([req.user!.tenantId]);
+  const myTenantId = req.user!.tenantId;
+
+  if (role === "super_admin") {
+    const tenants = await db.select().from(tenantsTable)
+      .where(eq(tenantsTable.isPlatform, false))
+      .orderBy(tenantsTable.createdAt);
+    const result = await buildRichTenantList(tenants.map(t => t.id));
     res.json(result); return;
   }
+
+  // Admin: own tenant + any tenant with parentTenantId = myTenantId
   const tenants = await db.select().from(tenantsTable)
-    .where(eq(tenantsTable.isPlatform, false))
+    .where(
+      and(
+        eq(tenantsTable.isPlatform, false),
+        or(eq(tenantsTable.id, myTenantId), eq(tenantsTable.parentTenantId, myTenantId)),
+      ),
+    )
     .orderBy(tenantsTable.createdAt);
   const result = await buildRichTenantList(tenants.map(t => t.id));
   res.json(result);
 });
 
-router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async (req, res): Promise<void> => {
+// ── Create tenant ─────────────────────────────────────────────────────────────
+router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateTenantBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const [tenant] = await db.insert(tenantsTable).values({ ...parsed.data, isPlatform: false }).returning();
+
+  // Admins automatically become the parent of tenants they create
+  const parentTenantId = req.user!.role === "admin" ? req.user!.tenantId : undefined;
+
+  const [tenant] = await db.insert(tenantsTable)
+    .values({ ...parsed.data, isPlatform: false, parentTenantId: parentTenantId ?? null })
+    .returning();
   res.status(201).json(toTenantResponse(tenant));
 });
 
+// ── Get single tenant ─────────────────────────────────────────────────────────
 router.get("/tenants/:tenantId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetTenantParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
-  if (role !== "super_admin" && req.user!.tenantId !== params.data.tenantId) {
+  if (role !== "super_admin" && !(await adminCanAccessTenant(req.user!.tenantId, params.data.tenantId))) {
     res.status(403).json({ error: "Forbidden" }); return;
   }
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, params.data.tenantId));
@@ -82,6 +116,10 @@ router.post("/tenants/:tenantId/managers", requireAuth, requireRole("super_admin
   const tenantId = Number(req.params.tenantId);
   const amUserId = Number(req.body?.accountManagerUserId);
   if (isNaN(tenantId) || isNaN(amUserId)) { res.status(400).json({ error: "tenantId and accountManagerUserId required" }); return; }
+
+  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tenantId))) {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
 
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
@@ -104,17 +142,21 @@ router.delete("/tenants/:tenantId/managers/:amUserId", requireAuth, requireRole(
   const tenantId = Number(req.params.tenantId);
   const amUserId = Number(req.params.amUserId);
   if (isNaN(tenantId) || isNaN(amUserId)) { res.status(400).json({ error: "Invalid IDs" }); return; }
+  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tenantId))) {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   await db.delete(accountManagerClientsTable)
     .where(and(eq(accountManagerClientsTable.accountManagerUserId, amUserId), eq(accountManagerClientsTable.clientTenantId, tenantId)));
   res.sendStatus(204);
 });
 
 // ── Assets for a specific tenant (cross-tenant management) ───────────────────
-// Super admin can manage assets for any tenant; admin can manage their own only.
 router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = Number(req.params.tenantId);
   if (isNaN(tid)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
-  if (req.user!.role === "admin" && req.user!.tenantId !== tid) { res.status(403).json({ error: "Forbidden" }); return; }
+  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tid))) {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid));
   res.json(assets.map(a => ({
     id: a.id, name: a.name, type: a.type, value: a.value,
@@ -127,7 +169,9 @@ router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", 
 router.post("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = Number(req.params.tenantId);
   if (isNaN(tid)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
-  if (req.user!.role === "admin" && req.user!.tenantId !== tid) { res.status(403).json({ error: "Forbidden" }); return; }
+  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tid))) {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
 
   const { name, type, value, scanFrequency, businessImpact, description } = req.body ?? {};
   if (!name || !type || !value) { res.status(400).json({ error: "name, type and value are required" }); return; }
@@ -151,18 +195,21 @@ router.delete("/tenants/:tenantId/assets/:assetId", requireAuth, requireRole("su
   const tid = Number(req.params.tenantId);
   const aid = Number(req.params.assetId);
   if (isNaN(tid) || isNaN(aid)) { res.status(400).json({ error: "Invalid IDs" }); return; }
-  if (req.user!.role === "admin" && req.user!.tenantId !== tid) { res.status(403).json({ error: "Forbidden" }); return; }
+  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tid))) {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   await db.delete(assetsTable).where(and(eq(assetsTable.id, aid), eq(assetsTable.tenantId, tid)));
   res.sendStatus(204);
 });
 
+// ── Update tenant ─────────────────────────────────────────────────────────────
 router.patch("/tenants/:tenantId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateTenantParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateTenantBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const role = req.user!.role;
-  if (role !== "super_admin" && req.user!.tenantId !== params.data.tenantId) {
+  if (role !== "super_admin" && !(await adminCanAccessTenant(req.user!.tenantId, params.data.tenantId))) {
     res.status(403).json({ error: "Forbidden" }); return;
   }
   const [tenant] = await db.update(tenantsTable).set(parsed.data)

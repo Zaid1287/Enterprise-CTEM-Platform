@@ -9,6 +9,7 @@ export const tenantsTable = pgTable("tenants", {
   plan: text("plan").notNull().default("starter"),
   isActive: boolean("is_active").notNull().default(true),
   isPlatform: boolean("is_platform").notNull().default(false),
+  parentTenantId: integer("parent_tenant_id"),
   maxAssets: integer("max_assets"),
   maxUsers: integer("max_users"),
   stripeCustomerId:     text("stripe_customer_id"),
