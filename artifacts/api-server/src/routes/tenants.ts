@@ -14,28 +14,21 @@ function toTenantResponse(t: typeof tenantsTable.$inferSelect) {
   };
 }
 
-router.get("/tenants", requireAuth, requireRole("super_admin"), async (_req, res): Promise<void> => {
-  const tenants = await db.select().from(tenantsTable)
-    .where(eq(tenantsTable.isPlatform, false))
-    .orderBy(tenantsTable.createdAt);
-
-  const tenantIds = tenants.map(t => t.id);
-  if (tenantIds.length === 0) { res.json([]); return; }
-
-  const [allUsers, allAssets, allFindings, allAssignments] = await Promise.all([
+async function buildRichTenantList(tenantIds: number[]) {
+  if (tenantIds.length === 0) return [];
+  const [allTenants, allUsers, allAssets, allFindings, allAssignments] = await Promise.all([
+    db.select().from(tenantsTable).where(inArray(tenantsTable.id, tenantIds)),
     db.select().from(usersTable).where(inArray(usersTable.tenantId, tenantIds)),
     db.select().from(assetsTable).where(inArray(assetsTable.tenantId, tenantIds)),
     db.select().from(findingsTable).where(inArray(findingsTable.tenantId, tenantIds)),
     db.select().from(accountManagerClientsTable).where(inArray(accountManagerClientsTable.clientTenantId, tenantIds)),
   ]);
-
   const amUserIds = [...new Set(allAssignments.map(a => a.accountManagerUserId))];
   const amUsers = amUserIds.length > 0
     ? await db.select({ id: usersTable.id, email: usersTable.email, firstName: usersTable.firstName, lastName: usersTable.lastName })
         .from(usersTable).where(inArray(usersTable.id, amUserIds))
     : [];
-
-  res.json(tenants.map(t => ({
+  return allTenants.map(t => ({
     ...toTenantResponse(t),
     userCount: allUsers.filter(u => u.tenantId === t.id).length,
     assetCount: allAssets.filter(a => a.tenantId === t.id).length,
@@ -46,9 +39,23 @@ router.get("/tenants", requireAuth, requireRole("super_admin"), async (_req, res
       .filter(a => a.clientTenantId === t.id)
       .map(a => {
         const u = amUsers.find(m => m.id === a.accountManagerUserId);
-        return u ? { id: u.id, name: `${u.firstName} ${u.lastName}`, email: u.email } : null;
+        return u ? { id: u.id, name: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.email, email: u.email } : null;
       }).filter(Boolean),
-  })));
+  }));
+}
+
+// Super admin: all client tenants. Admin: their own tenant.
+router.get("/tenants", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+  if (role === "admin") {
+    const result = await buildRichTenantList([req.user!.tenantId]);
+    res.json(result); return;
+  }
+  const tenants = await db.select().from(tenantsTable)
+    .where(eq(tenantsTable.isPlatform, false))
+    .orderBy(tenantsTable.createdAt);
+  const result = await buildRichTenantList(tenants.map(t => t.id));
+  res.json(result);
 });
 
 router.post("/tenants", requireAuth, requireRole("super_admin"), async (req, res): Promise<void> => {
@@ -99,6 +106,53 @@ router.delete("/tenants/:tenantId/managers/:amUserId", requireAuth, requireRole(
   if (isNaN(tenantId) || isNaN(amUserId)) { res.status(400).json({ error: "Invalid IDs" }); return; }
   await db.delete(accountManagerClientsTable)
     .where(and(eq(accountManagerClientsTable.accountManagerUserId, amUserId), eq(accountManagerClientsTable.clientTenantId, tenantId)));
+  res.sendStatus(204);
+});
+
+// ── Assets for a specific tenant (cross-tenant management) ───────────────────
+// Super admin can manage assets for any tenant; admin can manage their own only.
+router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tid = Number(req.params.tenantId);
+  if (isNaN(tid)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
+  if (req.user!.role === "admin" && req.user!.tenantId !== tid) { res.status(403).json({ error: "Forbidden" }); return; }
+  const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid));
+  res.json(assets.map(a => ({
+    id: a.id, name: a.name, type: a.type, value: a.value,
+    verificationStatus: a.verificationStatus, isActive: a.isActive,
+    scanFrequency: a.scanFrequency, businessImpact: a.businessImpact,
+    riskLevel: a.riskLevel, lastScannedAt: a.lastScannedAt,
+  })));
+});
+
+router.post("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tid = Number(req.params.tenantId);
+  if (isNaN(tid)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
+  if (req.user!.role === "admin" && req.user!.tenantId !== tid) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const { name, type, value, scanFrequency, businessImpact, description } = req.body ?? {};
+  if (!name || !type || !value) { res.status(400).json({ error: "name, type and value are required" }); return; }
+
+  const [asset] = await db.insert(assetsTable).values({
+    tenantId: tid,
+    name: String(name),
+    type: String(type),
+    value: String(value).trim().toLowerCase(),
+    verificationStatus: "unverified",
+    isActive: true,
+    scanFrequency: scanFrequency ?? "manual",
+    businessImpact: businessImpact ?? 5,
+    description: description ?? null,
+    riskLevel: "info",
+  }).returning();
+  res.status(201).json(asset);
+});
+
+router.delete("/tenants/:tenantId/assets/:assetId", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tid = Number(req.params.tenantId);
+  const aid = Number(req.params.assetId);
+  if (isNaN(tid) || isNaN(aid)) { res.status(400).json({ error: "Invalid IDs" }); return; }
+  if (req.user!.role === "admin" && req.user!.tenantId !== tid) { res.status(403).json({ error: "Forbidden" }); return; }
+  await db.delete(assetsTable).where(and(eq(assetsTable.id, aid), eq(assetsTable.tenantId, tid)));
   res.sendStatus(204);
 });
 
