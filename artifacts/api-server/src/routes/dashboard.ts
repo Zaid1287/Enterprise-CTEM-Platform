@@ -200,28 +200,24 @@ router.get("/dashboard/exposure-breakdown", requireAuth, async (req: Authenticat
 router.get("/dashboard/platform-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (req.user!.role !== "super_admin") { res.status(403).json({ error: "Forbidden" }); return; }
 
-  const allTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
-  const tenantIds = allTenants.map(t => t.id);
+  // Client tenants only — used for client-specific displays (table, rankings, AM portfolio)
+  const clientTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+  const clientTenantIds = clientTenants.map(t => t.id);
 
-  if (tenantIds.length === 0) {
-    res.json({
-      tenantCount: 0, activeTenantCount: 0, amCount: 0, clientsAtCriticalRisk: 0,
-      userCount: 0, assetCount: 0, findingCount: 0, criticalCount: 0, openFindingCount: 0,
-      activeScans: 0, openAlertsCount: 0, platformRiskScore: 0, brandThreatsCount: 0,
-      takedownsCount: 0, newVulns7D: 0, resolvedVulns7D: 0, exposedPortsCount: 0,
-      severityBreakdown: [], clientRiskRankings: [], recentAlerts: [], riskTrend: [], tenants: [],
-    });
-    return;
-  }
+  // ALL tenants (platform + client) — used for aggregated platform-wide stats
+  const allTenantsRaw = await db.select().from(tenantsTable);
+  const allTenantIds = allTenantsRaw.map(t => t.id);
 
+  // Aggregate stats use allTenantIds so the SA sees real cross-platform numbers.
+  // Client-specific displays (table, rankings, AM portfolio) use clientTenantIds only.
   const [allUsers, allAssets, allFindings, allScans, allAlerts, brandThreats, allTakedowns] = await Promise.all([
-    db.select({ id: usersTable.id, tenantId: usersTable.tenantId, role: usersTable.role }).from(usersTable).where(inArray(usersTable.tenantId, tenantIds)),
-    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, tenantIds)),
-    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, tenantIds)),
-    db.select().from(scansTable).where(inArray(scansTable.tenantId, tenantIds)),
-    db.select().from(alertsTable).where(inArray(alertsTable.tenantId, tenantIds)).orderBy(desc(alertsTable.createdAt)),
-    db.select().from(brandThreatScansTable).where(inArray(brandThreatScansTable.tenantId, tenantIds)),
-    db.select().from(takedownRequestsTable).where(inArray(takedownRequestsTable.tenantId, tenantIds)),
+    db.select({ id: usersTable.id, tenantId: usersTable.tenantId, role: usersTable.role }).from(usersTable),
+    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, allTenantIds)),
+    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, allTenantIds)),
+    db.select().from(scansTable).where(inArray(scansTable.tenantId, allTenantIds)),
+    db.select().from(alertsTable).where(inArray(alertsTable.tenantId, allTenantIds)).orderBy(desc(alertsTable.createdAt)),
+    db.select().from(brandThreatScansTable).where(inArray(brandThreatScansTable.tenantId, allTenantIds)),
+    db.select().from(takedownRequestsTable).where(inArray(takedownRequestsTable.tenantId, allTenantIds)),
   ]);
 
   const assetIds = allAssets.map(a => a.id);
@@ -242,9 +238,13 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+  // Count AMs globally — AM users may live on the platform tenant itself
   const amCount = allUsers.filter(u => u.role === "account_manager").length;
+
+  // clientsAtCriticalRisk: total distinct tenants (any type) with ≥1 critical finding
   const tenantsWithCritical = new Set(allFindings.filter(f => f.severity === "critical").map(f => f.tenantId));
-  const clientsAtCriticalRisk = [...tenantsWithCritical].filter(tid => tenantIds.includes(tid)).length;
+  const clientsAtCriticalRisk = tenantsWithCritical.size;
+
   const openAlertsCount = allAlerts.filter(a => !a.isRead).length;
 
   const platformRiskScore = allRiskScores.length > 0
@@ -254,7 +254,8 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   const CLOSED_STATUSES = ["mitigated", "accepted_risk", "false_positive"];
   const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
   const resolvedVulns7D = allFindings.filter(f => CLOSED_STATUSES.includes(f.status) && new Date(f.updatedAt) >= sevenDaysAgo).length;
-  const exposedPortsCount = allFindings.filter(f => f.cveId?.startsWith("EXP-PORT-")).length;
+  // cve (not cveId) — that is the actual schema column name
+  const exposedPortsCount = allFindings.filter(f => f.cve?.startsWith("EXP-PORT-")).length;
 
   const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(severity => ({
     severity,
@@ -287,11 +288,14 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     };
   });
 
+  const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r.score]));
+
+  // amPortfolio: look up assigned clients from allTenantsRaw (any tenant can be a client)
   const amPortfolio = amUsers.map(am => {
     const assignedTenantIds = allAmAssignments
       .filter(a => a.accountManagerUserId === am.id)
       .map(a => a.clientTenantId);
-    const assignedTenants = allTenants.filter(t => assignedTenantIds.includes(t.id));
+    const assignedTenants = allTenantsRaw.filter(t => assignedTenantIds.includes(t.id));
     return {
       amId: am.id,
       amName: `${am.firstName} ${am.lastName}`.trim() || am.email,
@@ -309,8 +313,8 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     };
   });
 
-  const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r.score]));
-  const clientRiskRankings = allTenants.map(t => {
+  // clientRiskRankings: include ALL tenants ranked by risk (SA sees full picture)
+  const clientRiskRankings = allTenantsRaw.map(t => {
     const clientAssets = allAssets.filter(a => a.tenantId === t.id);
     const scores = clientAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
     const avgRisk = scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r, 0) / scores.length) : 0;
@@ -328,12 +332,13 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
 
   const recentAlerts = allAlerts.slice(0, 8).map(a => ({
     id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
-    type: a.type, status: a.status,
+    type: a.type,
     createdAt: a.createdAt.toISOString(),
-    clientName: allTenants.find(t => t.id === a.tenantId)?.name ?? "Unknown",
+    clientName: allTenantsRaw.find(t => t.id === a.tenantId)?.name ?? "Unknown",
   }));
 
-  const tenantMetrics = allTenants.map(t => ({
+  // tenantMetrics: show ALL tenants (SA can see own platform tenant too)
+  const tenantMetrics = allTenantsRaw.map(t => ({
     id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
     createdAt: t.createdAt.toISOString(),
     userCount: allUsers.filter(u => u.tenantId === t.id).length,
@@ -345,8 +350,9 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   }));
 
   res.json({
-    tenantCount: allTenants.length,
-    activeTenantCount: allTenants.filter(t => t.isActive).length,
+    // "Total Clients" = non-platform client orgs only
+    tenantCount: clientTenants.length,
+    activeTenantCount: clientTenants.filter(t => t.isActive).length,
     amCount,
     clientsAtCriticalRisk,
     userCount: allUsers.length,
