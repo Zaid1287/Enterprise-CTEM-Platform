@@ -71,7 +71,7 @@ router.get("/tenants/:tenantId", requireAuth, async (req: AuthenticatedRequest, 
 });
 
 // ── Assign an account manager to a tenant ────────────────────────────────────
-router.post("/tenants/:tenantId/managers", requireAuth, requireRole("super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+router.post("/tenants/:tenantId/managers", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = Number(req.params.tenantId);
   const amUserId = Number(req.body?.accountManagerUserId);
   if (isNaN(tenantId) || isNaN(amUserId)) { res.status(400).json({ error: "tenantId and accountManagerUserId required" }); return; }
@@ -93,7 +93,7 @@ router.post("/tenants/:tenantId/managers", requireAuth, requireRole("super_admin
 });
 
 // ── Unassign an account manager from a tenant ─────────────────────────────────
-router.delete("/tenants/:tenantId/managers/:amUserId", requireAuth, requireRole("super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+router.delete("/tenants/:tenantId/managers/:amUserId", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = Number(req.params.tenantId);
   const amUserId = Number(req.params.amUserId);
   if (isNaN(tenantId) || isNaN(amUserId)) { res.status(400).json({ error: "Invalid IDs" }); return; }

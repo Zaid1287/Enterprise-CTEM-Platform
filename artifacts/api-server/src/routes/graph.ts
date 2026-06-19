@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import {
   db,
   assetsTable,
@@ -7,6 +7,7 @@ import {
   tenantsTable,
 } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { getAmClientTenantIds } from "../lib/amScoping";
 
 const router = Router();
 
@@ -24,29 +25,56 @@ const router = Router();
  *   cve-<cve>              CVE reference (virtual, deduplicated)
  */
 router.get("/graph/attack-surface", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
   const tenantId = req.user!.tenantId;
 
-  const [tenant, assets, findings] = await Promise.all([
-    db.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId)).then(r => r[0]),
-    db.select().from(assetsTable).where(and(eq(assetsTable.tenantId, tenantId), eq(assetsTable.isActive, true))),
-    db.select().from(findingsTable).where(and(eq(findingsTable.tenantId, tenantId), eq(findingsTable.isFalsePositive, false))),
+  // AM sees a combined graph of all their assigned client tenants
+  let clientTenantIds: number[] = [];
+  let isAm = false;
+  if (role === "account_manager") {
+    isAm = true;
+    clientTenantIds = await getAmClientTenantIds(req.user!.userId);
+    if (clientTenantIds.length === 0) {
+      res.json({ nodes: [], relationships: [], meta: { nodeCount: 0, relationshipCount: 0, assetCount: 0, findingCount: 0, cveCount: 0 } });
+      return;
+    }
+  }
+
+  const assetWhere = isAm
+    ? and(inArray(assetsTable.tenantId, clientTenantIds), eq(assetsTable.isActive, true))
+    : and(eq(assetsTable.tenantId, tenantId), eq(assetsTable.isActive, true));
+
+  const findingWhere = isAm
+    ? and(inArray(findingsTable.tenantId, clientTenantIds), eq(findingsTable.isFalsePositive, false))
+    : and(eq(findingsTable.tenantId, tenantId), eq(findingsTable.isFalsePositive, false));
+
+  const tenantIds = isAm ? clientTenantIds : [tenantId];
+
+  const [tenants, assets, findings] = await Promise.all([
+    db.select().from(tenantsTable).where(inArray(tenantsTable.id, tenantIds)),
+    db.select().from(assetsTable).where(assetWhere),
+    db.select().from(findingsTable).where(findingWhere),
   ]);
+
+  const tenantMap = new Map(tenants.map(t => [t.id, t]));
 
   const nodes: any[] = [];
   const relationships: any[] = [];
   const seenCves = new Set<string>();
 
-  // ── Organization node ──────────────────────────────────────────────────────
-  const orgId = `org-${tenantId}`;
-  nodes.push({
-    id: orgId,
-    labels: ["Organization"],
-    properties: {
-      name: tenant?.name ?? "Your Organization",
-      tenantId,
-      plan: tenant?.plan ?? "starter",
-    },
-  });
+  // ── Organization node(s) ───────────────────────────────────────────────────
+  for (const t of tenants) {
+    const orgId = `org-${t.id}`;
+    nodes.push({
+      id: orgId,
+      labels: ["Organization"],
+      properties: {
+        name: t.name ?? "Organization",
+        tenantId: t.id,
+        plan: t.plan ?? "starter",
+      },
+    });
+  }
 
   // ── Asset nodes + edges ────────────────────────────────────────────────────
   const assetMap = new Map(assets.map(a => [a.id, a]));
@@ -72,11 +100,11 @@ router.get("/graph/attack-surface", requireAuth, async (req: AuthenticatedReques
       },
     });
 
-    // Org → Asset (OWNS)
+    // Org → Asset (OWNS) — each asset links to its own tenant's org node
     relationships.push({
       id: `r-owns-${asset.id}`,
       type: "OWNS",
-      startNodeId: orgId,
+      startNodeId: `org-${asset.tenantId}`,
       endNodeId: nodeId,
     });
 
