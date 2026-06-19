@@ -481,6 +481,33 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   res.json({ verified: true, message: "Asset ownership successfully verified." });
 });
 
+// ── Manual Verification (admin / super_admin only) ────────────────────────
+router.post("/assets/:assetId/verify/manual", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+  if (role !== "admin" && role !== "super_admin" && role !== "manager") {
+    res.status(403).json({ error: "Only administrators can manually verify assets." });
+    return;
+  }
+  const assetId = parseInt(req.params.assetId, 10);
+  if (isNaN(assetId)) { res.status(400).json({ error: "Invalid asset ID" }); return; }
+
+  const [asset] = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  if (asset.verificationStatus === "verified") {
+    res.json({ verified: true, message: "Asset is already verified." });
+    return;
+  }
+
+  await db.update(assetsTable)
+    .set({ verificationStatus: "verified", verificationToken: null })
+    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+
+  await logAudit(req.user!, "manual_verify_asset", "asset", assetId);
+  res.json({ verified: true, message: "Asset ownership manually verified by administrator." });
+});
+
 // ── Technology Detection ─────────────────────────────────────────────────
 
 // List stored technology detections for an asset

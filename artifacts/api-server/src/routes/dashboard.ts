@@ -79,10 +79,11 @@ router.get("/dashboard/risk-trend", requireAuth, async (req: AuthenticatedReques
     dayEnd.setDate(dayEnd.getDate() - (days - 1 - i));
     dayEnd.setHours(23, 59, 59, 999);
 
+    const closedStatuses = ["mitigated", "accepted_risk", "false_positive"];
     const openOnDay = findings.filter(f => {
       const created = new Date(f.createdAt);
       if (created > dayEnd) return false;
-      if (f.status === "resolved") {
+      if (closedStatuses.includes(f.status)) {
         const updated = new Date(f.updatedAt);
         return updated > dayEnd;
       }
@@ -224,8 +225,19 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   ]);
 
   const assetIds = allAssets.map(a => a.id);
-  const allRiskScores = assetIds.length > 0
-    ? await db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+  const [allRiskScores, allAmAssignments] = await Promise.all([
+    assetIds.length > 0
+      ? db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+      : Promise.resolve([]),
+    db.select().from(accountManagerClientsTable),
+  ]);
+
+  const amUserIds = [...new Set(allAmAssignments.map(a => a.accountManagerUserId))];
+  const amUsers = amUserIds.length > 0
+    ? await db.select({
+        id: usersTable.id, email: usersTable.email,
+        firstName: usersTable.firstName, lastName: usersTable.lastName,
+      }).from(usersTable).where(inArray(usersTable.id, amUserIds))
     : [];
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -239,8 +251,9 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
     : 0;
 
+  const CLOSED_STATUSES = ["mitigated", "accepted_risk", "false_positive"];
   const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
-  const resolvedVulns7D = allFindings.filter(f => f.status === "resolved" && new Date(f.updatedAt) >= sevenDaysAgo).length;
+  const resolvedVulns7D = allFindings.filter(f => CLOSED_STATUSES.includes(f.status) && new Date(f.updatedAt) >= sevenDaysAgo).length;
   const exposedPortsCount = allFindings.filter(f => f.cveId?.startsWith("EXP-PORT-")).length;
 
   const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(severity => ({
@@ -258,7 +271,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     const openOnDay = allFindings.filter(f => {
       const created = new Date(f.createdAt);
       if (created > dayEnd) return false;
-      if (f.status === "resolved") return new Date(f.updatedAt) > dayEnd;
+      if (CLOSED_STATUSES.includes(f.status)) return new Date(f.updatedAt) > dayEnd;
       return true;
     });
     let penalty = 0;
@@ -271,6 +284,28 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     return {
       date: dayEnd.toISOString().split("T")[0],
       value: Math.max(0, Math.min(100, 100 - Math.round(penalty / assetCountForTrend))),
+    };
+  });
+
+  const amPortfolio = amUsers.map(am => {
+    const assignedTenantIds = allAmAssignments
+      .filter(a => a.accountManagerUserId === am.id)
+      .map(a => a.clientTenantId);
+    const assignedTenants = allTenants.filter(t => assignedTenantIds.includes(t.id));
+    return {
+      amId: am.id,
+      amName: `${am.firstName} ${am.lastName}`.trim() || am.email,
+      amEmail: am.email,
+      clientCount: assignedTenants.length,
+      clients: assignedTenants.map(t => ({
+        id: t.id,
+        name: t.name,
+        plan: t.plan,
+        isActive: t.isActive,
+        criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
+        openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
+        assetCount: allAssets.filter(a => a.tenantId === t.id).length,
+      })),
     };
   });
 
@@ -333,6 +368,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     recentAlerts,
     riskTrend,
     tenants: tenantMetrics,
+    amPortfolio,
   });
 });
 
@@ -758,9 +794,25 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   ]);
 
   const assetIds = allAssets.map(a => a.id);
-  const allRiskScores = assetIds.length > 0
-    ? await db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+  const [allRiskScores, tenantAmAssignments] = await Promise.all([
+    assetIds.length > 0
+      ? db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+      : Promise.resolve([]),
+    db.select().from(accountManagerClientsTable)
+      .where(eq(accountManagerClientsTable.clientTenantId, tid)),
+  ]);
+
+  const tenantAmUserIds = [...new Set(tenantAmAssignments.map(a => a.accountManagerUserId))];
+  const tenantAmUsers = tenantAmUserIds.length > 0
+    ? await db.select({ id: usersTable.id, email: usersTable.email, firstName: usersTable.firstName, lastName: usersTable.lastName })
+      .from(usersTable).where(inArray(usersTable.id, tenantAmUserIds))
     : [];
+
+  const amPortfolio = tenantAmUsers.map(am => ({
+    amId: am.id,
+    amName: `${am.firstName} ${am.lastName}`.trim() || am.email,
+    amEmail: am.email,
+  }));
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -769,8 +821,9 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
     : 0;
 
   const openAlertsCount = allAlerts.filter(a => !a.isRead).length;
+  const CLOSED_STATUSES_ADMIN = ["mitigated", "accepted_risk", "false_positive"];
   const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
-  const resolvedVulns7D = allFindings.filter(f => f.status === "resolved" && new Date(f.updatedAt) >= sevenDaysAgo).length;
+  const resolvedVulns7D = allFindings.filter(f => CLOSED_STATUSES_ADMIN.includes(f.status) && new Date(f.updatedAt) >= sevenDaysAgo).length;
   const exposedPortsCount = allFindings.filter(f => f.cveId?.startsWith("EXP-PORT-")).length;
 
   const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(severity => ({
@@ -788,7 +841,7 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
     const openOnDay = allFindings.filter(f => {
       const created = new Date(f.createdAt);
       if (created > dayEnd) return false;
-      if (f.status === "resolved") return new Date(f.updatedAt) > dayEnd;
+      if (CLOSED_STATUSES_ADMIN.includes(f.status)) return new Date(f.updatedAt) > dayEnd;
       return true;
     });
     let penalty = 0;
@@ -843,6 +896,7 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
     assetRiskRankings,
     recentAlerts,
     riskTrend,
+    amPortfolio,
   });
 });
 

@@ -80,6 +80,7 @@ export default function AssetsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isClient = user?.role === "client";
+  const isAdminOrSuperAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -115,6 +116,7 @@ export default function AssetsPage() {
 
   // Inline verify
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
+  const [manualVerifyingId, setManualVerifyingId] = useState<number | null>(null);
   const [stoppingId, setStoppingId] = useState<number | null>(null);
   const [showRunScan, setShowRunScan] = useState(false);
   const [preSelectedAssetIds, setPreSelectedAssetIds] = useState<number[]>([]);
@@ -328,6 +330,19 @@ export default function AssetsPage() {
     setVerifyExtra({});
     setVerifyMsg("");
     setShowVerify(true);
+  };
+
+  const handleManualVerify = async (assetId: number) => {
+    setManualVerifyingId(assetId);
+    try {
+      await apiFetch(`${BASE}/api/assets/${assetId}/verify/manual`, { method: "POST" });
+      toast({ title: "Asset verified", description: "Asset manually verified by administrator." });
+      queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    } catch (err: any) {
+      toast({ title: "Verification failed", description: err?.message ?? "Could not verify asset", variant: "destructive" });
+    } finally {
+      setManualVerifyingId(null);
+    }
   };
 
   const handleStop = async (scanId: number) => {
@@ -605,16 +620,30 @@ export default function AssetsPage() {
                         <Pencil className="w-3.5 h-3.5" />
                       </Button>
                       {asset.verificationStatus !== "verified" && (
-                        <Button
-                          variant="ghost" size="icon" className="h-7 w-7 text-amber-500 hover:text-amber-400"
-                          disabled={verifyingId === asset.id}
-                          onClick={() => handleInlineVerify(asset)}
-                          title="Verify ownership"
-                        >
-                          {verifyingId === asset.id
-                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            : <ShieldCheck className="w-3.5 h-3.5" />}
-                        </Button>
+                        <>
+                          <Button
+                            variant="ghost" size="icon" className="h-7 w-7 text-amber-500 hover:text-amber-400"
+                            disabled={verifyingId === asset.id}
+                            onClick={() => handleInlineVerify(asset)}
+                            title="Standard verification (DNS / HTTP / Email)"
+                          >
+                            {verifyingId === asset.id
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <ShieldCheck className="w-3.5 h-3.5" />}
+                          </Button>
+                          {isAdminOrSuperAdmin && (
+                            <Button
+                              variant="ghost" size="icon" className="h-7 w-7 text-green-500 hover:text-green-400"
+                              disabled={manualVerifyingId === asset.id}
+                              onClick={() => handleManualVerify(asset.id)}
+                              title="Manually verify (admin override)"
+                            >
+                              {manualVerifyingId === asset.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            </Button>
+                          )}
+                        </>
                       )}
                       <Link href={`/assets/${asset.id}`}>
                         <Button variant="ghost" size="icon" className="h-7 w-7" title="View details">

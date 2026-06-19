@@ -193,20 +193,6 @@ export function Sidebar() {
         </button>
       )}
 
-      {/* Role badge — hidden for client and account_manager roles */}
-      {!collapsed && role !== "client" && role !== "account_manager" && (
-        <div className="px-4 py-2 border-b border-sidebar-border">
-          <span className={cn(
-            "text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider",
-            role === "super_admin"     ? "bg-purple-500/20 text-purple-400 border border-purple-500/30" :
-            role === "account_manager" ? "bg-blue-500/20   text-blue-400   border border-blue-500/30"   :
-            role === "admin"           ? "bg-green-500/20  text-green-400  border border-green-500/30"   :
-                                         "bg-muted text-muted-foreground border border-border"
-          )}>
-            {role.replace(/_/g, " ")}
-          </span>
-        </div>
-      )}
 
       {/* Navigation */}
       <nav className={cn("flex-1 py-3 space-y-4", collapsed ? "px-1.5" : "px-3")}>

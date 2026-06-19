@@ -21,7 +21,7 @@ import {
 import {
   Server, Bug, ShieldCheck, Radar, Bell, TrendingUp, TrendingDown,
   AlertTriangle, Building2, Users, Shield, Target, ArrowRight,
-  ShieldAlert, Activity, Globe, Clock, CheckCircle2, XCircle, Loader2,
+  ShieldAlert, Activity, Globe, Clock, CheckCircle2, XCircle, Loader2, Briefcase,
 } from "lucide-react";
 import { Link } from "wouter";
 import { cn, riskLevelBg, capitalize } from "@/lib/utils";
@@ -88,6 +88,7 @@ function SuperAdminDashboard() {
   const riskTrend: any[] = d.riskTrend ?? [];
   const severityBreakdown: any[] = d.severityBreakdown ?? [];
   const clientRiskRankings: any[] = d.clientRiskRankings ?? [];
+  const amPortfolio: any[] = d.amPortfolio ?? [];
   const recentAlerts: any[] = d.recentAlerts ?? [];
 
   const riskColor = d.platformRiskScore >= 70 ? "text-red-400" : d.platformRiskScore >= 40 ? "text-amber-400" : "text-green-400";
@@ -335,6 +336,62 @@ function SuperAdminDashboard() {
             </div>
           </Link>
         </div>
+      </div>
+
+      {/* AM Portfolio */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Briefcase className="w-4 h-4 text-muted-foreground" /> Account Manager Portfolio
+          </h3>
+          <span className="text-xs text-muted-foreground">{amPortfolio.length} account managers</span>
+        </div>
+        {amPortfolio.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground">No account manager assignments configured yet.</div>
+        ) : (
+          <div className="divide-y divide-border/50">
+            {amPortfolio.map((am: any) => (
+              <div key={am.amId} className="px-4 py-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-9 h-9 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-sm font-bold text-blue-400">{am.amName.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{am.amName}</p>
+                    <p className="text-xs text-muted-foreground truncate">{am.amEmail}</p>
+                  </div>
+                  <Badge variant="outline" className="text-xs flex-shrink-0">
+                    {am.clientCount} {am.clientCount === 1 ? "client" : "clients"}
+                  </Badge>
+                </div>
+                {am.clients.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 ml-12">
+                    {am.clients.map((c: any) => (
+                      <div key={c.id} className="bg-accent/30 border border-border/50 rounded-lg px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium truncate">{c.name}</p>
+                          <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium border flex-shrink-0",
+                            c.isActive
+                              ? "bg-green-500/15 text-green-400 border-green-500/30"
+                              : "bg-muted text-muted-foreground border-border")}>
+                            {c.isActive ? "Active" : "Inactive"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          <span className="text-[10px] text-muted-foreground">{c.assetCount} assets</span>
+                          {c.criticalCount > 0 && <span className="text-[10px] text-red-400 font-medium">{c.criticalCount} critical</span>}
+                          {c.openFindingCount > 0 && <span className="text-[10px] text-amber-400">{c.openFindingCount} open</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground ml-12">No clients assigned.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Full Client Table */}
@@ -906,6 +963,7 @@ function AdminDashboard() {
   const riskTrend: any[] = d.riskTrend ?? [];
   const severityBreakdown: any[] = d.severityBreakdown ?? [];
   const assetRiskRankings: any[] = d.assetRiskRankings ?? [];
+  const amPortfolioAdmin: any[] = d.amPortfolio ?? [];
   const recentAlerts: any[] = d.recentAlerts ?? [];
 
   const riskColor = d.riskScore >= 70 ? "text-red-400" : d.riskScore >= 40 ? "text-amber-400" : "text-green-400";
@@ -1162,6 +1220,32 @@ function AdminDashboard() {
           </Link>
         </div>
       </div>
+
+      {/* AM Portfolio — who manages this account */}
+      {amPortfolioAdmin.length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Briefcase className="w-4 h-4 text-muted-foreground" /> Your Account Managers
+            </h3>
+            <span className="text-xs text-muted-foreground">{amPortfolioAdmin.length} assigned</span>
+          </div>
+          <div className="divide-y divide-border/50">
+            {amPortfolioAdmin.map((am: any) => (
+              <div key={am.amId} className="px-4 py-3 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+                  <span className="text-sm font-bold text-blue-400">{am.amName.charAt(0).toUpperCase()}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{am.amName}</p>
+                  <p className="text-xs text-muted-foreground truncate">{am.amEmail}</p>
+                </div>
+                <Badge variant="outline" className="text-xs flex-shrink-0 text-blue-400 border-blue-500/30">Account Manager</Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Asset Type Breakdown */}
       <div className="bg-card border border-border rounded-xl p-4">
