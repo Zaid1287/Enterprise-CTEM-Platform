@@ -29,41 +29,6 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "aikeys",   label: "AI Keys",       icon: KeyRound },
 ];
 
-const PLAN_TIERS = [
-  {
-    name: "Starter",
-    slug: "starter",
-    price: "$49",
-    period: "/month",
-    description: "For small teams getting started with threat exposure management.",
-    maxAssets: 25,
-    maxUsers: 5,
-    features: ["25 assets", "5 users", "Core vulnerability scanning", "Basic compliance reports", "Email alerts", "7-day data retention"],
-    highlight: false,
-  },
-  {
-    name: "Pro",
-    slug: "pro",
-    price: "$199",
-    period: "/month",
-    description: "Full CTEM capabilities for growing security teams.",
-    maxAssets: 200,
-    maxUsers: 25,
-    features: ["200 assets", "25 users", "All scanning tools", "Full compliance suite", "AI Copilot", "Takedown requests", "API access", "30-day data retention"],
-    highlight: true,
-  },
-  {
-    name: "Enterprise",
-    slug: "enterprise",
-    price: "Custom",
-    period: "",
-    description: "Unlimited scale with dedicated support and custom integrations.",
-    maxAssets: null,
-    maxUsers: null,
-    features: ["Unlimited assets", "Unlimited users", "Custom integrations", "Dedicated account manager", "SLA guarantee", "On-prem option", "Unlimited retention"],
-    highlight: false,
-  },
-];
 
 export default function AccountSettingsPage() {
   const [tab, setTab] = useState<Tab>("profile");
@@ -872,6 +837,13 @@ function BillingTab({ user }: { user: any }) {
     enabled: !!user?.tenantId,
   });
 
+  // Real packages created by super admin
+  const { data: packages = [], isLoading: pkgsLoading } = useQuery<any[]>({
+    queryKey: ["packages"],
+    queryFn: () => (apiFetch(`${BASE}/api/packages`) as Promise<any[]>).catch(() => []),
+    staleTime: 60_000,
+  });
+
   const { data: stripeData } = useQuery({
     queryKey: ["stripe-products"],
     queryFn: (): Promise<{ products: any[] }> =>
@@ -886,12 +858,13 @@ function BillingTab({ user }: { user: any }) {
     enabled: !!user,
   });
 
-  const currentPlan = tenantData?.plan ?? "starter";
+  // Current plan string from tenant record (e.g. "starter", "professional")
+  const currentPlan = (tenantData?.plan ?? "").toLowerCase();
   const hasStripeProducts = (stripeData?.products?.length ?? 0) > 0;
   const activeSub = subData?.subscription;
 
-  async function handleCheckout(priceId: string, planSlug: string) {
-    setCheckoutLoading(planSlug);
+  async function handleCheckout(priceId: string, planKey: string) {
+    setCheckoutLoading(planKey);
     try {
       const { url } = await apiFetch(`${BASE}/api/stripe/checkout`, {
         method: "POST",
@@ -917,23 +890,39 @@ function BillingTab({ user }: { user: any }) {
     }
   }
 
-  // Build display plan list — prefer Stripe products, fallback to static PLAN_TIERS
-  const displayPlans = hasStripeProducts
-    ? PLAN_TIERS.map(tier => {
-        const product = stripeData!.products.find((p: any) =>
-          p.metadata?.slug === tier.slug || p.name.toLowerCase() === tier.name.toLowerCase()
-        );
-        const monthlyPrice = product?.prices?.find((p: any) => p.recurring?.interval === "month");
-        return {
-          ...tier,
-          stripeProductId: product?.id ?? null,
-          stripePriceId: monthlyPrice?.id ?? null,
-          stripePrice: monthlyPrice
-            ? `$${(monthlyPrice.unitAmount / 100).toFixed(0)}`
-            : tier.price,
-        };
-      })
-    : PLAN_TIERS.map(t => ({ ...t, stripeProductId: null, stripePriceId: null, stripePrice: t.price }));
+  // Build display plan list from real packages (DB), enriched with Stripe pricing if available.
+  // Derive a slug from the package name to match against tenantData.plan.
+  const displayPlans = packages
+    .filter((pkg: any) => pkg.isActive)
+    .map((pkg: any, idx: number) => {
+      const slug = pkg.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const stripeProduct = hasStripeProducts
+        ? stripeData!.products.find((p: any) =>
+            p.metadata?.packageId === String(pkg.id) ||
+            p.metadata?.slug === slug ||
+            p.name.toLowerCase() === pkg.name.toLowerCase()
+          )
+        : null;
+      const monthlyPrice = stripeProduct?.prices?.find((p: any) => p.recurring?.interval === "month");
+      const priceDisplay = monthlyPrice
+        ? `$${(monthlyPrice.unitAmount / 100).toFixed(0)}`
+        : pkg.price > 0 ? `$${Number(pkg.price).toFixed(0)}` : "Free";
+      return {
+        id: pkg.id,
+        slug,
+        name: pkg.name,
+        description: pkg.description ?? "",
+        price: priceDisplay,
+        priceRaw: Number(pkg.price),
+        maxAssets: pkg.maxAssets,
+        maxUsers: pkg.maxUsers,
+        features: Array.isArray(pkg.features) ? pkg.features : [],
+        highlight: idx === 1 && packages.length >= 2, // middle package is "most popular"
+        isEnterprise: pkg.price === 0 && pkg.maxAssets === null,
+        stripeProductId: stripeProduct?.id ?? null,
+        stripePriceId: monthlyPrice?.id ?? null,
+      };
+    });
 
   return (
     <div className="space-y-5">
@@ -974,17 +963,32 @@ function BillingTab({ user }: { user: any }) {
         </div>
       </div>
 
-      {/* Plan tiers */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {displayPlans.map(plan => {
-          const isCurrent = plan.slug === currentPlan;
-          const isEnterprise = plan.slug === "enterprise";
-          const isHigherTier = PLAN_TIERS.findIndex(p => p.slug === plan.slug) > PLAN_TIERS.findIndex(p => p.slug === currentPlan);
+      {/* Plan tiers — from real packages created by super admin */}
+      {pkgsLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="rounded-xl border border-border bg-card p-5 space-y-3 animate-pulse">
+              <div className="h-4 w-24 bg-muted rounded" />
+              <div className="h-8 w-16 bg-muted rounded" />
+              <div className="space-y-2">{[...Array(4)].map((_, j) => <div key={j} className="h-3 bg-muted rounded" />)}</div>
+            </div>
+          ))}
+        </div>
+      ) : displayPlans.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border p-8 text-center text-muted-foreground">
+          <p className="text-sm">No plans available. Contact your administrator.</p>
+        </div>
+      ) : (
+      <div className={`grid grid-cols-1 gap-4 ${displayPlans.length <= 2 ? "md:grid-cols-2" : "md:grid-cols-3"}`}>
+        {displayPlans.map((plan, idx) => {
+          const isCurrent = plan.slug === currentPlan ||
+            plan.name.toLowerCase() === currentPlan ||
+            plan.name.toLowerCase().replace(/\s+/g, "") === currentPlan.replace(/\s+/g, "");
           const loading = checkoutLoading === plan.slug;
 
           return (
             <div
-              key={plan.slug}
+              key={plan.id}
               className={cn(
                 "rounded-xl border p-5 space-y-4 relative",
                 plan.highlight ? "border-primary/50 bg-primary/5" : "border-border bg-card",
@@ -1005,27 +1009,37 @@ function BillingTab({ user }: { user: any }) {
               <div>
                 <p className="font-semibold text-base">{plan.name}</p>
                 <div className="flex items-baseline gap-1 mt-1">
-                  <span className="text-2xl font-bold">{plan.stripePrice ?? plan.price}</span>
-                  {!isEnterprise && <span className="text-sm text-muted-foreground">/month</span>}
+                  <span className="text-2xl font-bold">{plan.price}</span>
+                  {plan.priceRaw > 0 && <span className="text-sm text-muted-foreground">/month</span>}
                 </div>
-                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{plan.description}</p>
+                {(plan.maxAssets !== null || plan.maxUsers !== null) && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {plan.maxAssets !== null ? `${plan.maxAssets} assets` : "Unlimited assets"}
+                    {plan.maxUsers !== null ? ` · ${plan.maxUsers} users` : " · Unlimited users"}
+                  </p>
+                )}
+                {plan.description && (
+                  <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{plan.description}</p>
+                )}
               </div>
 
-              <ul className="space-y-1.5">
-                {plan.features.map(f => (
-                  <li key={f} className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
+              {plan.features.length > 0 && (
+                <ul className="space-y-1.5">
+                  {plan.features.map((f: string) => (
+                    <li key={f} className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               {isCurrent ? (
                 <Button size="sm" variant="outline" disabled className="w-full">
                   <CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-green-400" /> Active Plan
                 </Button>
-              ) : isEnterprise ? (
-                <a href="mailto:sales@sentinelware.io?subject=Enterprise Plan Enquiry" className="block">
+              ) : plan.isEnterprise || plan.priceRaw === 0 ? (
+                <a href="mailto:sales@sentinelware.io?subject=Plan Enquiry" className="block">
                   <Button size="sm" variant="outline" className="w-full">
                     <Mail className="w-3.5 h-3.5 mr-1.5" /> Contact Sales
                   </Button>
@@ -1040,14 +1054,14 @@ function BillingTab({ user }: { user: any }) {
                 >
                   {loading
                     ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Processing…</>
-                    : <><ArrowUpRight className="w-3.5 h-3.5 mr-1.5" />{isHigherTier ? "Upgrade" : "Switch"}</>
+                    : <><ArrowUpRight className="w-3.5 h-3.5 mr-1.5" />{idx > displayPlans.findIndex(p => p.slug === currentPlan || p.name.toLowerCase() === currentPlan) ? "Upgrade" : "Switch"}</>
                   }
                 </Button>
               ) : (
                 <a href="mailto:sales@sentinelware.io?subject=Plan Change Request" className="block">
                   <Button size="sm" variant={plan.highlight ? "default" : "outline"} className="w-full">
                     <ArrowUpRight className="w-3.5 h-3.5 mr-1.5" />
-                    {isHigherTier ? "Upgrade" : "Switch"}
+                    Contact Sales
                   </Button>
                 </a>
               )}
@@ -1055,6 +1069,7 @@ function BillingTab({ user }: { user: any }) {
           );
         })}
       </div>
+      )}
 
       {/* Billing portal shortcut if subscribed */}
       {activeSub && (

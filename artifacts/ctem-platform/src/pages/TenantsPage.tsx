@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp,
   UserCheck, X, Globe, Shield, Cpu, Network, Code2, Cloud, Smartphone,
-  Lock, Trash2, Loader2, Zap,
+  Lock, Trash2, Loader2, Pencil, MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,17 +14,22 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Slider } from "@/components/ui/slider";
 import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn, formatDate } from "@/lib/utils";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
 interface TenantRow {
   id: number; name: string; slug: string; plan: string; isActive: boolean;
-  createdAt: string; userCount: number; assetCount: number;
+  parentTenantId: number | null; createdAt: string;
+  userCount: number; assetCount: number;
   findingCount: number; criticalCount: number; openFindingCount: number;
   assignedManagers: Array<{ id: number; name: string; email: string }>;
 }
@@ -33,12 +38,17 @@ interface UserRow {
 }
 interface AssetRow {
   id: number; name: string; type: string; value: string;
-  verificationStatus: string; scanFrequency: string; riskLevel: string; lastScannedAt: string | null;
+  verificationStatus: string; isActive: boolean;
+  scanFrequency: string; riskLevel: string; businessImpact: number | null;
+  lastScannedAt: string | null;
+}
+interface PkgData {
+  id: number; name: string; price: number;
+  maxAssets: number | null; maxUsers: number | null; isActive: boolean;
 }
 
-// ── Constants (matching AssetsPage exactly) ───────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const PLANS = ["starter", "professional", "enterprise"];
 
 const TYPE_CONFIG: Record<string, { label: string; valueLabel: string; valuePlaceholder: string }> = {
   domain:       { label: "Domain",           valueLabel: "Domain",             valuePlaceholder: "example.com"                },
@@ -63,15 +73,120 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
   domain: Globe, subdomain: Globe, url: Code2, ip: Cpu, cidr: Network,
   api: Code2, ssl_cert: Lock, cloud_asset: Cloud, host: Server, mobile_app: Smartphone,
 };
+const RISK_COLORS: Record<string, string> = {
+  critical: "bg-red-500/15 text-red-400",
+  high:     "bg-orange-500/15 text-orange-400",
+  medium:   "bg-yellow-500/15 text-yellow-400",
+  low:      "bg-blue-500/15 text-blue-400",
+  info:     "bg-muted/40 text-muted-foreground",
+};
 
 function typeLabel(t: string) { return TYPE_CONFIG[t]?.label ?? t; }
 function typeValueLabel(t: string) { return TYPE_CONFIG[t]?.valueLabel ?? "Value"; }
 function typeValuePlaceholder(t: string) { return TYPE_CONFIG[t]?.valuePlaceholder ?? ""; }
 
-const emptyTenantForm = { name: "", slug: "", plan: "starter" };
-const emptyAssetForm = { name: "", type: "domain", value: "", description: "", scanFrequency: "daily" };
+const emptyTenantForm = { name: "", slug: "", plan: "" };
+const emptyEditForm   = { name: "", plan: "", isActive: true, maxAssets: "", maxUsers: "" };
+const emptyAssetForm  = { name: "", type: "domain", value: "", description: "", scanFrequency: "daily", businessImpact: 5 };
 
 type ActiveTab = "managers" | "assets";
+
+// ── TenantAssetsPanel ─────────────────────────────────────────────────────────
+// Isolated component so each tenant's assets have their own query/cache.
+function TenantAssetsPanel({
+  tenantId, tenantName,
+  onAddAsset, onDeleteAsset,
+}: {
+  tenantId: number; tenantName: string;
+  onAddAsset: () => void;
+  onDeleteAsset: (assetId: number) => void;
+}) {
+  const { data: assets = [], isLoading } = useQuery<AssetRow[]>({
+    queryKey: ["tenant-assets", tenantId],
+    queryFn: () => apiFetch(`${BASE}/api/tenants/${tenantId}/assets`),
+    staleTime: 30_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-1.5">
+        {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-9 rounded-lg" />)}
+      </div>
+    );
+  }
+
+  if (assets.length === 0) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-border rounded-xl cursor-pointer hover:border-primary/40 hover:bg-accent/10 transition-colors"
+        onClick={e => { e.stopPropagation(); onAddAsset(); }}
+      >
+        <Server className="w-8 h-8 text-muted-foreground/30 mb-2" />
+        <p className="text-sm font-medium text-muted-foreground">No assets yet</p>
+        <p className="text-xs text-muted-foreground/60 mt-1">Click to add a domain, IP, URL, or other target</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border overflow-hidden">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-muted/30 border-b border-border">
+            <th className="text-left px-3 py-2 text-muted-foreground font-medium">Name</th>
+            <th className="text-left px-3 py-2 text-muted-foreground font-medium">Type</th>
+            <th className="text-left px-3 py-2 text-muted-foreground font-medium">Value</th>
+            <th className="text-left px-3 py-2 text-muted-foreground font-medium">Frequency</th>
+            <th className="text-left px-3 py-2 text-muted-foreground font-medium">Risk</th>
+            <th className="text-left px-3 py-2 text-muted-foreground font-medium">Verified</th>
+            <th className="text-left px-3 py-2 text-muted-foreground font-medium">Last Scan</th>
+            <th className="w-8 px-3 py-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {assets.map(a => {
+            const Icon = TYPE_ICONS[a.type] ?? Globe;
+            return (
+              <tr key={a.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
+                <td className="px-3 py-2 font-medium">{a.name}</td>
+                <td className="px-3 py-2">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <Icon className="w-3 h-3 shrink-0" />
+                    {typeLabel(a.type)}
+                  </span>
+                </td>
+                <td className="px-3 py-2 font-mono text-muted-foreground max-w-[160px] truncate">{a.value}</td>
+                <td className="px-3 py-2 capitalize text-muted-foreground">{a.scanFrequency}</td>
+                <td className="px-3 py-2">
+                  <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium capitalize", RISK_COLORS[a.riskLevel] ?? RISK_COLORS.info)}>
+                    {a.riskLevel}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  <span className={cn("text-[10px] font-medium", a.verificationStatus === "verified" ? "text-green-400" : "text-muted-foreground/50")}>
+                    {a.verificationStatus === "verified" ? "✓ Verified" : "Unverified"}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-muted-foreground">
+                  {a.lastScannedAt ? formatDate(a.lastScannedAt) : <span className="opacity-40">Never</span>}
+                </td>
+                <td className="px-3 py-2">
+                  <button
+                    onClick={e => { e.stopPropagation(); onDeleteAsset(a.id); }}
+                    className="p-1 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400 transition-colors"
+                    title="Remove asset"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 export default function TenantsPage() {
@@ -87,6 +202,13 @@ export default function TenantsPage() {
   // Create tenant dialog
   const [showCreate, setShowCreate] = useState(false);
   const [tenantForm, setTenantForm] = useState(emptyTenantForm);
+
+  // Edit tenant dialog
+  const [editTarget, setEditTarget] = useState<TenantRow | null>(null);
+  const [editForm, setEditForm] = useState(emptyEditForm);
+
+  // Delete confirmation
+  const [deleteTarget, setDeleteTarget] = useState<TenantRow | null>(null);
 
   // AM assignment dialog
   const [assignTarget, setAssignTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
@@ -107,11 +229,10 @@ export default function TenantsPage() {
     queryFn: () => apiFetch(`${BASE}/api/users`),
   });
 
-  // Fetch assets whenever a tenant row is expanded (regardless of tab)
-  const { data: tenantAssets = [], isLoading: assetsLoading } = useQuery<AssetRow[]>({
-    queryKey: ["tenant-assets", expandedId],
-    queryFn: () => apiFetch(`${BASE}/api/tenants/${expandedId}/assets`),
-    enabled: expandedId !== null,
+  // Packages — used for Plan dropdown
+  const { data: packages = [] } = useQuery<PkgData[]>({
+    queryKey: ["packages"],
+    queryFn: () => apiFetch(`${BASE}/api/packages`),
   });
 
   const amUsers = allUsers.filter(u => u.role === "account_manager");
@@ -124,6 +245,29 @@ export default function TenantsPage() {
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       setShowCreate(false); setTenantForm(emptyTenantForm);
       toast({ title: "Tenant created successfully" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const updateTenantMutation = useMutation({
+    mutationFn: ({ id, ...body }: { id: number } & object) =>
+      apiFetch(`${BASE}/api/tenants/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      setEditTarget(null);
+      toast({ title: "Tenant updated" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteTenantMutation = useMutation({
+    mutationFn: (id: number) =>
+      apiFetch(`${BASE}/api/tenants/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      setDeleteTarget(null);
+      if (expandedId === deleteTarget?.id) setExpandedId(null);
+      toast({ title: "Tenant deleted" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -168,8 +312,8 @@ export default function TenantsPage() {
   const deleteAssetMutation = useMutation({
     mutationFn: ({ tenantId, assetId }: { tenantId: number; assetId: number }) =>
       apiFetch(`${BASE}/api/tenants/${tenantId}/assets/${assetId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tenant-assets", expandedId] });
+    onSuccess: (_, { tenantId }) => {
+      queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       toast({ title: "Asset removed" });
     },
@@ -181,7 +325,29 @@ export default function TenantsPage() {
   function setTab(id: number, tab: ActiveTab) { setActiveTab(p => ({ ...p, [id]: tab })); }
   function toggleRow(id: number) { setExpandedId(prev => prev === id ? null : id); }
 
-  const totalAssets = tenants.reduce((s, t) => s + t.assetCount, 0);
+  function openEdit(t: TenantRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setEditTarget(t);
+    setEditForm({
+      name: t.name,
+      plan: t.plan,
+      isActive: t.isActive,
+      maxAssets: "",
+      maxUsers: "",
+    });
+  }
+
+  function openDelete(t: TenantRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setDeleteTarget(t);
+  }
+
+  // Plan options: packages from DB + free-text fallback if none
+  const planOptions = packages.length > 0
+    ? packages.filter(p => p.isActive).map(p => p.name.toLowerCase().replace(/\s+/g, "-"))
+    : ["starter", "professional", "enterprise"];
+
+  const totalAssets   = tenants.reduce((s, t) => s + t.assetCount, 0);
   const totalFindings = tenants.reduce((s, t) => s + t.findingCount, 0);
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -195,7 +361,7 @@ export default function TenantsPage() {
             Manage client organizations, account managers, and assets
           </p>
         </div>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <Button size="sm" onClick={() => { setTenantForm(emptyTenantForm); setShowCreate(true); }}>
           <Plus className="w-4 h-4 mr-1.5" /> New Tenant
         </Button>
       </div>
@@ -204,9 +370,9 @@ export default function TenantsPage() {
       {isSuperAdmin && (
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: "Total Tenants", value: tenants.length, icon: Building2, color: "text-purple-400" },
-            { label: "Total Assets",  value: totalAssets,    icon: Server,    color: "text-blue-400"   },
-            { label: "Total Findings",value: totalFindings,  icon: Bug,       color: "text-amber-400"  },
+            { label: "Total Tenants",  value: tenants.length, icon: Building2, color: "text-purple-400" },
+            { label: "Total Assets",   value: totalAssets,    icon: Server,    color: "text-blue-400"   },
+            { label: "Total Findings", value: totalFindings,  icon: Bug,       color: "text-amber-400"  },
           ].map(k => (
             <div key={k.label} className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
               <k.icon className={cn("w-6 h-6 shrink-0", k.color)} />
@@ -236,7 +402,7 @@ export default function TenantsPage() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Open Findings</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Critical</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
-                <th className="w-8 px-4 py-2.5" />
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -279,10 +445,48 @@ export default function TenantsPage() {
                         {t.isActive ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {expandedId === t.id
-                        ? <ChevronUp className="w-4 h-4" />
-                        : <ChevronDown className="w-4 h-4" />}
+                    <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        {/* Expand/collapse */}
+                        <button
+                          onClick={e => { e.stopPropagation(); toggleRow(t.id); }}
+                          className="p-1 rounded hover:bg-accent text-muted-foreground transition-colors"
+                          title="View details"
+                        >
+                          {expandedId === t.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+
+                        {/* Actions dropdown */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button className="p-1 rounded hover:bg-accent text-muted-foreground transition-colors">
+                              <MoreHorizontal className="w-4 h-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            <DropdownMenuItem onClick={e => openEdit(t, e)}>
+                              <Pencil className="w-3.5 h-3.5 mr-2" /> Edit Tenant
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={e => { e.stopPropagation(); setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-2" /> Add Asset
+                            </DropdownMenuItem>
+                            {/* Don't show Delete for the user's own tenant */}
+                            {t.id !== user?.tenantId && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={e => openDelete(t, e)}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </td>
                   </tr>
 
@@ -357,7 +561,7 @@ export default function TenantsPage() {
                           <div className="space-y-3">
                             <div className="flex items-center justify-between">
                               <p className="text-xs text-muted-foreground">
-                                Assets listed here are scanned for vulnerabilities. Add domains, IPs, URLs, and more.
+                                Assets from this tenant's inventory — same as their Asset Inventory page.
                               </p>
                               <Button
                                 size="sm" variant="outline" className="text-xs h-8 shrink-0"
@@ -366,77 +570,12 @@ export default function TenantsPage() {
                                 <Plus className="w-3.5 h-3.5 mr-1" /> Add Asset
                               </Button>
                             </div>
-
-                            {assetsLoading ? (
-                              <div className="space-y-1.5">
-                                {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-9 rounded-lg" />)}
-                              </div>
-                            ) : tenantAssets.length === 0 ? (
-                              <div
-                                className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-border rounded-xl cursor-pointer hover:border-primary/40 hover:bg-accent/10 transition-colors"
-                                onClick={e => { e.stopPropagation(); setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
-                              >
-                                <Server className="w-8 h-8 text-muted-foreground/30 mb-2" />
-                                <p className="text-sm font-medium text-muted-foreground">No assets yet</p>
-                                <p className="text-xs text-muted-foreground/60 mt-1">Click to add a domain, IP, URL, or other target</p>
-                              </div>
-                            ) : (
-                              <div className="rounded-lg border border-border overflow-hidden">
-                                <table className="w-full text-xs">
-                                  <thead>
-                                    <tr className="bg-muted/30 border-b border-border">
-                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Name</th>
-                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Type</th>
-                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Value</th>
-                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Frequency</th>
-                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Risk</th>
-                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Last Scan</th>
-                                      <th className="w-8 px-3 py-2" />
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {tenantAssets.map(a => {
-                                      const Icon = TYPE_ICONS[a.type] ?? Globe;
-                                      return (
-                                        <tr key={a.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
-                                          <td className="px-3 py-2 font-medium">{a.name}</td>
-                                          <td className="px-3 py-2">
-                                            <span className="flex items-center gap-1 text-muted-foreground">
-                                              <Icon className="w-3 h-3 shrink-0" />
-                                              {typeLabel(a.type)}
-                                            </span>
-                                          </td>
-                                          <td className="px-3 py-2 font-mono text-muted-foreground max-w-[160px] truncate">{a.value}</td>
-                                          <td className="px-3 py-2 capitalize text-muted-foreground">{a.scanFrequency}</td>
-                                          <td className="px-3 py-2">
-                                            <span className={cn(
-                                              "px-1.5 py-0.5 rounded text-[10px] font-medium capitalize",
-                                              a.riskLevel === "critical" && "bg-red-500/15 text-red-400",
-                                              a.riskLevel === "high"     && "bg-orange-500/15 text-orange-400",
-                                              a.riskLevel === "medium"   && "bg-yellow-500/15 text-yellow-400",
-                                              a.riskLevel === "low"      && "bg-blue-500/15 text-blue-400",
-                                              a.riskLevel === "info"     && "bg-muted text-muted-foreground",
-                                            )}>{a.riskLevel}</span>
-                                          </td>
-                                          <td className="px-3 py-2 text-muted-foreground">
-                                            {a.lastScannedAt ? formatDate(a.lastScannedAt) : <span className="text-muted-foreground/40">Never</span>}
-                                          </td>
-                                          <td className="px-3 py-2">
-                                            <button
-                                              onClick={e => { e.stopPropagation(); deleteAssetMutation.mutate({ tenantId: t.id, assetId: a.id }); }}
-                                              className="p-1 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400 transition-colors"
-                                              title="Delete"
-                                            >
-                                              <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
+                            <TenantAssetsPanel
+                              tenantId={t.id}
+                              tenantName={t.name}
+                              onAddAsset={() => { setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
+                              onDeleteAsset={assetId => deleteAssetMutation.mutate({ tenantId: t.id, assetId })}
+                            />
                           </div>
                         )}
                       </td>
@@ -449,134 +588,253 @@ export default function TenantsPage() {
         </div>
       )}
 
-      {/* ════════════════════════════ Dialogs ════════════════════════════════ */}
-
-      {/* Create Tenant */}
-      <Dialog open={showCreate} onOpenChange={v => { if (!v) { setShowCreate(false); setTenantForm(emptyTenantForm); } }}>
-        <DialogContent className="max-w-md">
+      {/* ── Create Tenant Dialog ───────────────────────────────────────────── */}
+      <Dialog open={showCreate} onOpenChange={v => { if (!v) setShowCreate(false); }}>
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Create New Tenant</DialogTitle>
-            <DialogDescription>Set up a new client organization on the platform.</DialogDescription>
+            <DialogDescription>Add a new client organization to the platform.</DialogDescription>
           </DialogHeader>
-          <form
-            className="space-y-4 mt-1"
-            onSubmit={e => { e.preventDefault(); createTenantMutation.mutate(tenantForm); }}
-          >
+          <form className="space-y-3 mt-2" onSubmit={e => {
+            e.preventDefault();
+            if (!tenantForm.name.trim()) return;
+            const slug = tenantForm.slug.trim() || tenantForm.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+            createTenantMutation.mutate({ name: tenantForm.name.trim(), slug, plan: tenantForm.plan || "starter" });
+          }}>
             <div className="space-y-1.5">
               <Label className="text-xs">Organization Name *</Label>
               <Input
                 value={tenantForm.name}
                 onChange={e => setTenantForm(p => ({ ...p, name: e.target.value }))}
-                placeholder="Acme Corp"
-                required className="h-9"
+                placeholder="Acme Corp" required className="h-9"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Slug *</Label>
+              <Label className="text-xs">Slug <span className="text-muted-foreground">(auto-generated if blank)</span></Label>
               <Input
                 value={tenantForm.slug}
-                onChange={e => setTenantForm(p => ({ ...p, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") }))}
-                placeholder="acme-corp"
-                required className="h-9 font-mono"
+                onChange={e => setTenantForm(p => ({ ...p, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") }))}
+                placeholder="acme-corp" className="h-9 font-mono"
               />
-              <p className="text-[11px] text-muted-foreground">Unique URL-safe identifier. Used internally.</p>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Plan</Label>
-              <Select value={tenantForm.plan} onValueChange={v => setTenantForm(p => ({ ...p, plan: v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PLANS.map(pl => <SelectItem key={pl} value={pl} className="capitalize">{pl.charAt(0).toUpperCase() + pl.slice(1)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {packages.length > 0 ? (
+                <Select value={tenantForm.plan || packages[0]?.name.toLowerCase().replace(/\s+/g, "-") || "starter"} onValueChange={v => setTenantForm(p => ({ ...p, plan: v }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {packages.filter(pk => pk.isActive).map(pk => {
+                      const slug = pk.name.toLowerCase().replace(/\s+/g, "-");
+                      return (
+                        <SelectItem key={pk.id} value={slug}>
+                          {pk.name} {pk.price > 0 ? `· $${pk.price}/mo` : "· Free"} {pk.maxAssets ? `· ${pk.maxAssets} assets` : ""}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select value={tenantForm.plan || "starter"} onValueChange={v => setTenantForm(p => ({ ...p, plan: v }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["starter", "professional", "enterprise"].map(pl => (
+                      <SelectItem key={pl} value={pl} className="capitalize">{pl.charAt(0).toUpperCase() + pl.slice(1)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
-            <DialogFooter>
-              <Button variant="outline" type="button" onClick={() => { setShowCreate(false); setTenantForm(emptyTenantForm); }}>Cancel</Button>
+            <DialogFooter className="mt-4">
+              <Button variant="outline" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
               <Button type="submit" disabled={createTenantMutation.isPending}>
-                {createTenantMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
-                Create Tenant
+                {createTenantMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Creating…</> : "Create Tenant"}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* Assign Account Manager */}
-      <Dialog open={!!assignTarget} onOpenChange={v => { if (!v) { setAssignTarget(null); setSelectedAmId(""); } }}>
-        <DialogContent className="max-w-md">
+      {/* ── Edit Tenant Dialog ─────────────────────────────────────────────── */}
+      <Dialog open={!!editTarget} onOpenChange={v => { if (!v) setEditTarget(null); }}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Assign Account Manager</DialogTitle>
-            <DialogDescription>
-              Assign a manager to <strong>{assignTarget?.tenantName}</strong>. They will see this tenant's data in their dashboard immediately.
-            </DialogDescription>
+            <DialogTitle>Edit Tenant</DialogTitle>
+            <DialogDescription>Update organization settings for {editTarget?.name}.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 mt-2">
-            {amUsers.length === 0 ? (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-amber-400">
-                No account manager users found. Go to <strong>Admin → Users</strong> and create a user with the <strong>account_manager</strong> role first, then come back here.
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <Label className="text-xs">Account Manager</Label>
-                <Select value={selectedAmId} onValueChange={setSelectedAmId}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select account manager..." />
-                  </SelectTrigger>
+          <form className="space-y-3 mt-2" onSubmit={e => {
+            e.preventDefault();
+            if (!editTarget) return;
+            const body: Record<string, unknown> = { name: editForm.name, plan: editForm.plan, isActive: editForm.isActive };
+            if (editForm.maxAssets) body.maxAssets = parseInt(editForm.maxAssets);
+            if (editForm.maxUsers) body.maxUsers = parseInt(editForm.maxUsers);
+            updateTenantMutation.mutate({ id: editTarget.id, ...body });
+          }}>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Organization Name *</Label>
+              <Input
+                value={editForm.name}
+                onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))}
+                required className="h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Plan</Label>
+              {packages.length > 0 ? (
+                <Select value={editForm.plan} onValueChange={v => setEditForm(p => ({ ...p, plan: v }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {amUsers.map(u => (
-                      <SelectItem key={u.id} value={String(u.id)}>
-                        {u.firstName || u.lastName ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() : u.email}
-                        {" · "}{u.email}
-                      </SelectItem>
+                    {packages.filter(pk => pk.isActive).map(pk => {
+                      const slug = pk.name.toLowerCase().replace(/\s+/g, "-");
+                      return (
+                        <SelectItem key={pk.id} value={slug}>
+                          {pk.name} {pk.price > 0 ? `· $${pk.price}/mo` : "· Free"} {pk.maxAssets ? `· ${pk.maxAssets} assets` : ""}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select value={editForm.plan} onValueChange={v => setEditForm(p => ({ ...p, plan: v }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["starter", "professional", "enterprise"].map(pl => (
+                      <SelectItem key={pl} value={pl} className="capitalize">{pl.charAt(0).toUpperCase() + pl.slice(1)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Max Assets <span className="text-muted-foreground">(blank = unlimited)</span></Label>
+                <Input
+                  type="number" min="1"
+                  value={editForm.maxAssets}
+                  onChange={e => setEditForm(p => ({ ...p, maxAssets: e.target.value }))}
+                  placeholder="unlimited" className="h-9"
+                />
               </div>
-            )}
-          </div>
-          <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => { setAssignTarget(null); setSelectedAmId(""); }}>Cancel</Button>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Max Users <span className="text-muted-foreground">(blank = unlimited)</span></Label>
+                <Input
+                  type="number" min="1"
+                  value={editForm.maxUsers}
+                  onChange={e => setEditForm(p => ({ ...p, maxUsers: e.target.value }))}
+                  placeholder="unlimited" className="h-9"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox" id="isActive" checked={editForm.isActive}
+                onChange={e => setEditForm(p => ({ ...p, isActive: e.target.checked }))}
+                className="w-4 h-4 rounded"
+              />
+              <Label htmlFor="isActive" className="text-xs cursor-pointer">Tenant is active</Label>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button variant="outline" type="button" onClick={() => setEditTarget(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateTenantMutation.isPending}>
+                {updateTenantMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Saving…</> : "Save Changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete Confirmation Dialog ─────────────────────────────────────── */}
+      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Tenant</DialogTitle>
+            <DialogDescription>
+              This will permanently delete <strong>{deleteTarget?.name}</strong> and all their assets,
+              users, and findings. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
             <Button
-              disabled={!selectedAmId || assignMutation.isPending || amUsers.length === 0}
-              onClick={() => {
-                if (!assignTarget || !selectedAmId) return;
-                assignMutation.mutate({ tenantId: assignTarget.tenantId, amId: Number(selectedAmId) });
-              }}
+              variant="destructive"
+              disabled={deleteTenantMutation.isPending}
+              onClick={() => deleteTarget && deleteTenantMutation.mutate(deleteTarget.id)}
             >
-              {assignMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
-              Assign
+              {deleteTenantMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Deleting…</> : "Delete Tenant"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Add Asset — matches AssetsPage design exactly */}
-      <Dialog open={!!assetTarget} onOpenChange={v => { if (!v) { setAssetTarget(null); setAssetForm({ ...emptyAssetForm }); } }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      {/* ── Assign Account Manager Dialog ─────────────────────────────────── */}
+      <Dialog open={!!assignTarget} onOpenChange={v => { if (!v) setAssignTarget(null); }}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Asset</DialogTitle>
+            <DialogTitle>Assign Account Manager</DialogTitle>
+            <DialogDescription>Select an account manager for {assignTarget?.tenantName}.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Account Manager</Label>
+              <Select value={selectedAmId} onValueChange={setSelectedAmId}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Select account manager" />
+                </SelectTrigger>
+                <SelectContent>
+                  {amUsers.length === 0
+                    ? <SelectItem value="-1" disabled>No account managers available</SelectItem>
+                    : amUsers.map(u => (
+                        <SelectItem key={u.id} value={String(u.id)}>
+                          {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.email}
+                        </SelectItem>
+                      ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setAssignTarget(null)}>Cancel</Button>
+            <Button
+              disabled={!selectedAmId || assignMutation.isPending}
+              onClick={() => assignTarget && assignMutation.mutate({ tenantId: assignTarget.tenantId, amId: Number(selectedAmId) })}
+            >
+              {assignMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Assigning…</> : "Assign"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add Asset Dialog ───────────────────────────────────────────────── */}
+      <Dialog open={!!assetTarget} onOpenChange={v => { if (!v) setAssetTarget(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add Asset to {assetTarget?.tenantName}</DialogTitle>
             <DialogDescription>
-              Adding to <strong>{assetTarget?.tenantName}</strong>. Asset will be immediately available for scanning.
+              Assets are added to this tenant's inventory and will appear in their Asset Inventory page.
             </DialogDescription>
           </DialogHeader>
-          <form
-            className="space-y-4 mt-1"
-            onSubmit={e => {
-              e.preventDefault();
-              if (!assetTarget) return;
-              addAssetMutation.mutate({ tenantId: assetTarget.tenantId, body: assetForm });
-            }}
-          >
+          <form className="space-y-3 mt-2" onSubmit={e => {
+            e.preventDefault();
+            if (!assetTarget) return;
+            addAssetMutation.mutate({
+              tenantId: assetTarget.tenantId,
+              body: {
+                name: assetForm.name.trim(),
+                type: assetForm.type,
+                value: assetForm.value.trim(),
+                description: assetForm.description.trim() || undefined,
+                scanFrequency: assetForm.scanFrequency,
+                businessImpact: assetForm.businessImpact,
+              },
+            });
+          }}>
             <div className="space-y-1.5">
               <Label className="text-xs">Asset Name *</Label>
               <Input
                 value={assetForm.name}
                 onChange={e => setAssetForm(p => ({ ...p, name: e.target.value }))}
-                placeholder="e.g. Main Website, Production API"
-                required className="h-9"
+                placeholder="e.g. Main Website" required className="h-9"
               />
             </div>
-
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">Type *</Label>
@@ -588,48 +846,38 @@ export default function TenantsPage() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">{typeValueLabel(assetForm.type)} *</Label>
-                <Input
-                  value={assetForm.value}
-                  onChange={e => setAssetForm(p => ({ ...p, value: e.target.value }))}
-                  placeholder={typeValuePlaceholder(assetForm.type)}
-                  required className="h-9 font-mono text-sm"
-                />
+                <Label className="text-xs">Scan Frequency</Label>
+                <Select value={assetForm.scanFrequency} onValueChange={v => setAssetForm(p => ({ ...p, scanFrequency: v }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-
             <div className="space-y-1.5">
-              <Label className="text-xs">Description (optional)</Label>
+              <Label className="text-xs">{typeValueLabel(assetForm.type)} *</Label>
               <Input
-                value={assetForm.description}
-                onChange={e => setAssetForm(p => ({ ...p, description: e.target.value }))}
-                placeholder="e.g. Main production website"
-                className="h-9"
+                value={assetForm.value}
+                onChange={e => setAssetForm(p => ({ ...p, value: e.target.value }))}
+                placeholder={typeValuePlaceholder(assetForm.type)}
+                required className="h-9 font-mono text-sm"
               />
             </div>
-
             <div className="space-y-1.5">
-              <Label className="text-xs">Scan Frequency</Label>
-              <Select value={assetForm.scanFrequency} onValueChange={v => setAssetForm(p => ({ ...p, scanFrequency: v }))}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {assetForm.scanFrequency !== "manual" && (
-                <p className="text-xs text-muted-foreground">
-                  This asset will be scanned automatically on a <strong>{assetForm.scanFrequency}</strong> schedule.
-                </p>
-              )}
+              <Label className="text-xs">Business Impact: <strong>{assetForm.businessImpact}</strong>/10</Label>
+              <Slider
+                min={1} max={10} step={1}
+                value={[assetForm.businessImpact]}
+                onValueChange={([v]) => setAssetForm(p => ({ ...p, businessImpact: v }))}
+                className="my-1"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Low (1)</span><span>Critical (10)</span></div>
             </div>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => { setAssetTarget(null); setAssetForm({ ...emptyAssetForm }); }}>
-                Cancel
-              </Button>
+            <DialogFooter className="mt-4">
+              <Button variant="outline" type="button" onClick={() => setAssetTarget(null)}>Cancel</Button>
               <Button type="submit" disabled={addAssetMutation.isPending}>
-                {addAssetMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
-                Add Asset
+                {addAssetMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Adding…</> : "Add Asset"}
               </Button>
             </DialogFooter>
           </form>

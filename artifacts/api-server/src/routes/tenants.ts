@@ -202,6 +202,30 @@ router.delete("/tenants/:tenantId/assets/:assetId", requireAuth, requireRole("su
   res.sendStatus(204);
 });
 
+// ── Delete tenant ─────────────────────────────────────────────────────────────
+// Super admin: any non-platform tenant. Admin: only their child tenants (not their own).
+router.delete("/tenants/:tenantId", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tid = Number(req.params.tenantId);
+  if (isNaN(tid)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
+
+  if (req.user!.role === "admin") {
+    if (tid === req.user!.tenantId) { res.status(403).json({ error: "Cannot delete your own tenant" }); return; }
+    if (!(await adminCanAccessTenant(req.user!.tenantId, tid))) {
+      res.status(403).json({ error: "Forbidden" }); return;
+    }
+  }
+
+  const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, tid));
+  if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
+  if (tenant.isPlatform) { res.status(403).json({ error: "Cannot delete platform tenant" }); return; }
+
+  // Cascade: delete assets, users, findings, etc. belonging to this tenant
+  await db.delete(assetsTable).where(eq(assetsTable.tenantId, tid));
+  await db.delete(usersTable).where(eq(usersTable.tenantId, tid));
+  await db.delete(tenantsTable).where(eq(tenantsTable.id, tid));
+  res.sendStatus(204);
+});
+
 // ── Update tenant ─────────────────────────────────────────────────────────────
 router.patch("/tenants/:tenantId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateTenantParams.safeParse(req.params);
