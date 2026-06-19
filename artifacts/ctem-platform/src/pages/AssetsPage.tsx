@@ -482,10 +482,15 @@ export default function AssetsPage() {
               return (
                 <tr key={asset.id} className="border-b border-border/50 hover:bg-accent/20 transition-colors">
                   {/* Asset name */}
-                  <td className="px-3 py-3 max-w-[140px]">
+                  <td className="px-3 py-3 max-w-[160px]">
                     <Link href={`/assets/${asset.id}`}>
                       <span className="font-medium text-primary hover:underline cursor-pointer block truncate">{asset.name}</span>
                     </Link>
+                    {asset.tenantId == null && user?.role === "super_admin" && (
+                      <span className="inline-block mt-0.5 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 leading-none">
+                        Unassigned
+                      </span>
+                    )}
                   </td>
 
                   {/* Type */}

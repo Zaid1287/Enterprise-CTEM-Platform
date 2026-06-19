@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, ilike, sql, inArray, desc } from "drizzle-orm";
+import { eq, and, ilike, sql, inArray, desc, isNull, or } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db, assetsTable, usersTable, findingsTable, findingCommentsTable, riskScoresTable,
@@ -142,6 +142,9 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(assetsTable.tenantId, ids);
+  } else if (role === "super_admin") {
+    // Super admins see their own tenant's assets AND unassigned (free pool) assets
+    tenantFilter = or(eq(assetsTable.tenantId, req.user!.tenantId), isNull(assetsTable.tenantId))!;
   } else {
     tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
   }
