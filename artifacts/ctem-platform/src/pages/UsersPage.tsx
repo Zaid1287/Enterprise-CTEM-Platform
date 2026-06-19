@@ -77,7 +77,9 @@ export default function UsersPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">User Management</h1>
-          <p className="text-sm text-muted-foreground">{userList.length} users</p>
+          <p className="text-sm text-muted-foreground">
+            {userList.length} {role === "super_admin" ? "users across all tenants" : role === "account_manager" ? "users across your assigned clients" : "users in your organization"}
+          </p>
         </div>
         {allowedRoles.length > 0 && (
           <Button size="sm" onClick={() => setShowCreate(true)}>

@@ -20,7 +20,7 @@ import {
 } from "recharts";
 import {
   Server, Bug, ShieldCheck, Radar, Bell, TrendingUp, TrendingDown,
-  AlertTriangle, Building2, Users, Shield, Target, ArrowRight,
+  AlertTriangle, Building2, Users, Users2, Shield, Target, ArrowRight,
   ShieldAlert, Activity, Globe, Clock, CheckCircle2, XCircle, Loader2, Briefcase,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -1031,7 +1031,7 @@ function AdminDashboard() {
         <StatCard label="High Findings" value={d.highCount} icon={Bug}
           color={d.highCount > 0 ? "text-orange-400" : undefined} />
         <StatCard label="Takedown Requests" value={d.takedownsCount} icon={Shield} color="text-cyan-400" />
-        <StatCard label="Active Scans" value={d.activeScans} icon={Radar} color="text-blue-400" />
+        <StatCard label="Team Members" value={d.userCount} icon={Users2} color="text-violet-400" />
       </div>
 
       {/* Charts Row */}
@@ -1222,14 +1222,19 @@ function AdminDashboard() {
       </div>
 
       {/* AM Portfolio — who manages this account */}
-      {amPortfolioAdmin.length > 0 && (
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <h3 className="text-sm font-medium flex items-center gap-2">
-              <Briefcase className="w-4 h-4 text-muted-foreground" /> Your Account Managers
-            </h3>
-            <span className="text-xs text-muted-foreground">{amPortfolioAdmin.length} assigned</span>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Briefcase className="w-4 h-4 text-muted-foreground" /> Your Account Managers
+          </h3>
+          <span className="text-xs text-muted-foreground">{amPortfolioAdmin.length} assigned</span>
+        </div>
+        {amPortfolioAdmin.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <Briefcase className="w-7 h-7 mx-auto mb-2 opacity-30" />
+            No account managers assigned to your organization yet
           </div>
+        ) : (
           <div className="divide-y divide-border/50">
             {amPortfolioAdmin.map((am: any) => (
               <div key={am.amId} className="px-4 py-3 flex items-center gap-3">
@@ -1244,8 +1249,8 @@ function AdminDashboard() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Asset Type Breakdown */}
       <div className="bg-card border border-border rounded-xl p-4">

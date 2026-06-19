@@ -393,15 +393,10 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
 
   const clientTenantIds = assignments.map(a => a.clientTenantId);
 
-  // Parallel fetch: clients + assets (AM-assigned only) + scans + alerts + takedowns + client users
+  // Parallel fetch: clients + ALL assets of client tenants + scans + alerts + takedowns + client users
   const [clients, rawAssets, allScans, rawAlerts, allTakedowns, clientUsers] = await Promise.all([
     db.select().from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds)),
-    db.select().from(assetsTable).where(
-      and(
-        inArray(assetsTable.tenantId, clientTenantIds),
-        eq(assetsTable.assignedAccountManagerId, amUserId),
-      ),
-    ),
+    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, clientTenantIds)),
     db.select().from(scansTable).where(inArray(scansTable.tenantId, clientTenantIds)),
     db.select().from(alertsTable)
       .where(inArray(alertsTable.tenantId, clientTenantIds))
@@ -444,7 +439,8 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
     const openOnDay = allFindings.filter(f => {
       const created = new Date(f.createdAt);
       if (created > dayEnd) return false;
-      if (f.status === "resolved") return new Date(f.updatedAt) > dayEnd;
+      const AM_CLOSED = ["mitigated", "accepted_risk", "false_positive"];
+      if (AM_CLOSED.includes(f.status)) return new Date(f.updatedAt) > dayEnd;
       return true;
     });
     let penalty = 0;
@@ -601,7 +597,8 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
 
   // Findings stats
   const openFindings = findings.filter(f => f.status === "open" && !f.isFalsePositive);
-  const resolvedFindings = findings.filter(f => f.status === "resolved");
+  const CLIENT_CLOSED = ["mitigated", "accepted_risk", "false_positive"];
+  const resolvedFindings = findings.filter(f => CLIENT_CLOSED.includes(f.status));
   const criticalVulns = openFindings.filter(f => f.severity === "critical").length;
 
   // New vulns from latest scan (findings added in last 7 days)
@@ -649,7 +646,7 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
     const openOnDay = findings.filter(f => {
       const created = new Date(f.createdAt);
       if (created > dayEnd) return false;
-      if (f.status === "resolved") {
+      if (CLIENT_CLOSED.includes(f.status)) {
         const resolved = new Date(f.updatedAt);
         return resolved > dayEnd;
       }
@@ -794,12 +791,13 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   ]);
 
   const assetIds = allAssets.map(a => a.id);
-  const [allRiskScores, tenantAmAssignments] = await Promise.all([
+  const [allRiskScores, tenantAmAssignments, allTenantUsers] = await Promise.all([
     assetIds.length > 0
       ? db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
       : Promise.resolve([]),
     db.select().from(accountManagerClientsTable)
       .where(eq(accountManagerClientsTable.clientTenantId, tid)),
+    db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.tenantId, tid)),
   ]);
 
   const tenantAmUserIds = [...new Set(tenantAmAssignments.map(a => a.accountManagerUserId))];
@@ -879,6 +877,7 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   }));
 
   res.json({
+    userCount: allTenantUsers.length,
     assetCount: allAssets.length,
     findingCount: allFindings.length,
     criticalCount: allFindings.filter(f => f.severity === "critical").length,
