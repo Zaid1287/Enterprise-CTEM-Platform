@@ -248,13 +248,19 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
 
   const assignments = await db.select().from(accountManagerClientsTable)
     .where(eq(accountManagerClientsTable.accountManagerUserId, amUserId));
-  if (assignments.length === 0) {
-    res.json({ clientCount: 0, assetCount: 0, findingCount: 0, criticalCount: 0, openFindingCount: 0, activeScans: 0, clients: [] });
-    return;
-  }
+
+  const empty = {
+    clientCount: 0, assetCount: 0, findingCount: 0, criticalCount: 0,
+    openFindingCount: 0, activeScans: 0, portfolioRiskScore: 0,
+    riskTrend: [], topRiskAssets: [], severityBreakdown: [],
+    recentAlerts: [], takedownRequests: [], clients: [],
+  };
+  if (assignments.length === 0) { res.json(empty); return; }
 
   const clientTenantIds = assignments.map(a => a.clientTenantId);
-  const [clients, rawAssets, allScans] = await Promise.all([
+
+  // Parallel fetch: clients + assets (AM-assigned only) + scans + alerts + takedowns + client users
+  const [clients, rawAssets, allScans, rawAlerts, allTakedowns, clientUsers] = await Promise.all([
     db.select().from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds)),
     db.select().from(assetsTable).where(
       and(
@@ -263,22 +269,123 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
       ),
     ),
     db.select().from(scansTable).where(inArray(scansTable.tenantId, clientTenantIds)),
+    db.select().from(alertsTable)
+      .where(inArray(alertsTable.tenantId, clientTenantIds))
+      .orderBy(desc(alertsTable.createdAt))
+      .limit(20),
+    db.select().from(takedownRequestsTable)
+      .where(inArray(takedownRequestsTable.tenantId, clientTenantIds))
+      .orderBy(desc(takedownRequestsTable.createdAt))
+      .limit(10),
+    db.select({
+      id: usersTable.id, tenantId: usersTable.tenantId,
+      firstName: usersTable.firstName, lastName: usersTable.lastName,
+      email: usersTable.email, role: usersTable.role,
+    }).from(usersTable).where(inArray(usersTable.tenantId, clientTenantIds)),
   ]);
 
   const assignedAssetIds = rawAssets.map(a => a.id);
-  const allFindings = assignedAssetIds.length > 0
-    ? await db.select().from(findingsTable).where(inArray(findingsTable.assetId, assignedAssetIds))
-    : [];
 
-  const allAssets = rawAssets;
+  // Fetch findings + risk scores keyed by assigned asset IDs
+  const [allFindings, allRiskScores] = await (assignedAssetIds.length > 0
+    ? Promise.all([
+        db.select().from(findingsTable).where(inArray(findingsTable.assetId, assignedAssetIds)),
+        db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assignedAssetIds)),
+      ])
+    : Promise.resolve([[], []] as [typeof findingsTable.$inferSelect[], typeof riskScoresTable.$inferSelect[]]));
+
+  // ── Portfolio risk score ─────────────────────────────────────────────────────
+  const portfolioRiskScore = allRiskScores.length > 0
+    ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
+    : 0;
+
+  // ── Risk trend (14 days) — same algorithm as /dashboard/risk-trend ───────────
+  const TREND_DAYS = 14;
+  const now = new Date();
+  const assetCountForTrend = Math.max(1, rawAssets.length);
+  const riskTrend = Array.from({ length: TREND_DAYS }, (_, i) => {
+    const dayEnd = new Date(now);
+    dayEnd.setDate(dayEnd.getDate() - (TREND_DAYS - 1 - i));
+    dayEnd.setHours(23, 59, 59, 999);
+    const openOnDay = allFindings.filter(f => {
+      const created = new Date(f.createdAt);
+      if (created > dayEnd) return false;
+      if (f.status === "resolved") return new Date(f.updatedAt) > dayEnd;
+      return true;
+    });
+    let penalty = 0;
+    for (const f of openOnDay) {
+      if (f.severity === "critical") penalty += 20;
+      else if (f.severity === "high") penalty += 12;
+      else if (f.severity === "medium") penalty += 6;
+      else if (f.severity === "low") penalty += 2;
+    }
+    return { date: dayEnd.toISOString().split("T")[0], value: Math.max(0, Math.min(100, 100 - Math.round(penalty / assetCountForTrend))) };
+  });
+
+  // ── Top risk assets ──────────────────────────────────────────────────────────
+  const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r]));
+  const findingsByAsset: Record<number, number> = {};
+  for (const f of allFindings) findingsByAsset[f.assetId] = (findingsByAsset[f.assetId] ?? 0) + 1;
+
+  const topRiskAssets = rawAssets
+    .filter(a => riskScoreMap.has(a.id))
+    .sort((a, b) => (riskScoreMap.get(b.id)?.score ?? 0) - (riskScoreMap.get(a.id)?.score ?? 0))
+    .slice(0, 5)
+    .map(a => ({
+      assetId: a.id, assetName: a.name, assetType: a.type,
+      riskScore: Math.round(riskScoreMap.get(a.id)?.score ?? 0),
+      riskLevel: riskScoreMap.get(a.id)?.level ?? "low",
+      findingsCount: findingsByAsset[a.id] ?? 0,
+      clientName: clients.find(c => c.id === a.tenantId)?.name ?? "Unknown",
+    }));
+
+  // ── Severity breakdown ───────────────────────────────────────────────────────
+  const severityBreakdown = ["critical", "high", "medium", "low", "info"]
+    .map(severity => ({ severity, count: allFindings.filter(f => f.severity === severity).length }))
+    .filter(s => s.count > 0);
+
+  // ── Recent alerts (only those related to assigned assets) ───────────────────
+  const recentAlerts = rawAlerts
+    .filter(a => !a.relatedAssetId || assignedAssetIds.includes(a.relatedAssetId))
+    .slice(0, 8)
+    .map(a => ({
+      id: a.id, title: a.title, severity: a.severity,
+      isRead: a.isRead, createdAt: a.createdAt.toISOString(),
+      clientName: clients.find(c => c.id === a.tenantId)?.name ?? "Unknown",
+    }));
+
+  // ── Takedown requests ────────────────────────────────────────────────────────
+  const takedownRequests = allTakedowns.map(t => ({
+    id: t.id, domain: t.domain, status: t.status,
+    reason: (t as any).reason ?? null,
+    createdAt: t.createdAt?.toISOString() ?? new Date().toISOString(),
+    clientName: clients.find(c => c.id === t.tenantId)?.name ?? "Unknown",
+  }));
+
+  // ── Client metrics (with admin user name + per-client risk score) ────────────
+  const clientAdminMap = new Map<number, { name: string; email: string }>();
+  for (const u of clientUsers) {
+    if (!clientAdminMap.has(u.tenantId) || u.role === "admin") {
+      clientAdminMap.set(u.tenantId, { name: `${u.firstName} ${u.lastName}`, email: u.email });
+    }
+  }
 
   const clientMetrics = clients.map(t => {
-    const clientAssets = allAssets.filter(a => a.tenantId === t.id);
+    const clientAssets = rawAssets.filter(a => a.tenantId === t.id);
     const clientAssetIds = clientAssets.map(a => a.id);
     const clientFindings = allFindings.filter(f => clientAssetIds.includes(f.assetId));
+    const clientRiskScores = allRiskScores.filter(r => clientAssetIds.includes(r.assetId));
+    const avgRisk = clientRiskScores.length > 0
+      ? Math.round(clientRiskScores.reduce((s, r) => s + r.score, 0) / clientRiskScores.length)
+      : 0;
+    const contact = clientAdminMap.get(t.id);
     return {
       id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
+      clientUserName: contact?.name ?? "—",
+      clientUserEmail: contact?.email ?? null,
       assetCount: clientAssets.length,
+      riskScore: avgRisk,
       findingCount: clientFindings.length,
       criticalCount: clientFindings.filter(f => f.severity === "critical").length,
       openFindingCount: clientFindings.filter(f => f.status === "open").length,
@@ -289,11 +396,17 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
 
   res.json({
     clientCount: clients.length,
-    assetCount: allAssets.length,
+    assetCount: rawAssets.length,
     findingCount: allFindings.length,
     criticalCount: allFindings.filter(f => f.severity === "critical").length,
     openFindingCount: allFindings.filter(f => f.status === "open").length,
     activeScans: allScans.filter(s => s.status === "running" || s.status === "pending").length,
+    portfolioRiskScore,
+    riskTrend,
+    topRiskAssets,
+    severityBreakdown,
+    recentAlerts,
+    takedownRequests,
     clients: clientMetrics,
   });
 });
