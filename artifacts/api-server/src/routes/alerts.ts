@@ -4,7 +4,7 @@ import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
-  CreateAlertRuleBody,
+  CreateAlertRuleBody, UpdateAlertRuleBody, UpdateAlertRuleParams,
 } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest, verifyToken } from "../lib/auth";
 import { addSseClient, removeSseClient } from "../lib/sseManager";
@@ -107,6 +107,33 @@ router.get("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, re
     .where(and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId)));
   if (!alert) { res.status(404).json({ error: "Alert not found" }); return; }
   res.json(toAlertResponse(alert));
+});
+
+router.patch("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const params = UpdateAlertRuleParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const parsed = UpdateAlertRuleBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const [rule] = await db.update(alertRulesTable)
+    .set(parsed.data)
+    .where(and(eq(alertRulesTable.id, params.data.ruleId), eq(alertRulesTable.tenantId, req.user!.tenantId)))
+    .returning();
+  if (!rule) { res.status(404).json({ error: "Rule not found" }); return; }
+  res.json({
+    id: rule.id, tenantId: rule.tenantId, name: rule.name, triggerType: rule.triggerType,
+    channel: rule.channel, destination: rule.destination, isActive: rule.isActive,
+    createdAt: rule.createdAt.toISOString(),
+  });
+});
+
+router.delete("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const ruleId = parseInt(req.params.ruleId, 10);
+  if (isNaN(ruleId)) { res.status(400).json({ error: "Invalid ruleId" }); return; }
+  const [deleted] = await db.delete(alertRulesTable)
+    .where(and(eq(alertRulesTable.id, ruleId), eq(alertRulesTable.tenantId, req.user!.tenantId)))
+    .returning();
+  if (!deleted) { res.status(404).json({ error: "Rule not found" }); return; }
+  res.status(204).end();
 });
 
 router.patch("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

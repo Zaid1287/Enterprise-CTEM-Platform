@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
 import { db, usersTable, tenantsTable, accountManagerClientsTable } from "@workspace/db";
-import { CreateUserBody, GetUserParams, UpdateUserParams, UpdateUserBody, DeleteUserParams } from "@workspace/api-zod";
+import { CreateUserBody, GetUserParams, UpdateUserParams, DeleteUserParams } from "@workspace/api-zod";
 import { requireAuth, hashPassword, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 
@@ -21,6 +21,9 @@ function toUserResponse(u: typeof usersTable.$inferSelect, tenantName?: string) 
     tenantName: tenantName ?? null,
     lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
     createdAt: u.createdAt.toISOString(),
+    twoFactorEnabled: u.twoFactorEnabled,
+    avatarUrl: u.avatarUrl ?? null,
+    isEmailVerified: u.isEmailVerified,
   };
 }
 
@@ -40,14 +43,14 @@ router.get("/users", requireAuth, async (req: AuthenticatedRequest, res): Promis
   }
 
   if (role === "account_manager") {
-    const assignments = await db.select().from(accountManagerClientsTable)
-      .where(eq(accountManagerClientsTable.accountManagerUserId, userId));
-    const clientTenantIds = assignments.map(a => a.clientTenantId);
-    if (clientTenantIds.length === 0) { res.json([]); return; }
-    const users = await db.select().from(usersTable).where(inArray(usersTable.tenantId, clientTenantIds));
-    const tenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable)
-      .where(inArray(tenantsTable.id, clientTenantIds));
-    const tMap = new Map(tenants.map(t => [t.id, t.name]));
+    const clients = await db.select({ clientId: accountManagerClientsTable.clientId })
+      .from(accountManagerClientsTable)
+      .where(eq(accountManagerClientsTable.managerId, userId));
+    const clientIds = clients.map(c => c.clientId);
+    if (clientIds.length === 0) { res.json([]); return; }
+    const users = await db.select().from(usersTable).where(inArray(usersTable.id, clientIds));
+    const tMap = new Map(await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable)
+      .then(rows => rows.map(r => [r.id, r.name] as [number, string])));
     res.json(users.map(u => toUserResponse(u, tMap.get(u.tenantId))));
     return;
   }
@@ -67,20 +70,9 @@ router.post("/users", requireAuth, async (req: AuthenticatedRequest, res): Promi
     res.status(403).json({ error: `Your role cannot create users with role: ${newRole}` }); return;
   }
 
-  let targetTenantId = tenantId;
-
-  if (newRole === "super_admin" || newRole === "account_manager") {
-    const [platformTenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, true));
-    if (platformTenant) targetTenantId = platformTenant.id;
-  } else if (role === "super_admin" && req.body.tenantId) {
-    targetTenantId = Number(req.body.tenantId);
-  } else if (role === "account_manager" && req.body.tenantId) {
-    const assignments = await db.select().from(accountManagerClientsTable)
-      .where(eq(accountManagerClientsTable.accountManagerUserId, userId));
-    const allowed = assignments.some(a => a.clientTenantId === Number(req.body.tenantId));
-    if (!allowed) { res.status(403).json({ error: "Cannot create users in unassigned tenant" }); return; }
-    targetTenantId = Number(req.body.tenantId);
-  }
+  const targetTenantId = (role === "super_admin" || role === "account_manager") && (req.body as any).tenantId
+    ? Number((req.body as any).tenantId)
+    : tenantId;
 
   const passwordHash = await hashPassword(parsed.data.password);
   const [user] = await db.insert(usersTable).values({
@@ -98,7 +90,8 @@ router.get("/users/:userId", requireAuth, async (req: AuthenticatedRequest, res)
   if (role === "super_admin") {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, params.data.userId));
     if (!user) { res.status(404).json({ error: "User not found" }); return; }
-    res.json(toUserResponse(user));
+    const [tenant] = await db.select({ name: tenantsTable.name }).from(tenantsTable).where(eq(tenantsTable.id, user.tenantId));
+    res.json(toUserResponse(user, tenant?.name));
     return;
   }
 
@@ -111,22 +104,61 @@ router.get("/users/:userId", requireAuth, async (req: AuthenticatedRequest, res)
 router.patch("/users/:userId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateUserParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const parsed = UpdateUserBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { role, tenantId } = req.user!;
+
+  const body = req.body as Record<string, unknown>;
+  const updateData: Record<string, unknown> = {};
+
+  // Fields any authorized user can update
+  if (body.firstName !== undefined) updateData.firstName = String(body.firstName);
+  if (body.lastName !== undefined) updateData.lastName = String(body.lastName);
+  if (body.role !== undefined) {
+    const allowedRoles = ROLE_HIERARCHY[role] ?? [];
+    if (!allowedRoles.includes(body.role as string)) {
+      res.status(403).json({ error: "You cannot assign this role" }); return;
+    }
+    updateData.role = body.role;
+  }
+  if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
+
+  // Super admin only fields
+  if (role === "super_admin") {
+    if (body.email !== undefined && String(body.email).trim()) {
+      updateData.email = String(body.email).trim().toLowerCase();
+    }
+    if (body.newPassword !== undefined && String(body.newPassword).length >= 8) {
+      updateData.passwordHash = await hashPassword(String(body.newPassword));
+    }
+    if (body.tenantId !== undefined && body.tenantId !== "") {
+      updateData.tenantId = Number(body.tenantId);
+    }
+    if (body.twoFactorEnabled === false) {
+      updateData.twoFactorEnabled = false;
+      updateData.twoFactorOtp = null;
+      updateData.twoFactorOtpExpiresAt = null;
+    }
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    res.status(400).json({ error: "No valid fields to update" }); return;
+  }
 
   const whereClause = role === "super_admin"
     ? eq(usersTable.id, params.data.userId)
     : and(eq(usersTable.id, params.data.userId), eq(usersTable.tenantId, tenantId));
 
-  const [user] = await db.update(usersTable).set(parsed.data).where(whereClause!).returning();
+  const [user] = await db.update(usersTable).set(updateData).where(whereClause!).returning();
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
   await logAudit(req.user! as any, "update_user", "user", user.id);
-  res.json(toUserResponse(user));
+
+  const [tenant] = role === "super_admin"
+    ? await db.select({ name: tenantsTable.name }).from(tenantsTable).where(eq(tenantsTable.id, user.tenantId))
+    : [];
+  res.json(toUserResponse(user, (tenant as any)?.name));
 });
 
 router.delete("/users/:userId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const params = DeleteUserParams.safeParse(req.params);
+  const params = GetUserParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const { role, tenantId } = req.user!;
 

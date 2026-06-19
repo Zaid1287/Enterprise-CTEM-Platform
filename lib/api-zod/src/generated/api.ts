@@ -1400,6 +1400,41 @@ export const CreateAlertRuleBody = zod.object({
 
 
 /**
+ * @summary Update an alert rule (toggle active, rename, change destination)
+ */
+export const UpdateAlertRuleParams = zod.object({
+  "ruleId": zod.coerce.number()
+})
+
+export const UpdateAlertRuleBody = zod.object({
+  "name": zod.string().optional(),
+  "triggerType": zod.string().optional(),
+  "channel": zod.string().optional(),
+  "destination": zod.string().optional(),
+  "isActive": zod.boolean().optional()
+})
+
+export const UpdateAlertRuleResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "name": zod.string(),
+  "triggerType": zod.string(),
+  "channel": zod.string(),
+  "destination": zod.string().nullish(),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Delete an alert rule
+ */
+export const DeleteAlertRuleParams = zod.object({
+  "ruleId": zod.coerce.number()
+})
+
+
+/**
  * @summary List risk scores for assets
  */
 export const ListRiskScoresResponseItem = zod.object({

@@ -30,6 +30,7 @@ import type {
   Alert,
   AlertRule,
   AlertRuleInput,
+  AlertRuleUpdate,
   AlertUpdate,
   Asset,
   AssetGroup,
@@ -5244,6 +5245,148 @@ export const useCreateAlertRule = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCreateAlertRuleMutationOptions(options));
+    }
+
+export const getUpdateAlertRuleUrl = (ruleId: number,) => {
+
+
+
+
+  return `/api/alerts/rules/${ruleId}`
+}
+
+/**
+ * @summary Update an alert rule (toggle active, rename, change destination)
+ */
+export const updateAlertRule = async (ruleId: number,
+    alertRuleUpdate: AlertRuleUpdate, options?: RequestInit): Promise<AlertRule> => {
+
+  return customFetch<AlertRule>(getUpdateAlertRuleUrl(ruleId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      alertRuleUpdate,)
+  }
+);}
+
+
+
+
+export const getUpdateAlertRuleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAlertRule>>, TError,{ruleId: number;data: BodyType<AlertRuleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAlertRule>>, TError,{ruleId: number;data: BodyType<AlertRuleUpdate>}, TContext> => {
+
+const mutationKey = ['updateAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAlertRule>>, {ruleId: number;data: BodyType<AlertRuleUpdate>}> = (props) => {
+          const {ruleId,data} = props ?? {};
+
+          return  updateAlertRule(ruleId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof updateAlertRule>>>
+    export type UpdateAlertRuleMutationBody = BodyType<AlertRuleUpdate>
+    export type UpdateAlertRuleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update an alert rule (toggle active, rename, change destination)
+ */
+export const useUpdateAlertRule = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAlertRule>>, TError,{ruleId: number;data: BodyType<AlertRuleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAlertRule>>,
+        TError,
+        {ruleId: number;data: BodyType<AlertRuleUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAlertRuleMutationOptions(options));
+    }
+
+export const getDeleteAlertRuleUrl = (ruleId: number,) => {
+
+
+
+
+  return `/api/alerts/rules/${ruleId}`
+}
+
+/**
+ * @summary Delete an alert rule
+ */
+export const deleteAlertRule = async (ruleId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAlertRuleUrl(ruleId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAlertRuleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{ruleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{ruleId: number}, TContext> => {
+
+const mutationKey = ['deleteAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAlertRule>>, {ruleId: number}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  deleteAlertRule(ruleId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAlertRule>>>
+
+    export type DeleteAlertRuleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete an alert rule
+ */
+export const useDeleteAlertRule = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{ruleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAlertRule>>,
+        TError,
+        {ruleId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAlertRuleMutationOptions(options));
     }
 
 export const getListRiskScoresUrl = () => {

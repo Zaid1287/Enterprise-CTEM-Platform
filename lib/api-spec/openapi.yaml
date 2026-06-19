@@ -1395,6 +1395,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/AlertRule"
 
+  /alerts/rules/{ruleId}:
+    patch:
+      operationId: updateAlertRule
+      tags: [alerts]
+      summary: Update an alert rule (toggle active, rename, change destination)
+      parameters:
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertRuleUpdate"
+      responses:
+        "200":
+          description: Updated alert rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+    delete:
+      operationId: deleteAlertRule
+      tags: [alerts]
+      summary: Delete an alert rule
+      parameters:
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
   # ──────────────────────────────────────────────────────────
   # RISK
   # ──────────────────────────────────────────────────────────
@@ -2928,6 +2966,20 @@ components:
           type: string
         destination:
           type: string
+
+    AlertRuleUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        triggerType:
+          type: string
+        channel:
+          type: string
+        destination:
+          type: string
+        isActive:
+          type: boolean
 
     # ── Risk ──────────────────────────────────────────────
     RiskScore:

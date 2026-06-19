@@ -597,6 +597,14 @@ export interface AlertRuleInput {
   destination?: string;
 }
 
+export interface AlertRuleUpdate {
+  name?: string;
+  triggerType?: string;
+  channel?: string;
+  destination?: string;
+  isActive?: boolean;
+}
+
 export interface RiskScore {
   id: number;
   assetId: number;

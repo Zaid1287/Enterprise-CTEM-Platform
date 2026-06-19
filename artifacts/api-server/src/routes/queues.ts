@@ -1,11 +1,13 @@
 /**
- * Queue monitor API — exposes BullMQ queue stats for the admin dashboard.
+ * Queue monitor API — exposes BullMQ queue stats + DB-backed scan stats.
  */
 import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { getScanQueue } from "../queues/scanQueue";
 import { getAlertQueue } from "../queues/alertQueue";
 import { isRedisAvailable } from "../lib/redis";
+import { db, scansTable, assetsTable } from "@workspace/db";
+import { eq, count, sql, desc } from "drizzle-orm";
 
 const router = Router();
 
@@ -22,6 +24,77 @@ async function queueStats(queue: ReturnType<typeof getScanQueue> | ReturnType<ty
   return { active, waiting, completed, failed, delayed, paused: isPaused };
 }
 
+async function getDbScanStats() {
+  const rows = await db
+    .select({
+      status: scansTable.status,
+      cnt: count(),
+    })
+    .from(scansTable)
+    .groupBy(scansTable.status);
+  const map: Record<string, number> = {};
+  for (const r of rows) map[r.status] = Number(r.cnt);
+  return {
+    running:   map["running"]   ?? 0,
+    pending:   map["pending"]   ?? 0,
+    completed: map["completed"] ?? 0,
+    failed:    map["failed"]    ?? 0,
+    cancelled: map["cancelled"] ?? 0,
+  };
+}
+
+async function getActiveScans() {
+  const active = await db
+    .select({
+      id: scansTable.id,
+      status: scansTable.status,
+      startedAt: scansTable.startedAt,
+      assetId: scansTable.assetId,
+      assetName: assetsTable.name,
+      assetValue: assetsTable.value,
+    })
+    .from(scansTable)
+    .leftJoin(assetsTable, eq(assetsTable.id, scansTable.assetId))
+    .where(sql`${scansTable.status} IN ('running','pending')`)
+    .orderBy(desc(scansTable.startedAt))
+    .limit(20);
+
+  return active.map(s => ({
+    id: s.id,
+    status: s.status,
+    startedAt: s.startedAt?.toISOString() ?? null,
+    assetId: s.assetId,
+    assetName: s.assetName ?? `Asset #${s.assetId}`,
+    assetValue: s.assetValue ?? "",
+  }));
+}
+
+async function getRecentScans() {
+  const recent = await db
+    .select({
+      id: scansTable.id,
+      status: scansTable.status,
+      startedAt: scansTable.startedAt,
+      completedAt: scansTable.completedAt,
+      assetId: scansTable.assetId,
+      assetName: assetsTable.name,
+    })
+    .from(scansTable)
+    .leftJoin(assetsTable, eq(assetsTable.id, scansTable.assetId))
+    .where(sql`${scansTable.status} IN ('completed','failed','cancelled')`)
+    .orderBy(desc(scansTable.completedAt))
+    .limit(10);
+
+  return recent.map(s => ({
+    id: s.id,
+    status: s.status,
+    startedAt: s.startedAt?.toISOString() ?? null,
+    completedAt: s.completedAt?.toISOString() ?? null,
+    assetId: s.assetId,
+    assetName: s.assetName ?? `Asset #${s.assetId}`,
+  }));
+}
+
 router.get("/queues/status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (req.user!.role !== "admin" && req.user!.role !== "super_admin") {
     res.status(403).json({ error: "Forbidden" });
@@ -29,9 +102,12 @@ router.get("/queues/status", requireAuth, async (req: AuthenticatedRequest, res)
   }
 
   const redisOk = isRedisAvailable();
-  const [scanStats, alertStats] = await Promise.all([
+  const [scanStats, alertStats, dbStats, activeScans, recentScans] = await Promise.all([
     queueStats(getScanQueue()),
     queueStats(getAlertQueue()),
+    getDbScanStats(),
+    getActiveScans(),
+    getRecentScans(),
   ]);
 
   res.json({
@@ -41,6 +117,9 @@ router.get("/queues/status", requireAuth, async (req: AuthenticatedRequest, res)
       alerts: { name: "ctem:alerts", ...alertStats },
     },
     mode: process.env.REDIS_URL ? "redis" : "in-memory",
+    dbStats,
+    activeScans,
+    recentScans,
   });
 });
 

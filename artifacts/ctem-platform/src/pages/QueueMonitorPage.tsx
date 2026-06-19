@@ -1,10 +1,42 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, CheckCircle2, XCircle, Clock, Pause, RefreshCw, Layers, Wifi, WifiOff, AlertTriangle, RotateCcw } from "lucide-react";
+import {
+  Activity, CheckCircle2, XCircle, Clock, RefreshCw, Layers,
+  Wifi, WifiOff, AlertTriangle, RotateCcw, Zap, Server,
+  BarChart3, TrendingUp, Play, Pause, Database,
+} from "lucide-react";
 import { getToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+
+interface ActiveScan {
+  id: number;
+  status: "running" | "pending";
+  startedAt: string | null;
+  assetId: number;
+  assetName: string;
+  assetValue: string;
+}
+
+interface RecentScan {
+  id: number;
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  assetId: number;
+  assetName: string;
+}
+
+interface DbStats {
+  running: number;
+  pending: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
 
 interface QueueStat {
   name: string;
@@ -20,6 +52,9 @@ interface QueueStatus {
   redis: { connected: boolean; url: string };
   queues: { scans: QueueStat; alerts: QueueStat };
   mode: "redis" | "in-memory";
+  dbStats: DbStats;
+  activeScans: ActiveScan[];
+  recentScans: RecentScan[];
 }
 
 interface Job {
@@ -59,80 +94,106 @@ async function retryFailed(queue: string): Promise<{ retried: number }> {
   return res.json();
 }
 
-function StatCard({ label, value, icon: Icon, color }: { label: string; value: number; icon: React.ElementType; color: string }) {
+function elapsed(startedAt: string | null): string {
+  if (!startedAt) return "—";
+  const ms = Date.now() - new Date(startedAt).getTime();
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+function duration(start: string | null, end: string | null): string {
+  if (!start || !end) return "—";
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+function StatCard({
+  label, value, icon: Icon, color, pulse,
+}: {
+  label: string; value: number; icon: React.ElementType; color: string; pulse?: boolean;
+}) {
   return (
-    <div className="bg-card border border-border rounded-lg p-4 flex items-center gap-3">
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${color}`}>
-        <Icon className="w-4 h-4" />
+    <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
+      <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", color)}>
+        <Icon className="w-4.5 h-4.5 w-5 h-5" />
       </div>
       <div>
-        <p className="text-xl font-bold">{value}</p>
-        <p className="text-xs text-muted-foreground">{label}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-2xl font-bold tabular-nums leading-none">{value}</p>
+          {pulse && value > 0 && (
+            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse inline-block" />
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
       </div>
     </div>
   );
 }
 
-function QueuePanel({ stat, queueName, selectedQueue, setSelectedQueue }: {
-  stat: QueueStat;
-  queueName: string;
-  selectedQueue: string;
-  setSelectedQueue: (q: string) => void;
-}) {
-  const isSelected = selectedQueue === queueName;
+function ActiveScanRow({ scan }: { scan: ActiveScan }) {
   return (
-    <div
-      className={`border rounded-xl p-5 cursor-pointer transition-all ${isSelected ? "border-primary/50 bg-primary/5" : "border-border bg-card hover:border-border/80"}`}
-      onClick={() => setSelectedQueue(queueName)}
-    >
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <p className="font-semibold text-sm">{stat.name}</p>
-          {stat.paused && <Badge variant="secondary" className="mt-1 text-[10px]">PAUSED</Badge>}
-        </div>
-        <Layers className="w-4 h-4 text-muted-foreground" />
+    <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40 last:border-0">
+      <div className={cn(
+        "w-2 h-2 rounded-full shrink-0",
+        scan.status === "running" ? "bg-blue-400 animate-pulse" : "bg-yellow-400",
+      )} />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{scan.assetName}</p>
+        <p className="text-xs text-muted-foreground font-mono truncate">{scan.assetValue}</p>
       </div>
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-          <span className="text-muted-foreground">Active</span>
-          <span className="ml-auto font-medium">{stat.active}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-yellow-500" />
-          <span className="text-muted-foreground">Waiting</span>
-          <span className="ml-auto font-medium">{stat.waiting}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500" />
-          <span className="text-muted-foreground">Completed</span>
-          <span className="ml-auto font-medium">{stat.completed}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-red-500" />
-          <span className="text-muted-foreground">Failed</span>
-          <span className="ml-auto font-medium">{stat.failed}</span>
-        </div>
-        <div className="flex items-center gap-2 col-span-2">
-          <div className="w-2 h-2 rounded-full bg-purple-500" />
-          <span className="text-muted-foreground">Delayed</span>
-          <span className="ml-auto font-medium">{stat.delayed}</span>
-        </div>
+      <div className="text-right shrink-0">
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-[10px] capitalize",
+            scan.status === "running" ? "border-blue-500/40 text-blue-400" : "border-yellow-500/40 text-yellow-400",
+          )}
+        >
+          {scan.status}
+        </Badge>
+        <p className="text-[10px] text-muted-foreground mt-0.5">{elapsed(scan.startedAt)}</p>
+      </div>
+    </div>
+  );
+}
+
+function RecentScanRow({ scan }: { scan: RecentScan }) {
+  const isOk = scan.status === "completed";
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/40 last:border-0">
+      {isOk
+        ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
+        : scan.status === "failed"
+          ? <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+          : <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+      <p className="text-sm flex-1 truncate">{scan.assetName}</p>
+      <div className="text-right shrink-0">
+        <p className="text-xs text-muted-foreground">{duration(scan.startedAt, scan.completedAt)}</p>
+        <p className="text-[10px] text-muted-foreground/60">
+          {scan.completedAt ? new Date(scan.completedAt).toLocaleTimeString() : "—"}
+        </p>
       </div>
     </div>
   );
 }
 
 function JobRow({ job }: { job: Job }) {
-  const duration = job.finishedOn && job.processedOn
+  const dur = job.finishedOn && job.processedOn
     ? `${((job.finishedOn - job.processedOn) / 1000).toFixed(1)}s`
     : null;
-
   return (
-    <div className="border border-border rounded-lg p-3 text-sm">
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-xs text-muted-foreground">#{job.id}</span>
-        <div className="flex items-center gap-2">
+    <div className="border border-border rounded-xl p-3.5 text-sm space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium truncate">{job.name}</p>
+          <p className="font-mono text-[10px] text-muted-foreground">#{job.id}</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
           {job.attemptsMade > 1 && (
             <Badge variant="outline" className="text-[10px]">{job.attemptsMade} attempts</Badge>
           )}
@@ -141,16 +202,18 @@ function JobRow({ job }: { job: Job }) {
           </span>
         </div>
       </div>
-      <p className="font-medium truncate mb-1">{job.name}</p>
       {job.failedReason && (
-        <p className="text-xs text-red-400 bg-red-500/10 rounded px-2 py-1 mt-1 truncate">
+        <p className="text-xs text-red-400 bg-red-500/10 rounded-lg px-2.5 py-1.5 font-mono truncate">
           {job.failedReason}
         </p>
       )}
-      {duration && <p className="text-xs text-muted-foreground mt-1">Duration: {duration}</p>}
+      {dur && <p className="text-xs text-muted-foreground">Duration: {dur}</p>}
       {typeof job.progress === "number" && job.progress > 0 && (
-        <div className="mt-2 h-1 bg-muted rounded-full overflow-hidden">
-          <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${job.progress}%` }} />
+        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full transition-all"
+            style={{ width: `${job.progress}%` }}
+          />
         </div>
       )}
     </div>
@@ -163,7 +226,7 @@ export default function QueueMonitorPage() {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const { data: status, isLoading } = useQuery({
+  const { data: status, isLoading, error } = useQuery({
     queryKey: ["queue-status"],
     queryFn: fetchStatus,
     refetchInterval: 5000,
@@ -187,118 +250,254 @@ export default function QueueMonitorPage() {
   });
 
   const JOB_TYPES = ["active", "waiting", "completed", "failed", "delayed"] as const;
+  const db = status?.dbStats;
+  const totalFinished = (db?.completed ?? 0) + (db?.failed ?? 0) + (db?.cancelled ?? 0);
+  const successRate = totalFinished > 0
+    ? Math.round(((db?.completed ?? 0) / totalFinished) * 100)
+    : null;
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6 max-w-5xl">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Queue Monitor</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">BullMQ job queue status (Celery equivalent)</p>
+          <h1 className="text-lg font-semibold">Queue Monitor</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Real-time background job tracking — scans and alert workers
+          </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries()}>
-          <RefreshCw className="w-3.5 h-3.5 mr-2" />
-          Refresh
+        <Button
+          variant="outline" size="sm"
+          onClick={() => qc.invalidateQueries({ queryKey: ["queue-status"] })}
+        >
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="text-center py-12 text-muted-foreground">Loading queue status…</div>
-      ) : status ? (
+      {isLoading && (
+        <div className="grid grid-cols-5 gap-3">
+          {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+        </div>
+      )}
+
+      {error && (
+        <div className="border border-red-500/30 bg-red-500/5 rounded-xl p-6 text-center space-y-2">
+          <XCircle className="w-8 h-8 text-red-400 mx-auto" />
+          <p className="font-medium">Failed to load queue status</p>
+          <p className="text-sm text-muted-foreground">Check that the API server is running</p>
+        </div>
+      )}
+
+      {status && (
         <>
-          <div className={`flex items-center gap-3 p-4 rounded-xl border ${status.redis.connected ? "border-green-500/20 bg-green-500/5" : "border-yellow-500/20 bg-yellow-500/5"}`}>
+          {/* Mode banner */}
+          <div className={cn(
+            "flex items-center gap-3 rounded-xl border px-4 py-3",
+            status.redis.connected
+              ? "border-green-500/25 bg-green-500/5"
+              : "border-blue-500/25 bg-blue-500/5",
+          )}>
             {status.redis.connected
-              ? <Wifi className="w-5 h-5 text-green-400" />
-              : <WifiOff className="w-5 h-5 text-yellow-400" />}
-            <div>
+              ? <Wifi className="w-5 h-5 text-green-400 shrink-0" />
+              : <Database className="w-5 h-5 text-blue-400 shrink-0" />}
+            <div className="flex-1">
               <p className="font-medium text-sm">
                 {status.redis.connected
-                  ? "Redis connected — BullMQ workers active"
-                  : "Redis not configured — using in-memory fallback"}
+                  ? "Redis connected — BullMQ distributed workers active"
+                  : "In-memory mode — jobs run in-process, tracked via database"}
               </p>
-              <p className="text-xs text-muted-foreground">
-                Mode: <span className="font-mono">{status.mode}</span>
-                {" · "}URL: <span className="font-mono">{status.redis.url}</span>
-                {" · "}Set <span className="font-mono">REDIS_URL</span> env var to enable distributed queues
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Mode: <code className="font-mono">{status.mode}</code>
+                {" · "}Redis: <code className="font-mono">{status.redis.url}</code>
+                {!status.redis.connected && " · Set REDIS_URL env var to enable distributed queuing"}
               </p>
+            </div>
+            {successRate !== null && (
+              <div className="text-right shrink-0">
+                <p className="text-lg font-bold text-green-400 tabular-nums">{successRate}%</p>
+                <p className="text-[10px] text-muted-foreground">success rate</p>
+              </div>
+            )}
+          </div>
+
+          {/* DB-backed scan stat cards — always visible */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+              <BarChart3 className="w-3.5 h-3.5" /> Scan Statistics (from database)
+            </p>
+            <div className="grid grid-cols-5 gap-3">
+              <StatCard label="Running" value={db?.running ?? 0} icon={Activity} color="bg-blue-500/15 text-blue-400" pulse />
+              <StatCard label="Pending" value={db?.pending ?? 0} icon={Clock} color="bg-yellow-500/15 text-yellow-400" />
+              <StatCard label="Completed" value={db?.completed ?? 0} icon={CheckCircle2} color="bg-green-500/15 text-green-400" />
+              <StatCard label="Failed" value={db?.failed ?? 0} icon={XCircle} color="bg-red-500/15 text-red-400" />
+              <StatCard label="Cancelled" value={db?.cancelled ?? 0} icon={Pause} color="bg-muted text-muted-foreground" />
             </div>
           </div>
 
+          {/* Active + Recent scans — always visible */}
           <div className="grid grid-cols-2 gap-4">
-            <QueuePanel
-              stat={status.queues.scans}
-              queueName="scans"
-              selectedQueue={selectedQueue}
-              setSelectedQueue={setSelectedQueue}
-            />
-            <QueuePanel
-              stat={status.queues.alerts}
-              queueName="alerts"
-              selectedQueue={selectedQueue}
-              setSelectedQueue={setSelectedQueue}
-            />
+            {/* Active/pending scans */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                  <h3 className="text-sm font-semibold">Active & Pending</h3>
+                  {(status.activeScans?.length ?? 0) > 0 && (
+                    <Badge variant="outline" className="text-[10px] border-blue-500/30 text-blue-400">
+                      {status.activeScans.length}
+                    </Badge>
+                  )}
+                </div>
+                <Play className="w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+              <div className="min-h-[120px]">
+                {(status.activeScans?.length ?? 0) === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+                    <Server className="w-6 h-6 opacity-30" />
+                    <p className="text-xs">No active scans</p>
+                  </div>
+                ) : (
+                  status.activeScans.map(s => <ActiveScanRow key={s.id} scan={s} />)
+                )}
+              </div>
+            </div>
+
+            {/* Recent completed/failed */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
+                  <h3 className="text-sm font-semibold">Recent Scans</h3>
+                </div>
+                <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+              <div className="min-h-[120px]">
+                {(status.recentScans?.length ?? 0) === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+                    <BarChart3 className="w-6 h-6 opacity-30" />
+                    <p className="text-xs">No completed scans yet</p>
+                  </div>
+                ) : (
+                  status.recentScans.map(s => <RecentScanRow key={s.id} scan={s} />)
+                )}
+              </div>
+            </div>
           </div>
 
+          {/* Redis BullMQ section — only when Redis is connected */}
           {status.redis.connected && (
-            <>
-              <div className="flex items-center justify-between">
-                <div className="flex gap-1 bg-muted/50 rounded-lg p-1">
-                  {JOB_TYPES.map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setJobType(t)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md capitalize transition-colors ${jobType === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                    >
-                      {t}
-                      {t === "failed" && status.queues[selectedQueue as "scans" | "alerts"]?.failed > 0 && (
-                        <span className="ml-1 text-red-400">({status.queues[selectedQueue as "scans" | "alerts"].failed})</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                {jobType === "failed" && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => retryMutation.mutate()}
-                    disabled={retryMutation.isPending}
-                  >
-                    <RotateCcw className="w-3.5 h-3.5 mr-2" />
-                    Retry All Failed
-                  </Button>
-                )}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="h-px flex-1 bg-border" />
+                <p className="text-xs text-muted-foreground font-medium px-2">BullMQ Queue Details</p>
+                <div className="h-px flex-1 bg-border" />
               </div>
 
-              <div className="space-y-2">
-                {jobsLoading && <div className="text-center py-8 text-muted-foreground">Loading jobs…</div>}
-                {!jobsLoading && jobsData?.jobs.length === 0 && (
-                  <div className="text-center py-8 text-muted-foreground border border-border rounded-xl">
-                    No {jobType} jobs in the <span className="font-mono">{selectedQueue}</span> queue
+              {/* Queue selector cards */}
+              <div className="grid grid-cols-2 gap-4">
+                {(["scans", "alerts"] as const).map(qn => {
+                  const stat = status.queues[qn];
+                  const isSel = selectedQueue === qn;
+                  return (
+                    <button
+                      key={qn}
+                      className={cn(
+                        "text-left border rounded-xl p-4 transition-all",
+                        isSel ? "border-primary/50 bg-primary/5" : "border-border bg-card hover:border-border/70",
+                      )}
+                      onClick={() => setSelectedQueue(qn)}
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <p className="font-semibold text-sm font-mono">{stat.name}</p>
+                          {stat.paused && <Badge variant="secondary" className="mt-1 text-[10px]">PAUSED</Badge>}
+                        </div>
+                        <Zap className={cn("w-4 h-4", isSel ? "text-primary" : "text-muted-foreground")} />
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 text-xs">
+                        {[
+                          { label: "Active", val: stat.active, color: "text-blue-400" },
+                          { label: "Waiting", val: stat.waiting, color: "text-yellow-400" },
+                          { label: "Completed", val: stat.completed, color: "text-green-400" },
+                          { label: "Failed", val: stat.failed, color: "text-red-400" },
+                          { label: "Delayed", val: stat.delayed, color: "text-purple-400" },
+                        ].map(({ label, val, color }) => (
+                          <div key={label} className="bg-muted/40 rounded-lg px-2 py-1.5 text-center">
+                            <p className={cn("font-bold tabular-nums", color)}>{val}</p>
+                            <p className="text-[9px] text-muted-foreground">{label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Job list */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex gap-1 bg-muted/50 rounded-lg p-1">
+                    {JOB_TYPES.map(t => (
+                      <button
+                        key={t}
+                        onClick={() => setJobType(t)}
+                        className={cn(
+                          "px-3 py-1.5 text-xs font-medium rounded-md capitalize transition-colors",
+                          jobType === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {t}
+                        {t === "failed" && status.queues[selectedQueue as "scans" | "alerts"]?.failed > 0 && (
+                          <span className="ml-1 text-red-400">({status.queues[selectedQueue as "scans" | "alerts"].failed})</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {jobType === "failed" && (
+                    <Button size="sm" variant="outline" onClick={() => retryMutation.mutate()} disabled={retryMutation.isPending}>
+                      <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                      Retry All Failed
+                    </Button>
+                  )}
+                </div>
+
+                {jobsLoading && (
+                  <div className="space-y-2">
+                    {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
                   </div>
                 )}
-                {!jobsLoading && jobsData?.jobs.map((job) => (
-                  <JobRow key={job.id} job={job} />
-                ))}
+                {!jobsLoading && jobsData?.jobs.length === 0 && (
+                  <div className="text-center py-10 text-muted-foreground border border-border rounded-xl">
+                    <Layers className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No {jobType} jobs in <code className="font-mono">{selectedQueue}</code></p>
+                  </div>
+                )}
+                {!jobsLoading && jobsData?.jobs.map(job => <JobRow key={job.id} job={job} />)}
               </div>
-            </>
+            </div>
           )}
 
+          {/* In-memory notice */}
           {!status.redis.connected && (
-            <div className="border border-border rounded-xl p-6 text-center space-y-3">
-              <AlertTriangle className="w-8 h-8 text-yellow-400 mx-auto" />
-              <p className="font-medium">In-memory mode active</p>
-              <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                Jobs run in-process and are not persisted. To enable distributed queuing with retry logic,
-                persistence and real-time monitoring, set the <span className="font-mono bg-muted px-1 rounded">REDIS_URL</span> environment variable
-                to an Upstash Redis or self-hosted Redis URL.
-              </p>
-              <div className="text-xs text-muted-foreground font-mono bg-muted rounded-lg p-3 text-left max-w-sm mx-auto">
-                REDIS_URL=redis://default:&lt;password&gt;@&lt;host&gt;:6379
+            <div className="border border-border rounded-xl p-5 bg-muted/20">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">BullMQ job list not available in in-memory mode</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Individual job history requires Redis. Scan statistics above are pulled directly from
+                    the database and are always accurate. To enable distributed job tracking with retry
+                    logic and full job history, set the{" "}
+                    <code className="font-mono bg-muted px-1 rounded">REDIS_URL</code> environment variable.
+                  </p>
+                  <p className="text-xs font-mono bg-muted rounded-lg p-2.5 mt-2 text-muted-foreground">
+                    REDIS_URL=redis://default:&lt;password&gt;@&lt;host&gt;:6379
+                  </p>
+                </div>
               </div>
             </div>
           )}
         </>
-      ) : (
-        <div className="text-center py-12 text-muted-foreground">Failed to load queue status</div>
       )}
     </div>
   );

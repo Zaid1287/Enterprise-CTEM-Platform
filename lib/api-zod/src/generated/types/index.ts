@@ -16,6 +16,7 @@ export * from './aiSummaryInput';
 export * from './alert';
 export * from './alertRule';
 export * from './alertRuleInput';
+export * from './alertRuleUpdate';
 export * from './alertUpdate';
 export * from './asset';
 export * from './assetGroup';
