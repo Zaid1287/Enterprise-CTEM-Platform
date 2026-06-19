@@ -61,6 +61,7 @@ function typeNeedsVerify(t: string) { return TYPE_CONFIG[t]?.needsVerify ?? fals
 const emptyForm = {
   name: "", type: "domain", value: "", description: "",
   scanFrequency: "manual",
+  businessImpact: 5,
   assignedClientId: undefined as number | undefined,
   assignedAccountManagerId: undefined as number | undefined,
 };
@@ -197,6 +198,7 @@ export default function AssetsPage() {
     const payload: any = {
       name: newAsset.name, type: newAsset.type, value: newAsset.value,
       scanFrequency: newAsset.scanFrequency,
+      businessImpact: newAsset.businessImpact,
       description: newAsset.description || undefined,
       metadata: Object.keys(cleanMeta).length > 0 ? cleanMeta : undefined,
     };
@@ -286,6 +288,7 @@ export default function AssetsPage() {
       name: editForm.name, type: editForm.type, value: editForm.value,
       description: editForm.description || undefined,
       scanFrequency: editForm.scanFrequency,
+      businessImpact: editForm.businessImpact,
       metadata: Object.keys(cleanMeta).length > 0 ? cleanMeta : editingAsset.metadata ?? null,
     };
     if (!isClient) {
@@ -307,6 +310,7 @@ export default function AssetsPage() {
       value: asset.value ?? "",
       description: asset.description ?? "",
       scanFrequency: asset.scanFrequency ?? "manual",
+      businessImpact: asset.businessImpact ?? 5,
       assignedClientId: asset.assignedClientId,
       assignedAccountManagerId: asset.assignedAccountManagerId,
     });
@@ -762,6 +766,28 @@ export default function AssetsPage() {
                 )}
               </div>
 
+              {/* Business Impact */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Business Impact</Label>
+                  <span className={cn(
+                    "text-xs font-bold px-1.5 py-0.5 rounded",
+                    newAsset.businessImpact >= 8 ? "bg-red-500/15 text-red-400" :
+                    newAsset.businessImpact >= 5 ? "bg-amber-500/15 text-amber-400" :
+                    "bg-blue-500/15 text-blue-400"
+                  )}>{newAsset.businessImpact}/10</span>
+                </div>
+                <input
+                  type="range" min={1} max={10} step={1}
+                  value={newAsset.businessImpact}
+                  onChange={e => setNewAsset(p => ({ ...p, businessImpact: parseInt(e.target.value) }))}
+                  className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  How critical is this asset to your business? Higher value = more weight in risk scoring.
+                </p>
+              </div>
+
               {/* Admin/AM only fields */}
               {!isClient && (
                 <div className="grid grid-cols-2 gap-3">
@@ -898,6 +924,29 @@ export default function AssetsPage() {
                 </p>
               )}
             </div>
+
+            {/* Business Impact */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Business Impact</Label>
+                <span className={cn(
+                  "text-xs font-bold px-1.5 py-0.5 rounded",
+                  editForm.businessImpact >= 8 ? "bg-red-500/15 text-red-400" :
+                  editForm.businessImpact >= 5 ? "bg-amber-500/15 text-amber-400" :
+                  "bg-blue-500/15 text-blue-400"
+                )}>{editForm.businessImpact}/10</span>
+              </div>
+              <input
+                type="range" min={1} max={10} step={1}
+                value={editForm.businessImpact}
+                onChange={e => setEditForm(p => ({ ...p, businessImpact: parseInt(e.target.value) }))}
+                className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                How critical is this asset to your business? Higher value = more weight in risk scoring.
+              </p>
+            </div>
+
             {!isClient && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">

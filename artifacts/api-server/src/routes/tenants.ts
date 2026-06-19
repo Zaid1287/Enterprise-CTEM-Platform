@@ -58,7 +58,7 @@ router.get("/tenants", requireAuth, requireRole("super_admin", "admin"), async (
   res.json(result);
 });
 
-router.post("/tenants", requireAuth, requireRole("super_admin"), async (req, res): Promise<void> => {
+router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async (req, res): Promise<void> => {
   const parsed = CreateTenantBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const [tenant] = await db.insert(tenantsTable).values({ ...parsed.data, isPlatform: false }).returning();
