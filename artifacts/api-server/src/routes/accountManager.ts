@@ -5,6 +5,28 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
 
+// Returns tenants that CAN be assigned to this AM — not already assigned + not the AM's own tenant
+router.get("/account-manager/available-tenants", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { role, userId, tenantId } = req.user!;
+  if (role !== "account_manager" && role !== "super_admin" && role !== "admin") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
+  const targetUserId = (role === "super_admin" || role === "admin") && req.query.userId
+    ? Number(req.query.userId)
+    : userId;
+  const existing = await db.select({ clientTenantId: accountManagerClientsTable.clientTenantId })
+    .from(accountManagerClientsTable)
+    .where(eq(accountManagerClientsTable.accountManagerUserId, targetUserId));
+  const existingIds = existing.map(e => e.clientTenantId);
+  const allTenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name, plan: tenantsTable.plan, isActive: tenantsTable.isActive })
+    .from(tenantsTable);
+  const available = allTenants.filter(t =>
+    t.id !== tenantId &&
+    !existingIds.includes(t.id)
+  );
+  res.json(available);
+});
+
 router.get("/account-manager/clients", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { role, userId } = req.user!;
   if (role !== "account_manager" && role !== "super_admin") {

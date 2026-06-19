@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { eq, and, ilike, sql, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { db, assetsTable, usersTable, findingsTable, riskScoresTable, technologyDetectionsTable } from "@workspace/db";
+import {
+  db, assetsTable, usersTable, findingsTable, findingCommentsTable, riskScoresTable,
+  technologyDetectionsTable, scanAssetResultsTable, assetGroupMembersTable, discoveryResultsTable,
+} from "@workspace/db";
 import {
   CreateAssetBody, GetAssetParams, UpdateAssetParams, UpdateAssetBody,
   DeleteAssetParams, VerifyAssetParams, VerifyAssetBody, CheckAssetVerificationParams,
@@ -219,10 +222,33 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
 router.delete("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = DeleteAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const [asset] = await db.delete(assetsTable)
-    .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)))
-    .returning();
+  const { assetId } = params.data;
+  const tenantId = req.user!.tenantId;
+
+  // Verify ownership before cascading
+  const [asset] = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  // 1. Delete finding comments → findings
+  const assetFindings = await db.select({ id: findingsTable.id }).from(findingsTable)
+    .where(and(eq(findingsTable.assetId, assetId), eq(findingsTable.tenantId, tenantId)));
+  if (assetFindings.length > 0) {
+    const fids = assetFindings.map(f => f.id);
+    await db.delete(findingCommentsTable).where(inArray(findingCommentsTable.findingId, fids));
+    await db.delete(findingsTable).where(inArray(findingsTable.id, fids));
+  }
+  // 2. Delete scan asset results
+  await db.delete(scanAssetResultsTable).where(eq(scanAssetResultsTable.assetId, assetId));
+  // 3. Remove from asset groups
+  await db.delete(assetGroupMembersTable).where(eq(assetGroupMembersTable.assetId, assetId));
+  // 4. Delete risk score (unique FK)
+  await db.delete(riskScoresTable).where(eq(riskScoresTable.assetId, assetId));
+  // 5. Delete discovery results
+  await db.delete(discoveryResultsTable).where(eq(discoveryResultsTable.assetId, assetId));
+  // 6. Delete asset (screenshots + technology_detections cascade via DB)
+  await db.delete(assetsTable).where(eq(assetsTable.id, assetId));
+
   await logAudit(req.user!, "delete_asset", "asset", asset.id);
   res.sendStatus(204);
 });

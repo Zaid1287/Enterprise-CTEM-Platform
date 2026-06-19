@@ -1,8 +1,55 @@
 import { Router } from "express";
 import { eq, inArray, and, or } from "drizzle-orm";
-import { db, tenantsTable, usersTable, assetsTable, findingsTable, accountManagerClientsTable } from "@workspace/db";
+import {
+  db, tenantsTable, usersTable, assetsTable, findingsTable, findingCommentsTable,
+  accountManagerClientsTable, scanAssetResultsTable, assetGroupMembersTable,
+  riskScoresTable, discoveryResultsTable,
+} from "@workspace/db";
 import { CreateTenantBody, UpdateTenantBody, GetTenantParams, UpdateTenantParams } from "@workspace/api-zod";
 import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
+
+/** Cascade-delete an asset and all child records that would violate FK constraints. */
+async function cascadeDeleteAsset(assetId: number, tenantId: number) {
+  // 1. Delete finding comments for findings on this asset
+  const assetFindings = await db.select({ id: findingsTable.id })
+    .from(findingsTable)
+    .where(and(eq(findingsTable.assetId, assetId), eq(findingsTable.tenantId, tenantId)));
+  if (assetFindings.length > 0) {
+    const fids = assetFindings.map(f => f.id);
+    await db.delete(findingCommentsTable).where(inArray(findingCommentsTable.findingId, fids));
+    await db.delete(findingsTable).where(inArray(findingsTable.id, fids));
+  }
+  // 2. Delete scan asset results
+  await db.delete(scanAssetResultsTable).where(eq(scanAssetResultsTable.assetId, assetId));
+  // 3. Remove from asset groups
+  await db.delete(assetGroupMembersTable).where(eq(assetGroupMembersTable.assetId, assetId));
+  // 4. Delete risk score
+  await db.delete(riskScoresTable).where(eq(riskScoresTable.assetId, assetId));
+  // 5. Delete discovery results
+  await db.delete(discoveryResultsTable).where(eq(discoveryResultsTable.assetId, assetId));
+  // 6. Delete asset (screenshots + technology_detections cascade automatically via DB)
+  await db.delete(assetsTable).where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+}
+
+/** Same but for a whole tenant — called during tenant deletion. */
+async function cascadeDeleteTenantAssets(tenantId: number) {
+  const tenantAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+    .where(eq(assetsTable.tenantId, tenantId));
+  if (tenantAssets.length === 0) return;
+  const aids = tenantAssets.map(a => a.id);
+  const tenantFindings = await db.select({ id: findingsTable.id }).from(findingsTable)
+    .where(eq(findingsTable.tenantId, tenantId));
+  if (tenantFindings.length > 0) {
+    const fids = tenantFindings.map(f => f.id);
+    await db.delete(findingCommentsTable).where(inArray(findingCommentsTable.findingId, fids));
+    await db.delete(findingsTable).where(eq(findingsTable.tenantId, tenantId));
+  }
+  await db.delete(scanAssetResultsTable).where(inArray(scanAssetResultsTable.assetId, aids));
+  await db.delete(assetGroupMembersTable).where(inArray(assetGroupMembersTable.assetId, aids));
+  await db.delete(riskScoresTable).where(inArray(riskScoresTable.assetId, aids));
+  await db.delete(discoveryResultsTable).where(inArray(discoveryResultsTable.assetId, aids));
+  await db.delete(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+}
 
 const router = Router();
 
@@ -272,7 +319,11 @@ router.delete("/tenants/:tenantId/assets/:assetId", requireAuth, requireRole("su
   if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tid))) {
     res.status(403).json({ error: "Forbidden" }); return;
   }
-  await db.delete(assetsTable).where(and(eq(assetsTable.id, aid), eq(assetsTable.tenantId, tid)));
+  // Verify asset belongs to this tenant before cascading
+  const [asset] = await db.select({ id: assetsTable.id })
+    .from(assetsTable).where(and(eq(assetsTable.id, aid), eq(assetsTable.tenantId, tid)));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+  await cascadeDeleteAsset(aid, tid);
   res.sendStatus(204);
 });
 
@@ -293,8 +344,8 @@ router.delete("/tenants/:tenantId", requireAuth, requireRole("super_admin", "adm
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
   if (tenant.isPlatform) { res.status(403).json({ error: "Cannot delete platform tenant" }); return; }
 
-  // Cascade: delete assets, users, findings, etc. belonging to this tenant
-  await db.delete(assetsTable).where(eq(assetsTable.tenantId, tid));
+  // Cascade: delete all asset child records, then assets, users, tenant
+  await cascadeDeleteTenantAssets(tid);
   await db.delete(usersTable).where(eq(usersTable.tenantId, tid));
   await db.delete(tenantsTable).where(eq(tenantsTable.id, tid));
   res.sendStatus(204);
