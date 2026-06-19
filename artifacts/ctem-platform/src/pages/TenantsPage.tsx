@@ -49,7 +49,7 @@ interface PkgData {
 }
 interface PoolAsset {
   id: number; name: string; type: string; value: string;
-  tenantId: number; tenantName: string;
+  tenantId: number | null; tenantName: string | null;
   verificationStatus: string; riskLevel: string;
   businessImpact: number | null; scanFrequency: string;
   lastScannedAt: string | null; isActive: boolean;
@@ -985,9 +985,10 @@ export default function TenantsPage() {
                   <SelectValue placeholder="All tenants" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__all__">All tenants</SelectItem>
-                  {[...new Set(poolAssets.map(a => a.tenantId))].map(tid => {
-                    const name = poolAssets.find(a => a.tenantId === tid)?.tenantName ?? tid;
+                  <SelectItem value="__all__">All</SelectItem>
+                  <SelectItem value="__unassigned__">Unassigned</SelectItem>
+                  {[...new Set(poolAssets.filter(a => a.tenantId != null).map(a => a.tenantId as number))].map(tid => {
+                    const name = poolAssets.find(a => a.tenantId === tid)?.tenantName ?? String(tid);
                     return <SelectItem key={tid} value={String(tid)}>{name}</SelectItem>;
                   })}
                 </SelectContent>
@@ -1009,7 +1010,8 @@ export default function TenantsPage() {
               // Filter out assets already belonging to target tenant, then apply search/tenant filter
               const available = poolAssets.filter(a => {
                 if (a.tenantId === pickerTarget?.tenantId) return false; // already here
-                if (poolTenantFilter !== "__all__" && String(a.tenantId) !== poolTenantFilter) return false;
+                if (poolTenantFilter === "__unassigned__" && a.tenantId != null) return false;
+                if (poolTenantFilter !== "__all__" && poolTenantFilter !== "__unassigned__" && String(a.tenantId) !== poolTenantFilter) return false;
                 if (poolSearch) {
                   const q = poolSearch.toLowerCase();
                   return a.name.toLowerCase().includes(q) || a.value.toLowerCase().includes(q);
@@ -1038,10 +1040,10 @@ export default function TenantsPage() {
                 );
               }
 
-              // Group available assets by source tenant
+              // Group available assets by source tenant (null = Unassigned pool)
               const grouped = new Map<string, PoolAsset[]>();
               for (const a of available) {
-                const key = `${a.tenantId}::${a.tenantName}`;
+                const key = a.tenantId != null ? `${a.tenantId}::${a.tenantName}` : `__null__::Unassigned`;
                 if (!grouped.has(key)) grouped.set(key, []);
                 grouped.get(key)!.push(a);
               }
@@ -1082,11 +1084,16 @@ export default function TenantsPage() {
 
                   {/* Grouped by source tenant */}
                   {[...grouped.entries()].map(([key, assets]) => {
+                    const isUnassigned = key.startsWith("__null__::");
                     const [, tenantName] = key.split("::");
                     return (
                       <div key={key}>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
-                          <Building2 className="w-3 h-3" /> Currently in: {tenantName}
+                        <p className={cn(
+                          "text-[10px] font-semibold uppercase tracking-wider mb-1.5 flex items-center gap-1.5",
+                          isUnassigned ? "text-amber-400/70" : "text-muted-foreground",
+                        )}>
+                          <Building2 className="w-3 h-3" />
+                          {isUnassigned ? "Unassigned (free pool)" : `Currently in: ${tenantName}`}
                         </p>
                         <div className="rounded-lg border border-border overflow-hidden">
                           {assets.map((a, idx) => {

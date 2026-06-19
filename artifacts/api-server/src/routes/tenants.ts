@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, inArray, and, or } from "drizzle-orm";
+import { eq, inArray, and, or, isNull } from "drizzle-orm";
 import {
   db, tenantsTable, usersTable, assetsTable, findingsTable, findingCommentsTable,
   accountManagerClientsTable, scanAssetResultsTable, assetGroupMembersTable,
@@ -145,7 +145,7 @@ router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async 
   res.status(201).json(toTenantResponse(tenant));
 });
 
-// ── Pool: all assets across every tenant the caller manages ──────────────────
+// ── Pool: all assets across every tenant the caller manages + unassigned ones ─
 // MUST be registered before /tenants/:tenantId to avoid the param shadowing "assets".
 router.get("/tenants/assets/pool", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;
@@ -162,18 +162,24 @@ router.get("/tenants/assets/pool", requireAuth, requireRole("super_admin", "admi
     tenantIds = rows.map(r => r.id);
   }
 
-  if (tenantIds.length === 0) { res.json([]); return; }
+  // Fetch assigned assets (belonging to managed tenants) AND unassigned assets (tenantId IS NULL)
+  const assetWhere = tenantIds.length > 0
+    ? or(inArray(assetsTable.tenantId, tenantIds), isNull(assetsTable.tenantId))
+    : isNull(assetsTable.tenantId);
 
   const [assets, tenants] = await Promise.all([
-    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, tenantIds)),
-    db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable)
-      .where(inArray(tenantsTable.id, tenantIds)),
+    db.select().from(assetsTable).where(assetWhere),
+    tenantIds.length > 0
+      ? db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable)
+          .where(inArray(tenantsTable.id, tenantIds))
+      : Promise.resolve([] as { id: number; name: string }[]),
   ]);
 
   const nameMap = new Map(tenants.map(t => [t.id, t.name]));
   res.json(assets.map(a => ({
     id: a.id, name: a.name, type: a.type, value: a.value,
-    tenantId: a.tenantId, tenantName: nameMap.get(a.tenantId) ?? "Unknown",
+    tenantId: a.tenantId ?? null,
+    tenantName: a.tenantId != null ? (nameMap.get(a.tenantId) ?? "Unknown") : null,
     verificationStatus: a.verificationStatus, riskLevel: a.riskLevel,
     businessImpact: a.businessImpact, scanFrequency: a.scanFrequency,
     lastScannedAt: a.lastScannedAt?.toISOString() ?? null, isActive: a.isActive,
@@ -199,11 +205,12 @@ router.post("/tenants/:tenantId/assets/assign", requireAuth, requireRole("super_
   const [targetTenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, targetTenantId));
   if (!targetTenant) { res.status(404).json({ error: "Target tenant not found" }); return; }
 
-  // For admin: verify they also own the source tenant of every selected asset
+  // For admin: verify they own the source tenant of every asset that has one.
+  // Unassigned assets (tenantId IS NULL) can be assigned by any admin.
   if (req.user!.role === "admin") {
     const sourceAssets = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
       .from(assetsTable).where(inArray(assetsTable.id, ids));
-    const sourceTenantIds = [...new Set(sourceAssets.map(a => a.tenantId))];
+    const sourceTenantIds = [...new Set(sourceAssets.map(a => a.tenantId).filter((t): t is number => t != null))];
     for (const srcTid of sourceTenantIds) {
       if (!(await adminCanAccessTenant(req.user!.tenantId, srcTid))) {
         res.status(403).json({ error: `Forbidden: cannot move assets from tenant ${srcTid}` }); return;
@@ -324,23 +331,17 @@ router.post("/tenants/:tenantId/assets/:assetId/unassign", requireAuth, requireR
     res.status(403).json({ error: "Forbidden" }); return;
   }
 
-  // Cannot unassign from your own tenant — nothing to move
-  if (tid === req.user!.tenantId) {
-    res.status(400).json({ error: "Cannot remove an asset from your own tenant" }); return;
-  }
-
   // Verify asset belongs to the target tenant
   const [asset] = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
     .from(assetsTable).where(and(eq(assetsTable.id, aid), eq(assetsTable.tenantId, tid)));
   if (!asset) { res.status(404).json({ error: "Asset not found in this tenant" }); return; }
 
-  // Move asset back to the caller's own tenant (their pool)
-  const [updated] = await db.update(assetsTable)
-    .set({ tenantId: req.user!.tenantId })
-    .where(eq(assetsTable.id, aid))
-    .returning({ id: assetsTable.id, tenantId: assetsTable.tenantId });
+  // Set tenantId = null — asset is now free/unassigned until explicitly re-assigned
+  await db.update(assetsTable)
+    .set({ tenantId: null })
+    .where(eq(assetsTable.id, aid));
 
-  res.json({ id: updated.id, movedToTenantId: updated.tenantId });
+  res.json({ id: aid, unassigned: true });
 });
 
 // ── Delete tenant ─────────────────────────────────────────────────────────────

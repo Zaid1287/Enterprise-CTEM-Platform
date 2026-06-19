@@ -6,7 +6,7 @@ import { usersTable } from "./users";
 
 export const assetsTable = pgTable("assets", {
   id: serial("id").primaryKey(),
-  tenantId: integer("tenant_id").notNull().references(() => tenantsTable.id),
+  tenantId: integer("tenant_id").references(() => tenantsTable.id),
   name: text("name").notNull(),
   type: text("type").notNull(),
   value: text("value").notNull(),
