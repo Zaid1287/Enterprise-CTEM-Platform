@@ -75,88 +75,335 @@ function DashboardSkeleton({ cards = 8 }: { cards?: number }) {
 
 /* ─── Super Admin Dashboard ─────────────────────────── */
 function SuperAdminDashboard() {
+  const { user } = useAuth();
   const { data, isLoading } = useQuery({
     queryKey: ["platform-overview"],
     queryFn: () => apiFetch<any>(`${BASE}/api/dashboard/platform-overview`),
     staleTime: 30_000,
   });
 
-  if (isLoading) return <DashboardSkeleton cards={6} />;
-  const tenants: any[] = data?.tenants ?? [];
+  if (isLoading) return <DashboardSkeleton cards={12} />;
+  const d = data ?? {};
+  const tenants: any[] = d.tenants ?? [];
+  const riskTrend: any[] = d.riskTrend ?? [];
+  const severityBreakdown: any[] = d.severityBreakdown ?? [];
+  const clientRiskRankings: any[] = d.clientRiskRankings ?? [];
+  const recentAlerts: any[] = d.recentAlerts ?? [];
+
+  const riskColor = d.platformRiskScore >= 70 ? "text-red-400" : d.platformRiskScore >= 40 ? "text-amber-400" : "text-green-400";
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-lg font-semibold">Platform Overview</h1>
-        <p className="text-sm text-muted-foreground">All client organizations across the platform</p>
+      {/* Hero Banner */}
+      <div className="rounded-2xl overflow-hidden bg-gradient-to-r from-slate-900 via-purple-950 to-slate-900 border border-purple-500/20 p-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <Shield className="w-5 h-5 text-purple-400" />
+              <span className="text-xs font-medium text-purple-300 uppercase tracking-widest">Super Admin</span>
+            </div>
+            <h1 className="text-2xl font-bold text-white">Platform Command Center</h1>
+            <p className="text-sm text-slate-400 mt-1">Complete visibility across all client organizations</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Platform Risk Score</p>
+            <p className={cn("text-4xl font-black tabular-nums", riskColor)}>{d.platformRiskScore ?? "—"}</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">{d.activeTenantCount ?? 0} active organizations</p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-4 gap-3">
+          {[
+            { label: "Total Clients", value: d.tenantCount, color: "text-purple-300" },
+            { label: "Account Managers", value: d.amCount, color: "text-blue-300" },
+            { label: "Total Assets", value: d.assetCount, color: "text-cyan-300" },
+            { label: "Critical Clients", value: d.clientsAtCriticalRisk, color: "text-red-300" },
+          ].map(s => (
+            <div key={s.label} className="bg-white/5 rounded-xl px-4 py-3 border border-white/10">
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</p>
+              <p className={cn("text-xl font-bold tabular-nums mt-0.5", s.color)}>{s.value ?? "—"}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
+      {/* Row 1 — 4 primary stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Client Tenants" value={data?.tenantCount} icon={Building2}
-          sub={`${data?.activeTenantCount ?? 0} active`} color="text-purple-400" />
-        <StatCard label="Total Users" value={data?.userCount} icon={Users} />
-        <StatCard label="Total Assets" value={data?.assetCount} icon={Server} />
-        <StatCard label="Open Findings" value={data?.openFindingCount} icon={Bug}
-          color={data?.openFindingCount > 0 ? "text-amber-400" : undefined} />
-        <StatCard label="Critical Findings" value={data?.criticalCount} icon={AlertTriangle}
-          color={data?.criticalCount > 0 ? "text-red-400" : undefined} />
-        <StatCard label="Active Scans" value={data?.activeScans} icon={Radar} color="text-blue-400" />
-        <StatCard label="Total Findings" value={data?.findingCount} icon={Bug} />
+        <StatCard label="Total Clients" value={d.tenantCount} icon={Building2}
+          sub={`${d.activeTenantCount ?? 0} active`} color="text-purple-400" />
+        <StatCard label="Account Managers" value={d.amCount} icon={Users} color="text-blue-400" />
+        <StatCard label="Clients at Critical Risk" value={d.clientsAtCriticalRisk} icon={ShieldAlert}
+          color={d.clientsAtCriticalRisk > 0 ? "text-red-400" : "text-green-400"} />
+        <StatCard label="Total Client Assets" value={d.assetCount} icon={Server} />
       </div>
 
+      {/* Row 2 — 4 secondary stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Critical Vulnerabilities" value={d.criticalCount} icon={AlertTriangle}
+          color={d.criticalCount > 0 ? "text-red-400" : undefined} />
+        <StatCard label="Open Alerts" value={d.openAlertsCount} icon={Bell}
+          color={d.openAlertsCount > 0 ? "text-amber-400" : undefined} />
+        <StatCard label="Brand Threats" value={d.brandThreatsCount} icon={Globe}
+          color={d.brandThreatsCount > 0 ? "text-orange-400" : undefined} />
+        <StatCard label="Takedown Requests" value={d.takedownsCount} icon={Shield} color="text-cyan-400" />
+      </div>
+
+      {/* Row 3 — 4 tertiary stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="New Vulns (7D)" value={d.newVulns7D} icon={TrendingUp}
+          color={d.newVulns7D > 0 ? "text-red-400" : "text-green-400"} />
+        <StatCard label="Resolved Vulns (7D)" value={d.resolvedVulns7D} icon={CheckCircle2}
+          color={d.resolvedVulns7D > 0 ? "text-green-400" : undefined} />
+        <StatCard label="Exposed Ports" value={d.exposedPortsCount} icon={Activity}
+          color={d.exposedPortsCount > 0 ? "text-orange-400" : undefined} />
+        <StatCard label="Active Scans" value={d.activeScans} icon={Radar} color="text-blue-400" />
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 bg-card border border-border rounded-xl p-4">
+          <h3 className="text-sm font-medium mb-4">Platform Risk Score Trend (14 days)</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={riskTrend}>
+              <defs>
+                <linearGradient id="saRiskGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#a855f7" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#a855f7" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 17%)" />
+              <XAxis dataKey="date" tick={{ fill: "#64748b", fontSize: 10 }} tickFormatter={(v) => v?.slice(5)} />
+              <YAxis tick={{ fill: "#64748b", fontSize: 10 }} domain={[0, 100]} />
+              <Tooltip contentStyle={{ background: "hsl(222 47% 11%)", border: "1px solid hsl(217 33% 17%)", borderRadius: "8px", fontSize: "12px" }}
+                labelStyle={{ color: "#94a3b8" }} />
+              <Area type="monotone" dataKey="value" stroke="#a855f7" strokeWidth={2} fill="url(#saRiskGrad)" name="Risk Score" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <h3 className="text-sm font-medium mb-4">Severity Breakdown</h3>
+          {severityBreakdown.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">No findings yet</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                  <Pie data={severityBreakdown} dataKey="count" nameKey="severity" cx="50%" cy="50%" innerRadius={45} outerRadius={70}>
+                    {severityBreakdown.map((e: any) => <Cell key={e.severity} fill={SEVERITY_COLORS[e.severity] ?? "#64748b"} />)}
+                  </Pie>
+                  <Tooltip contentStyle={{ background: "hsl(222 47% 11%)", border: "1px solid hsl(217 33% 17%)", borderRadius: "8px", fontSize: "12px" }}
+                    formatter={(v: any, name: any) => [v, capitalize(name)]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="mt-2 space-y-1.5">
+                {severityBreakdown.map((s: any) => (
+                  <div key={s.severity} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-sm" style={{ background: SEVERITY_COLORS[s.severity] }} />
+                      <span className="capitalize text-muted-foreground">{s.severity}</span>
+                    </div>
+                    <span className="font-semibold tabular-nums">{s.count}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Client Risk Rankings + Recent Alerts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Client Risk Rankings */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Target className="w-4 h-4 text-purple-400" /> Client Risk Rankings
+            </h3>
+            <span className="text-xs text-muted-foreground">{clientRiskRankings.length} clients</span>
+          </div>
+          <div className="divide-y divide-border/50">
+            {clientRiskRankings.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">No clients yet</div>
+            ) : clientRiskRankings.slice(0, 6).map((c: any, idx: number) => (
+              <div key={c.id} className="px-4 py-3 hover:bg-accent/30 transition-colors">
+                <div className="flex items-start justify-between mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0">#{idx + 1}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{c.name}</p>
+                      <p className="text-[10px] text-muted-foreground">{c.assetCount} assets · {c.openFindingCount} open · <span className="capitalize">{c.plan}</span></p>
+                    </div>
+                  </div>
+                  <span className={cn("ml-2 shrink-0 text-xs px-2 py-0.5 rounded font-semibold border capitalize", riskLevelBg(c.riskLevel))}>
+                    {c.riskScore > 0 ? c.riskScore : "—"}
+                  </span>
+                </div>
+                <div className="ml-6">
+                  <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${c.riskScore}%`, background: c.riskScore >= 70 ? "#ef4444" : c.riskScore >= 40 ? "#f97316" : "#eab308" }} />
+                  </div>
+                </div>
+                {c.criticalCount > 0 && (
+                  <p className="ml-6 text-[10px] text-red-400 mt-0.5">{c.criticalCount} critical finding{c.criticalCount !== 1 ? "s" : ""}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Recent Alerts */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Bell className="w-4 h-4 text-amber-400" /> Recent Alerts
+            </h3>
+            <Link href="/alerts">
+              <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
+                View all <ArrowRight className="w-3 h-3" />
+              </span>
+            </Link>
+          </div>
+          <div className="divide-y divide-border/50">
+            {recentAlerts.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
+              </div>
+            ) : recentAlerts.map((a: any) => (
+              <div key={a.id} className={cn("px-4 py-3 transition-colors", !a.isRead && "bg-primary/[0.03]")}>
+                <div className="flex items-start gap-2.5">
+                  {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
+                  <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium truncate flex-1">{a.title}</p>
+                      <SeverityBadge severity={a.severity} />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                      <Building2 className="w-2.5 h-2.5 shrink-0" />
+                      {a.clientName} · {new Date(a.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div>
+        <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+          <Activity className="w-4 h-4 text-muted-foreground" /> Quick Actions
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Link href="/takedowns">
+            <div className="bg-card border border-border rounded-xl p-4 hover:border-purple-500/50 hover:bg-purple-500/5 transition-all cursor-pointer group">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/15 flex items-center justify-center">
+                  <Shield className="w-5 h-5 text-purple-400" />
+                </div>
+                <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-purple-400 transition-colors" />
+              </div>
+              <p className="text-sm font-semibold">Submitted Takedowns</p>
+              <p className="text-2xl font-black tabular-nums text-purple-400 mt-1">{d.takedownsCount ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Manage takedown requests</p>
+            </div>
+          </Link>
+          <Link href="/brand-threats">
+            <div className="bg-card border border-border rounded-xl p-4 hover:border-orange-500/50 hover:bg-orange-500/5 transition-all cursor-pointer group">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl bg-orange-500/15 flex items-center justify-center">
+                  <Globe className="w-5 h-5 text-orange-400" />
+                </div>
+                <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-orange-400 transition-colors" />
+              </div>
+              <p className="text-sm font-semibold">Brand Threats</p>
+              <p className="text-2xl font-black tabular-nums text-orange-400 mt-1">{d.brandThreatsCount ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Active brand threat scans</p>
+            </div>
+          </Link>
+          <Link href="/findings">
+            <div className="bg-card border border-border rounded-xl p-4 hover:border-red-500/50 hover:bg-red-500/5 transition-all cursor-pointer group">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center">
+                  <Bug className="w-5 h-5 text-red-400" />
+                </div>
+                <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-red-400 transition-colors" />
+              </div>
+              <p className="text-sm font-semibold">Vulnerabilities</p>
+              <p className="text-2xl font-black tabular-nums text-red-400 mt-1">{d.criticalCount ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Critical open vulnerabilities</p>
+            </div>
+          </Link>
+        </div>
+      </div>
+
+      {/* Full Client Table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium">Client Tenants</h3>
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Building2 className="w-4 h-4 text-muted-foreground" /> All Client Organizations
+          </h3>
           <span className="text-xs text-muted-foreground">{tenants.length} organizations</span>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Tenant</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Plan</th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Users</th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Assets</th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Open</th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Critical</th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Scans</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tenants.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                No client tenants yet. Register a new organization to get started.
-              </td></tr>
-            )}
-            {tenants.map((t: any) => (
-              <tr key={t.id} className="border-b border-border/50 hover:bg-accent/30">
-                <td className="px-4 py-2.5">
-                  <p className="font-medium">{t.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{t.slug}</p>
-                </td>
-                <td className="px-4 py-2.5"><Badge variant="outline" className="text-xs capitalize">{t.plan}</Badge></td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{t.userCount}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{t.assetCount}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{t.openFindingCount}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">
-                  {t.criticalCount > 0 ? <span className="text-red-400 font-semibold">{t.criticalCount}</span>
-                    : <span className="text-muted-foreground">0</span>}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums">
-                  {t.activeScans > 0 ? <span className="text-blue-400">{t.activeScans}</span>
-                    : <span className="text-muted-foreground">0</span>}
-                </td>
-                <td className="px-4 py-2.5">
-                  <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium border",
-                    t.isActive ? "bg-green-500/15 text-green-400 border-green-500/30"
-                      : "bg-muted text-muted-foreground border-border")}>
-                    {t.isActive ? "Active" : "Inactive"}
-                  </span>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-accent/20">
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Organization</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Plan</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Users</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Assets</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Open</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Critical</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Scans</th>
+                <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {tenants.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  No client organizations yet.
+                </td></tr>
+              )}
+              {tenants.map((t: any) => (
+                <tr key={t.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-sm">{t.name}</p>
+                    <p className="text-[10px] text-muted-foreground">{t.slug}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge variant="outline" className="text-xs capitalize">{t.plan}</Badge>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-sm">{t.userCount}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-sm">{t.assetCount}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {t.openFindingCount > 0
+                      ? <span className="text-amber-400 font-semibold">{t.openFindingCount}</span>
+                      : <span className="text-muted-foreground/50">0</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {t.criticalCount > 0
+                      ? <span className="text-red-400 font-bold">{t.criticalCount}</span>
+                      : <span className="text-muted-foreground/50">0</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {t.activeScans > 0
+                      ? <span className="text-blue-400">{t.activeScans}</span>
+                      : <span className="text-muted-foreground/50">0</span>}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium border",
+                      t.isActive
+                        ? "bg-green-500/15 text-green-400 border-green-500/30"
+                        : "bg-muted text-muted-foreground border-border")}>
+                      {t.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -644,59 +891,99 @@ function ClientDashboard() {
 
 /* ─── Admin Dashboard (full) ─────────────────────────── */
 function AdminDashboard() {
-  const { data: overview, isLoading: loadingOverview } = useGetDashboardOverview({
-    query: { queryKey: getGetDashboardOverviewQueryKey() },
-  });
-  const { data: riskTrend } = useGetRiskTrend({ days: 30 }, {
-    query: { queryKey: getGetRiskTrendQueryKey({ days: 30 }) },
-  });
-  const { data: findingsBySeverity } = useGetFindingsBySeverity({
-    query: { queryKey: getGetFindingsBySeverityQueryKey() },
+  const { user } = useAuth();
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-overview"],
+    queryFn: () => apiFetch<any>(`${BASE}/api/dashboard/admin-overview`),
+    staleTime: 30_000,
   });
   const { data: assetBreakdown } = useGetAssetBreakdown({
     query: { queryKey: getGetAssetBreakdownQueryKey() },
   });
-  const { data: topRiskyAssets } = useGetTopRiskyAssets({ limit: 5 }, {
-    query: { queryKey: getGetTopRiskyAssetsQueryKey({ limit: 5 }) },
-  });
-  const { data: recentActivity } = useGetRecentActivity({
-    query: { queryKey: getGetRecentActivityQueryKey() },
-  });
 
-  if (loadingOverview) return <DashboardSkeleton />;
-  const o = overview as any;
+  if (isLoading) return <DashboardSkeleton cards={12} />;
+  const d = data ?? {};
+  const riskTrend: any[] = d.riskTrend ?? [];
+  const severityBreakdown: any[] = d.severityBreakdown ?? [];
+  const assetRiskRankings: any[] = d.assetRiskRankings ?? [];
+  const recentAlerts: any[] = d.recentAlerts ?? [];
+
+  const riskColor = d.riskScore >= 70 ? "text-red-400" : d.riskScore >= 40 ? "text-amber-400" : "text-green-400";
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-lg font-semibold">Security Overview</h1>
-        <p className="text-sm text-muted-foreground">Real-time threat exposure metrics</p>
+      {/* Hero Banner */}
+      <div className="rounded-2xl overflow-hidden bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 border border-blue-500/20 p-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <ShieldCheck className="w-5 h-5 text-blue-400" />
+              <span className="text-xs font-medium text-blue-300 uppercase tracking-widest">Admin Dashboard</span>
+            </div>
+            <h1 className="text-2xl font-bold text-white">Security Command Center</h1>
+            <p className="text-sm text-slate-400 mt-1">Your organization's full threat exposure at a glance</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Risk Score</p>
+            <p className={cn("text-4xl font-black tabular-nums", riskColor)}>{d.riskScore ?? "—"}</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">{d.assetCount ?? 0} assets monitored</p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-4 gap-3">
+          {[
+            { label: "Total Assets", value: d.assetCount, color: "text-blue-300" },
+            { label: "Critical Vulns", value: d.criticalCount, color: "text-red-300" },
+            { label: "Open Findings", value: d.openFindingCount, color: "text-amber-300" },
+            { label: "Open Alerts", value: d.openAlertsCount, color: "text-orange-300" },
+          ].map(s => (
+            <div key={s.label} className="bg-white/5 rounded-xl px-4 py-3 border border-white/10">
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</p>
+              <p className={cn("text-xl font-bold tabular-nums mt-0.5", s.color)}>{s.value ?? "—"}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
+      {/* Row 1 — 4 primary stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Total Assets" value={o?.totalAssets} icon={Server} trend={o?.assetsTrend} />
-        <StatCard label="Open Findings" value={o?.openFindings} icon={Bug}
-          color={o?.openFindings > 0 ? "text-orange-400" : undefined} />
-        <StatCard label="Critical" value={o?.criticalFindings} icon={AlertTriangle}
-          color={o?.criticalFindings > 0 ? "text-red-400" : undefined} />
-        <StatCard label="Active Scans" value={o?.activeScans} icon={Radar} />
-        <StatCard label="Risk Score" value={o?.riskScore} icon={TrendingUp}
-          color={o?.riskScore > 70 ? "text-red-400" : o?.riskScore > 40 ? "text-orange-400" : "text-green-400"} />
-        <StatCard label="High Findings" value={o?.highFindings} icon={Bug}
-          color={o?.highFindings > 0 ? "text-orange-400" : undefined} />
-        <StatCard label="Compliance" value={o?.complianceScore != null ? `${o.complianceScore}%` : "—"} icon={ShieldCheck}
-          color={o?.complianceScore >= 70 ? "text-green-400" : "text-orange-400"} />
-        <StatCard label="Unread Alerts" value={o?.unreadAlerts} icon={Bell}
-          color={o?.unreadAlerts > 0 ? "text-yellow-400" : undefined} />
+        <StatCard label="Total Assets" value={d.assetCount} icon={Server} />
+        <StatCard label="Critical Vulnerabilities" value={d.criticalCount} icon={AlertTriangle}
+          color={d.criticalCount > 0 ? "text-red-400" : undefined} />
+        <StatCard label="Open Findings" value={d.openFindingCount} icon={Bug}
+          color={d.openFindingCount > 0 ? "text-amber-400" : undefined} />
+        <StatCard label="Risk Score" value={d.riskScore} icon={TrendingUp} color={riskColor} />
       </div>
 
+      {/* Row 2 — 4 secondary stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Open Alerts" value={d.openAlertsCount} icon={Bell}
+          color={d.openAlertsCount > 0 ? "text-amber-400" : undefined} />
+        <StatCard label="New Vulns (7D)" value={d.newVulns7D} icon={TrendingUp}
+          color={d.newVulns7D > 0 ? "text-red-400" : "text-green-400"} />
+        <StatCard label="Resolved Vulns (7D)" value={d.resolvedVulns7D} icon={CheckCircle2}
+          color={d.resolvedVulns7D > 0 ? "text-green-400" : undefined} />
+        <StatCard label="Brand Threats" value={d.brandThreatsCount} icon={Globe}
+          color={d.brandThreatsCount > 0 ? "text-orange-400" : undefined} />
+      </div>
+
+      {/* Row 3 — 4 tertiary stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Exposed Ports" value={d.exposedPortsCount} icon={Activity}
+          color={d.exposedPortsCount > 0 ? "text-orange-400" : undefined} />
+        <StatCard label="High Findings" value={d.highCount} icon={Bug}
+          color={d.highCount > 0 ? "text-orange-400" : undefined} />
+        <StatCard label="Takedown Requests" value={d.takedownsCount} icon={Shield} color="text-cyan-400" />
+        <StatCard label="Active Scans" value={d.activeScans} icon={Radar} color="text-blue-400" />
+      </div>
+
+      {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-card border border-border rounded-xl p-4">
-          <h3 className="text-sm font-medium mb-4">Risk Score Trend (30 days)</h3>
-          <ResponsiveContainer width="100%" height={180}>
-            <AreaChart data={riskTrend as any[]}>
+          <h3 className="text-sm font-medium mb-4">Risk Score Trend (14 days)</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={riskTrend}>
               <defs>
-                <linearGradient id="riskGrad" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="adminRiskGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
                   <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                 </linearGradient>
@@ -706,84 +993,180 @@ function AdminDashboard() {
               <YAxis tick={{ fill: "#64748b", fontSize: 10 }} domain={[0, 100]} />
               <Tooltip contentStyle={{ background: "hsl(222 47% 11%)", border: "1px solid hsl(217 33% 17%)", borderRadius: "8px", fontSize: "12px" }}
                 labelStyle={{ color: "#94a3b8" }} />
-              <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} fill="url(#riskGrad)" />
+              <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} fill="url(#adminRiskGrad)" name="Risk Score" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
-
         <div className="bg-card border border-border rounded-xl p-4">
-          <h3 className="text-sm font-medium mb-4">Findings by Severity</h3>
-          <ResponsiveContainer width="100%" height={180}>
-            <PieChart>
-              <Pie data={findingsBySeverity as any[]} dataKey="count" nameKey="severity" cx="50%" cy="50%" innerRadius={50} outerRadius={75}>
-                {(findingsBySeverity as any[] ?? []).map((entry: any) => (
-                  <Cell key={entry.severity} fill={SEVERITY_COLORS[entry.severity] ?? "#64748b"} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ background: "hsl(222 47% 11%)", border: "1px solid hsl(217 33% 17%)", borderRadius: "8px", fontSize: "12px" }}
-                formatter={(v: any, name: any) => [v, capitalize(name)]} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="mt-2 space-y-1">
-            {(findingsBySeverity as any[] ?? []).filter((s: any) => s.count > 0).map((s: any) => (
-              <div key={s.severity} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 rounded-sm" style={{ background: SEVERITY_COLORS[s.severity] }} />
-                  <span className="capitalize text-muted-foreground">{s.severity}</span>
-                </div>
-                <span className="font-medium tabular-nums">{s.count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-card border border-border rounded-xl p-4">
-          <h3 className="text-sm font-medium mb-3">Top Risky Assets</h3>
-          <div className="space-y-2">
-            {(topRiskyAssets as any[] ?? []).map((a: any) => (
-              <div key={a.assetId} className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <p className="text-xs font-medium truncate">{a.assetName}</p>
-                    <span className={cn("text-xs px-1.5 py-0.5 rounded text-[10px] font-medium ml-2", riskLevelBg(a.riskLevel))}>{a.riskLevel}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-accent rounded-full overflow-hidden">
-                      <div className="h-full rounded-full"
-                        style={{ width: `${a.riskScore}%`, background: a.riskScore >= 80 ? "#ef4444" : a.riskScore >= 60 ? "#f97316" : "#eab308" }} />
+          <h3 className="text-sm font-medium mb-4">Severity Breakdown</h3>
+          {severityBreakdown.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">No findings yet</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                  <Pie data={severityBreakdown} dataKey="count" nameKey="severity" cx="50%" cy="50%" innerRadius={45} outerRadius={70}>
+                    {severityBreakdown.map((e: any) => <Cell key={e.severity} fill={SEVERITY_COLORS[e.severity] ?? "#64748b"} />)}
+                  </Pie>
+                  <Tooltip contentStyle={{ background: "hsl(222 47% 11%)", border: "1px solid hsl(217 33% 17%)", borderRadius: "8px", fontSize: "12px" }}
+                    formatter={(v: any, name: any) => [v, capitalize(name)]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="mt-2 space-y-1.5">
+                {severityBreakdown.map((s: any) => (
+                  <div key={s.severity} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-sm" style={{ background: SEVERITY_COLORS[s.severity] }} />
+                      <span className="capitalize text-muted-foreground">{s.severity}</span>
                     </div>
-                    <span className="text-xs tabular-nums text-muted-foreground w-6 text-right">{a.riskScore}</span>
+                    <span className="font-semibold tabular-nums">{s.count}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Asset Risk Rankings + Recent Alerts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Asset Risk Rankings */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Target className="w-4 h-4 text-blue-400" /> Asset Risk Rankings
+            </h3>
+            <Link href="/assets">
+              <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
+                View all <ArrowRight className="w-3 h-3" />
+              </span>
+            </Link>
+          </div>
+          <div className="divide-y divide-border/50">
+            {assetRiskRankings.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <Target className="w-7 h-7 mx-auto mb-2 opacity-30" />
+                No risk scores computed yet
+              </div>
+            ) : assetRiskRankings.map((a: any, idx: number) => (
+              <Link key={a.assetId} href={`/assets/${a.assetId}`}>
+                <div className="px-4 py-3 hover:bg-accent/30 cursor-pointer transition-colors">
+                  <div className="flex items-start justify-between mb-1.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0">#{idx + 1}</span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{a.assetName}</p>
+                        <p className="text-[10px] text-muted-foreground capitalize">{a.assetType} · {a.findingsCount} finding{a.findingsCount !== 1 ? "s" : ""}</p>
+                      </div>
+                    </div>
+                    <span className={cn("ml-2 shrink-0 text-xs px-2 py-0.5 rounded font-semibold border capitalize", riskLevelBg(a.riskLevel))}>
+                      {a.riskScore}
+                    </span>
+                  </div>
+                  <div className="ml-6">
+                    <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all"
+                        style={{ width: `${a.riskScore}%`, background: a.riskScore >= 70 ? "#ef4444" : a.riskScore >= 40 ? "#f97316" : "#eab308" }} />
+                    </div>
+                  </div>
+                  {a.criticalCount > 0 && (
+                    <p className="ml-6 text-[10px] text-red-400 mt-0.5">{a.criticalCount} critical</p>
+                  )}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        {/* Recent Alerts */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Bell className="w-4 h-4 text-amber-400" /> Recent Alerts
+            </h3>
+            <Link href="/alerts">
+              <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
+                View all <ArrowRight className="w-3 h-3" />
+              </span>
+            </Link>
+          </div>
+          <div className="divide-y divide-border/50">
+            {recentAlerts.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
+              </div>
+            ) : recentAlerts.map((a: any) => (
+              <div key={a.id} className={cn("px-4 py-3 transition-colors", !a.isRead && "bg-primary/[0.03]")}>
+                <div className="flex items-start gap-2.5">
+                  {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
+                  <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium truncate flex-1">{a.title}</p>
+                      <SeverityBadge severity={a.severity} />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {new Date(a.createdAt).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
+      </div>
 
-        <div className="bg-card border border-border rounded-xl p-4">
-          <h3 className="text-sm font-medium mb-3">Recent Activity</h3>
-          <div className="space-y-2">
-            {(recentActivity as any[] ?? []).slice(0, 6).map((item: any) => (
-              <div key={item.id} className="flex items-start gap-2.5 py-1 border-b border-border last:border-0">
-                <div className={cn("mt-0.5 w-1.5 h-1.5 rounded-full shrink-0",
-                  item.severity === "critical" ? "bg-red-400" : item.severity === "high" ? "bg-orange-400" :
-                  item.severity === "medium" ? "bg-yellow-400" : "bg-blue-400")} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate">{item.title}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">{item.description}</p>
+      {/* Quick Actions */}
+      <div>
+        <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+          <Activity className="w-4 h-4 text-muted-foreground" /> Quick Actions
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Link href="/takedowns">
+            <div className="bg-card border border-border rounded-xl p-4 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all cursor-pointer group">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/15 flex items-center justify-center">
+                  <Shield className="w-5 h-5 text-cyan-400" />
                 </div>
-                <span className="text-[10px] text-muted-foreground shrink-0">{new Date(item.createdAt).toLocaleDateString()}</span>
+                <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-cyan-400 transition-colors" />
               </div>
-            ))}
-          </div>
+              <p className="text-sm font-semibold">Submitted Takedowns</p>
+              <p className="text-2xl font-black tabular-nums text-cyan-400 mt-1">{d.takedownsCount ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Manage takedown requests</p>
+            </div>
+          </Link>
+          <Link href="/brand-threats">
+            <div className="bg-card border border-border rounded-xl p-4 hover:border-orange-500/50 hover:bg-orange-500/5 transition-all cursor-pointer group">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl bg-orange-500/15 flex items-center justify-center">
+                  <Globe className="w-5 h-5 text-orange-400" />
+                </div>
+                <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-orange-400 transition-colors" />
+              </div>
+              <p className="text-sm font-semibold">Brand Threats</p>
+              <p className="text-2xl font-black tabular-nums text-orange-400 mt-1">{d.brandThreatsCount ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Active brand threat scans</p>
+            </div>
+          </Link>
+          <Link href="/findings">
+            <div className="bg-card border border-border rounded-xl p-4 hover:border-red-500/50 hover:bg-red-500/5 transition-all cursor-pointer group">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center">
+                  <Bug className="w-5 h-5 text-red-400" />
+                </div>
+                <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-red-400 transition-colors" />
+              </div>
+              <p className="text-sm font-semibold">Vulnerabilities</p>
+              <p className="text-2xl font-black tabular-nums text-red-400 mt-1">{d.criticalCount ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Critical open vulnerabilities</p>
+            </div>
+          </Link>
         </div>
       </div>
 
+      {/* Asset Type Breakdown */}
       <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium mb-4">Asset Type Breakdown</h3>
-        <ResponsiveContainer width="100%" height={120}>
+        <ResponsiveContainer width="100%" height={130}>
           <BarChart data={assetBreakdown as any[]}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 17%)" vertical={false} />
             <XAxis dataKey="type" tick={{ fill: "#64748b", fontSize: 11 }} />

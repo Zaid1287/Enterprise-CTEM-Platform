@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, count, and, desc, sql, inArray, or, isNull, lte, gte } from "drizzle-orm";
-import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable } from "@workspace/db";
+import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable, brandThreatScansTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { cacheGet, cacheSet, cacheDelete, ck } from "../lib/cache";
 
@@ -203,16 +203,100 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   const tenantIds = allTenants.map(t => t.id);
 
   if (tenantIds.length === 0) {
-    res.json({ tenantCount: 0, activeTenantCount: 0, userCount: 0, assetCount: 0, findingCount: 0, criticalCount: 0, openFindingCount: 0, activeScans: 0, tenants: [] });
+    res.json({
+      tenantCount: 0, activeTenantCount: 0, amCount: 0, clientsAtCriticalRisk: 0,
+      userCount: 0, assetCount: 0, findingCount: 0, criticalCount: 0, openFindingCount: 0,
+      activeScans: 0, openAlertsCount: 0, platformRiskScore: 0, brandThreatsCount: 0,
+      takedownsCount: 0, newVulns7D: 0, resolvedVulns7D: 0, exposedPortsCount: 0,
+      severityBreakdown: [], clientRiskRankings: [], recentAlerts: [], riskTrend: [], tenants: [],
+    });
     return;
   }
 
-  const [allUsers, allAssets, allFindings, allScans] = await Promise.all([
-    db.select().from(usersTable).where(inArray(usersTable.tenantId, tenantIds)),
+  const [allUsers, allAssets, allFindings, allScans, allAlerts, brandThreats, allTakedowns] = await Promise.all([
+    db.select({ id: usersTable.id, tenantId: usersTable.tenantId, role: usersTable.role }).from(usersTable).where(inArray(usersTable.tenantId, tenantIds)),
     db.select().from(assetsTable).where(inArray(assetsTable.tenantId, tenantIds)),
     db.select().from(findingsTable).where(inArray(findingsTable.tenantId, tenantIds)),
     db.select().from(scansTable).where(inArray(scansTable.tenantId, tenantIds)),
+    db.select().from(alertsTable).where(inArray(alertsTable.tenantId, tenantIds)).orderBy(desc(alertsTable.createdAt)),
+    db.select().from(brandThreatScansTable).where(inArray(brandThreatScansTable.tenantId, tenantIds)),
+    db.select().from(takedownRequestsTable).where(inArray(takedownRequestsTable.tenantId, tenantIds)),
   ]);
+
+  const assetIds = allAssets.map(a => a.id);
+  const allRiskScores = assetIds.length > 0
+    ? await db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+    : [];
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const amCount = allUsers.filter(u => u.role === "account_manager").length;
+  const tenantsWithCritical = new Set(allFindings.filter(f => f.severity === "critical").map(f => f.tenantId));
+  const clientsAtCriticalRisk = [...tenantsWithCritical].filter(tid => tenantIds.includes(tid)).length;
+  const openAlertsCount = allAlerts.filter(a => !a.isRead).length;
+
+  const platformRiskScore = allRiskScores.length > 0
+    ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
+    : 0;
+
+  const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
+  const resolvedVulns7D = allFindings.filter(f => f.status === "resolved" && new Date(f.updatedAt) >= sevenDaysAgo).length;
+  const exposedPortsCount = allFindings.filter(f => f.cveId?.startsWith("EXP-PORT-")).length;
+
+  const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(severity => ({
+    severity,
+    count: allFindings.filter(f => f.severity === severity).length,
+  })).filter(s => s.count > 0);
+
+  const TREND_DAYS = 14;
+  const now = new Date();
+  const assetCountForTrend = Math.max(1, allAssets.length);
+  const riskTrend = Array.from({ length: TREND_DAYS }, (_, i) => {
+    const dayEnd = new Date(now);
+    dayEnd.setDate(dayEnd.getDate() - (TREND_DAYS - 1 - i));
+    dayEnd.setHours(23, 59, 59, 999);
+    const openOnDay = allFindings.filter(f => {
+      const created = new Date(f.createdAt);
+      if (created > dayEnd) return false;
+      if (f.status === "resolved") return new Date(f.updatedAt) > dayEnd;
+      return true;
+    });
+    let penalty = 0;
+    for (const f of openOnDay) {
+      if (f.severity === "critical") penalty += 20;
+      else if (f.severity === "high") penalty += 12;
+      else if (f.severity === "medium") penalty += 6;
+      else if (f.severity === "low") penalty += 2;
+    }
+    return {
+      date: dayEnd.toISOString().split("T")[0],
+      value: Math.max(0, Math.min(100, 100 - Math.round(penalty / assetCountForTrend))),
+    };
+  });
+
+  const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r.score]));
+  const clientRiskRankings = allTenants.map(t => {
+    const clientAssets = allAssets.filter(a => a.tenantId === t.id);
+    const scores = clientAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
+    const avgRisk = scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r, 0) / scores.length) : 0;
+    const tFindings = allFindings.filter(f => f.tenantId === t.id);
+    return {
+      id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
+      riskScore: avgRisk,
+      riskLevel: avgRisk >= 70 ? "critical" : avgRisk >= 40 ? "high" : avgRisk >= 20 ? "medium" : "low",
+      assetCount: clientAssets.length,
+      criticalCount: tFindings.filter(f => f.severity === "critical").length,
+      openFindingCount: tFindings.filter(f => f.status === "open").length,
+      userCount: allUsers.filter(u => u.tenantId === t.id).length,
+    };
+  }).sort((a, b) => b.riskScore - a.riskScore);
+
+  const recentAlerts = allAlerts.slice(0, 8).map(a => ({
+    id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
+    type: a.type, status: a.status,
+    createdAt: a.createdAt.toISOString(),
+    clientName: allTenants.find(t => t.id === a.tenantId)?.name ?? "Unknown",
+  }));
 
   const tenantMetrics = allTenants.map(t => ({
     id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
@@ -228,12 +312,26 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   res.json({
     tenantCount: allTenants.length,
     activeTenantCount: allTenants.filter(t => t.isActive).length,
+    amCount,
+    clientsAtCriticalRisk,
     userCount: allUsers.length,
     assetCount: allAssets.length,
     findingCount: allFindings.length,
     criticalCount: allFindings.filter(f => f.severity === "critical").length,
     openFindingCount: allFindings.filter(f => f.status === "open").length,
+    highCount: allFindings.filter(f => f.severity === "high").length,
     activeScans: allScans.filter(s => s.status === "running" || s.status === "pending").length,
+    openAlertsCount,
+    platformRiskScore,
+    brandThreatsCount: brandThreats.length,
+    takedownsCount: allTakedowns.length,
+    newVulns7D,
+    resolvedVulns7D,
+    exposedPortsCount,
+    severityBreakdown,
+    clientRiskRankings,
+    recentAlerts,
+    riskTrend,
     tenants: tenantMetrics,
   });
 });
@@ -641,6 +739,110 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
     topAssetTypes,
     topVulnerableAssets,
     topSecurityRisks,
+  });
+});
+
+router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+  if (role !== "admin" && role !== "manager") { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const tid = req.user!.tenantId;
+
+  const [allAssets, allFindings, allScans, allAlerts, brandThreats, allTakedowns] = await Promise.all([
+    db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid)),
+    db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid)),
+    db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
+    db.select().from(alertsTable).where(eq(alertsTable.tenantId, tid)).orderBy(desc(alertsTable.createdAt)),
+    db.select().from(brandThreatScansTable).where(eq(brandThreatScansTable.tenantId, tid)),
+    db.select().from(takedownRequestsTable).where(eq(takedownRequestsTable.tenantId, tid)),
+  ]);
+
+  const assetIds = allAssets.map(a => a.id);
+  const allRiskScores = assetIds.length > 0
+    ? await db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+    : [];
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const riskScore = allRiskScores.length > 0
+    ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
+    : 0;
+
+  const openAlertsCount = allAlerts.filter(a => !a.isRead).length;
+  const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
+  const resolvedVulns7D = allFindings.filter(f => f.status === "resolved" && new Date(f.updatedAt) >= sevenDaysAgo).length;
+  const exposedPortsCount = allFindings.filter(f => f.cveId?.startsWith("EXP-PORT-")).length;
+
+  const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(severity => ({
+    severity,
+    count: allFindings.filter(f => f.severity === severity).length,
+  })).filter(s => s.count > 0);
+
+  const TREND_DAYS = 14;
+  const now = new Date();
+  const assetCount = Math.max(1, allAssets.length);
+  const riskTrend = Array.from({ length: TREND_DAYS }, (_, i) => {
+    const dayEnd = new Date(now);
+    dayEnd.setDate(dayEnd.getDate() - (TREND_DAYS - 1 - i));
+    dayEnd.setHours(23, 59, 59, 999);
+    const openOnDay = allFindings.filter(f => {
+      const created = new Date(f.createdAt);
+      if (created > dayEnd) return false;
+      if (f.status === "resolved") return new Date(f.updatedAt) > dayEnd;
+      return true;
+    });
+    let penalty = 0;
+    for (const f of openOnDay) {
+      if (f.severity === "critical") penalty += 20;
+      else if (f.severity === "high") penalty += 12;
+      else if (f.severity === "medium") penalty += 6;
+      else if (f.severity === "low") penalty += 2;
+    }
+    return {
+      date: dayEnd.toISOString().split("T")[0],
+      value: Math.max(0, Math.min(100, 100 - Math.round(penalty / assetCount))),
+    };
+  });
+
+  const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r]));
+  const assetRiskRankings = allAssets
+    .filter(a => riskScoreMap.has(a.id))
+    .sort((a, b) => (riskScoreMap.get(b.id)?.score ?? 0) - (riskScoreMap.get(a.id)?.score ?? 0))
+    .slice(0, 8)
+    .map(a => {
+      const rs = riskScoreMap.get(a.id)!;
+      return {
+        assetId: a.id, assetName: a.name, assetType: a.type,
+        riskScore: Math.round(rs.score), riskLevel: rs.level,
+        findingsCount: allFindings.filter(f => f.assetId === a.id).length,
+        criticalCount: allFindings.filter(f => f.assetId === a.id && f.severity === "critical").length,
+      };
+    });
+
+  const recentAlerts = allAlerts.slice(0, 8).map(a => ({
+    id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
+    type: a.type, status: a.status,
+    createdAt: a.createdAt.toISOString(),
+  }));
+
+  res.json({
+    assetCount: allAssets.length,
+    findingCount: allFindings.length,
+    criticalCount: allFindings.filter(f => f.severity === "critical").length,
+    highCount: allFindings.filter(f => f.severity === "high").length,
+    openFindingCount: allFindings.filter(f => f.status === "open").length,
+    activeScans: allScans.filter(s => s.status === "running" || s.status === "pending").length,
+    openAlertsCount,
+    riskScore,
+    brandThreatsCount: brandThreats.length,
+    takedownsCount: allTakedowns.length,
+    newVulns7D,
+    resolvedVulns7D,
+    exposedPortsCount,
+    severityBreakdown,
+    assetRiskRankings,
+    recentAlerts,
+    riskTrend,
   });
 });
 
