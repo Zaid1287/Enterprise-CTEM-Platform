@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { eq, and, inArray, isNull, or } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
@@ -69,9 +70,18 @@ router.post("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res)
 
 router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListAlertsQueryParams.safeParse(req.query);
-  const filters = [eq(alertsTable.tenantId, req.user!.tenantId)];
+  const role = req.user!.role;
+  let tenantFilter;
+  if (role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    tenantFilter = inArray(alertsTable.tenantId, ids);
+  } else {
+    tenantFilter = eq(alertsTable.tenantId, req.user!.tenantId);
+  }
+  const filters = [tenantFilter];
 
-  if (req.user!.role === "client") {
+  if (role === "client") {
     const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
       .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
     const assignedIds = assignedAssets.map(a => a.id);

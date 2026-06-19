@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { eq, and, ilike, sql, inArray, desc } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, assetsTable, usersTable, findingsTable, riskScoresTable, technologyDetectionsTable } from "@workspace/db";
 import {
   CreateAssetBody, GetAssetParams, UpdateAssetParams, UpdateAssetBody,
@@ -132,8 +133,17 @@ function toAssetResponse(
 
 router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const query = ListAssetsQueryParams.safeParse(req.query);
-  const filters = [eq(assetsTable.tenantId, req.user!.tenantId)];
-  if (req.user!.role === "client") {
+  const role = req.user!.role;
+  let tenantFilter;
+  if (role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    tenantFilter = inArray(assetsTable.tenantId, ids);
+  } else {
+    tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
+  }
+  const filters = [tenantFilter];
+  if (role === "client") {
     filters.push(eq(assetsTable.assignedClientId, req.user!.userId));
   }
   if (query.success) {

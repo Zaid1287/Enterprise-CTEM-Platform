@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
   complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
@@ -33,8 +34,15 @@ function toCsv(headers: string[], rows: unknown[][]): string {
 }
 
 router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const reports = await db.select().from(reportsTable)
-    .where(eq(reportsTable.tenantId, req.user!.tenantId));
+  let rWhere;
+  if (req.user!.role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    rWhere = inArray(reportsTable.tenantId, ids);
+  } else {
+    rWhere = eq(reportsTable.tenantId, req.user!.tenantId);
+  }
+  const reports = await db.select().from(reportsTable).where(rWhere);
   res.json(reports.map(toReportResponse));
 });
 

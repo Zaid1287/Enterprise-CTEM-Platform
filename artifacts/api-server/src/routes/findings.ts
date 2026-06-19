@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { eq, and, ilike, inArray, desc } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
@@ -42,9 +43,18 @@ function toFindingResponse(
 
 router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListFindingsQueryParams.safeParse(req.query);
-  const filters = [eq(findingsTable.tenantId, req.user!.tenantId)];
+  const role = req.user!.role;
+  let tenantFilter;
+  if (role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    tenantFilter = inArray(findingsTable.tenantId, ids);
+  } else {
+    tenantFilter = eq(findingsTable.tenantId, req.user!.tenantId);
+  }
+  const filters = [tenantFilter];
 
-  if (req.user!.role === "client") {
+  if (role === "client") {
     const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
       .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
     const assignedIds = assignedAssets.map(a => a.id);

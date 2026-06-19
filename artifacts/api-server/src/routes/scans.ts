@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable } from "@workspace/db";
 import {
   CreateScanBody, GetScanParams, DeleteScanParams, CancelScanParams,
@@ -96,7 +97,15 @@ async function finalizeScannedAssets(assetIds: number[]) {
 
 router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListScansQueryParams.safeParse(req.query);
-  const filters = [eq(scansTable.tenantId, req.user!.tenantId)];
+  let tenantFilter;
+  if (req.user!.role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    tenantFilter = inArray(scansTable.tenantId, ids);
+  } else {
+    tenantFilter = eq(scansTable.tenantId, req.user!.tenantId);
+  }
+  const filters = [tenantFilter];
   if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
   const scans = await db.select().from(scansTable).where(and(...filters));
   res.json(scans.map(toScanResponse));

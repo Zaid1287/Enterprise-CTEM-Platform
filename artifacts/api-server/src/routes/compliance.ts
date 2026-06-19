@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { eq, and, count, sql } from "drizzle-orm";
+import { eq, and, count, sql, inArray } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, complianceFrameworksTable, complianceControlsTable } from "@workspace/db";
 import {
   GetComplianceControlParams, UpdateComplianceControlParams,
@@ -48,7 +49,15 @@ router.get("/compliance/frameworks", requireAuth, async (_req, res): Promise<voi
 
 router.get("/compliance/controls", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListComplianceControlsQueryParams.safeParse(req.query);
-  const filters = [eq(complianceControlsTable.tenantId, req.user!.tenantId)];
+  let tenantFilter;
+  if (req.user!.role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    tenantFilter = inArray(complianceControlsTable.tenantId, ids);
+  } else {
+    tenantFilter = eq(complianceControlsTable.tenantId, req.user!.tenantId);
+  }
+  const filters = [tenantFilter];
   if (q.success) {
     if (q.data.frameworkId) filters.push(eq(complianceControlsTable.frameworkId, q.data.frameworkId));
     if (q.data.status) filters.push(eq(complianceControlsTable.status, q.data.status));
@@ -197,8 +206,15 @@ router.delete(
 
 router.get("/compliance/summary", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const frameworks = await db.select().from(complianceFrameworksTable);
+  let summaryTenantFilter;
+  if (req.user!.role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    summaryTenantFilter = ids.length > 0 ? inArray(complianceControlsTable.tenantId, ids) : eq(complianceControlsTable.tenantId, -1);
+  } else {
+    summaryTenantFilter = eq(complianceControlsTable.tenantId, req.user!.tenantId);
+  }
   const controls = await db.select().from(complianceControlsTable)
-    .where(eq(complianceControlsTable.tenantId, req.user!.tenantId));
+    .where(summaryTenantFilter);
 
   const summary = frameworks.map(fw => {
     const fwControls = controls.filter(c => c.frameworkId === fw.id);

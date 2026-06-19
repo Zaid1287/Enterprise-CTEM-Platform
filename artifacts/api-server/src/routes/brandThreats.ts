@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, brandThreatScansTable, brandThreatResultsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { runBrandThreatScan } from "../lib/brandThreatRunner";
@@ -16,8 +17,16 @@ function toScanResponse(s: typeof brandThreatScansTable.$inferSelect) {
 
 // ── GET /brand-threats ────────────────────────────────────────────────────────
 router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  let btWhere;
+  if (req.user!.role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    btWhere = inArray(brandThreatScansTable.tenantId, ids);
+  } else {
+    btWhere = eq(brandThreatScansTable.tenantId, req.user!.tenantId);
+  }
   const scans = await db.select().from(brandThreatScansTable)
-    .where(eq(brandThreatScansTable.tenantId, req.user!.tenantId))
+    .where(btWhere)
     .orderBy(desc(brandThreatScansTable.createdAt));
   res.json(scans.map(toScanResponse));
 });

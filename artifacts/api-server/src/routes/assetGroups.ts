@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { eq, and, count, inArray } from "drizzle-orm";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, assetGroupsTable, assetGroupMembersTable, assetsTable } from "@workspace/db";
 import {
   CreateAssetGroupBody, GetAssetGroupParams, UpdateAssetGroupParams,
@@ -19,8 +20,15 @@ function toAssetResponse(a: typeof assetsTable.$inferSelect) {
 }
 
 router.get("/asset-groups", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const groups = await db.select().from(assetGroupsTable)
-    .where(eq(assetGroupsTable.tenantId, req.user!.tenantId));
+  let groupWhere;
+  if (req.user!.role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    groupWhere = inArray(assetGroupsTable.tenantId, ids);
+  } else {
+    groupWhere = eq(assetGroupsTable.tenantId, req.user!.tenantId);
+  }
+  const groups = await db.select().from(assetGroupsTable).where(groupWhere);
   const memberCounts = await db.select({
     groupId: assetGroupMembersTable.groupId,
     cnt: count(),

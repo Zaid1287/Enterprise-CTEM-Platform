@@ -1,6 +1,6 @@
 import { useState, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Building2, Users, Server, Bug, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp, UserCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,15 +27,24 @@ interface TenantRow {
   assignedManagers: Array<{ id: number; name: string; email: string }>;
 }
 
+interface UserRow {
+  id: number;
+  firstName: string | null;
+  lastName: string | null;
+  email: string;
+  role: string;
+}
+
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const PLANS = ["starter", "professional", "enterprise"];
-
 const emptyForm = { name: "", slug: "", plan: "starter" };
 
 export default function TenantsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [assignTarget, setAssignTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
+  const [selectedAmId, setSelectedAmId] = useState("");
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -44,6 +53,13 @@ export default function TenantsPage() {
     queryFn: () => apiFetch(`${BASE}/api/tenants`),
   });
 
+  const { data: allUsers = [] } = useQuery<UserRow[]>({
+    queryKey: ["platform-users"],
+    queryFn: () => apiFetch(`${BASE}/api/users`),
+  });
+
+  const amUsers = allUsers.filter(u => u.role === "account_manager");
+
   const createMutation = useMutation({
     mutationFn: (body: object) => apiFetch(`${BASE}/api/tenants`, { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
@@ -51,6 +67,31 @@ export default function TenantsPage() {
       setShowCreate(false);
       setForm(emptyForm);
       toast({ title: "Tenant created" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: ({ tenantId, accountManagerUserId }: { tenantId: number; accountManagerUserId: number }) =>
+      apiFetch(`${BASE}/api/tenants/${tenantId}/managers`, {
+        method: "POST",
+        body: JSON.stringify({ accountManagerUserId }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      setAssignTarget(null);
+      setSelectedAmId("");
+      toast({ title: "Account manager assigned" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const unassignMutation = useMutation({
+    mutationFn: ({ tenantId, amUserId }: { tenantId: number; amUserId: number }) =>
+      apiFetch(`${BASE}/api/tenants/${tenantId}/managers/${amUserId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      toast({ title: "Account manager unassigned" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -110,8 +151,10 @@ export default function TenantsPage() {
             <tbody>
               {tenants.map(t => (
                 <Fragment key={t.id}>
-                  <tr className={cn("border-b border-border/50 hover:bg-accent/30 cursor-pointer",
-                    expandedId === t.id && "bg-accent/20")} onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}>
+                  <tr
+                    className={cn("border-b border-border/50 hover:bg-accent/30 cursor-pointer", expandedId === t.id && "bg-accent/20")}
+                    onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}
+                  >
                     <td className="px-4 py-2.5">
                       <div className="font-medium">{t.name}</div>
                       <div className="text-xs text-muted-foreground">ID: {t.id} · {t.slug}</div>
@@ -129,7 +172,9 @@ export default function TenantsPage() {
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium border",
-                        t.isActive ? "bg-green-500/15 text-green-400 border-green-500/30" : "bg-muted text-muted-foreground border-border")}>
+                        t.isActive
+                          ? "bg-green-500/15 text-green-400 border-green-500/30"
+                          : "bg-muted text-muted-foreground border-border")}>
                         {t.isActive ? "Active" : "Inactive"}
                       </span>
                     </td>
@@ -137,23 +182,47 @@ export default function TenantsPage() {
                       {expandedId === t.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </td>
                   </tr>
+
                   {expandedId === t.id && (
                     <tr className="border-b border-border/50 bg-accent/10">
-                      <td colSpan={8} className="px-6 py-3">
-                        <div className="text-xs space-y-1">
-                          <p className="font-medium text-muted-foreground mb-1.5">Account Managers</p>
-                          {t.assignedManagers.length === 0 ? (
-                            <p className="text-muted-foreground/60">No account managers assigned</p>
-                          ) : (
-                            t.assignedManagers.map((m: any) => (
-                              <div key={m.id} className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-primary" />
-                                <span>{m.name}</span>
-                                <span className="text-muted-foreground">·</span>
-                                <span className="text-muted-foreground">{m.email}</span>
+                      <td colSpan={8} className="px-6 py-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                              <UserCheck className="w-3.5 h-3.5" /> Account Managers
+                            </p>
+                            {t.assignedManagers.length === 0 ? (
+                              <p className="text-xs text-muted-foreground/70 italic">No account managers assigned to this tenant.</p>
+                            ) : (
+                              <div className="space-y-1.5">
+                                {t.assignedManagers.map((m: any) => (
+                                  <div key={m.id} className="flex items-center gap-2 text-xs">
+                                    <div className="w-6 h-6 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                      <span className="text-[10px] font-bold text-blue-400">{(m.name || m.email).charAt(0).toUpperCase()}</span>
+                                    </div>
+                                    <span className="font-medium">{m.name}</span>
+                                    <span className="text-muted-foreground">·</span>
+                                    <span className="text-muted-foreground">{m.email}</span>
+                                    <button
+                                      onClick={e => { e.stopPropagation(); unassignMutation.mutate({ tenantId: t.id, amUserId: m.id }); }}
+                                      className="ml-auto p-0.5 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400 transition-colors"
+                                      title="Unassign"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
                               </div>
-                            ))
-                          )}
+                            )}
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7 shrink-0"
+                            onClick={e => { e.stopPropagation(); setAssignTarget({ tenantId: t.id, tenantName: t.name }); setSelectedAmId(""); }}
+                          >
+                            <Plus className="w-3.5 h-3.5 mr-1" /> Assign Manager
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -168,6 +237,7 @@ export default function TenantsPage() {
         </div>
       )}
 
+      {/* Create Tenant Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
           <DialogHeader><DialogTitle>Create Client Tenant</DialogTitle></DialogHeader>
@@ -178,7 +248,11 @@ export default function TenantsPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Slug (unique identifier)</Label>
-              <Input value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value.toLowerCase().replace(/\s+/g, "-") }))} required className="h-9" placeholder="acme-corp" />
+              <Input
+                value={form.slug}
+                onChange={e => setForm(p => ({ ...p, slug: e.target.value.toLowerCase().replace(/\s+/g, "-") }))}
+                required className="h-9" placeholder="acme-corp"
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Plan</Label>
@@ -194,6 +268,49 @@ export default function TenantsPage() {
               <Button type="submit" disabled={createMutation.isPending}>{createMutation.isPending ? "Creating..." : "Create Tenant"}</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Account Manager Dialog */}
+      <Dialog open={!!assignTarget} onOpenChange={open => { if (!open) { setAssignTarget(null); setSelectedAmId(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Account Manager</DialogTitle>
+            <p className="text-sm text-muted-foreground">Select an account manager to assign to <span className="font-medium text-foreground">{assignTarget?.tenantName}</span></p>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            {amUsers.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">No account manager users found. Create a user with the account_manager role first.</p>
+            ) : (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Account Manager</Label>
+                <Select value={selectedAmId} onValueChange={setSelectedAmId}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Select account manager..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {amUsers.map(u => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.firstName || u.lastName ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() : u.email} — {u.email}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => { setAssignTarget(null); setSelectedAmId(""); }}>Cancel</Button>
+            <Button
+              disabled={!selectedAmId || assignMutation.isPending}
+              onClick={() => {
+                if (!assignTarget || !selectedAmId) return;
+                assignMutation.mutate({ tenantId: assignTarget.tenantId, accountManagerUserId: Number(selectedAmId) });
+              }}
+            >
+              {assignMutation.isPending ? "Assigning..." : "Assign"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

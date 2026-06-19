@@ -1,18 +1,27 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { db, riskScoresTable, assetsTable } from "@workspace/db";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
 
 router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  let whereClause;
+  if (req.user!.role === "account_manager") {
+    const ids = await getAmClientTenantIds(req.user!.userId);
+    if (ids.length === 0) { res.json([]); return; }
+    whereClause = inArray(assetsTable.tenantId, ids);
+  } else {
+    whereClause = eq(assetsTable.tenantId, req.user!.tenantId);
+  }
   const scores = await db.select({
     score: riskScoresTable,
     assetName: assetsTable.name,
     assetType: assetsTable.type,
   }).from(riskScoresTable)
     .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
-    .where(eq(assetsTable.tenantId, req.user!.tenantId));
+    .where(whereClause);
 
   res.json(scores.map(({ score, assetName, assetType }) => ({
     id: score.id, assetId: score.assetId, assetName: assetName ?? "Unknown",
