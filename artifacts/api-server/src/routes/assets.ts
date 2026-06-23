@@ -93,6 +93,13 @@ async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
   return assets.map(a => toAssetResponse(a, userMap, findingMap, riskMap));
 }
 
+/** WHERE clause for a single asset: SA can access any asset across all tenants. */
+function assetAccessFilter(assetId: number, user: { tenantId: number; role: string }) {
+  const byId = eq(assetsTable.id, assetId);
+  if (user.role === "super_admin") return byId;
+  return and(byId, eq(assetsTable.tenantId, user.tenantId))!;
+}
+
 function toAssetResponse(
   a: typeof assetsTable.$inferSelect,
   userMap?: Map<number, string>,
@@ -189,9 +196,9 @@ router.post("/assets", requireAuth, async (req: AuthenticatedRequest, res): Prom
 router.get("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const filters = [eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)];
+  const filters: ReturnType<typeof eq>[] = [assetAccessFilter(params.data.assetId, req.user!) as any];
   if (req.user!.role === "client") {
-    filters.push(eq(assetsTable.assignedClientId, req.user!.userId));
+    filters.push(eq(assetsTable.assignedClientId, req.user!.userId) as any);
   }
   const [asset] = await db.select().from(assetsTable).where(and(...filters));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
@@ -214,7 +221,7 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
   }
 
   const [asset] = await db.update(assetsTable).set(updateData)
-    .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)))
+    .where(assetAccessFilter(params.data.assetId, req.user!))
     .returning();
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
   await logAudit(req.user!, "update_asset", "asset", asset.id);
@@ -306,7 +313,7 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
 
   const [existing] = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    .where(assetAccessFilter(params.data.assetId, req.user!));
   if (!existing) { res.status(404).json({ error: "Asset not found" }); return; }
 
   const method = (body.data as any).method ?? "dns_txt";
@@ -329,7 +336,7 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
     await db.update(assetsTable)
       .set({ verificationToken: token, verificationMethod: method, verificationStatus: "pending",
              verificationEmailToken: emailToken, verificationEmailExpiry: expiry })
-      .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+      .where(eq(assetsTable.id, params.data.assetId));
 
     await sendEmail({
       to: adminEmail,
@@ -350,7 +357,7 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
   // dns_txt / http_file / cloud — generate token, store method
   await db.update(assetsTable)
     .set({ verificationToken: token, verificationMethod: method, verificationStatus: "pending" })
-    .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    .where(eq(assetsTable.id, params.data.assetId));
 
   if (method === "http_file") {
     res.json({
@@ -395,7 +402,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
   const [asset] = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    .where(assetAccessFilter(params.data.assetId, req.user!));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
   // Already verified (e.g. email confirm link clicked before this poll)
@@ -481,7 +488,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
     // Admin/AM can manually confirm
     await db.update(assetsTable)
       .set({ verificationStatus: "verified" })
-      .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+      .where(eq(assetsTable.id, params.data.assetId));
     await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
     res.json({ verified: true, message: "Cloud asset ownership confirmed by administrator." });
     return;
@@ -515,7 +522,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   }
   await db.update(assetsTable)
     .set({ verificationStatus: "verified" })
-    .where(and(eq(assetsTable.id, params.data.assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    .where(eq(assetsTable.id, params.data.assetId));
   await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
   res.json({ verified: true, message: "Asset ownership successfully verified." });
 });
@@ -531,7 +538,7 @@ router.post("/assets/:assetId/verify/manual", requireAuth, async (req: Authentic
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid asset ID" }); return; }
 
   const [asset] = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    .where(assetAccessFilter(assetId, req.user!));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
   if (asset.verificationStatus === "verified") {
@@ -541,7 +548,7 @@ router.post("/assets/:assetId/verify/manual", requireAuth, async (req: Authentic
 
   await db.update(assetsTable)
     .set({ verificationStatus: "verified", verificationToken: null })
-    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    .where(eq(assetsTable.id, assetId));
 
   await logAudit(req.user!, "manual_verify_asset", "asset", assetId);
   res.json({ verified: true, message: "Asset ownership manually verified by administrator." });

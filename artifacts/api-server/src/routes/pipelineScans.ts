@@ -2780,12 +2780,13 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
   }
   if (configs.length === 0) { res.status(400).json({ error: "At least one asset is required" }); return; }
 
-  // Enforce ownership verification before scanning
+  // Enforce ownership verification before scanning.
+  // Fetch by ID only (no tenantId filter) — SA/admin can scan cross-tenant assets.
   const scanAssetIds = configs.map(c => c.assetId);
   const assetRows = await db
-    .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus })
+    .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus, tenantId: assetsTable.tenantId })
     .from(assetsTable)
-    .where(and(inArray(assetsTable.id, scanAssetIds), eq(assetsTable.tenantId, tenantId)));
+    .where(inArray(assetsTable.id, scanAssetIds));
   const unverified = assetRows.filter(a => a.verificationStatus !== "verified");
   if (unverified.length > 0) {
     res.status(422).json({
@@ -2795,6 +2796,12 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
     return;
   }
 
+  // Determine effective tenant: if all assets belong to the same client tenant, use that tenant
+  // so that the scan record, findings, and tech detections are attributed to the correct tenant.
+  const uniqueAssetTenantIds = [...new Set(assetRows.map(a => a.tenantId).filter((t): t is number => t != null))];
+  const effectiveTenantId = uniqueAssetTenantIds.length === 1 ? uniqueAssetTenantIds[0] : tenantId;
+
+  // Pipeline config is always loaded from the CALLER's tenant (SA/admin configured the tools)
   const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
   const pipelineSteps = await db.select({ tool: securityToolsTable })
     .from(toolPipelineStepsTable)
@@ -2807,10 +2814,10 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
     res.status(400).json({ error: "No pipeline tools enabled. Configure pipeline steps first." }); return;
   }
 
-  // Insert scan as "queued" — enqueueAndRun will flip it to "running" when a slot opens
+  // Scan record is created under the effective (client) tenant so the client can see it
   const willQueue = activeScans >= MAX_CONCURRENT_SCANS;
   const [scan] = await db.insert(scansTable).values({
-    tenantId, name: name ?? `Pipeline Scan — ${new Date().toLocaleDateString()}`,
+    tenantId: effectiveTenantId, name: name ?? `Pipeline Scan — ${new Date().toLocaleDateString()}`,
     type: "pipeline", status: willQueue ? "pending" : "running",
     assetIds: configs.map(c => c.assetId), startedAt: willQueue ? null : new Date(), findingsCount: 0,
   }).returning();
@@ -2821,7 +2828,7 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
   });
 
   setImmediate(() => {
-    enqueueAndRun({ scanId: scan.id, tenantId, userId, configs, allTools, enabledTools }).catch(() => {});
+    enqueueAndRun({ scanId: scan.id, tenantId: effectiveTenantId, userId, configs, allTools, enabledTools }).catch(() => {});
   });
 });
 

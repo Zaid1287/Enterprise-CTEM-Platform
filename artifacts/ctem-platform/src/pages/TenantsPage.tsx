@@ -4,6 +4,7 @@ import {
   Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp,
   UserCheck, X, Globe, Shield, Cpu, Network, Code2, Cloud, Smartphone,
   Lock, Trash2, Loader2, Pencil, MoreHorizontal, ArrowRightLeft,
+  ShieldCheck, PlayCircle,
   Search, CheckSquare, Square, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -109,10 +110,38 @@ function TenantAssetsPanel({
   onAddAsset: () => void;
   onRemoveAsset: (assetId: number) => void;
 }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
   const { data: assets = [], isLoading } = useQuery<AssetRow[]>({
     queryKey: ["tenant-assets", tenantId],
     queryFn: () => apiFetch(`${BASE}/api/tenants/${tenantId}/assets`),
     staleTime: 30_000,
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: (assetId: number) =>
+      apiFetch(`${BASE}/api/assets/${assetId}/verify/manual`, { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      toast({ title: "Asset verified", description: "Ownership marked as verified. You can now run a scan." });
+    },
+    onError: (e: any) => toast({ title: "Verify failed", description: e.message, variant: "destructive" }),
+  });
+
+  const scanMutation = useMutation({
+    mutationFn: (assetId: number) =>
+      apiFetch(`${BASE}/api/scans/pipeline-run`, {
+        method: "POST",
+        body: JSON.stringify({ assetIds: [assetId] }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      toast({ title: "Scan queued", description: "Pipeline scan has been started. Results will appear in the tenant's scan history." });
+    },
+    onError: (e: any) => toast({ title: "Scan failed", description: e.message, variant: "destructive" }),
   });
 
   if (isLoading) {
@@ -136,6 +165,8 @@ function TenantAssetsPanel({
     );
   }
 
+  const isAnyPending = verifyMutation.isPending || scanMutation.isPending;
+
   return (
     <div className="rounded-lg border border-border overflow-hidden">
       <table className="w-full text-xs">
@@ -148,12 +179,15 @@ function TenantAssetsPanel({
             <th className="text-left px-3 py-2 text-muted-foreground font-medium">Risk</th>
             <th className="text-left px-3 py-2 text-muted-foreground font-medium">Verified</th>
             <th className="text-left px-3 py-2 text-muted-foreground font-medium">Last Scan</th>
-            <th className="w-8 px-3 py-2" />
+            <th className="px-3 py-2 text-muted-foreground font-medium text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
           {assets.map(a => {
             const Icon = TYPE_ICONS[a.type] ?? Globe;
+            const isVerified = a.verificationStatus === "verified";
+            const isVerifyPending = verifyMutation.isPending && verifyMutation.variables === a.id;
+            const isScanPending  = scanMutation.isPending  && scanMutation.variables  === a.id;
             return (
               <tr key={a.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
                 <td className="px-3 py-2 font-medium">{a.name}</td>
@@ -171,21 +205,51 @@ function TenantAssetsPanel({
                   </span>
                 </td>
                 <td className="px-3 py-2">
-                  <span className={cn("text-[10px] font-medium", a.verificationStatus === "verified" ? "text-green-400" : "text-muted-foreground/50")}>
-                    {a.verificationStatus === "verified" ? "✓ Verified" : "Unverified"}
+                  <span className={cn("text-[10px] font-medium", isVerified ? "text-green-400" : "text-muted-foreground/50")}>
+                    {isVerified ? "✓ Verified" : "Unverified"}
                   </span>
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">
                   {a.lastScannedAt ? formatDate(a.lastScannedAt) : <span className="opacity-40">Never</span>}
                 </td>
                 <td className="px-3 py-2">
-                  <button
-                    onClick={e => { e.stopPropagation(); onRemoveAsset(a.id); }}
-                    className="p-1 rounded hover:bg-amber-500/15 text-muted-foreground hover:text-amber-400 transition-colors"
-                    title="Remove from this tenant (asset is kept in your pool)"
-                  >
-                    <ArrowRightLeft className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-0.5 justify-end">
+                    {/* Verify — admin override for unverified assets */}
+                    {!isVerified && (
+                      <button
+                        onClick={e => { e.stopPropagation(); verifyMutation.mutate(a.id); }}
+                        disabled={isAnyPending}
+                        title="Mark as verified (admin override)"
+                        className="p-1 rounded hover:bg-green-500/15 text-muted-foreground hover:text-green-400 transition-colors disabled:opacity-40"
+                      >
+                        {isVerifyPending
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <ShieldCheck className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                    {/* Scan Now — only for verified assets */}
+                    {isVerified && (
+                      <button
+                        onClick={e => { e.stopPropagation(); scanMutation.mutate(a.id); }}
+                        disabled={isAnyPending}
+                        title="Run pipeline scan now"
+                        className="p-1 rounded hover:bg-blue-500/15 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40"
+                      >
+                        {isScanPending
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <PlayCircle className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                    {/* Remove from tenant */}
+                    <button
+                      onClick={e => { e.stopPropagation(); onRemoveAsset(a.id); }}
+                      disabled={isAnyPending}
+                      title="Remove from this tenant (asset is kept in your pool)"
+                      className="p-1 rounded hover:bg-amber-500/15 text-muted-foreground hover:text-amber-400 transition-colors disabled:opacity-40"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             );
