@@ -290,7 +290,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
 
   const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r.score]));
 
-  // amPortfolio: look up assigned clients from allTenantsRaw (any tenant can be a client)
+  // amPortfolio: look up assigned clients from allTenantsRaw; include individual assets per client
   const amPortfolio = amUsers.map(am => {
     const assignedTenantIds = allAmAssignments
       .filter(a => a.accountManagerUserId === am.id)
@@ -301,15 +301,19 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       amName: `${am.firstName} ${am.lastName}`.trim() || am.email,
       amEmail: am.email,
       clientCount: assignedTenants.length,
-      clients: assignedTenants.map(t => ({
-        id: t.id,
-        name: t.name,
-        plan: t.plan,
-        isActive: t.isActive,
-        criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
-        openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
-        assetCount: allAssets.filter(a => a.tenantId === t.id).length,
-      })),
+      clients: assignedTenants.map(t => {
+        const clientAssets = allAssets.filter(a => a.tenantId === t.id);
+        return {
+          id: t.id,
+          name: t.name,
+          plan: t.plan,
+          isActive: t.isActive,
+          criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
+          openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
+          assetCount: clientAssets.length,
+          assets: clientAssets.map(a => ({ id: a.id, name: a.name, type: a.type, riskLevel: a.riskLevel })),
+        };
+      }),
     };
   });
 
@@ -356,7 +360,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     amCount,
     clientsAtCriticalRisk,
     userCount: allUsers.length,
-    assetCount: allAssets.length,
+    assetCount: allAssets.filter(a => a.tenantId === req.user!.tenantId).length,
     findingCount: allFindings.length,
     criticalCount: allFindings.filter(f => f.severity === "critical").length,
     openFindingCount: allFindings.filter(f => f.status === "open").length,
@@ -807,16 +811,65 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   ]);
 
   const tenantAmUserIds = [...new Set(tenantAmAssignments.map(a => a.accountManagerUserId))];
-  const tenantAmUsers = tenantAmUserIds.length > 0
+
+  // Also include AMs who *belong* to this tenant (platform-admin scenario where AMs live on the platform org)
+  const tenantOwnAmUsers = await db.select({ id: usersTable.id, email: usersTable.email, firstName: usersTable.firstName, lastName: usersTable.lastName })
+    .from(usersTable).where(and(eq(usersTable.tenantId, tid), eq(usersTable.role, "account_manager")));
+
+  const allAmUserIds = [...new Set([...tenantAmUserIds, ...tenantOwnAmUsers.map(u => u.id)])];
+
+  const tenantAmUsers = allAmUserIds.length > 0
     ? await db.select({ id: usersTable.id, email: usersTable.email, firstName: usersTable.firstName, lastName: usersTable.lastName })
-      .from(usersTable).where(inArray(usersTable.id, tenantAmUserIds))
+      .from(usersTable).where(inArray(usersTable.id, allAmUserIds))
     : [];
 
-  const amPortfolio = tenantAmUsers.map(am => ({
-    amId: am.id,
-    amName: `${am.firstName} ${am.lastName}`.trim() || am.email,
-    amEmail: am.email,
-  }));
+  // Fetch all AM→client assignments for these AMs + the client tenants + assets
+  const [allAmAssignmentsAdmin, ] = await Promise.all([
+    allAmUserIds.length > 0
+      ? db.select().from(accountManagerClientsTable).where(inArray(accountManagerClientsTable.accountManagerUserId, allAmUserIds))
+      : Promise.resolve([]),
+  ]);
+
+  const assignedClientTenantIds = [...new Set(allAmAssignmentsAdmin.map(a => a.clientTenantId))];
+  const [assignedClientTenants, assignedClientAssets, assignedClientFindings] = await Promise.all([
+    assignedClientTenantIds.length > 0
+      ? db.select().from(tenantsTable).where(inArray(tenantsTable.id, assignedClientTenantIds))
+      : Promise.resolve([]),
+    assignedClientTenantIds.length > 0
+      ? db.select({ id: assetsTable.id, name: assetsTable.name, type: assetsTable.type, riskLevel: assetsTable.riskLevel, tenantId: assetsTable.tenantId })
+          .from(assetsTable).where(inArray(assetsTable.tenantId, assignedClientTenantIds))
+      : Promise.resolve([]),
+    assignedClientTenantIds.length > 0
+      ? db.select({ tenantId: findingsTable.tenantId, severity: findingsTable.severity, status: findingsTable.status })
+          .from(findingsTable).where(inArray(findingsTable.tenantId, assignedClientTenantIds))
+      : Promise.resolve([]),
+  ]);
+
+  const amPortfolio = tenantAmUsers.map(am => {
+    const amAssignmentIds = allAmAssignmentsAdmin
+      .filter(a => a.accountManagerUserId === am.id)
+      .map(a => a.clientTenantId);
+    const amClients = assignedClientTenants.filter(t => amAssignmentIds.includes(t.id));
+    return {
+      amId: am.id,
+      amName: `${am.firstName} ${am.lastName}`.trim() || am.email,
+      amEmail: am.email,
+      clientCount: amClients.length,
+      clients: amClients.map(t => {
+        const cAssets = assignedClientAssets.filter(a => a.tenantId === t.id);
+        return {
+          id: t.id,
+          name: t.name,
+          plan: t.plan,
+          isActive: t.isActive,
+          assetCount: cAssets.length,
+          assets: cAssets.map(a => ({ id: a.id, name: a.name, type: a.type, riskLevel: a.riskLevel })),
+          criticalCount: assignedClientFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
+          openFindingCount: assignedClientFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
+        };
+      }),
+    };
+  });
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -828,7 +881,7 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   const CLOSED_STATUSES_ADMIN = ["mitigated", "accepted_risk", "false_positive"];
   const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
   const resolvedVulns7D = allFindings.filter(f => CLOSED_STATUSES_ADMIN.includes(f.status) && new Date(f.updatedAt) >= sevenDaysAgo).length;
-  const exposedPortsCount = allFindings.filter(f => f.cveId?.startsWith("EXP-PORT-")).length;
+  const exposedPortsCount = allFindings.filter(f => f.cve?.startsWith("EXP-PORT-")).length;
 
   const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(severity => ({
     severity,

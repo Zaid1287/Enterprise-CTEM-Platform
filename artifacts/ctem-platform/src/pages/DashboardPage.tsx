@@ -377,11 +377,23 @@ function SuperAdminDashboard() {
                             {c.isActive ? "Active" : "Inactive"}
                           </span>
                         </div>
-                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                        <div className="flex items-center gap-3 mt-1 flex-wrap mb-1.5">
                           <span className="text-[10px] text-muted-foreground">{c.assetCount} assets</span>
                           {c.criticalCount > 0 && <span className="text-[10px] text-red-400 font-medium">{c.criticalCount} critical</span>}
                           {c.openFindingCount > 0 && <span className="text-[10px] text-amber-400">{c.openFindingCount} open</span>}
                         </div>
+                        {c.assets?.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {c.assets.map((a: any) => (
+                              <span key={a.id} className="inline-flex items-center gap-1 text-[10px] bg-accent/60 border border-border/40 rounded px-1.5 py-0.5">
+                                <span className="capitalize text-muted-foreground">{a.type}</span>
+                                <span className="font-medium text-foreground truncate max-w-[80px]">{a.name}</span>
+                                {a.riskLevel === "critical" && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />}
+                                {a.riskLevel === "high" && <span className="w-1.5 h-1.5 rounded-full bg-orange-500 flex-shrink-0" />}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1221,31 +1233,71 @@ function AdminDashboard() {
         </div>
       </div>
 
-      {/* AM Portfolio — who manages this account */}
+      {/* AM Portfolio */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h3 className="text-sm font-medium flex items-center gap-2">
-            <Briefcase className="w-4 h-4 text-muted-foreground" /> Your Account Managers
+            <Briefcase className="w-4 h-4 text-muted-foreground" /> Account Manager Portfolio
           </h3>
-          <span className="text-xs text-muted-foreground">{amPortfolioAdmin.length} assigned</span>
+          <span className="text-xs text-muted-foreground">{amPortfolioAdmin.length} account managers</span>
         </div>
         {amPortfolioAdmin.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">
             <Briefcase className="w-7 h-7 mx-auto mb-2 opacity-30" />
-            No account managers assigned to your organization yet
+            No account managers configured yet
           </div>
         ) : (
           <div className="divide-y divide-border/50">
             {amPortfolioAdmin.map((am: any) => (
-              <div key={am.amId} className="px-4 py-3 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
-                  <span className="text-sm font-bold text-blue-400">{am.amName.charAt(0).toUpperCase()}</span>
+              <div key={am.amId} className="px-4 py-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-9 h-9 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-sm font-bold text-blue-400">{am.amName.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{am.amName}</p>
+                    <p className="text-xs text-muted-foreground truncate">{am.amEmail}</p>
+                  </div>
+                  <Badge variant="outline" className="text-xs flex-shrink-0">
+                    {am.clientCount ?? 0} {(am.clientCount ?? 0) === 1 ? "client" : "clients"}
+                  </Badge>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{am.amName}</p>
-                  <p className="text-xs text-muted-foreground truncate">{am.amEmail}</p>
-                </div>
-                <Badge variant="outline" className="text-xs flex-shrink-0 text-blue-400 border-blue-500/30">Account Manager</Badge>
+                {(am.clients?.length ?? 0) > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 ml-12">
+                    {am.clients.map((c: any) => (
+                      <div key={c.id} className="bg-accent/30 border border-border/50 rounded-lg px-3 py-2">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <p className="text-xs font-medium truncate">{c.name}</p>
+                          <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium border flex-shrink-0",
+                            c.isActive
+                              ? "bg-green-500/15 text-green-400 border-green-500/30"
+                              : "bg-muted text-muted-foreground border-border")}>
+                            {c.isActive ? "Active" : "Inactive"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 flex-wrap mb-1.5">
+                          <span className="text-[10px] text-muted-foreground">{c.assetCount} assets</span>
+                          {c.criticalCount > 0 && <span className="text-[10px] text-red-400 font-medium">{c.criticalCount} critical</span>}
+                          {c.openFindingCount > 0 && <span className="text-[10px] text-amber-400">{c.openFindingCount} open</span>}
+                        </div>
+                        {c.assets?.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {c.assets.map((a: any) => (
+                              <span key={a.id} className="inline-flex items-center gap-1 text-[10px] bg-accent/60 border border-border/40 rounded px-1.5 py-0.5">
+                                <span className="capitalize text-muted-foreground">{a.type}</span>
+                                <span className="font-medium text-foreground truncate max-w-[80px]">{a.name}</span>
+                                {a.riskLevel === "critical" && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />}
+                                {a.riskLevel === "high" && <span className="w-1.5 h-1.5 rounded-full bg-orange-500 flex-shrink-0" />}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground ml-12">No clients assigned.</p>
+                )}
               </div>
             ))}
           </div>
