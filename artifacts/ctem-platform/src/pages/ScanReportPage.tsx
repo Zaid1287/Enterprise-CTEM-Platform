@@ -1191,7 +1191,7 @@ export default function ScanReportPage() {
             </SectionCard>
 
             {/* ── 15. Directory Fuzzing ─────────────────────────────────── */}
-            <SectionCard icon={FolderOpen} title="Directory Fuzzing"
+            <SectionCard icon={FolderOpen} title="Directory Fuzzing" fullWidth
               count={selectedAsset?.dirFuzz?.stats?.totalUnique ?? undefined}>
               {!(selectedAsset?.dirFuzz)
                 ? <EmptyState message="No directory fuzzing performed" icon={FolderOpen} />
@@ -1627,16 +1627,17 @@ function TechnologiesTab({ assetId }: { assetId: number }) {
             {/* Tech card grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
               {items.map((t: any, i: number) => {
-                const initial = (t.name || "?")[0].toUpperCase();
+                const label = t.technology || t.name || "?";
+                const initial = label[0].toUpperCase();
                 const conf = t.confidence ?? 100;
                 return (
                   <div key={i} className="bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-border/80 transition-all group flex flex-col gap-3">
                     <div className="flex items-center gap-3">
                       <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-black text-base border", meta.bg, meta.color, meta.border)}>
-                        {initial}
+                        {t.icon ? <span className="text-lg">{t.icon}</span> : initial}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-bold leading-tight truncate">{t.name}</p>
+                        <p className="text-sm font-bold leading-tight truncate">{label}</p>
                         {t.version && (
                           <p className="text-[10px] font-mono text-muted-foreground leading-tight mt-0.5">v{t.version}</p>
                         )}

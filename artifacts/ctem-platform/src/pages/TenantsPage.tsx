@@ -29,7 +29,7 @@ import { cn, formatDate } from "@/lib/utils";
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface TenantRow {
   id: number; name: string; slug: string; plan: string; isActive: boolean;
-  parentTenantId: number | null; createdAt: string;
+  isPlatform?: boolean; parentTenantId: number | null; createdAt: string;
   userCount: number; assetCount: number;
   findingCount: number; criticalCount: number; openFindingCount: number;
   assignedManagers: Array<{ id: number; name: string; email: string }>;
@@ -466,7 +466,12 @@ export default function TenantsPage() {
                     onClick={() => toggleRow(t.id)}
                   >
                     <td className="px-4 py-2.5">
-                      <div className="font-medium">{t.name}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{t.name}</span>
+                        {t.isPlatform && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wide">Platform</span>
+                        )}
+                      </div>
                       <div className="text-xs text-muted-foreground">{t.slug}</div>
                     </td>
                     <td className="px-4 py-2.5">
@@ -517,8 +522,8 @@ export default function TenantsPage() {
                             >
                               <Plus className="w-3.5 h-3.5 mr-2" /> Add Asset
                             </DropdownMenuItem>
-                            {/* Don't show Delete for the user's own tenant */}
-                            {t.id !== user?.tenantId && (
+                            {/* Don't show Delete for own tenant or platform tenant */}
+                            {t.id !== user?.tenantId && !t.isPlatform && (
                               <>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem

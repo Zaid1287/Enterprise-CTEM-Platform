@@ -112,7 +112,6 @@ router.get("/tenants", requireAuth, requireRole("super_admin", "admin"), async (
 
   if (role === "super_admin") {
     const tenants = await db.select().from(tenantsTable)
-      .where(eq(tenantsTable.isPlatform, false))
       .orderBy(tenantsTable.createdAt);
     const result = await buildRichTenantList(tenants.map(t => t.id));
     res.json(result); return;

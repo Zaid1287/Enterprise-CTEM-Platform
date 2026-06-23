@@ -1993,6 +1993,15 @@ async function executePipeline(
     const allSubdomains = dnsResult.subdomains;
     const allDns      = dnsResult.dnsRecords;
 
+    // ── Update asset primary IP from DNS A record if not already set ──────────
+    const primaryIp = allDns.find(r => r.type === "A")?.value ?? null;
+    if (primaryIp && !asset.ipAddress) {
+      await db.update(assetsTable)
+        .set({ ipAddress: primaryIp })
+        .where(eq(assetsTable.id, asset.id))
+        .catch(() => {});
+    }
+
     const results: Array<typeof scanAssetResultsTable.$inferInsert> = [];
     const findingInserts: Array<typeof findingsTable.$inferInsert>   = [];
 
