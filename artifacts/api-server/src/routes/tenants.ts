@@ -177,6 +177,7 @@ router.get("/tenants/assets/pool", requireAuth, requireRole("super_admin", "admi
   const nameMap = new Map(tenants.map(t => [t.id, t.name]));
   res.json(assets.map(a => ({
     id: a.id, name: a.name, type: a.type, value: a.value,
+    description: a.description ?? null,
     tenantId: a.tenantId ?? null,
     tenantName: a.tenantId != null ? (nameMap.get(a.tenantId) ?? "Unknown") : null,
     verificationStatus: a.verificationStatus, riskLevel: a.riskLevel,

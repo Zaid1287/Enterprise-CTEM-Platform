@@ -1,7 +1,7 @@
 import { useState, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp,
+  Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp, ChevronRight,
   UserCheck, X, Globe, Shield, Cpu, Network, Code2, Cloud, Smartphone,
   Lock, Trash2, Loader2, Pencil, MoreHorizontal, ArrowRightLeft,
   ShieldCheck, PlayCircle,
@@ -50,6 +50,7 @@ interface PkgData {
 }
 interface PoolAsset {
   id: number; name: string; type: string; value: string;
+  description: string | null;
   tenantId: number | null; tenantName: string | null;
   verificationStatus: string; riskLevel: string;
   businessImpact: number | null; scanFrequency: string;
@@ -296,6 +297,11 @@ export default function TenantsPage() {
   const [poolSearch, setPoolSearch] = useState("");
   const [poolTenantFilter, setPoolTenantFilter] = useState("__all__");
 
+  // Add asset dialog — two-step (Browse Inventory → Form)
+  const [addStep, setAddStep] = useState<1 | 2>(1);
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [inventoryTypeFilter, setInventoryTypeFilter] = useState("__all__");
+
   // ── Queries ──────────────────────────────────────────────────────────────────
   const { data: tenants = [], isLoading } = useQuery<TenantRow[]>({
     queryKey: ["platform-tenants"],
@@ -317,8 +323,8 @@ export default function TenantsPage() {
   const { data: poolAssets = [], isLoading: poolLoading } = useQuery<PoolAsset[]>({
     queryKey: ["assets-pool"],
     queryFn: () => apiFetch(`${BASE}/api/tenants/assets/pool`),
-    enabled: !!pickerTarget,
-    staleTime: 0, // always fresh when picker opens
+    enabled: !!pickerTarget || !!assetTarget,
+    staleTime: 0, // always fresh when picker/add-dialog opens
   });
 
   const amUsers = allUsers.filter(u => u.role === "account_manager");
@@ -390,6 +396,7 @@ export default function TenantsPage() {
       queryClient.invalidateQueries({ queryKey: ["tenant-assets", assetTarget?.tenantId] });
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       setAssetTarget(null); setAssetForm({ ...emptyAssetForm });
+      setAddStep(1); setInventorySearch(""); setInventoryTypeFilter("__all__");
       toast({ title: "Asset added successfully" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -692,7 +699,12 @@ export default function TenantsPage() {
                                 </Button>
                                 <Button
                                   size="sm" variant="outline" className="text-xs h-8"
-                                  onClick={e => { e.stopPropagation(); setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setAssetTarget({ tenantId: t.id, tenantName: t.name });
+                                    setAssetForm({ ...emptyAssetForm });
+                                    setAddStep(1); setInventorySearch(""); setInventoryTypeFilter("__all__");
+                                  }}
                                 >
                                   <Plus className="w-3.5 h-3.5 mr-1" /> New Asset
                                 </Button>
@@ -701,7 +713,7 @@ export default function TenantsPage() {
                             <TenantAssetsPanel
                               tenantId={t.id}
                               tenantName={t.name}
-                              onAddAsset={() => { setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
+                              onAddAsset={() => { setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); setAddStep(1); setInventorySearch(""); setInventoryTypeFilter("__all__"); }}
                               onRemoveAsset={assetId => unassignAssetMutation.mutate({ tenantId: t.id, assetId })}
                             />
                           </div>
@@ -931,84 +943,296 @@ export default function TenantsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Add Asset Dialog ───────────────────────────────────────────────── */}
-      <Dialog open={!!assetTarget} onOpenChange={v => { if (!v) setAssetTarget(null); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Add Asset to {assetTarget?.tenantName}</DialogTitle>
-            <DialogDescription>
-              Assets are added to this tenant's inventory and will appear in their Asset Inventory page.
+      {/* ── Add Asset Dialog — Step 1: Browse Inventory / Step 2: Form ────── */}
+      <Dialog
+        open={!!assetTarget}
+        onOpenChange={v => {
+          if (!v) {
+            setAssetTarget(null); setAssetForm({ ...emptyAssetForm });
+            setAddStep(1); setInventorySearch(""); setInventoryTypeFilter("__all__");
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
+
+          {/* ── Header ──────────────────────────────────────────────────────── */}
+          <div className="px-6 pt-6 pb-4 border-b border-border shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              {addStep === 1
+                ? <Search className="w-4 h-4 text-primary" />
+                : <Plus className="w-4 h-4 text-primary" />}
+              {addStep === 1 ? "Select from Inventory" : "Asset Details"}
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-xs">
+              {addStep === 1
+                ? `Browse your asset inventory and pick an asset to copy into ${assetTarget?.tenantName}, or create from scratch.`
+                : `Review and edit the details before adding to ${assetTarget?.tenantName}.`}
             </DialogDescription>
-          </DialogHeader>
-          <form className="space-y-3 mt-2" onSubmit={e => {
-            e.preventDefault();
-            if (!assetTarget) return;
-            addAssetMutation.mutate({
-              tenantId: assetTarget.tenantId,
-              body: {
-                name: assetForm.name.trim(),
-                type: assetForm.type,
-                value: assetForm.value.trim(),
-                description: assetForm.description.trim() || undefined,
-                scanFrequency: assetForm.scanFrequency,
-                businessImpact: assetForm.businessImpact,
-              },
-            });
-          }}>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Asset Name *</Label>
-              <Input
-                value={assetForm.name}
-                onChange={e => setAssetForm(p => ({ ...p, name: e.target.value }))}
-                placeholder="e.g. Main Website" required className="h-9"
-              />
+            {/* Step indicator */}
+            <div className="flex items-center gap-2 mt-3">
+              <div className={cn("flex items-center gap-1.5 text-xs font-medium", addStep === 1 ? "text-primary" : "text-muted-foreground")}>
+                <div className={cn(
+                  "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border",
+                  addStep === 1 ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border",
+                )}>1</div>
+                Browse Inventory
+              </div>
+              <div className="h-px flex-1 bg-border" />
+              <div className={cn("flex items-center gap-1.5 text-xs font-medium", addStep === 2 ? "text-primary" : "text-muted-foreground")}>
+                <div className={cn(
+                  "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border",
+                  addStep === 2 ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border",
+                )}>2</div>
+                Asset Details
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Type *</Label>
-                <Select value={assetForm.type} onValueChange={v => setAssetForm(p => ({ ...p, type: v, value: "" }))}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+          </div>
+
+          {addStep === 1 ? (
+            <>
+              {/* ── Step 1: Search / filter bar ─────────────────────────────── */}
+              <div className="px-6 py-3 border-b border-border shrink-0 flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    value={inventorySearch}
+                    onChange={e => setInventorySearch(e.target.value)}
+                    placeholder="Search by name or value…"
+                    className="h-8 pl-8 text-xs"
+                    autoFocus
+                  />
+                </div>
+                <Select value={inventoryTypeFilter} onValueChange={setInventoryTypeFilter}>
+                  <SelectTrigger className="h-8 text-xs w-44 shrink-0">
+                    <SelectValue placeholder="All types" />
+                  </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="__all__">All types</SelectItem>
                     {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{typeLabel(t)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Scan Frequency</Label>
-                <Select value={assetForm.scanFrequency} onValueChange={v => setAssetForm(p => ({ ...p, scanFrequency: v }))}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+
+              {/* ── Step 1: Asset list ──────────────────────────────────────── */}
+              <div className="flex-1 overflow-y-auto px-6 py-3 min-h-0">
+                {poolLoading ? (
+                  <div className="space-y-2">
+                    {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}
+                  </div>
+                ) : (() => {
+                  const filtered = poolAssets.filter(a => {
+                    if (inventoryTypeFilter !== "__all__" && a.type !== inventoryTypeFilter) return false;
+                    if (inventorySearch) {
+                      const q = inventorySearch.toLowerCase();
+                      return a.name.toLowerCase().includes(q) || a.value.toLowerCase().includes(q);
+                    }
+                    return true;
+                  });
+
+                  if (poolAssets.length === 0) {
+                    return (
+                      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                        <Server className="w-9 h-9 mb-3 opacity-25" />
+                        <p className="text-sm font-medium">No assets in the inventory yet.</p>
+                        <p className="text-xs mt-1 opacity-60">Use "Create from Scratch" below to add the first one.</p>
+                      </div>
+                    );
+                  }
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+                        <Search className="w-8 h-8 mb-2 opacity-25" />
+                        <p className="text-sm">No assets match your search.</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="rounded-lg border border-border overflow-hidden">
+                      {filtered.map((a, idx) => {
+                        const Icon = TYPE_ICONS[a.type] ?? Globe;
+                        return (
+                          <div
+                            key={a.id}
+                            className={cn(
+                              "flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-accent/40 transition-colors group",
+                              idx < filtered.length - 1 && "border-b border-border/40",
+                            )}
+                            onClick={() => {
+                              setAssetForm({
+                                name: a.name,
+                                type: a.type,
+                                value: a.value,
+                                description: a.description ?? "",
+                                scanFrequency: a.scanFrequency ?? "daily",
+                                businessImpact: a.businessImpact ?? 5,
+                              });
+                              setAddStep(2);
+                            }}
+                          >
+                            {/* Icon */}
+                            <div className="w-8 h-8 rounded-lg bg-muted/50 border border-border flex items-center justify-center shrink-0">
+                              <Icon className="w-4 h-4 text-muted-foreground" />
+                            </div>
+
+                            {/* Name + value */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium truncate">{a.name}</p>
+                                {a.tenantName && (
+                                  <span className="text-[10px] bg-muted/60 text-muted-foreground border border-border/50 px-1.5 py-0.5 rounded shrink-0">
+                                    {a.tenantName}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground font-mono truncate">{a.value}</p>
+                            </div>
+
+                            {/* Type badge */}
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground border border-border/40 shrink-0">
+                              {typeLabel(a.type)}
+                            </span>
+
+                            {/* Risk */}
+                            <span className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded font-medium capitalize shrink-0",
+                              RISK_COLORS[a.riskLevel] ?? RISK_COLORS.info,
+                            )}>
+                              {a.riskLevel}
+                            </span>
+
+                            {/* Scan freq */}
+                            <span className="text-[10px] text-muted-foreground shrink-0 hidden sm:block capitalize">
+                              {a.scanFrequency ?? "manual"}
+                            </span>
+
+                            {/* Business impact */}
+                            <span className="text-[10px] text-muted-foreground shrink-0">BI {a.businessImpact ?? 5}/10</span>
+
+                            {/* Arrow */}
+                            <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{typeValueLabel(assetForm.type)} *</Label>
-              <Input
-                value={assetForm.value}
-                onChange={e => setAssetForm(p => ({ ...p, value: e.target.value }))}
-                placeholder={typeValuePlaceholder(assetForm.type)}
-                required className="h-9 font-mono text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Business Impact: <strong>{assetForm.businessImpact}</strong>/10</Label>
-              <Slider
-                min={1} max={10} step={1}
-                value={[assetForm.businessImpact]}
-                onValueChange={([v]) => setAssetForm(p => ({ ...p, businessImpact: v }))}
-                className="my-1"
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Low (1)</span><span>Critical (10)</span></div>
-            </div>
-            <DialogFooter className="mt-4">
-              <Button variant="outline" type="button" onClick={() => setAssetTarget(null)}>Cancel</Button>
-              <Button type="submit" disabled={addAssetMutation.isPending}>
-                {addAssetMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Adding…</> : "Add Asset"}
-              </Button>
-            </DialogFooter>
-          </form>
+
+              {/* ── Step 1: Footer ──────────────────────────────────────────── */}
+              <div className="px-6 py-4 border-t border-border shrink-0 flex items-center justify-between gap-3">
+                <Button variant="outline" size="sm" onClick={() => {
+                  setAssetTarget(null); setAddStep(1); setInventorySearch(""); setInventoryTypeFilter("__all__");
+                }}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="secondary" size="sm"
+                  onClick={() => { setAssetForm({ ...emptyAssetForm }); setAddStep(2); }}
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1.5" /> Create from Scratch
+                </Button>
+              </div>
+            </>
+          ) : (
+            /* ── Step 2: Asset details form ─────────────────────────────────── */
+            <form className="flex-1 flex flex-col min-h-0" onSubmit={e => {
+              e.preventDefault();
+              if (!assetTarget) return;
+              addAssetMutation.mutate({
+                tenantId: assetTarget.tenantId,
+                body: {
+                  name: assetForm.name.trim(),
+                  type: assetForm.type,
+                  value: assetForm.value.trim(),
+                  description: assetForm.description.trim() || undefined,
+                  scanFrequency: assetForm.scanFrequency,
+                  businessImpact: assetForm.businessImpact,
+                },
+              });
+            }}>
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Asset Name *</Label>
+                  <Input
+                    value={assetForm.name}
+                    onChange={e => setAssetForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g. Main Website" required className="h-9"
+                    autoFocus
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Type *</Label>
+                    <Select value={assetForm.type} onValueChange={v => setAssetForm(p => ({ ...p, type: v, value: "" }))}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{typeLabel(t)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Scan Frequency</Label>
+                    <Select value={assetForm.scanFrequency} onValueChange={v => setAssetForm(p => ({ ...p, scanFrequency: v }))}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{typeValueLabel(assetForm.type)} *</Label>
+                  <Input
+                    value={assetForm.value}
+                    onChange={e => setAssetForm(p => ({ ...p, value: e.target.value }))}
+                    placeholder={typeValuePlaceholder(assetForm.type)}
+                    required className="h-9 font-mono text-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Description <span className="text-muted-foreground">(optional)</span></Label>
+                  <Input
+                    value={assetForm.description}
+                    onChange={e => setAssetForm(p => ({ ...p, description: e.target.value }))}
+                    placeholder="Brief description of this asset" className="h-9"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Business Impact: <strong>{assetForm.businessImpact}</strong>/10</Label>
+                  <Slider
+                    min={1} max={10} step={1}
+                    value={[assetForm.businessImpact]}
+                    onValueChange={([v]) => setAssetForm(p => ({ ...p, businessImpact: v }))}
+                    className="my-1"
+                  />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>Low (1)</span><span>Critical (10)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Form footer */}
+              <div className="px-6 py-4 border-t border-border shrink-0 flex items-center justify-between gap-3">
+                <Button variant="ghost" size="sm" type="button" onClick={() => setAddStep(1)}>
+                  ← Back to Inventory
+                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" type="button" onClick={() => {
+                    setAssetTarget(null); setAddStep(1); setInventorySearch(""); setInventoryTypeFilter("__all__");
+                  }}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm" disabled={addAssetMutation.isPending}>
+                    {addAssetMutation.isPending
+                      ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Adding…</>
+                      : <><Plus className="w-3.5 h-3.5 mr-1.5" />Add to {assetTarget?.tenantName}</>}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
