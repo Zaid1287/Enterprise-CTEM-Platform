@@ -4,7 +4,7 @@ import {
   Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp,
   UserCheck, X, Globe, Shield, Cpu, Network, Code2, Cloud, Smartphone,
   Lock, Trash2, Loader2, Pencil, MoreHorizontal, ArrowRightLeft,
-  ShieldCheck, PlayCircle,
+  PlayCircle,
   Search, CheckSquare, Square, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Slider } from "@/components/ui/slider";
 import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -96,7 +95,6 @@ function typeValuePlaceholder(t: string) { return TYPE_CONFIG[t]?.valuePlacehold
 
 const emptyTenantForm = { name: "", slug: "", plan: "" };
 const emptyEditForm   = { name: "", plan: "", isActive: true, maxAssets: "", maxUsers: "" };
-const emptyAssetForm  = { name: "", type: "domain", value: "", description: "", scanFrequency: "daily", businessImpact: 5 };
 
 type ActiveTab = "managers" | "assets";
 
@@ -117,17 +115,6 @@ function TenantAssetsPanel({
     queryKey: ["tenant-assets", tenantId],
     queryFn: () => apiFetch(`${BASE}/api/tenants/${tenantId}/assets`),
     staleTime: 30_000,
-  });
-
-  const verifyMutation = useMutation({
-    mutationFn: (assetId: number) =>
-      apiFetch(`${BASE}/api/assets/${assetId}/verify/manual`, { method: "POST" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
-      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
-      toast({ title: "Asset verified", description: "Ownership marked as verified. You can now run a scan." });
-    },
-    onError: (e: any) => toast({ title: "Verify failed", description: e.message, variant: "destructive" }),
   });
 
   const scanMutation = useMutation({
@@ -160,12 +147,10 @@ function TenantAssetsPanel({
       >
         <Server className="w-8 h-8 text-muted-foreground/30 mb-2" />
         <p className="text-sm font-medium text-muted-foreground">No assets yet</p>
-        <p className="text-xs text-muted-foreground/60 mt-1">Click to add a domain, IP, URL, or other target</p>
+        <p className="text-xs text-muted-foreground/60 mt-1">Click to select from your asset inventory</p>
       </div>
     );
   }
-
-  const isAnyPending = verifyMutation.isPending || scanMutation.isPending;
 
   return (
     <div className="rounded-lg border border-border overflow-hidden">
@@ -186,8 +171,7 @@ function TenantAssetsPanel({
           {assets.map(a => {
             const Icon = TYPE_ICONS[a.type] ?? Globe;
             const isVerified = a.verificationStatus === "verified";
-            const isVerifyPending = verifyMutation.isPending && verifyMutation.variables === a.id;
-            const isScanPending  = scanMutation.isPending  && scanMutation.variables  === a.id;
+            const isScanPending = scanMutation.isPending && scanMutation.variables === a.id;
             return (
               <tr key={a.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
                 <td className="px-3 py-2 font-medium">{a.name}</td>
@@ -214,36 +198,21 @@ function TenantAssetsPanel({
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-0.5 justify-end">
-                    {/* Verify — admin override for unverified assets */}
-                    {!isVerified && (
-                      <button
-                        onClick={e => { e.stopPropagation(); verifyMutation.mutate(a.id); }}
-                        disabled={isAnyPending}
-                        title="Mark as verified (admin override)"
-                        className="p-1 rounded hover:bg-green-500/15 text-muted-foreground hover:text-green-400 transition-colors disabled:opacity-40"
-                      >
-                        {isVerifyPending
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <ShieldCheck className="w-3.5 h-3.5" />}
-                      </button>
-                    )}
-                    {/* Scan Now — only for verified assets */}
-                    {isVerified && (
-                      <button
-                        onClick={e => { e.stopPropagation(); scanMutation.mutate(a.id); }}
-                        disabled={isAnyPending}
-                        title="Run pipeline scan now"
-                        className="p-1 rounded hover:bg-blue-500/15 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40"
-                      >
-                        {isScanPending
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <PlayCircle className="w-3.5 h-3.5" />}
-                      </button>
-                    )}
+                    {/* Scan Now button — available for all assets */}
+                    <button
+                      onClick={e => { e.stopPropagation(); scanMutation.mutate(a.id); }}
+                      disabled={scanMutation.isPending}
+                      title={isVerified ? "Run pipeline scan now" : "Asset must be verified before scanning"}
+                      className="p-1 rounded hover:bg-blue-500/15 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40"
+                    >
+                      {isScanPending
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <PlayCircle className="w-3.5 h-3.5" />}
+                    </button>
                     {/* Remove from tenant */}
                     <button
                       onClick={e => { e.stopPropagation(); onRemoveAsset(a.id); }}
-                      disabled={isAnyPending}
+                      disabled={scanMutation.isPending}
                       title="Remove from this tenant (asset is kept in your pool)"
                       className="p-1 rounded hover:bg-amber-500/15 text-muted-foreground hover:text-amber-400 transition-colors disabled:opacity-40"
                     >
@@ -286,11 +255,7 @@ export default function TenantsPage() {
   const [assignTarget, setAssignTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
   const [selectedAmId, setSelectedAmId] = useState("");
 
-  // Add asset dialog
-  const [assetTarget, setAssetTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
-  const [assetForm, setAssetForm] = useState({ ...emptyAssetForm });
-
-  // Asset picker dialog — assign existing assets to a tenant
+  // Asset picker dialog — assign existing assets to a tenant (replaces old "create" dialog)
   const [pickerTarget, setPickerTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [poolSearch, setPoolSearch] = useState("");
@@ -377,20 +342,6 @@ export default function TenantsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       toast({ title: "Account manager unassigned" });
-    },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const addAssetMutation = useMutation({
-    mutationFn: ({ tenantId, body }: { tenantId: number; body: object }) =>
-      apiFetch(`${BASE}/api/tenants/${tenantId}/assets`, {
-        method: "POST", body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tenant-assets", assetTarget?.tenantId] });
-      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
-      setAssetTarget(null); setAssetForm({ ...emptyAssetForm });
-      toast({ title: "Asset added successfully" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -582,7 +533,7 @@ export default function TenantsPage() {
                               <Pencil className="w-3.5 h-3.5 mr-2" /> Edit Tenant
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              onClick={e => { e.stopPropagation(); setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
+                              onClick={e => { e.stopPropagation(); setPickerTarget({ tenantId: t.id, tenantName: t.name }); setSelectedIds(new Set()); setPoolSearch(""); setPoolTenantFilter("__all__"); }}
                             >
                               <Plus className="w-3.5 h-3.5 mr-2" /> Add Asset
                             </DropdownMenuItem>
@@ -675,33 +626,25 @@ export default function TenantsPage() {
                           <div className="space-y-3">
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs text-muted-foreground flex-1">
-                                Assets belonging to this tenant. Use <strong>Assign Existing</strong> to move assets from other tenants here.
+                                Assets belonging to this tenant. Select from your asset inventory to assign them here.
                               </p>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <Button
-                                  size="sm" variant="outline" className="text-xs h-8"
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    setPickerTarget({ tenantId: t.id, tenantName: t.name });
-                                    setSelectedIds(new Set());
-                                    setPoolSearch("");
-                                    setPoolTenantFilter("__all__");
-                                  }}
-                                >
-                                  <ArrowRightLeft className="w-3.5 h-3.5 mr-1" /> Assign Existing
-                                </Button>
-                                <Button
-                                  size="sm" variant="outline" className="text-xs h-8"
-                                  onClick={e => { e.stopPropagation(); setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
-                                >
-                                  <Plus className="w-3.5 h-3.5 mr-1" /> New Asset
-                                </Button>
-                              </div>
+                              <Button
+                                size="sm" variant="outline" className="text-xs h-8 shrink-0"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setPickerTarget({ tenantId: t.id, tenantName: t.name });
+                                  setSelectedIds(new Set());
+                                  setPoolSearch("");
+                                  setPoolTenantFilter("__all__");
+                                }}
+                              >
+                                <Plus className="w-3.5 h-3.5 mr-1" /> Add Asset
+                              </Button>
                             </div>
                             <TenantAssetsPanel
                               tenantId={t.id}
                               tenantName={t.name}
-                              onAddAsset={() => { setAssetTarget({ tenantId: t.id, tenantName: t.name }); setAssetForm({ ...emptyAssetForm }); }}
+                              onAddAsset={() => { setPickerTarget({ tenantId: t.id, tenantName: t.name }); setSelectedIds(new Set()); setPoolSearch(""); setPoolTenantFilter("__all__"); }}
                               onRemoveAsset={assetId => unassignAssetMutation.mutate({ tenantId: t.id, assetId })}
                             />
                           </div>
@@ -931,88 +874,7 @@ export default function TenantsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Add Asset Dialog ───────────────────────────────────────────────── */}
-      <Dialog open={!!assetTarget} onOpenChange={v => { if (!v) setAssetTarget(null); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Add Asset to {assetTarget?.tenantName}</DialogTitle>
-            <DialogDescription>
-              Assets are added to this tenant's inventory and will appear in their Asset Inventory page.
-            </DialogDescription>
-          </DialogHeader>
-          <form className="space-y-3 mt-2" onSubmit={e => {
-            e.preventDefault();
-            if (!assetTarget) return;
-            addAssetMutation.mutate({
-              tenantId: assetTarget.tenantId,
-              body: {
-                name: assetForm.name.trim(),
-                type: assetForm.type,
-                value: assetForm.value.trim(),
-                description: assetForm.description.trim() || undefined,
-                scanFrequency: assetForm.scanFrequency,
-                businessImpact: assetForm.businessImpact,
-              },
-            });
-          }}>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Asset Name *</Label>
-              <Input
-                value={assetForm.name}
-                onChange={e => setAssetForm(p => ({ ...p, name: e.target.value }))}
-                placeholder="e.g. Main Website" required className="h-9"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Type *</Label>
-                <Select value={assetForm.type} onValueChange={v => setAssetForm(p => ({ ...p, type: v, value: "" }))}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ASSET_TYPES.map(t => <SelectItem key={t} value={t}>{typeLabel(t)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Scan Frequency</Label>
-                <Select value={assetForm.scanFrequency} onValueChange={v => setAssetForm(p => ({ ...p, scanFrequency: v }))}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{typeValueLabel(assetForm.type)} *</Label>
-              <Input
-                value={assetForm.value}
-                onChange={e => setAssetForm(p => ({ ...p, value: e.target.value }))}
-                placeholder={typeValuePlaceholder(assetForm.type)}
-                required className="h-9 font-mono text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Business Impact: <strong>{assetForm.businessImpact}</strong>/10</Label>
-              <Slider
-                min={1} max={10} step={1}
-                value={[assetForm.businessImpact]}
-                onValueChange={([v]) => setAssetForm(p => ({ ...p, businessImpact: v }))}
-                className="my-1"
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Low (1)</span><span>Critical (10)</span></div>
-            </div>
-            <DialogFooter className="mt-4">
-              <Button variant="outline" type="button" onClick={() => setAssetTarget(null)}>Cancel</Button>
-              <Button type="submit" disabled={addAssetMutation.isPending}>
-                {addAssetMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Adding…</> : "Add Asset"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Asset Picker Dialog — assign existing assets to a tenant ───────── */}
+      {/* ── Asset Picker Dialog — select from asset inventory and assign to a tenant ── */}
       <Dialog
         open={!!pickerTarget}
         onOpenChange={v => {
@@ -1028,11 +890,11 @@ export default function TenantsPage() {
           {/* Header */}
           <div className="px-6 pt-6 pb-4 border-b border-border shrink-0">
             <DialogTitle className="flex items-center gap-2">
-              <ArrowRightLeft className="w-4 h-4 text-primary" />
-              Assign Assets to {pickerTarget?.tenantName}
+              <Server className="w-4 h-4 text-primary" />
+              Add Asset to {pickerTarget?.tenantName}
             </DialogTitle>
             <DialogDescription className="mt-1">
-              Select assets from any tenant you manage and move them here. Each asset can only belong to one tenant at a time.
+              Select one or more assets from your asset inventory. Assets already in this tenant are shown at the bottom for reference.
             </DialogDescription>
           </div>
 
@@ -1096,7 +958,7 @@ export default function TenantsPage() {
                   <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
                     <Server className="w-8 h-8 mb-2 opacity-30" />
                     <p className="text-sm">No assets found across your managed tenants.</p>
-                    <p className="text-xs mt-1 opacity-60">Create assets first using the "New Asset" button.</p>
+                    <p className="text-xs mt-1 opacity-60">Add assets to your inventory first via the Asset Inventory page.</p>
                   </div>
                 );
               }
@@ -1288,8 +1150,8 @@ export default function TenantsPage() {
                 })}
               >
                 {assignAssetsMutation.isPending
-                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Moving…</>
-                  : <><ArrowRightLeft className="w-3.5 h-3.5 mr-1.5" /> Move {selectedIds.size > 0 ? selectedIds.size : ""} to {pickerTarget?.tenantName}</>
+                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Assigning…</>
+                  : <><Plus className="w-3.5 h-3.5 mr-1.5" /> Add {selectedIds.size > 0 ? selectedIds.size : ""} to {pickerTarget?.tenantName}</>
                 }
               </Button>
             </div>

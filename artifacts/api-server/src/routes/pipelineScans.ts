@@ -1355,8 +1355,10 @@ async function executePipeline(
   enabledTools: (typeof securityToolsTable.$inferSelect)[],
 ): Promise<{ findingsCount: number }> {
   const assetIds = assetConfigs.map(c => c.assetId);
+  // Fetch by ID only — effectiveTenantId was already verified at enqueue time, and
+  // SA/admin may scan assets belonging to a different tenant than their own.
   const assets = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
+    .where(inArray(assetsTable.id, assetIds));
 
   // ── Load platform API keys for this run ──────────────────────────────────
   const [nvdKey, shodanKey, vtKey, hunterKey, githubToken, fofaEmail, fofaApiKey, censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey] = await Promise.all([
