@@ -1029,6 +1029,8 @@ function AdminDashboard() {
   const assetRiskRankings: any[] = d.assetRiskRankings ?? [];
   const amPortfolioAdmin: any[] = d.amPortfolio ?? [];
   const recentAlerts: any[] = d.recentAlerts ?? [];
+  const clientRiskRankings: any[] = d.clientRiskRankings ?? [];
+  const allClientOrganizations: any[] = d.allClientOrganizations ?? [];
 
   const riskColor = d.riskScore >= 70 ? "text-red-400" : d.riskScore >= 40 ? "text-amber-400" : "text-green-400";
 
@@ -1065,6 +1067,17 @@ function AdminDashboard() {
           ))}
         </div>
       </div>
+
+      {/* Row 0 — AM / Client metrics (only shown when AM portfolio data exists) */}
+      {(d.amCount > 0 || d.totalClients > 0) && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard label="Account Managers" value={d.amCount ?? 0} icon={Users} color="text-blue-400" />
+          <StatCard label="Total Clients" value={d.totalClients ?? 0} icon={Building2} color="text-purple-400" />
+          <StatCard label="Critical Clients" value={d.criticalClients ?? 0} icon={ShieldAlert}
+            color={(d.criticalClients ?? 0) > 0 ? "text-red-400" : undefined} />
+          <StatCard label="Active Scans" value={d.activeScans ?? 0} icon={Radar} color="text-blue-400" />
+        </div>
+      )}
 
       {/* Row 1 — 4 primary stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1150,7 +1163,7 @@ function AdminDashboard() {
         </div>
       </div>
 
-      {/* Asset Risk Rankings + Recent Alerts */}
+      {/* Asset Risk Rankings + Client Risk Rankings */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Asset Risk Rankings */}
         <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -1200,40 +1213,82 @@ function AdminDashboard() {
           </div>
         </div>
 
-        {/* Recent Alerts */}
+        {/* Client Risk Rankings */}
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <h3 className="text-sm font-medium flex items-center gap-2">
-              <Bell className="w-4 h-4 text-amber-400" /> Recent Alerts
+              <Building2 className="w-4 h-4 text-purple-400" /> Client Risk Rankings
             </h3>
-            <Link href="/alerts">
-              <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
-                View all <ArrowRight className="w-3 h-3" />
-              </span>
-            </Link>
+            <span className="text-xs text-muted-foreground">{clientRiskRankings.length} client{clientRiskRankings.length !== 1 ? "s" : ""}</span>
           </div>
           <div className="divide-y divide-border/50">
-            {recentAlerts.length === 0 ? (
+            {clientRiskRankings.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
+                <Building2 className="w-7 h-7 mx-auto mb-2 opacity-30" />
+                No clients assigned to account managers yet
               </div>
-            ) : recentAlerts.map((a: any) => (
-              <div key={a.id} className={cn("px-4 py-3 transition-colors", !a.isRead && "bg-primary/[0.03]")}>
-                <div className="flex items-start gap-2.5">
-                  {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
-                  <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs font-medium truncate flex-1">{a.title}</p>
-                      <SeverityBadge severity={a.severity} />
+            ) : clientRiskRankings.map((c: any, idx: number) => (
+              <div key={c.tenantId} className="px-4 py-3">
+                <div className="flex items-start justify-between mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0">#{idx + 1}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{c.tenantName}</p>
+                      <p className="text-[10px] text-muted-foreground">{c.assetCount} asset{c.assetCount !== 1 ? "s" : ""} · {c.openFindingCount} open</p>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {new Date(a.createdAt).toLocaleDateString()}
-                    </p>
+                  </div>
+                  <span className={cn("ml-2 shrink-0 text-xs px-2 py-0.5 rounded font-semibold border capitalize", riskLevelBg(c.riskLevel))}>
+                    {c.avgRisk}
+                  </span>
+                </div>
+                <div className="ml-6">
+                  <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${c.avgRisk}%`, background: c.avgRisk >= 70 ? "#ef4444" : c.avgRisk >= 40 ? "#f97316" : "#eab308" }} />
                   </div>
                 </div>
+                {c.criticalCount > 0 && (
+                  <p className="ml-6 text-[10px] text-red-400 mt-0.5">{c.criticalCount} critical finding{c.criticalCount !== 1 ? "s" : ""}</p>
+                )}
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Recent Alerts */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Bell className="w-4 h-4 text-amber-400" /> Recent Alerts
+          </h3>
+          <Link href="/alerts">
+            <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
+              View all <ArrowRight className="w-3 h-3" />
+            </span>
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-border/50 [&>*]:border-b [&>*]:border-border/50">
+          {recentAlerts.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground col-span-2">
+              <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
+            </div>
+          ) : recentAlerts.map((a: any) => (
+            <div key={a.id} className={cn("px-4 py-3 transition-colors", !a.isRead && "bg-primary/[0.03]")}>
+              <div className="flex items-start gap-2.5">
+                {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
+                <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-xs font-medium truncate flex-1">{a.title}</p>
+                    <SeverityBadge severity={a.severity} />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {new Date(a.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1283,6 +1338,74 @@ function AdminDashboard() {
             </div>
           </Link>
         </div>
+      </div>
+
+      {/* All Client Organizations */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Building2 className="w-4 h-4 text-muted-foreground" /> All Client Organizations
+          </h3>
+          <span className="text-xs text-muted-foreground">{allClientOrganizations.length} organization{allClientOrganizations.length !== 1 ? "s" : ""}</span>
+        </div>
+        {allClientOrganizations.length === 0 ? (
+          <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+            <Building2 className="w-7 h-7 mx-auto mb-2 opacity-30" />
+            No client organizations assigned to account managers yet
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-accent/20">
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Organization</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Plan</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Assets</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Open</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Critical</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Avg Risk</th>
+                  <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allClientOrganizations.map((t: any) => (
+                  <tr key={t.tenantId} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-sm">{t.tenantName}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className="text-xs capitalize">{t.plan}</Badge>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-sm">{t.assetCount}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {t.openFindingCount > 0
+                        ? <span className="text-amber-400 font-semibold">{t.openFindingCount}</span>
+                        : <span className="text-muted-foreground/50">0</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {t.criticalCount > 0
+                        ? <span className="text-red-400 font-bold">{t.criticalCount}</span>
+                        : <span className="text-muted-foreground/50">0</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      <span className={cn("font-semibold", t.avgRisk >= 70 ? "text-red-400" : t.avgRisk >= 40 ? "text-orange-400" : "text-green-400")}>
+                        {t.avgRisk}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium border",
+                        t.isActive
+                          ? "bg-green-500/15 text-green-400 border-green-500/30"
+                          : "bg-muted text-muted-foreground border-border")}>
+                        {t.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* AM Portfolio */}

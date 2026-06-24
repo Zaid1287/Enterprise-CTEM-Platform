@@ -862,6 +862,11 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
       : Promise.resolve([]),
   ]);
 
+  const assignedClientAssetIdList = assignedClientAssets.map(a => a.id);
+  const assignedClientRiskScores = assignedClientAssetIdList.length > 0
+    ? await db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assignedClientAssetIdList))
+    : [];
+
   const amPortfolio = tenantAmUsers.map(am => {
     const amAssignmentIds = allAmAssignmentsAdmin
       .filter(a => a.accountManagerUserId === am.id)
@@ -893,6 +898,25 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   const riskScore = allRiskScores.length > 0
     ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
     : 0;
+
+  const clientRiskRankings = assignedClientTenants.map(t => {
+    const cAssets = assignedClientAssets.filter(a => a.tenantId === t.id);
+    const cScores = cAssets
+      .map(a => assignedClientRiskScores.find(r => r.assetId === a.id)?.score ?? 0)
+      .filter(s => s > 0);
+    const avgRisk = cScores.length > 0 ? Math.round(cScores.reduce((s, r) => s + r, 0) / cScores.length) : 0;
+    const cFindings = assignedClientFindings.filter(f => f.tenantId === t.id);
+    const criticalCount = cFindings.filter(f => f.severity === "critical").length;
+    const openFindingCount = cFindings.filter(f => f.status === "open").length;
+    const riskLevel = avgRisk >= 70 ? "critical" : avgRisk >= 40 ? "high" : avgRisk >= 20 ? "medium" : "low";
+    return {
+      tenantId: t.id, tenantName: t.name, plan: t.plan ?? "free",
+      isActive: t.isActive ?? true,
+      assetCount: cAssets.length, avgRisk, criticalCount, openFindingCount, riskLevel,
+    };
+  }).sort((a, b) => b.avgRisk - a.avgRisk);
+
+  const criticalClients = clientRiskRankings.filter(c => c.criticalCount > 0 || c.riskLevel === "critical").length;
 
   const openAlertsCount = allAlerts.filter(a => !a.isRead).length;
   const CLOSED_STATUSES_ADMIN = ["mitigated", "accepted_risk", "false_positive"];
@@ -972,6 +996,11 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
     recentAlerts,
     riskTrend,
     amPortfolio,
+    amCount: tenantAmUsers.length,
+    totalClients: assignedClientTenantIds.length,
+    criticalClients,
+    clientRiskRankings: clientRiskRankings.slice(0, 6),
+    allClientOrganizations: clientRiskRankings,
   });
 });
 
