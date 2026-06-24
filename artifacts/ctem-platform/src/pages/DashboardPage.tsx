@@ -88,6 +88,7 @@ function SuperAdminDashboard() {
   const riskTrend: any[] = d.riskTrend ?? [];
   const severityBreakdown: any[] = d.severityBreakdown ?? [];
   const clientRiskRankings: any[] = d.clientRiskRankings ?? [];
+  const assetRiskRankings: any[] = d.assetRiskRankings ?? [];
   const amPortfolio: any[] = d.amPortfolio ?? [];
   const recentAlerts: any[] = d.recentAlerts ?? [];
 
@@ -159,6 +160,18 @@ function SuperAdminDashboard() {
         <StatCard label="Active Scans" value={d.activeScans} icon={Radar} color="text-blue-400" />
       </div>
 
+      {/* Row 4 — additional stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Open Findings" value={d.openFindingCount} icon={Bug}
+          color={d.openFindingCount > 0 ? "text-amber-400" : undefined} />
+        <StatCard label="High Findings" value={d.highCount} icon={AlertTriangle}
+          color={d.highCount > 0 ? "text-orange-400" : undefined} />
+        <StatCard label="Platform Risk Score" value={d.platformRiskScore ?? "—"} icon={Activity}
+          color={riskColor} sub="out of 100" />
+        <StatCard label="Team Members" value={d.userCount} icon={Users} color="text-violet-400"
+          sub="across all tenants" />
+      </div>
+
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-card border border-border rounded-xl p-4">
@@ -211,8 +224,47 @@ function SuperAdminDashboard() {
         </div>
       </div>
 
-      {/* Client Risk Rankings + Recent Alerts */}
+      {/* Asset Risk Rankings + Client Risk Rankings */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Asset Risk Rankings */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Server className="w-4 h-4 text-cyan-400" /> Asset Risk Rankings
+            </h3>
+            <span className="text-xs text-muted-foreground">top {assetRiskRankings.length} assets</span>
+          </div>
+          <div className="divide-y divide-border/50">
+            {assetRiskRankings.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">No risk data yet — run a scan to populate</div>
+            ) : assetRiskRankings.map((a: any, idx: number) => (
+              <div key={a.id} className="px-4 py-3 hover:bg-accent/30 transition-colors">
+                <div className="flex items-start justify-between mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0">#{idx + 1}</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate">{a.name}</p>
+                      <p className="text-[10px] text-muted-foreground capitalize">{a.type} · <span className="text-muted-foreground/70">{a.tenantName}</span></p>
+                    </div>
+                  </div>
+                  <span className={cn("ml-2 shrink-0 text-xs px-2 py-0.5 rounded font-semibold border capitalize", riskLevelBg(a.riskLevel))}>
+                    {a.riskScore}
+                  </span>
+                </div>
+                <div className="ml-6">
+                  <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${a.riskScore}%`, background: a.riskScore >= 70 ? "#ef4444" : a.riskScore >= 40 ? "#f97316" : "#eab308" }} />
+                  </div>
+                </div>
+                {a.criticalCount > 0 && (
+                  <p className="ml-6 text-[10px] text-red-400 mt-0.5">{a.criticalCount} critical · {a.openFindingCount} open</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Client Risk Rankings */}
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -251,42 +303,42 @@ function SuperAdminDashboard() {
             ))}
           </div>
         </div>
+      </div>
 
-        {/* Recent Alerts */}
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <h3 className="text-sm font-medium flex items-center gap-2">
-              <Bell className="w-4 h-4 text-amber-400" /> Recent Alerts
-            </h3>
-            <Link href="/alerts">
-              <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
-                View all <ArrowRight className="w-3 h-3" />
-              </span>
-            </Link>
-          </div>
-          <div className="divide-y divide-border/50">
-            {recentAlerts.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
-              </div>
-            ) : recentAlerts.map((a: any) => (
-              <div key={a.id} className={cn("px-4 py-3 transition-colors", !a.isRead && "bg-primary/[0.03]")}>
-                <div className="flex items-start gap-2.5">
-                  {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
-                  <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs font-medium truncate flex-1">{a.title}</p>
-                      <SeverityBadge severity={a.severity} />
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                      <Building2 className="w-2.5 h-2.5 shrink-0" />
-                      {a.clientName} · {new Date(a.createdAt).toLocaleDateString()}
-                    </p>
+      {/* Recent Alerts */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Bell className="w-4 h-4 text-amber-400" /> Recent Alerts
+          </h3>
+          <Link href="/alerts">
+            <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
+              View all <ArrowRight className="w-3 h-3" />
+            </span>
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border/50">
+          {recentAlerts.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground col-span-2">
+              <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
+            </div>
+          ) : recentAlerts.map((a: any) => (
+            <div key={a.id} className={cn("px-4 py-3 transition-colors hover:bg-accent/20", !a.isRead && "bg-primary/[0.03]")}>
+              <div className="flex items-start gap-2.5">
+                {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
+                <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-xs font-medium truncate flex-1">{a.title}</p>
+                    <SeverityBadge severity={a.severity} />
                   </div>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                    <Building2 className="w-2.5 h-2.5 shrink-0" />
+                    {a.clientName} · {new Date(a.createdAt).toLocaleDateString()}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </div>
 

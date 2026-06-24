@@ -290,6 +290,22 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
 
   const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r.score]));
 
+  // Top risky assets platform-wide (SA view across all tenants)
+  const assetRiskRankings = allAssets
+    .map(a => ({
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      tenantName: allTenantsRaw.find(t => t.id === a.tenantId)?.name ?? "Unknown",
+      riskScore: riskScoreMap.get(a.id) ?? 0,
+      riskLevel: a.riskLevel ?? "low",
+      criticalCount: allFindings.filter(f => f.assetId === a.id && f.severity === "critical").length,
+      openFindingCount: allFindings.filter(f => f.assetId === a.id && f.status === "open").length,
+    }))
+    .filter(a => a.riskScore > 0)
+    .sort((a, b) => b.riskScore - a.riskScore)
+    .slice(0, 8);
+
   // amPortfolio: look up assigned clients from allTenantsRaw; include individual assets per client
   const amPortfolio = amUsers.map(am => {
     const assignedTenantIds = allAmAssignments
@@ -360,7 +376,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     amCount,
     clientsAtCriticalRisk,
     userCount: allUsers.length,
-    assetCount: allAssets.filter(a => a.tenantId === req.user!.tenantId).length,
+    assetCount: allAssets.length,
     findingCount: allFindings.length,
     criticalCount: allFindings.filter(f => f.severity === "critical").length,
     openFindingCount: allFindings.filter(f => f.status === "open").length,
@@ -375,6 +391,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     exposedPortsCount,
     severityBreakdown,
     clientRiskRankings,
+    assetRiskRankings,
     recentAlerts,
     riskTrend,
     tenants: tenantMetrics,
