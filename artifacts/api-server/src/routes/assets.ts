@@ -150,7 +150,8 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(assetsTable.tenantId, ids);
   } else if (role === "super_admin") {
-    // SA sees ALL assets across every tenant — no tenant restriction
+    // Super admins see their own tenant's assets AND unassigned (free pool) assets
+    tenantFilter = or(eq(assetsTable.tenantId, req.user!.tenantId), isNull(assetsTable.tenantId))!;
   } else {
     tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
   }

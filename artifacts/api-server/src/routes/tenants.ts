@@ -289,7 +289,7 @@ router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", 
     id: a.id, name: a.name, type: a.type, value: a.value,
     verificationStatus: a.verificationStatus, isActive: a.isActive,
     scanFrequency: a.scanFrequency, businessImpact: a.businessImpact,
-    riskLevel: a.riskLevel, lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
+    riskLevel: a.riskLevel, lastScannedAt: a.lastScannedAt,
   })));
 });
 
@@ -308,7 +308,7 @@ router.post("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin",
     name: String(name),
     type: String(type),
     value: String(value).trim().toLowerCase(),
-    verificationStatus: "verified",
+    verificationStatus: "unverified",
     isActive: true,
     scanFrequency: scanFrequency ?? "manual",
     businessImpact: businessImpact ?? 5,
