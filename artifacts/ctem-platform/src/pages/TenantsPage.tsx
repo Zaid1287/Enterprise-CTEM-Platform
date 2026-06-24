@@ -463,7 +463,8 @@ export default function TenantsPage() {
     ? packages.filter(p => p.isActive).map(p => p.name.toLowerCase().replace(/\s+/g, "-"))
     : ["starter", "professional", "enterprise"];
 
-  const totalAssets   = tenants.reduce((s, t) => s + t.assetCount, 0);
+  // totalAssets = platform tenant assets only, matching what Asset Inventory shows
+  const totalAssets   = tenants.filter(t => t.isPlatform).reduce((s, t) => s + t.assetCount, 0);
   const totalFindings = tenants.reduce((s, t) => s + t.findingCount, 0);
 
   // ── Render ────────────────────────────────────────────────────────────────────

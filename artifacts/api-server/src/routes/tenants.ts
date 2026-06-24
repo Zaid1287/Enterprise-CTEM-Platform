@@ -152,12 +152,14 @@ router.get("/tenants/assets/pool", requireAuth, requireRole("super_admin", "admi
 
   let tenantIds: number[];
   if (role === "super_admin") {
-    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+    // Super admin sees ALL tenants (platform + client) so every asset appears in the picker
+    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable);
     tenantIds = rows.map(r => r.id);
   } else {
+    // Admin sees their own tenant + direct child tenants (no isPlatform filter — admins can
+    // live on any tenant type and should see all assets they legitimately manage)
     const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable)
-      .where(and(eq(tenantsTable.isPlatform, false),
-        or(eq(tenantsTable.id, myTenantId), eq(tenantsTable.parentTenantId, myTenantId))));
+      .where(or(eq(tenantsTable.id, myTenantId), eq(tenantsTable.parentTenantId, myTenantId)));
     tenantIds = rows.map(r => r.id);
   }
 

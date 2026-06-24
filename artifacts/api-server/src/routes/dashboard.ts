@@ -376,7 +376,8 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     amCount,
     clientsAtCriticalRisk,
     userCount: allUsers.length,
-    assetCount: allAssets.length,
+    // assetCount = platform-tenant assets only — matches what Asset Inventory shows to the SA
+    assetCount: allAssets.filter(a => a.tenantId !== null && !clientTenantIds.includes(a.tenantId)).length,
     findingCount: allFindings.length,
     criticalCount: allFindings.filter(f => f.severity === "critical").length,
     openFindingCount: allFindings.filter(f => f.status === "open").length,
