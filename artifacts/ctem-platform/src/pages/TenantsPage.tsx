@@ -4,7 +4,7 @@ import {
   Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp,
   UserCheck, X, Globe, Shield, Cpu, Network, Code2, Cloud, Smartphone,
   Lock, Trash2, Loader2, Pencil, MoreHorizontal, ArrowRightLeft,
-  ShieldCheck, PlayCircle,
+  PlayCircle,
   Search, CheckSquare, Square, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -119,17 +119,6 @@ function TenantAssetsPanel({
     staleTime: 30_000,
   });
 
-  const verifyMutation = useMutation({
-    mutationFn: (assetId: number) =>
-      apiFetch(`${BASE}/api/assets/${assetId}/verify/manual`, { method: "POST" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tenant-assets", tenantId] });
-      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
-      toast({ title: "Asset verified", description: "Ownership marked as verified. You can now run a scan." });
-    },
-    onError: (e: any) => toast({ title: "Verify failed", description: e.message, variant: "destructive" }),
-  });
-
   const scanMutation = useMutation({
     mutationFn: (assetId: number) =>
       apiFetch(`${BASE}/api/scans/pipeline-run`, {
@@ -165,8 +154,6 @@ function TenantAssetsPanel({
     );
   }
 
-  const isAnyPending = verifyMutation.isPending || scanMutation.isPending;
-
   return (
     <div className="rounded-lg border border-border overflow-hidden">
       <table className="w-full text-xs">
@@ -186,8 +173,7 @@ function TenantAssetsPanel({
           {assets.map(a => {
             const Icon = TYPE_ICONS[a.type] ?? Globe;
             const isVerified = a.verificationStatus === "verified";
-            const isVerifyPending = verifyMutation.isPending && verifyMutation.variables === a.id;
-            const isScanPending  = scanMutation.isPending  && scanMutation.variables  === a.id;
+            const isScanPending = scanMutation.isPending && scanMutation.variables === a.id;
             return (
               <tr key={a.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
                 <td className="px-3 py-2 font-medium">{a.name}</td>
@@ -214,36 +200,21 @@ function TenantAssetsPanel({
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-0.5 justify-end">
-                    {/* Verify — admin override for unverified assets */}
-                    {!isVerified && (
-                      <button
-                        onClick={e => { e.stopPropagation(); verifyMutation.mutate(a.id); }}
-                        disabled={isAnyPending}
-                        title="Mark as verified (admin override)"
-                        className="p-1 rounded hover:bg-green-500/15 text-muted-foreground hover:text-green-400 transition-colors disabled:opacity-40"
-                      >
-                        {isVerifyPending
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <ShieldCheck className="w-3.5 h-3.5" />}
-                      </button>
-                    )}
-                    {/* Scan Now — only for verified assets */}
-                    {isVerified && (
-                      <button
-                        onClick={e => { e.stopPropagation(); scanMutation.mutate(a.id); }}
-                        disabled={isAnyPending}
-                        title="Run pipeline scan now"
-                        className="p-1 rounded hover:bg-blue-500/15 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40"
-                      >
-                        {isScanPending
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <PlayCircle className="w-3.5 h-3.5" />}
-                      </button>
-                    )}
+                    {/* Scan Now button — available for all assets */}
+                    <button
+                      onClick={e => { e.stopPropagation(); scanMutation.mutate(a.id); }}
+                      disabled={scanMutation.isPending}
+                      title={isVerified ? "Run pipeline scan now" : "Asset must be verified before scanning"}
+                      className="p-1 rounded hover:bg-blue-500/15 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40"
+                    >
+                      {isScanPending
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <PlayCircle className="w-3.5 h-3.5" />}
+                    </button>
                     {/* Remove from tenant */}
                     <button
                       onClick={e => { e.stopPropagation(); onRemoveAsset(a.id); }}
-                      disabled={isAnyPending}
+                      disabled={scanMutation.isPending}
                       title="Remove from this tenant (asset is kept in your pool)"
                       className="p-1 rounded hover:bg-amber-500/15 text-muted-foreground hover:text-amber-400 transition-colors disabled:opacity-40"
                     >
