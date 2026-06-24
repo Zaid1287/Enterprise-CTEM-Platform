@@ -360,7 +360,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     amCount,
     clientsAtCriticalRisk,
     userCount: allUsers.length,
-    assetCount: allAssets.filter(a => a.tenantId === req.user!.tenantId).length,
+    assetCount: allAssets.length,
     findingCount: allFindings.length,
     criticalCount: allFindings.filter(f => f.severity === "critical").length,
     openFindingCount: allFindings.filter(f => f.status === "open").length,
