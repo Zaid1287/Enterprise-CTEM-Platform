@@ -6,7 +6,7 @@ import {
   getListAlertsQueryKey, getListAlertRulesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Bell, BellOff, ChevronRight, Trash2, Power } from "lucide-react";
+import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, severityBgColor, capitalize, formatDateTime } from "@/lib/utils";
+import { apiFetch } from "@/lib/apiFetch";
+import { useToast } from "@/hooks/use-toast";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const CHANNEL_PLACEHOLDER: Record<string, string> = {
   email:    "alerts@company.com",
@@ -24,11 +28,15 @@ const CHANNEL_PLACEHOLDER: Record<string, string> = {
   webhook:  "https://your-server.com/webhook",
 };
 
+type TestState = { status: "idle" } | { status: "testing" } | { status: "ok"; dest: string } | { status: "error"; msg: string };
+
 export default function AlertsPage() {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
   const [severityFilter, setSeverityFilter] = useState("");
   const [showCreateRule, setShowCreateRule] = useState(false);
   const [ruleForm, setRuleForm] = useState({ name: "", triggerType: "new_finding", channel: "email", destination: "" });
+  const [testStates, setTestStates] = useState<Record<number, TestState>>({});
   const queryClient = useQueryClient();
 
   const alertParams = { severity: severityFilter || undefined };
@@ -65,6 +73,26 @@ export default function AlertsPage() {
     if (!confirm("Delete this alert rule?")) return;
     await deleteRule.mutateAsync({ ruleId });
     queryClient.invalidateQueries({ queryKey: getListAlertRulesQueryKey() });
+  };
+
+  const handleTestRule = async (rule: any) => {
+    setTestStates(prev => ({ ...prev, [rule.id]: { status: "testing" } }));
+    try {
+      const result = await apiFetch<{ success: boolean; channel: string; destination: string }>(
+        `${BASE}/api/alerts/rules/${rule.id}/test`,
+        { method: "POST" },
+      );
+      if (result.success) {
+        setTestStates(prev => ({ ...prev, [rule.id]: { status: "ok", dest: result.destination } }));
+        toast({ title: "Test sent!", description: `${capitalize(result.channel)} notification delivered successfully.` });
+        setTimeout(() => setTestStates(prev => ({ ...prev, [rule.id]: { status: "idle" } })), 4000);
+      }
+    } catch (err: any) {
+      const msg = err?.message ?? "Delivery failed. Check your destination URL or credentials.";
+      setTestStates(prev => ({ ...prev, [rule.id]: { status: "error", msg } }));
+      toast({ title: "Test failed", description: msg, variant: "destructive" });
+      setTimeout(() => setTestStates(prev => ({ ...prev, [rule.id]: { status: "idle" } })), 6000);
+    }
   };
 
   const alertList = alerts as any[] ?? [];
@@ -153,7 +181,8 @@ export default function AlertsPage() {
         </TabsContent>
 
         <TabsContent value="rules" className="space-y-3 mt-3">
-          <div className="flex justify-end">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">Alert rules fire on matching scan events and deliver notifications to your configured channel.</p>
             <Button size="sm" onClick={() => setShowCreateRule(true)}>
               <Plus className="w-4 h-4 mr-1.5" /> New Rule
             </Button>
@@ -167,61 +196,81 @@ export default function AlertsPage() {
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Channel</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Destination</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground"></th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {(rules as any[] ?? []).map((rule: any) => (
-                  <tr key={rule.id} className="border-b border-border/50 hover:bg-accent/20 transition-colors">
-                    <td className="px-4 py-2.5 text-sm font-medium">{rule.name}</td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{capitalize(rule.triggerType.replace(/_/g, " "))}</td>
-                    <td className="px-4 py-2.5 text-xs">
-                      <span className="flex items-center gap-1">
-                        {rule.channel === "email" && "📧"}
-                        {rule.channel === "slack" && "💬"}
-                        {rule.channel === "discord" && "🎮"}
-                        {rule.channel === "telegram" && "✈️"}
-                        {rule.channel === "webhook" && "🔗"}
-                        {capitalize(rule.channel)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono truncate max-w-[180px]" title={rule.destination ?? ""}>
-                      {rule.destination ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn(
-                        "text-xs px-2 py-0.5 rounded-md border",
-                        rule.isActive
-                          ? "bg-green-500/15 text-green-400 border-green-500/30"
-                          : "bg-muted text-muted-foreground border-border"
-                      )}>
-                        {rule.isActive ? "Active" : "Paused"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost" size="icon" className="h-7 w-7"
-                          title={rule.isActive ? "Pause rule" : "Activate rule"}
-                          onClick={() => handleToggleRule(rule)}
-                          disabled={updateRule.isPending}
-                        >
-                          <Power className={cn("w-3.5 h-3.5", rule.isActive ? "text-green-400" : "text-muted-foreground")} />
-                        </Button>
-                        <Button
-                          variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                          title="Delete rule"
-                          onClick={() => handleDeleteRule(rule.id)}
-                          disabled={deleteRule.isPending}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {(rules as any[] ?? []).map((rule: any) => {
+                  const ts: TestState = testStates[rule.id] ?? { status: "idle" };
+                  return (
+                    <tr key={rule.id} className="border-b border-border/50 hover:bg-accent/20 transition-colors">
+                      <td className="px-4 py-2.5 text-sm font-medium">{rule.name}</td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{capitalize(rule.triggerType.replace(/_/g, " "))}</td>
+                      <td className="px-4 py-2.5 text-xs">
+                        <span className="flex items-center gap-1">
+                          {rule.channel === "email" && "📧"}
+                          {rule.channel === "slack" && "💬"}
+                          {rule.channel === "discord" && "🎮"}
+                          {rule.channel === "telegram" && "✈️"}
+                          {rule.channel === "webhook" && "🔗"}
+                          {capitalize(rule.channel)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono truncate max-w-[160px]" title={rule.destination ?? ""}>
+                        {rule.destination ?? <span className="italic text-muted-foreground/50">platform default</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={cn(
+                          "text-xs px-2 py-0.5 rounded-md border",
+                          rule.isActive
+                            ? "bg-green-500/15 text-green-400 border-green-500/30"
+                            : "bg-muted text-muted-foreground border-border"
+                        )}>
+                          {rule.isActive ? "Active" : "Paused"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost" size="sm"
+                            className={cn(
+                              "h-7 px-2 text-xs gap-1",
+                              ts.status === "ok" && "text-green-400 hover:text-green-400",
+                              ts.status === "error" && "text-destructive hover:text-destructive",
+                            )}
+                            title="Send a test notification"
+                            onClick={() => handleTestRule(rule)}
+                            disabled={ts.status === "testing"}
+                          >
+                            {ts.status === "testing" && <Loader2 className="w-3 h-3 animate-spin" />}
+                            {ts.status === "ok" && <CheckCircle2 className="w-3 h-3" />}
+                            {ts.status === "error" && <XCircle className="w-3 h-3" />}
+                            {ts.status === "idle" && <FlaskConical className="w-3 h-3" />}
+                            {ts.status === "testing" ? "Sending…" : ts.status === "ok" ? "Sent!" : ts.status === "error" ? "Failed" : "Test"}
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon" className="h-7 w-7"
+                            title={rule.isActive ? "Pause rule" : "Activate rule"}
+                            onClick={() => handleToggleRule(rule)}
+                            disabled={updateRule.isPending}
+                          >
+                            <Power className={cn("w-3.5 h-3.5", rule.isActive ? "text-green-400" : "text-muted-foreground")} />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                            title="Delete rule"
+                            onClick={() => handleDeleteRule(rule.id)}
+                            disabled={deleteRule.isPending}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {(rules as any[] ?? []).length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">No alert rules configured.</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">No alert rules configured. Create one to start receiving notifications.</td></tr>
                 )}
               </tbody>
             </table>
@@ -280,6 +329,9 @@ export default function AlertsPage() {
               )}
               {ruleForm.channel === "slack" && (
                 <p className="text-[11px] text-muted-foreground">Create an Incoming Webhook in your Slack workspace and paste the URL here.</p>
+              )}
+              {ruleForm.channel === "email" && (
+                <p className="text-[11px] text-muted-foreground">Requires Resend API key or SMTP configured in Platform Settings.</p>
               )}
             </div>
             <DialogFooter className="mt-4">

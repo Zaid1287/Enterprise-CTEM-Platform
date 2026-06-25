@@ -4,6 +4,8 @@ import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, brandThreatScansTable, brandThreatResultsTable, assetsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { runBrandThreatScan } from "../lib/brandThreatRunner";
+import { dispatchNotifications } from "../lib/notifier";
+import { logger } from "../lib/logger";
 
 const router = Router();
 
@@ -101,7 +103,28 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
     scan = created;
   }
 
-  setImmediate(() => { void runBrandThreatScan(scan.id, raw); });
+  const scanId = scan.id;
+  setImmediate(async () => {
+    try {
+      await runBrandThreatScan(scanId, raw);
+      const results = await db.select().from(brandThreatResultsTable)
+        .where(eq(brandThreatResultsTable.scanId, scanId));
+      const highRiskCount = results.filter(r => (r.riskScore ?? 0) >= 7).length;
+      await dispatchNotifications({
+        tenantId,
+        eventType: "brand_threat",
+        title: `Brand Threat Scan Complete — ${raw}`,
+        message: `Found ${results.length} lookalike domain${results.length !== 1 ? "s" : ""} resembling "${raw}". ${highRiskCount} high-risk.`,
+        severity: highRiskCount > 0 ? "high" : results.length > 0 ? "medium" : "info",
+        findingsCount: results.length,
+        criticalCount: 0,
+        highCount: highRiskCount,
+        domain: raw,
+      });
+    } catch (err) {
+      logger.warn({ err, scanId }, "Brand threat scan or notification failed");
+    }
+  });
   res.json(toScanResponse(scan));
 });
 

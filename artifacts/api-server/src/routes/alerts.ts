@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { eq, and, inArray, isNull, or } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
 import {
@@ -8,6 +8,10 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest, verifyToken } from "../lib/auth";
 import { addSseClient, removeSseClient } from "../lib/sseManager";
+import { sendChannelNotification } from "../lib/notifier";
+import type { NotificationEvent } from "../lib/notifier";
+import { getPlatformSetting } from "./platformSettings";
+import { logger } from "../lib/logger";
 
 const router = Router();
 
@@ -68,6 +72,88 @@ router.post("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res)
   });
 });
 
+// ── Test a specific alert rule ────────────────────────────────────────────────
+router.post("/alerts/rules/:ruleId/test", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const ruleId = parseInt(req.params.ruleId, 10);
+  if (isNaN(ruleId)) { res.status(400).json({ error: "Invalid ruleId" }); return; }
+
+  const [rule] = await db.select().from(alertRulesTable)
+    .where(and(eq(alertRulesTable.id, ruleId), eq(alertRulesTable.tenantId, req.user!.tenantId)));
+  if (!rule) { res.status(404).json({ error: "Rule not found" }); return; }
+
+  const testEvent: NotificationEvent = {
+    tenantId: req.user!.tenantId,
+    eventType: "scan_complete",
+    title: "🧪 Test Notification — Sentinelware CTEM",
+    message: `This is a test notification for rule "${rule.name}". If you received this, your ${rule.channel} channel is configured correctly.`,
+    severity: "info",
+    findingsCount: 3,
+    criticalCount: 1,
+    highCount: 2,
+    assetName: "test-asset.example.com",
+    scanId: 0,
+  };
+
+  let dest = rule.destination;
+  if (!dest) {
+    dest = await getPlatformSetting(
+      rule.channel === "slack"    ? "slack_webhook_url" :
+      rule.channel === "discord"  ? "discord_webhook_url" :
+      rule.channel === "telegram" ? "telegram_bot_token" : ""
+    ) ?? "";
+    if (rule.channel === "telegram" && dest) {
+      const chatId = await getPlatformSetting("telegram_chat_id") ?? "";
+      dest = `${dest}:${chatId}`;
+    }
+  }
+
+  if (!dest) {
+    res.status(422).json({ error: `No destination configured for channel "${rule.channel}". Set a destination on the rule or configure platform-level settings.` });
+    return;
+  }
+
+  try {
+    await sendChannelNotification(rule.channel, dest, testEvent);
+    logger.info({ ruleId, channel: rule.channel, tenantId: req.user!.tenantId }, "Test notification sent successfully");
+    res.json({ success: true, channel: rule.channel, destination: dest.length > 40 ? dest.slice(0, 37) + "…" : dest });
+  } catch (err: any) {
+    logger.warn({ err, ruleId, channel: rule.channel }, "Test notification failed");
+    res.status(502).json({ error: err?.message ?? "Delivery failed. Check your destination URL/token." });
+  }
+});
+
+// ── Test a channel without saving a rule (platform-settings test) ─────────────
+router.post("/alerts/test-channel", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { channel, destination } = req.body as { channel?: string; destination?: string };
+  if (!channel || !destination) {
+    res.status(400).json({ error: "channel and destination are required" }); return;
+  }
+  const allowed = ["email", "slack", "discord", "telegram", "webhook"];
+  if (!allowed.includes(channel)) {
+    res.status(400).json({ error: `Invalid channel. Must be one of: ${allowed.join(", ")}` }); return;
+  }
+
+  const testEvent: NotificationEvent = {
+    tenantId: req.user!.tenantId,
+    eventType: "scan_complete",
+    title: "🧪 Test Notification — Sentinelware CTEM",
+    message: `This is a test notification via ${channel}. Your channel is configured correctly.`,
+    severity: "info",
+    findingsCount: 3,
+    criticalCount: 1,
+    highCount: 2,
+    assetName: "test-asset.example.com",
+    scanId: 0,
+  };
+
+  try {
+    await sendChannelNotification(channel, destination, testEvent);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? "Delivery failed" });
+  }
+});
+
 router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListAlertsQueryParams.safeParse(req.query);
   const role = req.user!.role;
@@ -77,7 +163,6 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(alertsTable.tenantId, ids);
   } else if (role === "client") {
-    // Cross-tenant: assigned assets can live in any tenant — skip tenantFilter entirely
     tenantFilter = undefined;
   } else {
     tenantFilter = eq(alertsTable.tenantId, req.user!.tenantId);
@@ -85,7 +170,6 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   const filters: any[] = tenantFilter ? [tenantFilter] : [];
 
   if (role === "client") {
-    // Show only alerts tied to the client's assigned assets (cross-tenant, no global/null alerts)
     const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
       .where(eq(assetsTable.assignedClientId, req.user!.userId));
     const assignedIds = assignedAssets.map(a => a.id);

@@ -158,26 +158,37 @@ async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> 
       // ── Dispatch Slack / Discord / email notifications ────────────────────────
       setImmediate(async () => {
         try {
-          const [critRows, highRows] = await Promise.all([
+          const pipelineAssetIdsForNotif = entry.configs.map(c => c.assetId);
+          const [critRows, highRows, assetTenantRows] = await Promise.all([
             db.select({ id: findingsTable.id }).from(findingsTable)
               .where(and(eq(findingsTable.scanId, entry.scanId), eq(findingsTable.severity, "critical"))),
             db.select({ id: findingsTable.id }).from(findingsTable)
               .where(and(eq(findingsTable.scanId, entry.scanId), eq(findingsTable.severity, "high"))),
+            db.select({ tenantId: assetsTable.tenantId }).from(assetsTable)
+              .where(inArray(assetsTable.id, pipelineAssetIdsForNotif)),
           ]);
           const criticalCount = critRows.length;
           const highCount = highRows.length;
           const severity = criticalCount > 0 ? "critical" : highCount > 0 ? "high" : "medium";
-          await dispatchNotifications({
-            tenantId: entry.tenantId,
-            eventType: criticalCount > 0 ? "critical_finding" : highCount > 0 ? "high_finding" : "scan_complete",
-            title: `Scan Complete — ${findingsCount} finding${findingsCount !== 1 ? "s" : ""} detected`,
-            message: `Pipeline scan #${entry.scanId} completed across ${entry.configs.length} asset${entry.configs.length !== 1 ? "s" : ""}. ${criticalCount} critical, ${highCount} high severity findings.`,
-            severity,
-            scanId: entry.scanId,
-            findingsCount,
-            criticalCount,
-            highCount,
-          });
+
+          // Collect all unique tenant IDs that own assets in this scan — so
+          // AM-triggered scans fire rules for client tenants, not just tenant 5.
+          const tenantIdsToNotify = new Set<number>([entry.tenantId]);
+          for (const row of assetTenantRows) tenantIdsToNotify.add(row.tenantId);
+
+          for (const tenantId of tenantIdsToNotify) {
+            await dispatchNotifications({
+              tenantId,
+              eventType: criticalCount > 0 ? "critical_finding" : highCount > 0 ? "high_finding" : "scan_complete",
+              title: `Scan Complete — ${findingsCount} finding${findingsCount !== 1 ? "s" : ""} detected`,
+              message: `Pipeline scan #${entry.scanId} completed across ${entry.configs.length} asset${entry.configs.length !== 1 ? "s" : ""}. ${criticalCount} critical, ${highCount} high severity findings.`,
+              severity,
+              scanId: entry.scanId,
+              findingsCount,
+              criticalCount,
+              highCount,
+            });
+          }
         } catch (err) {
           logger.warn({ err, scanId: entry.scanId }, "Notification dispatch failed (non-fatal)");
         }

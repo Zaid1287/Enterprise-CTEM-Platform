@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import nodemailer from "nodemailer";
 import { getPlatformSetting } from "../routes/platformSettings";
 
 let resend: Resend | null = null;
@@ -14,6 +15,24 @@ async function getResendAsync(): Promise<Resend | null> {
   return resend;
 }
 
+async function getSMTPTransport(): Promise<{ transport: nodemailer.Transporter; from: string } | null> {
+  const host = await getPlatformSetting("smtp_host");
+  if (!host) return null;
+  const portStr = await getPlatformSetting("smtp_port");
+  const port = parseInt(portStr ?? "587", 10);
+  const user = await getPlatformSetting("smtp_user");
+  const pass = await getPlatformSetting("smtp_pass");
+  const from = await getPlatformSetting("smtp_from") ?? `Sentinelware <noreply@${host}>`;
+  const transport = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: user && pass ? { user, pass } : undefined,
+    tls: { rejectUnauthorized: false },
+  });
+  return { transport, from };
+}
+
 export interface EmailOptions {
   to: string;
   subject: string;
@@ -22,16 +41,28 @@ export interface EmailOptions {
 
 export async function sendEmail(opts: EmailOptions): Promise<void> {
   const client = await getResendAsync();
-  if (!client) {
-    console.log(`[Email] To: ${opts.to} | Subject: ${opts.subject}`);
+  if (client) {
+    await client.emails.send({
+      from: "Sentinelware <noreply@sentinelware.io>",
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+    });
     return;
   }
-  await client.emails.send({
-    from: "Sentinelware <noreply@sentinelware.io>",
-    to: opts.to,
-    subject: opts.subject,
-    html: opts.html,
-  });
+
+  const smtp = await getSMTPTransport();
+  if (smtp) {
+    await smtp.transport.sendMail({
+      from: smtp.from,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+    });
+    return;
+  }
+
+  console.log(`[Email] No provider configured — To: ${opts.to} | Subject: ${opts.subject}`);
 }
 
 export function otpEmailHtml(opts: {

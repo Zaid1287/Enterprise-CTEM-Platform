@@ -188,6 +188,30 @@ async function insertAlertRecord(event: NotificationEvent): Promise<void> {
   }
 }
 
+/**
+ * Send a notification via a single channel rule — used by the test endpoint.
+ * Does NOT insert a DB record or fire platform-level fallbacks.
+ */
+export async function sendChannelNotification(
+  channel: string,
+  destination: string,
+  event: NotificationEvent,
+): Promise<void> {
+  if (channel === "email") {
+    await sendEmail({ to: destination, subject: `[Sentinelware] ${event.title}`, html: alertEmailHtml(event) });
+  } else if (channel === "slack") {
+    await postWebhook(destination, slackPayload(event));
+  } else if (channel === "discord") {
+    await postWebhook(destination, discordPayload(event));
+  } else if (channel === "telegram") {
+    await sendTelegram(destination, event);
+  } else if (channel === "webhook") {
+    await postWebhook(destination, genericWebhookPayload(event));
+  } else {
+    throw new Error(`Unknown channel: ${channel}`);
+  }
+}
+
 export async function dispatchNotifications(event: NotificationEvent): Promise<void> {
   try {
     await insertAlertRecord(event);
@@ -225,10 +249,10 @@ export async function dispatchNotifications(event: NotificationEvent): Promise<v
           firedKeys.add(key);
           logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "email" }, "Alert email sent");
         } else if (rule.channel === "telegram") {
-          const chatId = rule.destination
+          const telegramDest = rule.destination
             ? dest
             : `${dest}:${await getPlatformSetting("telegram_chat_id") ?? ""}`;
-          await sendTelegram(chatId, event);
+          await sendTelegram(telegramDest, event);
           firedKeys.add(key);
           logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "telegram" }, "Telegram notification sent");
         } else if (rule.channel === "webhook") {
