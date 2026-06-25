@@ -1428,7 +1428,7 @@ async function executePipeline(
     // ── Auto-trigger brand threat scan for Domain/Subdomain assets immediately ─
     // This fires per-asset (not post-scan), so brand intel runs in parallel
     // with the main pipeline rather than waiting for all assets to complete.
-    if ((asset.type === "Domain" || asset.type === "Subdomain") && domain && !isIp(domain)) {
+    if ((asset.type === "domain" || asset.type === "subdomain") && domain && !isIp(domain)) {
       setImmediate(async () => {
         try {
           await triggerBrandThreatScan(tenantId, domain, scanId);
@@ -2007,6 +2007,26 @@ async function executePipeline(
           }
         }
       }
+
+      // ── Auto-trigger brand threat scans for discovered subdomains ─────────
+      // Fan-out brand monitoring to all unique apex domains found via enumeration.
+      // Deduped against the asset's own domain to avoid double-scanning.
+      setImmediate(async () => {
+        try {
+          const apexDomains = new Set<string>();
+          for (const s of subdomainScanReport.all) {
+            const apex = extractDomain(s.name);
+            if (apex && !isIp(apex) && apex.includes(".") && apex !== domain) {
+              apexDomains.add(apex);
+            }
+          }
+          for (const apex of apexDomains) {
+            await triggerBrandThreatScan(tenantId, apex, scanId);
+          }
+        } catch (err) {
+          logger.warn({ err, assetId: asset.id }, "Subdomain brand threat fan-out failed (non-fatal)");
+        }
+      });
     }
 
     // ── Compile all data and store per-tool results ────────────────────────────
