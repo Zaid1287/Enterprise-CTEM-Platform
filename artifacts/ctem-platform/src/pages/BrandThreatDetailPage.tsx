@@ -7,6 +7,7 @@ import {
   ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
   Hash, Search, ChevronRight, Download, Fish, Database, Target,
   MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
+  TrendingUp,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -609,6 +610,7 @@ export default function BrandThreatDetailPage() {
   const [search, setSearch] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [activeTab, setActiveTab] = useState<TabMode>("typosquatting");
+  const [watchlistItem, setWatchlistItem] = useState<any | null>(null);
   const PAGE_SIZE = 50;
 
   const { data: scan, isLoading, refetch } = useGetBrandThreatScan(id, {
@@ -625,6 +627,23 @@ export default function BrandThreatDetailPage() {
   });
 
   const s = scan as any;
+
+  useEffect(() => {
+    if (!s?.domain) return;
+    const domain = s.domain.toLowerCase().replace(/^www\./, "");
+    void fetch("/api/brand-watchlist", {
+      headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then((items: any[]) => {
+        const match = items.find((i: any) =>
+          i.type === "domain" &&
+          i.value.toLowerCase().replace(/^www\./, "") === domain,
+        );
+        setWatchlistItem(match ?? null);
+      })
+      .catch(() => {});
+  }, [s?.domain]);
   const results: any[] = s?.results ?? [];
   const phishingDetections: any[] = s?.phishingDetections ?? [];
   const dataLeaks: any[] = s?.dataLeaks ?? [];
@@ -708,6 +727,11 @@ export default function BrandThreatDetailPage() {
               <XCircle className="w-3 h-3" /> Error
             </span>
           )}
+          {watchlistItem && (
+            <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full shrink-0">
+              <Shield className="w-3 h-3" /> Watchlist
+            </span>
+          )}
           <div className="flex-1" />
           <Button
             variant="outline" size="sm" className="h-8 shrink-0 gap-1.5"
@@ -735,6 +759,13 @@ export default function BrandThreatDetailPage() {
               <Zap className="w-2.5 h-2.5" /> Auto-triggered from pipeline scan #{s.pipelineScanId}
             </span>
           )}
+          {watchlistItem?.lastScanAt && (
+            <span className="ml-2 inline-flex items-center gap-0.5 text-blue-400/70">
+              <Shield className="w-2.5 h-2.5" />
+              Last auto-scan: {formatDate(watchlistItem.lastScanAt)}
+              {watchlistItem.nextScanAt && ` · Next: ${formatDate(watchlistItem.nextScanAt)}`}
+            </span>
+          )}
         </p>
 
         {s.status === "done" && (
@@ -755,6 +786,52 @@ export default function BrandThreatDetailPage() {
           </div>
         )}
       </div>
+
+      {/* ── Watchlist delta banner — shown after a scheduled re-scan ─────────── */}
+      {watchlistItem?.prevScanSummary && s.status === "done" && (() => {
+        const prev = watchlistItem.prevScanSummary as Record<string, number>;
+        const deltaLive    = (s.liveCount ?? 0)         - (prev.liveCount ?? 0);
+        const deltaPhish   = (s.phishingCount ?? 0)     - (prev.phishingCount ?? 0);
+        const deltaLeaks   = (s.dataLeakCount ?? 0)     - (prev.dataLeakCount ?? 0);
+        const deltaAbuse   = (s.brandAbuseCount ?? 0)   - (prev.brandAbuseCount ?? 0);
+        const totalNew     = Math.max(0, deltaLive) + Math.max(0, deltaPhish) + Math.max(0, deltaLeaks) + Math.max(0, deltaAbuse);
+        const hasChanges   = deltaLive !== 0 || deltaPhish !== 0 || deltaLeaks !== 0 || deltaAbuse !== 0;
+        if (!hasChanges) return null;
+        return (
+          <div className={cn(
+            "mx-6 mt-4 border rounded-xl p-4 shrink-0",
+            totalNew > 0
+              ? "bg-orange-500/5 border-orange-500/20"
+              : "bg-green-500/5 border-green-500/20",
+          )}>
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingUp className={cn("w-4 h-4 shrink-0", totalNew > 0 ? "text-orange-400" : "text-green-400")} />
+              <p className={cn("text-sm font-semibold", totalNew > 0 ? "text-orange-400" : "text-green-400")}>
+                {totalNew > 0
+                  ? `${totalNew} new threat${totalNew !== 1 ? "s" : ""} found since last scheduled scan`
+                  : "No new threats found since last scheduled scan"}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3 ml-6">
+              {[
+                { label: "Live domains",  delta: deltaLive,  warn: deltaLive > 0 },
+                { label: "Phishing",      delta: deltaPhish, warn: deltaPhish > 0 },
+                { label: "Data leaks",    delta: deltaLeaks, warn: deltaLeaks > 0 },
+                { label: "Brand abuse",   delta: deltaAbuse, warn: deltaAbuse > 0 },
+              ].filter(d => d.delta !== 0).map(d => (
+                <span key={d.label} className={cn(
+                  "text-[11px] font-semibold px-2 py-1 rounded-lg border",
+                  d.warn
+                    ? "text-orange-400 bg-orange-500/10 border-orange-500/20"
+                    : "text-green-400 bg-green-500/10 border-green-500/20",
+                )}>
+                  {d.delta > 0 ? `+${d.delta}` : d.delta} {d.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Status banners ──────────────────────────────────────────────────── */}
       {(s.status === "running" || s.status === "pending") && (

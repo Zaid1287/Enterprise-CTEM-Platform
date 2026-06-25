@@ -245,12 +245,39 @@ router.get("/brand-threats/:id/brand-abuse", requireAuth, async (req: Authentica
   res.json(results.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })));
 });
 
+function computeWatchlistNextScanAt(frequency: string): Date | null {
+  const now = new Date();
+  if (frequency === "daily") {
+    const next = new Date(now);
+    next.setDate(next.getDate() + 1);
+    next.setHours(3, 0, 0, 0);
+    return next;
+  }
+  if (frequency === "weekly") {
+    const next = new Date(now);
+    next.setDate(next.getDate() + 7);
+    next.setHours(3, 0, 0, 0);
+    return next;
+  }
+  return null;
+}
+
+function toWatchlistResponse(i: typeof brandWatchlistItemsTable.$inferSelect) {
+  return {
+    ...i,
+    createdAt:       i.createdAt.toISOString(),
+    nextScanAt:      i.nextScanAt ? i.nextScanAt.toISOString() : null,
+    lastScanAt:      i.lastScanAt ? i.lastScanAt.toISOString() : null,
+    prevScanSummary: (i.prevScanSummary as Record<string, number> | null) ?? null,
+  };
+}
+
 // ── GET /brand-watchlist ──────────────────────────────────────────────────────
 router.get("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const items = await db.select().from(brandWatchlistItemsTable)
     .where(eq(brandWatchlistItemsTable.tenantId, req.user!.tenantId))
     .orderBy(desc(brandWatchlistItemsTable.createdAt));
-  res.json(items.map(i => ({ ...i, createdAt: i.createdAt.toISOString() })));
+  res.json(items.map(toWatchlistResponse));
 });
 
 // ── POST /brand-watchlist ─────────────────────────────────────────────────────
@@ -258,6 +285,7 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
   const type = String(req.body?.type ?? "").trim();
   const value = String(req.body?.value ?? "").trim();
   const notes = String(req.body?.notes ?? "").trim() || null;
+  const frequency = String(req.body?.frequency ?? "none").trim();
 
   if (!type || !value) {
     res.status(400).json({ error: "type and value are required" }); return;
@@ -266,15 +294,52 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
   if (!validTypes.includes(type)) {
     res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` }); return;
   }
+  const validFrequencies = ["none", "daily", "weekly"];
+  if (!validFrequencies.includes(frequency)) {
+    res.status(400).json({ error: `frequency must be one of: ${validFrequencies.join(", ")}` }); return;
+  }
+
+  const nextScanAt = type === "domain" ? computeWatchlistNextScanAt(frequency) : null;
 
   const [item] = await db.insert(brandWatchlistItemsTable).values({
     tenantId: req.user!.tenantId,
     type,
     value,
     notes,
+    frequency,
+    nextScanAt,
   }).returning();
 
-  res.status(201).json({ ...item, createdAt: item!.createdAt.toISOString() });
+  res.status(201).json(toWatchlistResponse(item!));
+});
+
+// ── PATCH /brand-watchlist/:id ────────────────────────────────────────────────
+router.patch("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const [existing] = await db.select().from(brandWatchlistItemsTable)
+    .where(and(eq(brandWatchlistItemsTable.id, id), eq(brandWatchlistItemsTable.tenantId, req.user!.tenantId)));
+  if (!existing) { res.status(404).json({ error: "Watchlist item not found" }); return; }
+
+  const updates: Partial<typeof brandWatchlistItemsTable.$inferInsert> = {};
+  if (req.body?.notes !== undefined) updates.notes = String(req.body.notes).trim() || null;
+  if (req.body?.frequency !== undefined) {
+    const freq = String(req.body.frequency).trim();
+    const validFrequencies = ["none", "daily", "weekly"];
+    if (!validFrequencies.includes(freq)) {
+      res.status(400).json({ error: `frequency must be one of: ${validFrequencies.join(", ")}` }); return;
+    }
+    updates.frequency = freq;
+    if (existing.type === "domain") {
+      updates.nextScanAt = computeWatchlistNextScanAt(freq);
+    }
+  }
+
+  const [updated] = await db.update(brandWatchlistItemsTable)
+    .set(updates)
+    .where(eq(brandWatchlistItemsTable.id, id))
+    .returning();
+  res.json(toWatchlistResponse(updated!));
 });
 
 // ── DELETE /brand-watchlist/:id ───────────────────────────────────────────────

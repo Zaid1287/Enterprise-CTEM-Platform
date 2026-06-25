@@ -68,12 +68,17 @@ export const brandThreatResultsTable = pgTable("brand_threat_results", {
 });
 
 export const brandWatchlistItemsTable = pgTable("brand_watchlist_items", {
-  id:        serial("id").primaryKey(),
-  tenantId:  integer("tenant_id").notNull().references(() => tenantsTable.id),
-  type:      text("type").notNull(),
-  value:     text("value").notNull(),
-  notes:     text("notes"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  id:              serial("id").primaryKey(),
+  tenantId:        integer("tenant_id").notNull().references(() => tenantsTable.id),
+  type:            text("type").notNull(),
+  value:           text("value").notNull(),
+  notes:           text("notes"),
+  frequency:       text("frequency").notNull().default("none"),
+  nextScanAt:      timestamp("next_scan_at", { withTimezone: true }),
+  lastScanAt:      timestamp("last_scan_at", { withTimezone: true }),
+  lastScanId:      integer("last_scan_id").references(() => brandThreatScansTable.id, { onDelete: "set null" }),
+  prevScanSummary: jsonb("prev_scan_summary"),
+  createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const dataLeakResultsTable = pgTable("data_leak_results", {

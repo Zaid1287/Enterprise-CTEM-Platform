@@ -8,7 +8,7 @@
  */
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
-import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable } from "@workspace/db";
+import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable } from "@workspace/db";
 import { and, eq, sql, lte, isNotNull } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 
@@ -255,9 +255,137 @@ async function dispatchDueSchedules(): Promise<void> {
   }
 }
 
+function computeWatchlistNextScanAt(frequency: string, from: Date): Date | null {
+  if (frequency === "daily") {
+    const next = new Date(from);
+    next.setDate(next.getDate() + 1);
+    next.setUTCHours(3, 0, 0, 0);
+    return next;
+  }
+  if (frequency === "weekly") {
+    const next = new Date(from);
+    next.setDate(next.getDate() + 7);
+    next.setUTCHours(3, 0, 0, 0);
+    return next;
+  }
+  return null;
+}
+
+async function dispatchDueWatchlistDomains(): Promise<void> {
+  const now = new Date();
+  const dueItems = await db
+    .select()
+    .from(brandWatchlistItemsTable)
+    .where(
+      and(
+        eq(brandWatchlistItemsTable.type, "domain"),
+        isNotNull(brandWatchlistItemsTable.nextScanAt),
+        lte(brandWatchlistItemsTable.nextScanAt, now),
+      ),
+    );
+
+  if (dueItems.length === 0) return;
+
+  const { runBrandThreatScan } = await import("../lib/brandThreatRunner");
+  const { brandThreatResultsTable, phishingDetectionsTable, dataLeakResultsTable, brandAbuseResultsTable } = await import("@workspace/db");
+
+  for (const item of dueItems) {
+    try {
+      const domain = item.value.toLowerCase()
+        .replace(/^https?:\/\//, "")
+        .replace(/^www\./, "")
+        .split("/")[0]!
+        .split("?")[0]!;
+
+      if (!domain) continue;
+
+      const [existing] = await db
+        .select()
+        .from(brandThreatScansTable)
+        .where(
+          and(
+            eq(brandThreatScansTable.tenantId, item.tenantId),
+            eq(brandThreatScansTable.domain, domain),
+          ),
+        );
+
+      let scanId: number;
+      let prevScanSummary: Record<string, number> | null = null;
+
+      if (existing) {
+        // Snapshot the current scan summary BEFORE deletion for delta computation
+        prevScanSummary = {
+          totalPermutations: existing.totalPermutations ?? 0,
+          liveCount:         existing.liveCount ?? 0,
+          registeredCount:   existing.registeredCount ?? 0,
+          phishingCount:     existing.phishingCount ?? 0,
+          dataLeakCount:     existing.dataLeakCount ?? 0,
+          brandAbuseCount:   existing.brandAbuseCount ?? 0,
+        };
+
+        // Delete prior child rows so new scan results are clean
+        await Promise.all([
+          db.delete(brandThreatResultsTable).where(eq(brandThreatResultsTable.scanId, existing.id)),
+          db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, existing.id)),
+          db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, existing.id)),
+          db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, existing.id)),
+        ]);
+        await db.update(brandThreatScansTable)
+          .set({
+            status: "pending",
+            totalPermutations: 0,
+            liveCount: 0,
+            registeredCount: 0,
+            phishingRisk: "low",
+            fuzzerBreakdown: null,
+            error: null,
+            completedAt: null,
+            dataLeakCount: 0,
+            phishingCount: 0,
+            brandAbuseCount: 0,
+            darkWebCount: 0,
+          })
+          .where(eq(brandThreatScansTable.id, existing.id));
+        scanId = existing.id;
+      } else {
+        const [created] = await db.insert(brandThreatScansTable).values({
+          tenantId: item.tenantId,
+          domain,
+          status: "pending",
+        }).returning();
+        scanId = created!.id;
+      }
+
+      const nextScanAt = computeWatchlistNextScanAt(item.frequency ?? "none", now);
+
+      await db.update(brandWatchlistItemsTable)
+        .set({
+          lastScanAt: now,
+          lastScanId: scanId,
+          nextScanAt,
+          prevScanSummary: prevScanSummary ?? undefined,
+        })
+        .where(eq(brandWatchlistItemsTable.id, item.id));
+
+      setImmediate(async () => {
+        try {
+          await runBrandThreatScan(scanId, domain);
+          logger.info({ scanId, domain, itemId: item.id }, "Beat: watchlist brand scan completed");
+        } catch (err) {
+          logger.error({ err, scanId, domain }, "Beat: watchlist brand scan failed");
+        }
+      });
+
+      logger.info({ itemId: item.id, domain, scanId, nextScanAt }, "Beat: watchlist domain scan dispatched");
+    } catch (err) {
+      logger.error({ err, itemId: item.id }, "Beat: failed to dispatch watchlist item");
+    }
+  }
+}
+
 async function dispatchDueScans(): Promise<void> {
   try {
-    await Promise.all([dispatchDueAssets(), dispatchDueSchedules()]);
+    await Promise.all([dispatchDueAssets(), dispatchDueSchedules(), dispatchDueWatchlistDomains()]);
   } catch (err) {
     logger.error({ err }, "Beat scheduler error");
   }

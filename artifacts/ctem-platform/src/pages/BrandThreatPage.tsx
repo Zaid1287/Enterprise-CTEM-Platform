@@ -9,7 +9,8 @@ import {
   ShieldAlert, Plus, Trash2, Loader2, Globe, AlertTriangle,
   CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap, Shield,
   TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
-  BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link,
+  BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link, CalendarClock,
+  RotateCw, Edit2, Check, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -255,13 +256,121 @@ const WATCHLIST_TYPE_ICONS: Record<string, React.ReactNode> = {
 
 const WATCHLIST_TYPES = ["keyword","logo_url","domain","ip","email","social_handle","mobile_app"] as const;
 
+const FREQ_LABELS: Record<string, string> = {
+  none:   "No schedule",
+  daily:  "Daily",
+  weekly: "Weekly",
+};
+
+function WatchlistItem({
+  item, onDelete, onFrequencyChange, deleting,
+}: {
+  item: any;
+  onDelete: (id: number) => void;
+  onFrequencyChange: (id: number, frequency: string) => void;
+  deleting: boolean;
+}) {
+  const [editingFreq, setEditingFreq] = useState(false);
+  const [pendingFreq, setPendingFreq] = useState<string>(item.frequency ?? "none");
+  const isDomain = item.type === "domain";
+
+  function saveFreq() {
+    onFrequencyChange(item.id, pendingFreq);
+    setEditingFreq(false);
+  }
+
+  return (
+    <div className="bg-muted/10 border border-border rounded-xl px-4 py-3 space-y-2">
+      <div className="flex items-center gap-3">
+        <span className="text-muted-foreground shrink-0">
+          {WATCHLIST_TYPE_ICONS[item.type] ?? <Tag className="w-3.5 h-3.5" />}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-mono font-medium truncate">{item.value}</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted border border-border text-muted-foreground capitalize shrink-0">
+              {item.type?.replace(/_/g, " ")}
+            </span>
+            {isDomain && item.frequency && item.frequency !== "none" && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center gap-1 shrink-0">
+                <RotateCw className="w-2.5 h-2.5" />
+                {FREQ_LABELS[item.frequency]}
+              </span>
+            )}
+          </div>
+          {item.notes && (
+            <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{item.notes}</p>
+          )}
+        </div>
+        <span className="text-[10px] text-muted-foreground/50 shrink-0 hidden sm:block">{formatDate(item.createdAt)}</span>
+        {isDomain && (
+          <Button
+            variant="ghost" size="sm"
+            onClick={() => { setEditingFreq(v => !v); setPendingFreq(item.frequency ?? "none"); }}
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-blue-400 shrink-0"
+            title="Set scan schedule"
+          >
+            <CalendarClock className="w-3.5 h-3.5" />
+          </Button>
+        )}
+        <Button
+          variant="ghost" size="sm"
+          onClick={() => onDelete(item.id)}
+          disabled={deleting}
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400 shrink-0"
+        >
+          {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+        </Button>
+      </div>
+
+      {/* Scheduling meta row — only domains */}
+      {isDomain && (item.lastScanAt || item.nextScanAt || editingFreq) && (
+        <div className="flex items-center gap-4 pl-7 flex-wrap">
+          {item.lastScanAt && (
+            <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+              <Clock className="w-3 h-3" /> Last scan: {formatDate(item.lastScanAt)}
+            </span>
+          )}
+          {item.nextScanAt && (
+            <span className="text-[10px] text-blue-400/70 flex items-center gap-1">
+              <CalendarClock className="w-3 h-3" /> Next: {formatDate(item.nextScanAt)}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Inline frequency editor */}
+      {editingFreq && (
+        <div className="flex items-center gap-2 pl-7">
+          <span className="text-xs text-muted-foreground">Auto-scan:</span>
+          <select
+            value={pendingFreq}
+            onChange={e => setPendingFreq(e.target.value)}
+            className="bg-background border border-border rounded-lg px-2 py-1 text-xs focus:outline-none"
+          >
+            {Object.entries(FREQ_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+          <Button size="sm" variant="ghost" onClick={saveFreq} className="h-6 w-6 p-0 text-green-400">
+            <Check className="w-3.5 h-3.5" />
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setEditingFreq(false)} className="h-6 w-6 p-0 text-muted-foreground">
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WatchlistSection() {
   const { toast } = useToast();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ value: "", type: "keyword", notes: "" });
+  const [form, setForm] = useState({ value: "", type: "domain", notes: "", frequency: "none" });
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   async function fetchItems() {
@@ -286,12 +395,17 @@ function WatchlistSection() {
       const res = await fetch("/api/brand-watchlist", {
         method: "POST",
         headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ value: form.value.trim(), type: form.type, notes: form.notes }),
+        body: JSON.stringify({
+          value: form.value.trim(),
+          type: form.type,
+          notes: form.notes,
+          frequency: form.frequency,
+        }),
       });
       if (!res.ok) throw new Error("Failed");
       toast({ title: "Watchlist item added" });
       setShowForm(false);
-      setForm({ value: "", type: "keyword", notes: "" });
+      setForm({ value: "", type: "domain", notes: "", frequency: "none" });
       void fetchItems();
     } catch {
       toast({ title: "Failed to add watchlist item", variant: "destructive" });
@@ -316,6 +430,29 @@ function WatchlistSection() {
     }
   }
 
+  async function handleFrequencyChange(id: number, frequency: string) {
+    try {
+      const res = await fetch(`/api/brand-watchlist/${id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      setItems(prev => prev.map(i => i.id === id ? updated : i));
+      toast({
+        title: frequency === "none"
+          ? "Auto-scan disabled"
+          : `Auto-scan set to ${FREQ_LABELS[frequency]}`,
+      });
+    } catch {
+      toast({ title: "Failed to update schedule", variant: "destructive" });
+    }
+  }
+
+  const domainItems = items.filter((i: any) => i.type === "domain");
+  const scheduledCount = domainItems.filter((i: any) => i.frequency && i.frequency !== "none").length;
+
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
       <div className="max-w-3xl">
@@ -323,8 +460,14 @@ function WatchlistSection() {
           <div>
             <h2 className="text-sm font-semibold">Brand Asset Watchlist</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Monitor keywords, domains, IPs, emails, social handles, and mobile app names for brand abuse across scans.
+              Monitor keywords, domains, IPs, emails, and social handles. Domain items can be auto-scanned on a schedule.
             </p>
+            {scheduledCount > 0 && (
+              <p className="text-[11px] text-blue-400 mt-1 flex items-center gap-1">
+                <RotateCw className="w-3 h-3" />
+                {scheduledCount} domain{scheduledCount !== 1 ? "s" : ""} scheduled for automatic re-scanning
+              </p>
+            )}
           </div>
           <Button size="sm" onClick={() => setShowForm(v => !v)} className="h-8 gap-1.5">
             <Plus className="w-3.5 h-3.5" /> Add Item
@@ -357,6 +500,27 @@ function WatchlistSection() {
                 </select>
               </div>
             </div>
+            {form.type === "domain" && (
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">
+                  <span className="flex items-center gap-1"><CalendarClock className="w-3 h-3" /> Auto-scan Schedule</span>
+                </label>
+                <select
+                  value={form.frequency}
+                  onChange={e => setForm(v => ({ ...v, frequency: e.target.value }))}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                >
+                  {Object.entries(FREQ_LABELS).map(([val, label]) => (
+                    <option key={val} value={val}>{label}</option>
+                  ))}
+                </select>
+                {form.frequency !== "none" && (
+                  <p className="text-[10px] text-blue-400/70 mt-1.5">
+                    Brand threat scan will run automatically at 03:00 UTC every {form.frequency === "daily" ? "day" : "week"}.
+                  </p>
+                )}
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Description</label>
               <input
@@ -387,37 +551,19 @@ function WatchlistSection() {
             </div>
             <p className="text-sm font-medium text-muted-foreground">No watchlist items yet</p>
             <p className="text-xs text-muted-foreground/60 mt-1 max-w-xs">
-              Add keywords, domains, or other assets you want to monitor for brand abuse across all scans.
+              Add a domain to auto-scan it daily or weekly for new typosquatting and phishing threats.
             </p>
           </div>
         ) : (
           <div className="space-y-2">
             {items.map((item: any) => (
-              <div key={item.id} className="flex items-center gap-3 bg-muted/10 border border-border rounded-xl px-4 py-3">
-                <span className="text-muted-foreground shrink-0">
-                  {WATCHLIST_TYPE_ICONS[item.type] ?? <Tag className="w-3.5 h-3.5" />}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-mono font-medium truncate">{item.value}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted border border-border text-muted-foreground capitalize shrink-0">
-                      {item.type?.replace(/_/g, " ")}
-                    </span>
-                  </div>
-                  {item.notes && (
-                    <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{item.notes}</p>
-                  )}
-                </div>
-                <span className="text-[10px] text-muted-foreground/50 shrink-0">{formatDate(item.createdAt)}</span>
-                <Button
-                  variant="ghost" size="sm"
-                  onClick={() => handleDelete(item.id)}
-                  disabled={deletingId === item.id}
-                  className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400 shrink-0"
-                >
-                  {deletingId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                </Button>
-              </div>
+              <WatchlistItem
+                key={item.id}
+                item={item}
+                onDelete={handleDelete}
+                onFrequencyChange={handleFrequencyChange}
+                deleting={deletingId === item.id}
+              />
             ))}
           </div>
         )}
