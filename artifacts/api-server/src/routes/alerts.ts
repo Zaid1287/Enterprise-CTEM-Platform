@@ -76,21 +76,21 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(alertsTable.tenantId, ids);
+  } else if (role === "client") {
+    // Cross-tenant: assigned assets can live in any tenant — skip tenantFilter entirely
+    tenantFilter = undefined;
   } else {
     tenantFilter = eq(alertsTable.tenantId, req.user!.tenantId);
   }
-  const filters = [tenantFilter];
+  const filters: any[] = tenantFilter ? [tenantFilter] : [];
 
   if (role === "client") {
-    // Look up assigned assets cross-tenant (no tenant_id restriction — client assets can span tenants)
+    // Show only alerts tied to the client's assigned assets (cross-tenant, no global/null alerts)
     const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
       .where(eq(assetsTable.assignedClientId, req.user!.userId));
     const assignedIds = assignedAssets.map(a => a.id);
-    if (assignedIds.length > 0) {
-      filters.push(inArray(alertsTable.relatedAssetId, assignedIds) as any);
-    } else {
-      res.json([]); return;
-    }
+    if (assignedIds.length === 0) { res.json([]); return; }
+    filters.push(inArray(alertsTable.relatedAssetId, assignedIds));
   }
 
   if (q.success) {

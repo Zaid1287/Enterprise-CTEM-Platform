@@ -587,15 +587,16 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
   const findingsWhere = isClient
     ? (assignedAssetIds.length > 0 ? inArray(findingsTable.assetId, assignedAssetIds) : null)
     : eq(findingsTable.tenantId, tid);
+  // For clients: ONLY show alerts tied to their assigned assets (no null-relatedAssetId global alerts)
   const alertsWhere = isClient
     ? (assignedAssetIds.length > 0
-        ? and(eq(alertsTable.tenantId, tid), or(isNull(alertsTable.relatedAssetId), inArray(alertsTable.relatedAssetId, assignedAssetIds)))
-        : and(eq(alertsTable.tenantId, tid), isNull(alertsTable.relatedAssetId)))
+        ? inArray(alertsTable.relatedAssetId, assignedAssetIds)
+        : null)
     : eq(alertsTable.tenantId, tid);
 
   const [findings, alerts, scans, takedowns] = await Promise.all([
     findingsWhere ? db.select().from(findingsTable).where(findingsWhere) : Promise.resolve([]),
-    db.select().from(alertsTable).where(alertsWhere!),
+    alertsWhere ? db.select().from(alertsTable).where(alertsWhere) : Promise.resolve([]),
     db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
     db.select().from(takedownRequestsTable).where(eq(takedownRequestsTable.tenantId, tid)),
   ]);
