@@ -2935,8 +2935,28 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
     const dns    = dedup(allDns as any[], "value");
     const eps    = dedup(allEndpoints as any[], "url");
     const intel  = dedup(allIntel as any[], "key");
-    const secrets = vulns.filter((v: any) => v.cve?.startsWith("SEC-") || v.cve?.startsWith("CRED-"));
-    const cves    = vulns.filter((v: any) => !v.cve?.startsWith("SEC-") && !v.cve?.startsWith("HDR-") && !v.cve?.startsWith("CWE-") && !v.cve?.startsWith("CRED-"));
+    // Prefixes used by every secrets-producing scanner:
+    //  SEC-      → runSecretsScanner (env files, config files, JS files)
+    //  CRED-     → legacy credential findings
+    //  JSSEC-    → jsAnalyzer (API keys / secrets embedded in JS bundles)
+    //  GH-SECRET-→ secretsHunter (GitHub repo secret scan)
+    const SECRET_PREFIXES = ["SEC-", "CRED-", "JSSEC-", "GH-SECRET-"];
+    const isSecretFinding = (id: string) => SECRET_PREFIXES.some(p => id.startsWith(p));
+    const secretVulns = vulns.filter((v: any) => isSecretFinding(v.cve ?? ""));
+    // Remap VulnFinding fields → shape the Secrets card expects: type / value / file
+    const secrets = secretVulns.map((v: any) => {
+      const titleStr = String(v.title ?? "");
+      // "AWS Access Key exposed in /.env" → type = "AWS Access Key"
+      const typeMatch = titleStr.match(/^(.+?)\s+(?:exposed|found|detected|discovered)\s+(?:in|at)/i);
+      const type = ((typeMatch?.[1] ?? titleStr) || v.cve) ?? "Secret";
+      // "Credential discovered at /.env: AKIA****1234" → file = "/.env", value = "AKIA****1234"
+      const sourceStr = String(v.source ?? "");
+      const sourceMatch = sourceStr.match(/at\s+(\S+)[:\s]+(.+)/);
+      const file = sourceMatch?.[1] ?? "";
+      const value = sourceMatch?.[2]?.trim() ?? "";
+      return { type, value, file, port: (v as any).port ?? null, severity: v.severity, cve: v.cve, remediation: v.remediation };
+    });
+    const cves = vulns.filter((v: any) => !isSecretFinding(v.cve ?? "") && !v.cve?.startsWith("HDR-") && !v.cve?.startsWith("CWE-"));
     const headerIssues = vulns.filter((v: any) => v.cve?.startsWith("HDR-") || v.cve?.startsWith("CWE-"));
 
     const critCount = cves.filter((v: any) => v.severity === "critical").length;

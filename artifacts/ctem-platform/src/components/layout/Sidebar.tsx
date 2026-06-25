@@ -50,7 +50,7 @@ const navGroups: NavGroup[] = [
   },
   {
     title: "Protection",
-    onlyFor: ["client", "admin"],
+    onlyFor: ["client", "admin", "super_admin"],
     items: [
       { label: "Takedown Requests", href: "/takedowns", icon: ShieldOff },
     ],

@@ -649,9 +649,29 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
     .map(a => ({ id: a.id, title: a.title, message: a.message, severity: a.severity, isRead: a.isRead, createdAt: a.createdAt }));
 
   // False positive breakdown
-  const fpSubmitted = findings.filter(f => f.falsePositiveStatus === "submitted").length;
-  const fpConfirmed = findings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
-  const fpRejected = findings.filter(f => f.falsePositiveStatus === "rejected").length;
+  const fpSubmitted = allFindings.filter(f => f.falsePositiveStatus === "submitted").length;
+  const fpConfirmed = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpRejected  = allFindings.filter(f => f.falsePositiveStatus === "rejected").length;
+
+  // Full list of false positive findings (any non-"none" status) with asset name for display
+  const assetNameMap = new Map(allAssets.map(a => [a.id, a.name]));
+  const falsePositiveFindings = allFindings
+    .filter(f => f.falsePositiveStatus && f.falsePositiveStatus !== "none")
+    .map(f => ({
+      id: f.id,
+      title: f.title,
+      severity: f.severity,
+      status: f.status,
+      falsePositiveStatus: f.falsePositiveStatus,
+      isFalsePositive: f.isFalsePositive,
+      assetId: f.assetId,
+      assetName: assetNameMap.get(f.assetId ?? -1) ?? "Unknown Asset",
+      cveId: f.cve,
+      tenantId: f.tenantId,
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
+    }))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   // Takedown breakdown
   const tdTotal = takedowns.length;
@@ -795,6 +815,7 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
     takedowns: { total: tdTotal, submitted: tdSubmitted, inProgress: tdInProgress, closed: tdClosed },
     recentTakedowns,
     falsePositives: { submitted: fpSubmitted, confirmed: fpConfirmed, rejected: fpRejected },
+    falsePositiveFindings,
     scoreTimeline,
     categoryScores,
     topAssetTypes,
