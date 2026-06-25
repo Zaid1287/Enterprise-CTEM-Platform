@@ -145,7 +145,7 @@ async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> 
           const uniqueDomains = [...new Set(
             assetRows
               .map(a => extractDomain(a.value))
-              .filter(d => d.length > 0 && !isIp(d) && d.includes(".")),
+              .filter(d => d.length > 0 && !isIp(d) && isValidHostname(d)),
           )];
           for (const domain of uniqueDomains) {
             await triggerBrandThreatScan(entry.tenantId, domain, entry.scanId);
@@ -297,6 +297,11 @@ function extractDomain(target: string): string {
 
 function isIp(s: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(s);
+}
+
+/** Strict hostname validation — only allow RFC-1123 labels; no shell metacharacters. */
+function isValidHostname(s: string): boolean {
+  return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$/i.test(s);
 }
 
 function maskSecret(s: string): string {
@@ -1428,7 +1433,7 @@ async function executePipeline(
     // ── Auto-trigger brand threat scan for Domain/Subdomain assets immediately ─
     // This fires per-asset (not post-scan), so brand intel runs in parallel
     // with the main pipeline rather than waiting for all assets to complete.
-    if ((asset.type === "domain" || asset.type === "subdomain") && domain && !isIp(domain)) {
+    if ((asset.type === "domain" || asset.type === "subdomain") && domain && !isIp(domain) && isValidHostname(domain)) {
       setImmediate(async () => {
         try {
           await triggerBrandThreatScan(tenantId, domain, scanId);
@@ -2018,7 +2023,7 @@ async function executePipeline(
           if (domain) triggeredDomains.add(domain); // already triggered for parent asset
           for (const s of subdomainScanReport.all) {
             const sub = s.name?.toLowerCase().trim();
-            if (!sub || isIp(sub) || !sub.includes(".")) continue;
+            if (!sub || isIp(sub) || !isValidHostname(sub)) continue;
             if (triggeredDomains.has(sub)) continue;
             triggeredDomains.add(sub);
             await triggerBrandThreatScan(tenantId, sub, scanId);

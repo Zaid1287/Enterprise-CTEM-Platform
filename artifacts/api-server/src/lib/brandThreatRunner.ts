@@ -84,9 +84,9 @@ interface PermResult {
 }
 
 async function runDnstwistBinary(domain: string): Promise<PermResult[]> {
-  const cp = await import("child_process");
-  const { stdout } = await promisify(cp.exec)(
-    `dnstwist --format json --threads 20 ${domain}`,
+  const { stdout } = await execFileAsync(
+    "dnstwist",
+    ["--format", "json", "--threads", "20", domain],
     { timeout: 180_000, maxBuffer: 20 * 1024 * 1024 },
   );
   const raw = JSON.parse(stdout) as Array<{

@@ -183,7 +183,7 @@ router.get("/brand-threats/:id/typosquatting", requireAuth, async (req: Authenti
   const results = await db.select().from(brandThreatResultsTable)
     .where(eq(brandThreatResultsTable.scanId, id))
     .orderBy(desc(brandThreatResultsTable.riskScore));
-  const registered = results.filter(r => r.registrationStatus === "registered" || r.registrationStatus === "active" || r.registrationStatus === "protected");
+  const registered = results.filter(r => r.registrationStatus === "registered" || r.registrationStatus === "active" || r.registrationStatus === "parked" || r.registrationStatus === "protected");
   const unregistered = results.filter(r => !r.registrationStatus || r.registrationStatus === "unresolved" || r.registrationStatus === "unregistered");
   res.json({
     total: results.length,
