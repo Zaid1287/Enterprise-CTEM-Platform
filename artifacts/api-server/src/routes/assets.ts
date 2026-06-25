@@ -4,6 +4,7 @@ import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db, assetsTable, usersTable, findingsTable, findingCommentsTable, riskScoresTable,
   technologyDetectionsTable, scanAssetResultsTable, assetGroupMembersTable, discoveryResultsTable,
+  tenantsTable,
 } from "@workspace/db";
 import {
   CreateAssetBody, GetAssetParams, UpdateAssetParams, UpdateAssetBody,
@@ -51,6 +52,17 @@ const upload = multer({
 async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
   if (assets.length === 0) return [];
 
+  // Fetch tenant names for SA cross-tenant view
+  const tenantIds = [...new Set(assets.map(a => a.tenantId).filter((id): id is number => id != null))];
+  const tenantMap = new Map<number, string>();
+  if (tenantIds.length > 0) {
+    const tenantRows = await db
+      .select({ id: tenantsTable.id, name: tenantsTable.name })
+      .from(tenantsTable)
+      .where(inArray(tenantsTable.id, tenantIds));
+    for (const t of tenantRows) tenantMap.set(t.id, t.name);
+  }
+
   const userIds = new Set<number>();
   for (const a of assets) {
     if (a.assignedClientId) userIds.add(a.assignedClientId);
@@ -90,7 +102,7 @@ async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
     .where(inArray(riskScoresTable.assetId, assetIds));
   const riskMap = new Map(riskRows.map(r => [r.assetId, r]));
 
-  return assets.map(a => toAssetResponse(a, userMap, findingMap, riskMap));
+  return assets.map(a => toAssetResponse(a, userMap, findingMap, riskMap, tenantMap));
 }
 
 /** WHERE clause for a single asset: SA can access any asset across all tenants. */
@@ -105,12 +117,14 @@ function toAssetResponse(
   userMap?: Map<number, string>,
   findingMap?: Map<number, { total: number; open: number; critical: number; high: number }>,
   riskMap?: Map<number, { score: number; level: string }>,
+  tenantMap?: Map<number, string>,
 ) {
   const findings = findingMap?.get(a.id);
   const risk = riskMap?.get(a.id);
   return {
     id: a.id,
     tenantId: a.tenantId,
+    tenantName: (a.tenantId && tenantMap) ? (tenantMap.get(a.tenantId) ?? null) : null,
     name: a.name,
     type: a.type,
     value: a.value,

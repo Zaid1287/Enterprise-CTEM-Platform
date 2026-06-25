@@ -456,6 +456,9 @@ export default function AssetsPage() {
             <tr className="border-b border-border bg-accent/20">
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Asset</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Type</th>
+              {user?.role === "super_admin" && (
+                <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Tenant</th>
+              )}
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Value</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Risk Level</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Risk Score</th>
@@ -497,6 +500,15 @@ export default function AssetsPage() {
                   <td className="px-3 py-3">
                     <TypeBadge type={asset.type} />
                   </td>
+
+                  {/* Tenant (SA only) */}
+                  {user?.role === "super_admin" && (
+                    <td className="px-3 py-3">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-accent/60 text-muted-foreground">
+                        {(asset as any).tenantName ?? "—"}
+                      </span>
+                    </td>
+                  )}
 
                   {/* Value */}
                   <td className="px-3 py-3 max-w-[160px]">
