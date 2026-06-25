@@ -23,6 +23,7 @@ const PLATFORM_KEYS = [
   { key: "hibp_api_key",         label: "HIBP API Key",          description: "Have I Been Pwned API key — checks if your domain's email accounts appear in known data breaches", category: "brand_threat" },
   { key: "google_safe_browsing_key", label: "Google Safe Browsing Key", description: "Google Safe Browsing API key — verifies brand threat domains against Google's phishing/malware database", category: "brand_threat" },
   { key: "whoisxml_api_key",     label: "WhoisXML API Key",      description: "WhoisXML API key — enhanced WHOIS lookups with registrant contact data and domain age analysis", category: "brand_threat" },
+  { key: "phishtank_api_key",    label: "PhishTank API Key",     description: "PhishTank API key — removes anonymous throttle when downloading the PhishTank verified phishing URL feed", category: "brand_threat" },
   { key: "smtp_host",            label: "SMTP Host",             description: "Custom SMTP server host (used if Resend is not configured)",                      category: "email" },
   { key: "smtp_port",            label: "SMTP Port",             description: "Custom SMTP server port (e.g. 587 for TLS)",                                       category: "email" },
   { key: "smtp_user",            label: "SMTP Username",         description: "SMTP authentication username",                                                    category: "email" },

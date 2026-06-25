@@ -10,16 +10,55 @@ export interface BrandAbuseResult {
   risk: string;
 }
 
-export async function scanBrandAbuse(brand: string, domain: string): Promise<BrandAbuseResult[]> {
+export async function scanBrandAbuse(
+  brand: string,
+  domain: string,
+  socialHandles: string[] = [],
+): Promise<BrandAbuseResult[]> {
   const results: BrandAbuseResult[] = [];
 
   await Promise.allSettled([
     checkCertTransparencyAbuse(brand, domain, results),
     checkDNSTwistLookalikePatterns(brand, domain, results),
     checkMaliciousAppStorePatterns(brand, domain, results),
+    ...socialHandles.map(handle => checkSocialHandle(handle, brand, results)),
   ]);
 
   return results;
+}
+
+async function checkSocialHandle(
+  handle: string,
+  brand: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  const platforms = [
+    { name: "Twitter/X", url: `https://twitter.com/${encodeURIComponent(handle)}` },
+    { name: "Instagram", url: `https://instagram.com/${encodeURIComponent(handle)}` },
+  ];
+  for (const p of platforms) {
+    try {
+      const res = await fetch(p.url, {
+        method: "HEAD",
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(5_000),
+        redirect: "follow",
+      });
+      if (res.ok || res.status === 200 || res.status === 301 || res.status === 302) {
+        out.push({
+          type: "fake_social",
+          platform: p.name,
+          url: p.url,
+          title: `@${handle} on ${p.name}`,
+          description: `Watchlist social handle @${handle} found on ${p.name} — may be a brand impersonator for ${brand}`,
+          evidenceSnippet: `HTTP ${res.status} response from ${p.url}`,
+          risk: "medium",
+        });
+      }
+    } catch {
+      // Network error is fine — handle doesn't exist
+    }
+  }
 }
 
 async function checkCertTransparencyAbuse(

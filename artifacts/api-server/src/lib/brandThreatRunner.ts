@@ -8,6 +8,7 @@ import {
   db,
   brandThreatScansTable, brandThreatResultsTable,
   dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable,
+  brandWatchlistItemsTable,
 } from "@workspace/db";
 import { logger } from "./logger";
 import { rdapLookup } from "./rdapClient";
@@ -17,6 +18,7 @@ import { checkGoogleSafeBrowsing } from "./googleSafeBrowsing";
 import { hibpDomainLookup, severityFromBreach } from "./hibpClient";
 import { vtDomainLookup } from "./vtDomainClient";
 import { scanBrandAbuse } from "./brandAbuseScanner";
+import { intelxSearch, intelxTypeToBucket } from "./intelxClient";
 import { getPlatformSetting } from "../routes/platformSettings";
 
 const execFileAsync = promisify(execFile);
@@ -512,37 +514,93 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       }
     }
 
-    // ── Phase 5: Data leak check (HIBP) + Brand abuse scan in parallel ────────
+    // ── Phase 5: Data leaks (HIBP + IntelX + watchlist) + Brand abuse ─────────
     const [tenantRow] = await db.select({ tenantId: brandThreatScansTable.tenantId })
       .from(brandThreatScansTable)
       .where(eq(brandThreatScansTable.id, scanId));
     const tenantId = tenantRow?.tenantId ?? 0;
 
+    // Load watchlist items to cross-reference in scans
+    const watchlistItems = await db.select()
+      .from(brandWatchlistItemsTable)
+      .where(eq(brandWatchlistItemsTable.tenantId, tenantId));
+
+    const intelxKey = await getPlatformSetting("intelx_api_key");
+    const brandName = domain.split(".")[0] ?? domain;
+
+    // Build IntelX query terms: domain + brand name + any email/social_handle watchlist items
+    const intelxTerms = [domain, brandName];
+    for (const item of watchlistItems) {
+      if ((item.type === "email_pattern" || item.type === "domain") && item.value) {
+        intelxTerms.push(item.value);
+      }
+    }
+    const uniqueTerms = [...new Set(intelxTerms)].slice(0, 5);
+
     const [hibpResult, brandAbuseList] = await Promise.all([
       hibpKey ? hibpDomainLookup(domain, hibpKey) : Promise.resolve(null),
-      scanBrandAbuse(domain.split(".")[0] ?? domain, domain),
+      scanBrandAbuse(brandName, domain, watchlistItems.filter(w => w.type === "social_handle").map(w => w.value)),
     ]);
+    const intelxResultArrays = intelxKey
+      ? await Promise.all(uniqueTerms.map(term => intelxSearch(term, intelxKey, 10)))
+      : [];
 
     let dataLeakCount = 0;
+    const leakInserts: typeof dataLeakResultsTable.$inferInsert[] = [];
+
     if (hibpResult && hibpResult.breaches.length > 0) {
-      const leakInserts: typeof dataLeakResultsTable.$inferInsert[] = hibpResult.breaches.map(b => ({
-        tenantId,
-        scanId,
-        source: "HIBP",
-        title: b.title,
-        breachDate: b.breachDate,
-        description: b.description?.replace(/<[^>]+>/g, "").slice(0, 500) ?? null,
-        exposedData: b.dataClasses,
-        domainMatch: b.domain,
-        severity: severityFromBreach(b),
-        url: `https://haveibeenpwned.com/PwnedWebsites#${encodeURIComponent(b.name)}`,
-      }));
+      for (const b of hibpResult.breaches) {
+        leakInserts.push({
+          tenantId,
+          scanId,
+          source: "HIBP",
+          title: b.title,
+          breachDate: b.breachDate,
+          description: b.description?.replace(/<[^>]+>/g, "").slice(0, 500) ?? null,
+          exposedData: b.dataClasses,
+          domainMatch: b.domain,
+          severity: severityFromBreach(b),
+          url: `https://haveibeenpwned.com/PwnedWebsites#${encodeURIComponent(b.name)}`,
+        });
+      }
+    }
+
+    // IntelX results → data_leak_results (deduplicated by name)
+    if (intelxKey && intelxResultArrays.length > 0) {
+      const seenNames = new Set<string>();
+      for (const results of intelxResultArrays) {
+        if (!results) continue;
+        for (const r of results) {
+          if (seenNames.has(r.name)) continue;
+          seenNames.add(r.name);
+          const bucket = intelxTypeToBucket(r.type);
+          leakInserts.push({
+            tenantId,
+            scanId,
+            source: bucket === "darkweb" ? "IntelX-DarkWeb" : bucket === "pastes" ? "IntelX-Paste" : "IntelX",
+            title: r.name || "IntelX match",
+            breachDate: r.date ? r.date.slice(0, 10) : null,
+            description: r.preview ?? `Dark/deep web mention found via IntelX (bucket: ${bucket})`,
+            exposedData: [],
+            domainMatch: domain,
+            severity: bucket === "darkweb" ? "critical" : bucket === "credential" ? "high" : "medium",
+            url: r.storageid
+              ? `https://intelx.io/?did=${encodeURIComponent(r.storageid)}`
+              : "https://intelx.io",
+          });
+        }
+      }
+    }
+
+    if (leakInserts.length > 0) {
       for (let i = 0; i < leakInserts.length; i += 50) {
         await db.insert(dataLeakResultsTable).values(leakInserts.slice(i, i + 50));
       }
       dataLeakCount = leakInserts.length;
     }
 
+    // Cross-reference watchlist items: flag any domain-type items found in results
+    const watchlistDomains = watchlistItems.filter(w => w.type === "domain").map(w => w.value.toLowerCase());
     let brandAbuseCount = 0;
     if (brandAbuseList.length > 0) {
       const abuseInserts: typeof brandAbuseResultsTable.$inferInsert[] = brandAbuseList.map(a => ({
@@ -556,6 +614,22 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         evidenceSnippet: a.evidenceSnippet ?? undefined,
         risk: a.risk,
       }));
+      // Also add watchlist domain hits found in live permutation results
+      for (const wdomain of watchlistDomains) {
+        const hit = liveResults.find(r => r.permutation.toLowerCase().includes(wdomain));
+        if (hit) {
+          abuseInserts.push({
+            tenantId,
+            scanId,
+            type: "fake_domain",
+            platform: "DNS",
+            url: `http://${hit.permutation}`,
+            title: `Watchlist match: ${hit.permutation}`,
+            description: `Domain from your brand watchlist (${wdomain}) found as a live permutation`,
+            risk: "high",
+          });
+        }
+      }
       for (let i = 0; i < abuseInserts.length; i += 50) {
         await db.insert(brandAbuseResultsTable).values(abuseInserts.slice(i, i + 50));
       }

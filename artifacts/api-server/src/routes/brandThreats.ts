@@ -173,6 +173,39 @@ router.delete("/brand-threats/:id", requireAuth, async (req: AuthenticatedReques
   res.json({ success: true });
 });
 
+// ── GET /brand-threats/:id/typosquatting ─────────────────────────────────────
+router.get("/brand-threats/:id/typosquatting", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
+    .where(and(eq(brandThreatScansTable.id, id), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+  const results = await db.select().from(brandThreatResultsTable)
+    .where(eq(brandThreatResultsTable.scanId, id))
+    .orderBy(desc(brandThreatResultsTable.riskScore));
+  const registered = results.filter(r => r.registrationStatus === "registered" || r.registrationStatus === "active" || r.registrationStatus === "protected");
+  const unregistered = results.filter(r => !r.registrationStatus || r.registrationStatus === "unresolved" || r.registrationStatus === "unregistered");
+  res.json({
+    total: results.length,
+    registered: registered.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    unregistered: unregistered.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+  });
+});
+
+// ── GET /brand-threats/:scanId/permutations/:permutationId ────────────────────
+router.get("/brand-threats/:scanId/permutations/:permutationId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const scanId = parseInt(String(req.params.scanId), 10);
+  const permId = parseInt(String(req.params.permutationId), 10);
+  if (isNaN(scanId) || isNaN(permId)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
+    .where(and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [result] = await db.select().from(brandThreatResultsTable)
+    .where(and(eq(brandThreatResultsTable.id, permId), eq(brandThreatResultsTable.scanId, scanId)));
+  if (!result) { res.status(404).json({ error: "Permutation not found" }); return; }
+  res.json({ ...result, createdAt: result.createdAt.toISOString() });
+});
+
 // ── GET /brand-threats/:id/phishing ──────────────────────────────────────────
 router.get("/brand-threats/:id/phishing", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);

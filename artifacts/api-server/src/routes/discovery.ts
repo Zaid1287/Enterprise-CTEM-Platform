@@ -3,7 +3,9 @@ import { eq, and, desc } from "drizzle-orm";
 import { db, assetsTable, discoveryResultsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { getPlatformSetting } from "./platformSettings";
+import { logger } from "../lib/logger";
 import { runPassiveDiscovery, type PassiveDiscoveryOptions } from "../lib/passiveDiscovery";
+import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
 
 const router = Router();
 
@@ -59,6 +61,22 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
   }
 
   res.json({ assetId, asset: { id: asset.id, name: asset.name, value: asset.value }, results, savedIds });
+
+  // Auto-trigger brand threat scan for Domain/Subdomain assets
+  if (asset.type === "domain" || asset.type === "subdomain") {
+    const rawDomain = String(asset.value ?? "")
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split("/")[0]!.split("?")[0]!;
+    if (rawDomain && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(rawDomain)) {
+      setImmediate(() => {
+        void triggerBrandThreatScan(tenantId, rawDomain).catch((err: unknown) => {
+          logger.warn({ err, domain: rawDomain }, "Auto brand-threat trigger from discovery failed");
+        });
+      });
+    }
+  }
 });
 
 // GET /api/discovery/results/:assetId

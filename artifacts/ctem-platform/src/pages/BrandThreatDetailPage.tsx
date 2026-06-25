@@ -223,7 +223,7 @@ function PhishingTab({ phishing }: { phishing: any[] }) {
             {p.verified && <span className="text-green-400 flex items-center gap-0.5"><CheckCircle2 className="w-3 h-3" /> Verified</span>}
           </div>
           <div className="flex items-center gap-2">
-            <a href={`https://www.virustotal.com/gui/url/${Buffer.from(p.url).toString("base64")}`} target="_blank" rel="noopener noreferrer"
+            <a href={`https://www.virustotal.com/gui/url/${btoa(p.url)}`} target="_blank" rel="noopener noreferrer"
               className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
               <ExternalLink className="w-3 h-3" /> VirusTotal
             </a>
@@ -733,7 +733,7 @@ export default function BrandThreatDetailPage() {
               </div>
             </div>
 
-            {/* Results table */}
+            {/* Results — registered / unregistered split */}
             <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
               <div className="px-5 py-3 border-b border-border flex items-center gap-3 bg-card/30">
                 <Activity className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -753,159 +753,247 @@ export default function BrandThreatDetailPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-[28px_1fr_120px_80px_80px_90px_100px] items-center px-5 py-2 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider">
-                <span />
-                <span>Domain</span>
-                <span className="text-center">Type</span>
-                <span className="text-center">DNS A</span>
-                <span className="text-center">MX</span>
-                <span className="text-center">VT</span>
-                <span className="text-center">Risk Score</span>
-              </div>
+              <div className="flex-1 overflow-y-auto">
+                {/* ── Registered Domains table ─────────────────────────────── */}
+                {(() => {
+                  const registered = filtered.filter((r: any) =>
+                    r.registrationStatus === "registered" || r.registrationStatus === "active" || r.registrationStatus === "protected"
+                  );
+                  const unregistered = filtered.filter((r: any) =>
+                    !r.registrationStatus || r.registrationStatus === "unresolved" || r.registrationStatus === "unregistered"
+                  );
 
-              <div className="flex-1 overflow-y-auto divide-y divide-border">
-                {paged.map((r: any) => {
-                  const fm = FUZZER_META[r.fuzzer];
-                  const isExpanded = expandedId === r.id;
-                  return (
-                    <div key={r.id}>
-                      <div
-                        className={cn(
-                          "grid grid-cols-[28px_1fr_120px_80px_80px_90px_100px] items-center px-5 py-2.5 hover:bg-muted/20 transition-colors cursor-pointer",
-                          r.isSuspicious && "bg-orange-500/3",
-                          r.isPhishing && "bg-red-500/5",
-                        )}
-                        onClick={() => setExpandedId(isExpanded ? null : r.id)}
-                      >
-                        <div className="flex items-center justify-center">
-                          {r.isPhishing
-                            ? <Fish className="w-3.5 h-3.5 text-red-400" />
-                            : r.isSuspicious
-                            ? <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
-                            : <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground/20" />
-                          }
-                        </div>
-                        <div className="flex items-center gap-2 min-w-0 pr-2">
-                          <span className="text-sm font-mono truncate">{r.permutation}</span>
-                          {isExpanded ? <ChevronUp className="w-3 h-3 text-muted-foreground/40 shrink-0" /> : <ChevronDown className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
-                        </div>
-                        <div className="flex justify-center">
-                          <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", fm ? `${fm.color} ${fm.bg}` : "text-muted-foreground bg-muted")}>
-                            {fm?.label ?? r.fuzzer}
-                          </span>
-                        </div>
-                        <div className="flex justify-center">
-                          {r.dnsA?.length > 0 ? (
-                            <span className="flex items-center gap-1 text-[11px] text-red-400 font-mono font-medium">
-                              <Server className="w-2.5 h-2.5 shrink-0" />
-                              {r.dnsA[0].length > 11 ? r.dnsA[0].slice(0, 11) + "…" : r.dnsA[0]}
+                  function PermRow({ r }: { r: any }) {
+                    const fm = FUZZER_META[r.fuzzer];
+                    const isExpanded = expandedId === r.id;
+                    return (
+                      <div>
+                        <div
+                          className={cn(
+                            "grid grid-cols-[28px_1fr_110px_80px_60px_60px_90px_100px] items-center px-5 py-2.5 hover:bg-muted/20 transition-colors cursor-pointer",
+                            r.isSuspicious && "bg-orange-500/3",
+                            r.isPhishing && "bg-red-500/5",
+                          )}
+                          onClick={() => setExpandedId(isExpanded ? null : r.id)}
+                        >
+                          <div className="flex items-center justify-center">
+                            {r.isPhishing
+                              ? <Fish className="w-3.5 h-3.5 text-red-400" />
+                              : r.isSuspicious
+                              ? <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
+                              : <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground/20" />
+                            }
+                          </div>
+                          <div className="flex items-center gap-2 min-w-0 pr-2">
+                            <span className="text-sm font-mono truncate">{r.permutation}</span>
+                            {isExpanded ? <ChevronUp className="w-3 h-3 text-muted-foreground/40 shrink-0" /> : <ChevronDown className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
+                          </div>
+                          <div className="flex justify-center">
+                            <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", fm ? `${fm.color} ${fm.bg}` : "text-muted-foreground bg-muted")}>
+                              {fm?.label ?? r.fuzzer}
                             </span>
-                          ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                          </div>
+                          <div className="flex justify-center">
+                            {r.dnsA?.length > 0 ? (
+                              <span className="flex items-center gap-1 text-[11px] text-red-400 font-mono font-medium">
+                                <Server className="w-2.5 h-2.5 shrink-0" />
+                                {r.dnsA[0].length > 11 ? r.dnsA[0].slice(0, 11) + "…" : r.dnsA[0]}
+                              </span>
+                            ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                          </div>
+                          <div className="flex justify-center">
+                            {r.dnsNs?.length > 0 ? (
+                              <span className="text-[10px] text-blue-400 font-medium">NS</span>
+                            ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                          </div>
+                          <div className="flex justify-center">
+                            {r.dnsMx?.length > 0 ? (
+                              <span className="flex items-center gap-1 text-[11px] text-orange-400 font-medium">
+                                <Mail className="w-2.5 h-2.5" /> MX
+                              </span>
+                            ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                          </div>
+                          <div className="flex justify-center">
+                            {r.vtMalicious > 0 ? (
+                              <span className="text-[11px] text-red-400 font-bold">{r.vtMalicious} 🚩</span>
+                            ) : r.vtMalicious === 0 ? (
+                              <span className="text-[11px] text-green-400/60">clean</span>
+                            ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                          </div>
+                          <div className="px-2">
+                            <RiskScoreBar score={r.riskScore} />
+                          </div>
                         </div>
-                        <div className="flex justify-center">
-                          {r.dnsMx?.length > 0 ? (
-                            <span className="flex items-center gap-1 text-[11px] text-orange-400 font-medium">
-                              <Mail className="w-2.5 h-2.5" /> MX
-                            </span>
-                          ) : <span className="text-xs text-muted-foreground/30">—</span>}
-                        </div>
-                        <div className="flex justify-center">
-                          {r.vtMalicious > 0 ? (
-                            <span className="text-[11px] text-red-400 font-bold">{r.vtMalicious} 🚩</span>
-                          ) : r.vtMalicious === 0 ? (
-                            <span className="text-[11px] text-green-400/60">clean</span>
-                          ) : <span className="text-xs text-muted-foreground/30">—</span>}
-                        </div>
-                        <div className="px-2">
-                          <RiskScoreBar score={r.riskScore} />
-                        </div>
-                      </div>
 
-                      {isExpanded && (
-                        <div className="bg-muted/10 border-t border-border/50 px-8 py-4">
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 text-xs">
-                            <div>
-                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">DNS Records</p>
-                              <div className="space-y-1">
-                                {r.dnsA?.length > 0 && r.dnsA.map((ip: string) => (
-                                  <div key={ip} className="flex items-center gap-1.5">
-                                    <Server className="w-3 h-3 text-red-400 shrink-0" />
-                                    <span className="font-mono">{ip}</span>
-                                    {r.geoCountry && r.dnsA[0] === ip && (
-                                      <span className="text-muted-foreground/60">({r.geoCountry})</span>
+                        {isExpanded && (
+                          <div className="bg-muted/10 border-t border-border/50 px-8 py-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 text-xs">
+                              <div>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">DNS Records</p>
+                                <div className="space-y-1">
+                                  {r.dnsA?.length > 0 && r.dnsA.map((ip: string) => (
+                                    <div key={ip} className="flex items-center gap-1.5">
+                                      <Server className="w-3 h-3 text-red-400 shrink-0" />
+                                      <span className="font-mono">{ip}</span>
+                                      {r.geoCountry && r.dnsA[0] === ip && <span className="text-muted-foreground/60">({r.geoCountry})</span>}
+                                    </div>
+                                  ))}
+                                  {r.dnsNs?.length > 0 && r.dnsNs.slice(0, 2).map((ns: string) => (
+                                    <div key={ns} className="flex items-center gap-1.5">
+                                      <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
+                                      <span className="font-mono text-muted-foreground">{ns}</span>
+                                    </div>
+                                  ))}
+                                  {!r.dnsA?.length && !r.dnsNs?.length && <p className="text-muted-foreground/50 italic">No records</p>}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">RDAP / WHOIS</p>
+                                {r.whoisRegistrar || r.whoisCreated ? (
+                                  <div className="space-y-1">
+                                    {r.whoisRegistrar && <p className="flex items-center gap-1"><Building2 className="w-3 h-3 text-muted-foreground" /> {r.whoisRegistrar.slice(0, 25)}{r.whoisRegistrar.length > 25 ? "…" : ""}</p>}
+                                    {r.whoisCreated && <p className="flex items-center gap-1"><Calendar className="w-3 h-3 text-muted-foreground" /> Created: {r.whoisCreated?.slice(0, 10)}</p>}
+                                    {r.whoisCountry && <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-muted-foreground" /> {r.whoisCountry}</p>}
+                                    {r.whoisAbuseContact && <p className="flex items-center gap-1 break-all"><Mail className="w-3 h-3 text-muted-foreground shrink-0" /><a href={`mailto:${r.whoisAbuseContact}`} className="text-primary hover:underline">{r.whoisAbuseContact}</a></p>}
+                                    {r.whoisAgeDays !== null && r.whoisAgeDays !== undefined && (
+                                      <p className={cn("flex items-center gap-1", r.whoisAgeDays < 90 ? "text-red-400" : "")}>
+                                        <Info className="w-3 h-3 text-muted-foreground" />
+                                        {r.whoisAgeDays < 90 ? `⚠ New domain (${r.whoisAgeDays}d old)` : `${r.whoisAgeDays}d old`}
+                                      </p>
                                     )}
                                   </div>
-                                ))}
-                                {r.dnsNs?.length > 0 && r.dnsNs.slice(0, 2).map((ns: string) => (
-                                  <div key={ns} className="flex items-center gap-1.5">
-                                    <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
-                                    <span className="font-mono text-muted-foreground">{ns}</span>
-                                  </div>
-                                ))}
-                                {!r.dnsA?.length && !r.dnsNs?.length && <p className="text-muted-foreground/50 italic">No records</p>}
+                                ) : <p className="text-muted-foreground/50 italic">Not resolved</p>}
                               </div>
-                            </div>
-
-                            <div>
-                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">RDAP / WHOIS</p>
-                              {r.whoisRegistrar || r.whoisCreated || r.whoisCountry ? (
-                                <div className="space-y-1">
-                                  {r.whoisRegistrar && <p className="flex items-center gap-1"><Building2 className="w-3 h-3 text-muted-foreground" /> {r.whoisRegistrar.slice(0, 25)}{r.whoisRegistrar.length > 25 ? "…" : ""}</p>}
-                                  {r.whoisCreated && <p className="flex items-center gap-1"><Calendar className="w-3 h-3 text-muted-foreground" /> Created: {r.whoisCreated?.slice(0, 10)}</p>}
-                                  {r.whoisCountry && <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-muted-foreground" /> {r.whoisCountry}</p>}
-                                  {r.whoisAgeDays !== null && r.whoisAgeDays !== undefined && (
-                                    <p className={cn("flex items-center gap-1", r.whoisAgeDays < 90 ? "text-red-400" : "")}>
-                                      <Info className="w-3 h-3 text-muted-foreground" />
-                                      {r.whoisAgeDays < 90 ? `⚠ New domain (${r.whoisAgeDays}d old)` : `${r.whoisAgeDays}d old`}
-                                    </p>
+                              <div>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">GeoIP</p>
+                                {r.geoCountry || r.geoOrg ? (
+                                  <div className="space-y-1">
+                                    {r.geoCountry && <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-muted-foreground" /> {r.geoCity ? `${r.geoCity}, ` : ""}{r.geoCountry}</p>}
+                                    {r.geoAsn && <p className="flex items-center gap-1"><Globe className="w-3 h-3 text-muted-foreground" /> {r.geoAsn}</p>}
+                                    {r.geoOrg && <p className="flex items-center gap-1"><Building2 className="w-3 h-3 text-muted-foreground" /> {r.geoOrg.slice(0, 25)}{r.geoOrg.length > 25 ? "…" : ""}</p>}
+                                  </div>
+                                ) : <p className="text-muted-foreground/50 italic">Not resolved</p>}
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Threat Intel</p>
+                                <div className="space-y-1.5">
+                                  {r.isPhishing && <div className="flex items-center gap-1.5 text-red-400"><Fish className="w-3 h-3 shrink-0" /><span>Confirmed phishing ({r.phishingSource})</span></div>}
+                                  {r.vtMalicious !== null && r.vtMalicious !== undefined && (
+                                    <div className={cn("flex items-center gap-1.5", r.vtMalicious > 0 ? "text-red-400" : "text-green-400/70")}>
+                                      <ShieldAlert className="w-3 h-3 shrink-0" />
+                                      VT: {r.vtMalicious} malicious / {r.vtSuspicious ?? 0} suspicious
+                                    </div>
                                   )}
+                                  {r.vtPermalink && (
+                                    <a href={r.vtPermalink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+                                      <ExternalLink className="w-3 h-3" /> VirusTotal report
+                                    </a>
+                                  )}
+                                  {!r.isPhishing && (r.vtMalicious === null || r.vtMalicious === undefined) && <p className="text-muted-foreground/50 italic">No threat data</p>}
                                 </div>
-                              ) : <p className="text-muted-foreground/50 italic">Not resolved</p>}
-                            </div>
-
-                            <div>
-                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">GeoIP</p>
-                              {r.geoCountry || r.geoOrg ? (
-                                <div className="space-y-1">
-                                  {r.geoCountry && <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-muted-foreground" /> {r.geoCity ? `${r.geoCity}, ` : ""}{r.geoCountry}</p>}
-                                  {r.geoAsn && <p className="flex items-center gap-1"><Globe className="w-3 h-3 text-muted-foreground" /> {r.geoAsn}</p>}
-                                  {r.geoOrg && <p className="flex items-center gap-1"><Building2 className="w-3 h-3 text-muted-foreground" /> {r.geoOrg.slice(0, 25)}{r.geoOrg.length > 25 ? "…" : ""}</p>}
-                                </div>
-                              ) : <p className="text-muted-foreground/50 italic">Not resolved</p>}
-                            </div>
-
-                            <div>
-                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Threat Intel</p>
-                              <div className="space-y-1.5">
-                                {r.isPhishing && (
-                                  <div className="flex items-center gap-1.5 text-red-400">
-                                    <Fish className="w-3 h-3 shrink-0" />
-                                    <span>Confirmed phishing ({r.phishingSource})</span>
-                                  </div>
-                                )}
-                                {r.vtMalicious !== null && r.vtMalicious !== undefined && (
-                                  <div className={cn("flex items-center gap-1.5", r.vtMalicious > 0 ? "text-red-400" : "text-green-400/70")}>
-                                    <ShieldAlert className="w-3 h-3 shrink-0" />
-                                    VT: {r.vtMalicious} malicious / {r.vtSuspicious ?? 0} suspicious
-                                  </div>
-                                )}
-                                {r.vtPermalink && (
-                                  <a href={r.vtPermalink} target="_blank" rel="noopener noreferrer"
-                                    className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
-                                    <ExternalLink className="w-3 h-3" /> VirusTotal report
-                                  </a>
-                                )}
-                                {!r.isPhishing && (r.vtMalicious === null || r.vtMalicious === undefined) && (
-                                  <p className="text-muted-foreground/50 italic">No threat data</p>
-                                )}
                               </div>
                             </div>
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
+                    );
+                  }
+
+                  const REG_HEADER = (
+                    <div className="grid grid-cols-[28px_1fr_110px_80px_60px_60px_90px_100px] items-center px-5 py-2 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider">
+                      <span />
+                      <span>Domain</span>
+                      <span className="text-center">Type</span>
+                      <span className="text-center">A Records</span>
+                      <span className="text-center">NS</span>
+                      <span className="text-center">MX</span>
+                      <span className="text-center">VT</span>
+                      <span className="text-center">Risk</span>
                     </div>
                   );
-                })}
+
+                  return (
+                    <div className="divide-y divide-border">
+                      {/* ── Registered Domains ── */}
+                      <div>
+                        <div className="px-5 py-2.5 bg-red-500/5 border-b border-red-500/20 flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+                          <span className="text-xs font-semibold text-red-400 uppercase tracking-wider">
+                            Registered / Active Domains
+                          </span>
+                          <span className="text-[10px] text-red-400/60 bg-red-500/10 px-1.5 py-0.5 rounded-full font-bold">
+                            {registered.length}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground ml-1">— domains confirmed registered; treat as potential threats</span>
+                        </div>
+                        {registered.length > 0 ? (
+                          <>
+                            {REG_HEADER}
+                            <div className="divide-y divide-border">
+                              {registered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((r: any) => <PermRow key={r.id} r={r} />)}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex items-center gap-2 px-5 py-4 text-sm text-green-400/70">
+                            <CheckCircle2 className="w-4 h-4 shrink-0" /> No registered permutations found — good signal
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── Unregistered Domains ── */}
+                      <div>
+                        <div className="px-5 py-2.5 bg-muted/30 border-b border-border flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-muted-foreground/40 shrink-0" />
+                          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Unregistered / Unresolved Domains
+                          </span>
+                          <span className="text-[10px] text-muted-foreground/60 bg-muted px-1.5 py-0.5 rounded-full font-bold">
+                            {unregistered.length}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground ml-1">— available to register; monitor for future squatting</span>
+                        </div>
+                        {unregistered.length > 0 ? (
+                          <>
+                            <div className="grid grid-cols-[28px_1fr_110px_80px_60px_60px] items-center px-5 py-2 border-b border-border bg-muted/10 text-[10px] text-muted-foreground uppercase tracking-wider">
+                              <span /><span>Domain</span>
+                              <span className="text-center">Type</span>
+                              <span className="text-center">A Records</span>
+                              <span className="text-center">NS</span>
+                              <span className="text-center">MX</span>
+                            </div>
+                            <div className="divide-y divide-border">
+                              {unregistered.slice(0, 100).map((r: any) => {
+                                const fm = FUZZER_META[r.fuzzer];
+                                return (
+                                  <div key={r.id} className="grid grid-cols-[28px_1fr_110px_80px_60px_60px] items-center px-5 py-2 hover:bg-muted/10 transition-colors">
+                                    <span />
+                                    <span className="text-sm font-mono text-muted-foreground truncate">{r.permutation}</span>
+                                    <div className="flex justify-center">
+                                      <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", fm ? `${fm.color} ${fm.bg}` : "text-muted-foreground bg-muted opacity-60")}>
+                                        {fm?.label ?? r.fuzzer}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-center">
+                                      {r.dnsA?.length > 0 ? <span className="text-[11px] text-red-400 font-mono">{r.dnsA[0]?.slice(0, 11)}</span> : <span className="text-xs text-muted-foreground/20">—</span>}
+                                    </div>
+                                    <div className="flex justify-center">
+                                      {r.dnsNs?.length > 0 ? <span className="text-[10px] text-blue-400/60">NS</span> : <span className="text-xs text-muted-foreground/20">—</span>}
+                                    </div>
+                                    <div className="flex justify-center">
+                                      {r.dnsMx?.length > 0 ? <span className="text-[11px] text-orange-400/60">MX</span> : <span className="text-xs text-muted-foreground/20">—</span>}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="px-5 py-4 text-sm text-muted-foreground/60 italic">No unregistered permutations.</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {filtered.length === 0 && (
                   <div className="flex flex-col items-center justify-center h-32 text-center">
@@ -918,7 +1006,7 @@ export default function BrandThreatDetailPage() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-card/30">
                   <span className="text-xs text-muted-foreground">
-                    Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                    Page {page + 1} of {totalPages} (registered domains)
                   </span>
                   <div className="flex items-center gap-1">
                     <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 text-xs">
