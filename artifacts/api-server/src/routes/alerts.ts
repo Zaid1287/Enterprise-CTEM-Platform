@@ -82,13 +82,14 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   const filters = [tenantFilter];
 
   if (role === "client") {
+    // Look up assigned assets cross-tenant (no tenant_id restriction — client assets can span tenants)
     const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-      .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
+      .where(eq(assetsTable.assignedClientId, req.user!.userId));
     const assignedIds = assignedAssets.map(a => a.id);
     if (assignedIds.length > 0) {
-      filters.push(or(isNull(alertsTable.relatedAssetId), inArray(alertsTable.relatedAssetId, assignedIds))!);
+      filters.push(inArray(alertsTable.relatedAssetId, assignedIds) as any);
     } else {
-      filters.push(isNull(alertsTable.relatedAssetId));
+      res.json([]); return;
     }
   }
 

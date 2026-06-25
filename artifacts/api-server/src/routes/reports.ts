@@ -34,8 +34,24 @@ function toCsv(headers: string[], rows: unknown[][]): string {
 }
 
 router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+
+  // Client: only show reports that include at least one asset assigned to them
+  if (role === "client") {
+    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(eq(assetsTable.assignedClientId, req.user!.userId));
+    const assignedIds = new Set(assignedAssets.map(a => a.id));
+    if (assignedIds.size === 0) { res.json([]); return; }
+    const allReports = await db.select().from(reportsTable)
+      .where(eq(reportsTable.tenantId, req.user!.tenantId));
+    const clientReports = allReports.filter(r =>
+      Array.isArray(r.assetIds) && (r.assetIds as number[]).some(id => assignedIds.has(id))
+    );
+    res.json(clientReports.map(toReportResponse)); return;
+  }
+
   let rWhere;
-  if (req.user!.role === "account_manager") {
+  if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     rWhere = inArray(reportsTable.tenantId, ids);

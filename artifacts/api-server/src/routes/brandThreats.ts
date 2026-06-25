@@ -32,17 +32,51 @@ router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res)
 });
 
 // ── POST /brand-threats ───────────────────────────────────────────────────────
+// If a scan for the same domain already exists for this tenant, reset and re-run it
+// instead of creating a duplicate entry.
 router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const raw = String(req.body?.domain ?? "").trim().toLowerCase()
     .replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0].split("?")[0];
   if (!raw || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(raw)) {
     res.status(400).json({ error: "Invalid domain. Expected format: example.com" }); return;
   }
-  const [scan] = await db.insert(brandThreatScansTable).values({
-    tenantId: req.user!.tenantId,
-    domain: raw,
-    status: "pending",
-  }).returning();
+
+  const tenantId = req.user!.tenantId;
+
+  // Check for existing scan for same domain + tenant
+  const [existing] = await db.select({ id: brandThreatScansTable.id })
+    .from(brandThreatScansTable)
+    .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, raw)));
+
+  let scan: typeof brandThreatScansTable.$inferSelect;
+
+  if (existing) {
+    // Re-run: wipe old results and reset the existing scan record
+    await db.delete(brandThreatResultsTable).where(eq(brandThreatResultsTable.scanId, existing.id));
+    const [updated] = await db.update(brandThreatScansTable)
+      .set({
+        status: "pending",
+        totalPermutations: null,
+        liveCount: null,
+        registeredCount: null,
+        phishingRisk: null,
+        fuzzerBreakdown: null,
+        error: null,
+        completedAt: null,
+      })
+      .where(eq(brandThreatScansTable.id, existing.id))
+      .returning();
+    scan = updated;
+  } else {
+    // First time: create new scan record
+    const [created] = await db.insert(brandThreatScansTable).values({
+      tenantId,
+      domain: raw,
+      status: "pending",
+    }).returning();
+    scan = created;
+  }
+
   setImmediate(() => { void runBrandThreatScan(scan.id, raw); });
   res.json(toScanResponse(scan));
 });

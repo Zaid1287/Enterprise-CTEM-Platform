@@ -97,8 +97,25 @@ async function finalizeScannedAssets(assetIds: number[]) {
 
 router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListScansQueryParams.safeParse(req.query);
+  const role = req.user!.role;
+
+  // Client: only show scans that include at least one asset assigned to them
+  if (role === "client") {
+    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(eq(assetsTable.assignedClientId, req.user!.userId));
+    const assignedIds = new Set(assignedAssets.map(a => a.id));
+    if (assignedIds.size === 0) { res.json([]); return; }
+    const filters: ReturnType<typeof eq>[] = [eq(scansTable.tenantId, req.user!.tenantId) as any];
+    if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status) as any);
+    const allScans = await db.select().from(scansTable).where(and(...filters));
+    const clientScans = allScans.filter(s =>
+      Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => assignedIds.has(id))
+    );
+    res.json(clientScans.map(toScanResponse)); return;
+  }
+
   let tenantFilter;
-  if (req.user!.role === "account_manager") {
+  if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(scansTable.tenantId, ids);

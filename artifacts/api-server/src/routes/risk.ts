@@ -16,6 +16,9 @@ router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): 
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     whereClause = inArray(assetsTable.tenantId, ids) as any;
+  } else if (role === "client") {
+    // Client sees risk scores only for assets explicitly assigned to them (cross-tenant)
+    whereClause = eq(assetsTable.assignedClientId, req.user!.userId) as any;
   } else {
     whereClause = eq(assetsTable.tenantId, req.user!.tenantId) as any;
   }
