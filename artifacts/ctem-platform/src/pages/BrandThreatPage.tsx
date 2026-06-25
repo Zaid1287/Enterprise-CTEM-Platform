@@ -261,7 +261,7 @@ function WatchlistSection() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ value: "", type: "keyword", description: "" });
+  const [form, setForm] = useState({ value: "", type: "keyword", notes: "" });
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   async function fetchItems() {
@@ -286,12 +286,12 @@ function WatchlistSection() {
       const res = await fetch("/api/brand-watchlist", {
         method: "POST",
         headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ value: form.value.trim(), type: form.type, description: form.description }),
+        body: JSON.stringify({ value: form.value.trim(), type: form.type, notes: form.notes }),
       });
       if (!res.ok) throw new Error("Failed");
       toast({ title: "Watchlist item added" });
       setShowForm(false);
-      setForm({ value: "", type: "keyword", description: "" });
+      setForm({ value: "", type: "keyword", notes: "" });
       void fetchItems();
     } catch {
       toast({ title: "Failed to add watchlist item", variant: "destructive" });
@@ -360,8 +360,8 @@ function WatchlistSection() {
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Description</label>
               <input
-                value={form.description}
-                onChange={e => setForm(v => ({ ...v, description: e.target.value }))}
+                value={form.notes}
+                onChange={e => setForm(v => ({ ...v, notes: e.target.value }))}
                 placeholder="Optional context for this watchlist item"
                 className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
               />
@@ -404,8 +404,8 @@ function WatchlistSection() {
                       {item.type?.replace(/_/g, " ")}
                     </span>
                   </div>
-                  {item.description && (
-                    <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{item.description}</p>
+                  {item.notes && (
+                    <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{item.notes}</p>
                   )}
                 </div>
                 <span className="text-[10px] text-muted-foreground/50 shrink-0">{formatDate(item.createdAt)}</span>

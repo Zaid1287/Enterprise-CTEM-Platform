@@ -28,40 +28,74 @@ export async function scanBrandAbuse(
   return results;
 }
 
+/**
+ * Check if a watchlist social handle appears on major platforms AND contains
+ * impersonation signals. Mere profile existence is NOT flagged — we require that
+ * the handle contains the brand name as a substring (suggesting impersonation)
+ * or that the page title/content references the brand while using a handle that
+ * is NOT exactly the brand name (brand-adjacent squatting).
+ *
+ * False-positive prevention:
+ *  - Skip if handle is identical to brand (may be the legitimate official account)
+ *  - Require handle to contain brand name or brand name to appear in page body
+ *  - Use GET (not HEAD) so we can inspect the page title for brand mentions
+ */
 async function checkSocialHandle(
   handle: string,
   brand: string,
   out: BrandAbuseResult[],
 ): Promise<void> {
+  const handleLower = handle.toLowerCase();
+  const brandLower  = brand.toLowerCase();
+
+  // If the handle is exactly the brand name, it may be the official account — skip
+  if (handleLower === brandLower) return;
+
+  // Impersonation signal: handle contains brand as a substring (e.g. "brand_official", "real_brand")
+  const handleContainsBrand = handleLower.includes(brandLower);
+
   const platforms = [
     { name: "Twitter/X",  url: `https://twitter.com/${encodeURIComponent(handle)}` },
     { name: "Instagram",  url: `https://instagram.com/${encodeURIComponent(handle)}` },
-    { name: "LinkedIn",   url: `https://www.linkedin.com/in/${encodeURIComponent(handle)}` },
     { name: "TikTok",     url: `https://www.tiktok.com/@${encodeURIComponent(handle)}` },
     { name: "Facebook",   url: `https://www.facebook.com/${encodeURIComponent(handle)}` },
     { name: "YouTube",    url: `https://www.youtube.com/@${encodeURIComponent(handle)}` },
   ];
+
   for (const p of platforms) {
     try {
       const res = await fetch(p.url, {
-        method: "HEAD",
+        method: "GET",
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-        signal: AbortSignal.timeout(6_000),
+        signal: AbortSignal.timeout(8_000),
         redirect: "follow",
       });
-      if (res.ok || res.status === 200 || res.status === 301 || res.status === 302) {
-        out.push({
-          type: "fake_social",
-          platform: p.name,
-          url: p.url,
-          title: `@${handle} on ${p.name}`,
-          description: `Watchlist social handle @${handle} found on ${p.name} — may be impersonating ${brand}`,
-          evidenceSnippet: `HTTP ${res.status} response from ${p.url}`,
-          risk: "medium",
-        });
-      }
+
+      if (!res.ok) continue;
+
+      // Parse body for secondary impersonation signal: page mentions brand name
+      const body = await res.text();
+      const bodyLower = body.toLowerCase();
+      const titleMatch = bodyLower.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const pageTitle  = titleMatch ? titleMatch[1] ?? "" : "";
+      const bodyMentionsBrand = bodyLower.includes(brandLower) ||
+                                pageTitle.toLowerCase().includes(brandLower);
+
+      // Flag only when there is at least one concrete impersonation signal
+      if (!handleContainsBrand && !bodyMentionsBrand) continue;
+
+      const risk = handleContainsBrand ? "high" : "medium";
+      out.push({
+        type: "fake_social",
+        platform: p.name,
+        url: p.url,
+        title: `@${handle} on ${p.name}`,
+        description: `Watchlist handle @${handle} found on ${p.name} with brand name "${brand}" in ${handleContainsBrand ? "handle" : "page content"} — possible impersonation`,
+        evidenceSnippet: `Page title: ${pageTitle || "(none)"}; handle contains brand: ${handleContainsBrand}; page mentions brand: ${bodyMentionsBrand}`,
+        risk,
+      });
     } catch {
-      // Network error — handle likely doesn't exist
+      // Network error — handle likely doesn't exist or platform blocked the request
     }
   }
 }

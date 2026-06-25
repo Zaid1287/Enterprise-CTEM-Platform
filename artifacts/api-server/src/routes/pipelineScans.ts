@@ -2009,19 +2009,19 @@ async function executePipeline(
       }
 
       // ── Auto-trigger brand threat scans for discovered subdomains ─────────
-      // Fan-out brand monitoring to all unique apex domains found via enumeration.
-      // Deduped against the asset's own domain to avoid double-scanning.
+      // Fan-out brand monitoring to each unique subdomain found via enumeration
+      // (full subdomain name, not just apex) so brand intelligence covers the
+      // complete discovered attack surface.
       setImmediate(async () => {
         try {
-          const apexDomains = new Set<string>();
+          const triggeredDomains = new Set<string>();
+          if (domain) triggeredDomains.add(domain); // already triggered for parent asset
           for (const s of subdomainScanReport.all) {
-            const apex = extractDomain(s.name);
-            if (apex && !isIp(apex) && apex.includes(".") && apex !== domain) {
-              apexDomains.add(apex);
-            }
-          }
-          for (const apex of apexDomains) {
-            await triggerBrandThreatScan(tenantId, apex, scanId);
+            const sub = s.name?.toLowerCase().trim();
+            if (!sub || isIp(sub) || !sub.includes(".")) continue;
+            if (triggeredDomains.has(sub)) continue;
+            triggeredDomains.add(sub);
+            await triggerBrandThreatScan(tenantId, sub, scanId);
           }
         } catch (err) {
           logger.warn({ err, assetId: asset.id }, "Subdomain brand threat fan-out failed (non-fatal)");

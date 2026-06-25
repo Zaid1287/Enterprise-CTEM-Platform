@@ -343,21 +343,22 @@ async function runVtEnrichment(
   const vtMap = new Map<string, NonNullable<Awaited<ReturnType<typeof vtDomainLookup>>>>();
   if (!vtApiKey) return vtMap;
 
-  const VT_CONCURRENCY = 4;
-  const VT_DELAY_MS = 1500;
+  // VT free-tier limit: 4 req/min → 15 000 ms inter-request delay, single worker
+  // to guarantee we never exceed the quota regardless of queue length.
+  const VT_DELAY_MS = 15_000;
   const queue = [...liveResults];
 
   async function worker() {
     while (queue.length > 0) {
       const item = queue.shift();
       if (!item) break;
-      await new Promise(r => setTimeout(r, VT_DELAY_MS));
       const result = await vtDomainLookup(item.permutation, vtApiKey);
       if (result) vtMap.set(item.permutation, result);
+      if (queue.length > 0) await new Promise(r => setTimeout(r, VT_DELAY_MS));
     }
   }
 
-  await Promise.all(Array.from({ length: VT_CONCURRENCY }, () => worker()));
+  await worker(); // single worker — strict 4 req/min
   return vtMap;
 }
 

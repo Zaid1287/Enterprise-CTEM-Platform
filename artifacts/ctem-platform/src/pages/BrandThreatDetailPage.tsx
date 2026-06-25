@@ -948,10 +948,15 @@ export default function BrandThreatDetailPage() {
                 {/* ── Registered Domains table ─────────────────────────────── */}
                 {(() => {
                   const registered = filtered.filter((r: any) =>
-                    r.registrationStatus === "registered" || r.registrationStatus === "active" || r.registrationStatus === "protected"
+                    r.registrationStatus === "registered" ||
+                    r.registrationStatus === "active" ||
+                    r.registrationStatus === "parked" ||
+                    r.registrationStatus === "protected"  // legacy compat
                   );
                   const unregistered = filtered.filter((r: any) =>
-                    !r.registrationStatus || r.registrationStatus === "unresolved" || r.registrationStatus === "unregistered"
+                    !r.registrationStatus ||
+                    r.registrationStatus === "unregistered" ||
+                    r.registrationStatus === "unresolved"  // legacy compat
                   );
 
                   function PermRow({ r }: { r: any }) {
