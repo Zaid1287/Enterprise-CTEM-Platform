@@ -574,17 +574,18 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
   const uid = req.user!.userId;
   const isClient = req.user!.role === "client";
 
-  // For client role: scope to only their assigned assets
+  // For client role: scope to only their assigned assets (cross-tenant — no tenantId restriction)
   const assetFilter = isClient
-    ? and(eq(assetsTable.tenantId, tid), eq(assetsTable.assignedClientId, uid))
+    ? eq(assetsTable.assignedClientId, uid)
     : eq(assetsTable.tenantId, tid);
 
   const assets = await db.select().from(assetsTable).where(assetFilter);
   const assignedAssetIds = assets.map(a => a.id);
 
   // Build findings/alerts/scans/takedowns filters based on assigned assets
+  // For client: filter only by asset IDs (no tenantId restriction — assets can span tenants)
   const findingsWhere = isClient
-    ? (assignedAssetIds.length > 0 ? and(eq(findingsTable.tenantId, tid), inArray(findingsTable.assetId, assignedAssetIds)) : null)
+    ? (assignedAssetIds.length > 0 ? inArray(findingsTable.assetId, assignedAssetIds) : null)
     : eq(findingsTable.tenantId, tid);
   const alertsWhere = isClient
     ? (assignedAssetIds.length > 0
@@ -648,14 +649,14 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
     .slice(0, 5)
     .map(a => ({ id: a.id, title: a.title, message: a.message, severity: a.severity, isRead: a.isRead, createdAt: a.createdAt }));
 
-  // False positive breakdown
-  const fpSubmitted = allFindings.filter(f => f.falsePositiveStatus === "submitted").length;
-  const fpConfirmed = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
-  const fpRejected  = allFindings.filter(f => f.falsePositiveStatus === "rejected").length;
+  // False positive breakdown — use the scoped `findings` and `assets` vars (client-scoped)
+  const fpSubmitted = findings.filter(f => f.falsePositiveStatus === "submitted").length;
+  const fpConfirmed = findings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpRejected  = findings.filter(f => f.falsePositiveStatus === "rejected").length;
 
   // Full list of false positive findings (any non-"none" status) with asset name for display
-  const assetNameMap = new Map(allAssets.map(a => [a.id, a.name]));
-  const falsePositiveFindings = allFindings
+  const assetNameMap = new Map(assets.map(a => [a.id, a.name]));
+  const falsePositiveFindings = findings
     .filter(f => f.falsePositiveStatus && f.falsePositiveStatus !== "none")
     .map(f => ({
       id: f.id,
