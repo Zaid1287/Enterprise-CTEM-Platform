@@ -1048,7 +1048,6 @@ async function runSecretsScanner(target: string, endpoints: EndpointFinding[], h
           const matches = content.match(pat.pattern);
           if (!matches) continue;
           const raw = matches[0];
-          const masked = maskSecret(raw);
           const severityToCvss: Record<string, number> = { critical: 9.5, high: 7.5, medium: 5.0, low: 3.0, info: 1.0 };
           findings.push({
             cve: `SEC-${pat.name.replace(/\s+/g, "-").toUpperCase().slice(0, 20)}`,
@@ -1057,7 +1056,7 @@ async function runSecretsScanner(target: string, endpoints: EndpointFinding[], h
             title: `${pat.name} exposed in ${path}`,
             cwe: pat.cwe,
             remediation: pat.remediation,
-            source: `Credential discovered at ${path}: ${masked}`,
+            source: `Credential discovered at ${path}: ${raw}`,
           });
         }
       } catch {}

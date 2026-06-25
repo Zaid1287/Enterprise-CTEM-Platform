@@ -150,25 +150,26 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(assetsTable.tenantId, ids);
   } else if (role === "super_admin") {
-    // Super admins see their own tenant's assets AND unassigned (free pool) assets
-    tenantFilter = or(eq(assetsTable.tenantId, req.user!.tenantId), isNull(assetsTable.tenantId))!;
+    // Super admins see ALL assets across all tenants (platform operator view)
+    tenantFilter = undefined;
   } else {
     tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
   }
-  const filters = [tenantFilter];
+  const filters: ReturnType<typeof eq>[] = [];
+  if (tenantFilter) filters.push(tenantFilter as any);
   if (role === "client") {
-    filters.push(eq(assetsTable.assignedClientId, req.user!.userId));
+    filters.push(eq(assetsTable.assignedClientId, req.user!.userId) as any);
   }
   if (query.success) {
-    if (query.data.type) filters.push(eq(assetsTable.type, query.data.type));
-    if (query.data.verificationStatus) filters.push(eq(assetsTable.verificationStatus, query.data.verificationStatus));
-    if (query.data.search) filters.push(ilike(assetsTable.name, `%${query.data.search}%`));
+    if (query.data.type) filters.push(eq(assetsTable.type, query.data.type) as any);
+    if (query.data.verificationStatus) filters.push(eq(assetsTable.verificationStatus, query.data.verificationStatus) as any);
+    if (query.data.search) filters.push(ilike(assetsTable.name, `%${query.data.search}%`) as any);
   }
   // riskLevel filter (not in generated schema, read from raw query)
   if (req.query.riskLevel) {
-    filters.push(eq(assetsTable.riskLevel, req.query.riskLevel as string));
+    filters.push(eq(assetsTable.riskLevel, req.query.riskLevel as string) as any);
   }
-  const assets = await db.select().from(assetsTable).where(and(...filters));
+  const assets = await db.select().from(assetsTable).where(filters.length ? and(...filters) : undefined);
   res.json(await enrichAssets(assets));
 });
 

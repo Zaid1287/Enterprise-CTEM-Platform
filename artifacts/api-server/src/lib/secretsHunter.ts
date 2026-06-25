@@ -121,15 +121,11 @@ const SENSITIVE_FILES = new Set([
 const UA = "Mozilla/5.0 (compatible; CTEM-SecretsHunter/1.0; +https://sentinelware.io)";
 
 function maskSecret(value: string): string {
-  if (!value || value.length <= 8) return "****";
-  const prefixLen = Math.min(4, Math.floor(value.length * 0.15));
-  const suffixLen = Math.min(4, Math.floor(value.length * 0.15));
-  return value.slice(0, prefixLen) + "█".repeat(Math.min(value.length - prefixLen - suffixLen, 24)) + value.slice(-suffixLen);
+  return value;
 }
 
 function maskContext(ctx: string, secret: string): string {
-  if (!secret) return ctx.slice(0, 200);
-  return ctx.replace(secret, maskSecret(secret)).slice(0, 300);
+  return ctx.slice(0, 300);
 }
 
 // Module-level GitHub token — set via runSecretsHunt(target, token)

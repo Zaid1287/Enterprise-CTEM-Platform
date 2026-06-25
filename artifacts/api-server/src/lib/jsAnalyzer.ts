@@ -112,9 +112,7 @@ const PATH_PATTERN = /(?:"|'|`)(((?:https?:\/\/|\/\/)[^"'`\s]{1,300})|((?:\/|\.\
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function maskValue(s: string): string {
-  const clean = s.trim().replace(/^['"`]|['"`]$/g, "");
-  if (clean.length <= 8) return "••••••••";
-  return clean.slice(0, 4) + "••••••••" + clean.slice(-4);
+  return s.trim().replace(/^['"`]|['"`]$/g, "");
 }
 
 function getLineNumber(content: string, index: number): number {
@@ -127,7 +125,7 @@ function extractContext(content: string, index: number, matchLen: number): strin
   const snippet = content.slice(start, end);
   const secretStart = index - start;
   const secretEnd = secretStart + matchLen;
-  return (snippet.slice(0, secretStart) + "[REDACTED]" + snippet.slice(secretEnd))
+  return snippet
     .replace(/[\r\n]+/g, " ")
     .trim()
     .slice(0, 220);
