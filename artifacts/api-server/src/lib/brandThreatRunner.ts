@@ -259,33 +259,68 @@ async function scanPermutations(domain: string): Promise<PermResult[]> {
 
 // ── Risk scoring ───────────────────────────────────────────────────────────────
 
+// High-risk GeoIP country codes (known phishing hosting hotspots)
+const HIGH_RISK_COUNTRIES = new Set([
+  "RU", "CN", "KP", "IR", "NG", "UA", "PK", "BD", "VN", "IN",
+  "BR", "ID", "TH", "TR", "PL", "CZ", "RO", "HU", "BG", "BY",
+]);
+
 function computeRisk(
   dnsA: string[],
   dnsMx: string[],
+  dnsNs: string[],
   fuzzer: string,
   vtMalicious: number,
+  vtSuspicious: number,
   isPhishing: boolean,
+  phishingSource: string | null,
   whoisAgeDays: number | null,
+  geoCountry: string | null,
 ): number {
   let score = 0;
-  if (dnsA.length > 0) score += 35;
-  if (dnsMx.length > 0) score += 25;
-  if (isPhishing) score += 30;
-  if (vtMalicious > 0) score += Math.min(20, vtMalicious * 3);
-  if (["homoglyph","replacement","transposition","bitsquatting"].includes(fuzzer)) score += 10;
-  if (["subdomain","hyphenation"].includes(fuzzer)) score += 5;
-  if (whoisAgeDays !== null && whoisAgeDays < 90) score += 10;
+
+  // Base: active DNS
+  if (dnsA.length > 0) score += 45;       // A record active — live domain
+  if (dnsMx.length > 0) score += 35;      // MX active — phishing-ready
+
+  // NS parked-domain signal: has NS but no A record
+  if (dnsNs.length > 0 && dnsA.length === 0) score += 15;
+
+  // Fuzzer deceptiveness weighting
+  if (["homoglyph","bitsquatting"].includes(fuzzer)) score += 20;
+  else if (["replacement","transposition"].includes(fuzzer)) score += 15;
+  else if (["subdomain","hyphenation"].includes(fuzzer)) score += 10;
+
+  // WHOIS age signals
+  if (whoisAgeDays !== null) {
+    if (whoisAgeDays < 30) score += 25;   // brand-new domain — strong phishing signal
+    else if (whoisAgeDays < 90) score += 10;
+  }
+
+  // VirusTotal
+  if (vtMalicious >= 1) score += 40;
+  else if (vtSuspicious >= 3) score += 20;
+
+  // Phishing feed matches
+  if (isPhishing) {
+    if (phishingSource === "Google Safe Browsing") score += 45;
+    else score += 50; // PhishTank / OpenPhish
+  }
+
+  // GeoIP high-risk country
+  if (geoCountry && HIGH_RISK_COUNTRIES.has(geoCountry)) score += 10;
+
   return Math.min(100, score);
 }
 
 // ── Phase helpers ─────────────────────────────────────────────────────────────
 
 async function runRdapEnrichment(
-  liveResults: PermResult[],
+  allResults: PermResult[],
 ): Promise<Map<string, Awaited<ReturnType<typeof rdapLookup>>>> {
   const rdapMap = new Map<string, Awaited<ReturnType<typeof rdapLookup>>>();
   const RDAP_CONCURRENCY = 5;
-  const queue = [...liveResults];
+  const queue = [...allResults];
 
   async function worker() {
     while (queue.length > 0) {
@@ -403,16 +438,16 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       .set({ totalPermutations: permResults.length })
       .where(eq(brandThreatScansTable.id, scanId));
 
-    // Only enrich domains that are actually live (have A records)
+    // Separate live (A-record) results for enrichment that needs IPs
     const liveResults = permResults.filter(r => r.dnsA.length > 0);
 
     logger.info({ scanId, domain, total: permResults.length, live: liveResults.length }, "Permutation phase done; starting enrichment");
 
-    // ── Phase 2: RDAP + GeoIP + VT + Phishing checks in parallel ─────────────
+    // ── Phase 2: RDAP (all permutations) + GeoIP/VT/Phishing (live only) ──────
     const allIps = [...new Set(liveResults.flatMap(r => r.dnsA))];
 
     const [rdapMap, geoMap, vtMap, phishMap] = await Promise.all([
-      runRdapEnrichment(liveResults),
+      runRdapEnrichment(permResults),            // RDAP runs on ALL permutations — not just live
       geoIpBatch(allIps),
       vtApiKey ? runVtEnrichment(liveResults, vtApiKey) : Promise.resolve(new Map()),
       runPhishingChecks(liveResults, gsbKey),
@@ -443,9 +478,17 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       const phish = phishMap.get(r.permutation);
 
       const vtMalicious = vt?.malicious ?? 0;
+      const vtSuspicious = vt?.suspicious ?? 0;
       const isPhishing = phish?.isPhishing ?? false;
+      const phishSource = phish?.source ?? null;
 
-      const riskScore = computeRisk(r.dnsA, r.dnsMx, r.fuzzer, vtMalicious, isPhishing, rdap?.ageDays ?? null);
+      const riskScore = computeRisk(
+        r.dnsA, r.dnsMx, r.dnsNs, r.fuzzer,
+        vtMalicious, vtSuspicious,
+        isPhishing, phishSource,
+        rdap?.ageDays ?? null,
+        geo?.country ?? null,
+      );
       const isSuspicious = riskScore >= 40;
 
       if (r.dnsA.length > 0) liveCount++;

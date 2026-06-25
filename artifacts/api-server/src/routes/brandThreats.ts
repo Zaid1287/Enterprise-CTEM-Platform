@@ -262,7 +262,7 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
   if (!type || !value) {
     res.status(400).json({ error: "type and value are required" }); return;
   }
-  const validTypes = ["domain", "brand_name", "trademark", "email_pattern", "logo_hash", "executive_name", "social_handle"];
+  const validTypes = ["keyword", "logo_url", "domain", "ip", "email", "social_handle", "mobile_app"];
   if (!validTypes.includes(type)) {
     res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` }); return;
   }

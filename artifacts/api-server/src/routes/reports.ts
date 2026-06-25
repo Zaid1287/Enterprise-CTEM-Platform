@@ -4,6 +4,7 @@ import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
   complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
+  dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable,
   riskScoresTable, technologyDetectionsTable,
 } from "@workspace/db";
 import { CreateReportBody, GetReportParams, DeleteReportParams } from "@workspace/api-zod";
@@ -173,10 +174,24 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
     .where(and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, tenantId)));
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
 
-  const allResults = await db.select().from(brandThreatResultsTable)
-    .where(eq(brandThreatResultsTable.scanId, scanId))
-    .orderBy(desc(brandThreatResultsTable.riskScore))
-    .limit(200);
+  const [allResults, dataLeaks, phishingDetections, brandAbuse] = await Promise.all([
+    db.select().from(brandThreatResultsTable)
+      .where(eq(brandThreatResultsTable.scanId, scanId))
+      .orderBy(desc(brandThreatResultsTable.riskScore))
+      .limit(200),
+    db.select().from(dataLeakResultsTable)
+      .where(eq(dataLeakResultsTable.scanId, scanId))
+      .orderBy(desc(dataLeakResultsTable.createdAt))
+      .limit(50),
+    db.select().from(phishingDetectionsTable)
+      .where(eq(phishingDetectionsTable.scanId, scanId))
+      .orderBy(desc(phishingDetectionsTable.createdAt))
+      .limit(50),
+    db.select().from(brandAbuseResultsTable)
+      .where(eq(brandAbuseResultsTable.scanId, scanId))
+      .orderBy(desc(brandAbuseResultsTable.createdAt))
+      .limit(50),
+  ]);
 
   const liveResults = allResults.filter(r => r.dnsA && r.dnsA.length > 0);
   const topResults  = allResults.slice(0, 100);
@@ -190,6 +205,10 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
       liveCount:         scan.liveCount,
       registeredCount:   scan.registeredCount,
       phishingRisk:      scan.phishingRisk,
+      dataLeakCount:     scan.dataLeakCount ?? 0,
+      phishingCount:     scan.phishingCount ?? 0,
+      brandAbuseCount:   scan.brandAbuseCount ?? 0,
+      darkWebCount:      scan.darkWebCount ?? 0,
       fuzzerBreakdown:   scan.fuzzerBreakdown ?? null,
       faviconUrl:        scan.faviconUrl ?? null,
       faviconMmh3:       scan.faviconMmh3 ?? null,
@@ -200,23 +219,76 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
       createdAt:         scan.createdAt.toISOString(),
       completedAt:       scan.completedAt?.toISOString() ?? null,
     },
+    // Pillar 1: Typosquatting — top domains by risk
     topResults: topResults.map(r => ({
-      permutation:   r.permutation,
-      fuzzer:        r.fuzzer,
-      dnsA:          r.dnsA ?? null,
-      dnsMx:         r.dnsMx ?? null,
-      mxSpf:         r.mxSpf ?? null,
-      riskScore:     r.riskScore,
-      isSuspicious:  r.isSuspicious,
+      permutation:      r.permutation,
+      fuzzer:           r.fuzzer,
+      dnsA:             r.dnsA ?? null,
+      dnsMx:            r.dnsMx ?? null,
+      dnsNs:            r.dnsNs ?? null,
+      mxSpf:            r.mxSpf ?? null,
+      riskScore:        r.riskScore,
+      isSuspicious:     r.isSuspicious,
+      whoisRegistrar:   r.whoisRegistrar ?? null,
+      whoisCreated:     r.whoisCreated ?? null,
+      whoisAgeDays:     r.whoisAgeDays ?? null,
+      geoCountry:       r.geoCountry ?? null,
+      vtMalicious:      r.vtMalicious ?? null,
+      isPhishing:       r.isPhishing ?? false,
+      phishingSource:   r.phishingSource ?? null,
+      registrationStatus: r.registrationStatus ?? null,
     })),
     liveResults: liveResults.slice(0, 100).map(r => ({
-      permutation:   r.permutation,
-      fuzzer:        r.fuzzer,
-      dnsA:          r.dnsA ?? null,
-      dnsMx:         r.dnsMx ?? null,
-      mxSpf:         r.mxSpf ?? null,
-      riskScore:     r.riskScore,
-      isSuspicious:  r.isSuspicious,
+      permutation:      r.permutation,
+      fuzzer:           r.fuzzer,
+      dnsA:             r.dnsA ?? null,
+      dnsMx:            r.dnsMx ?? null,
+      dnsNs:            r.dnsNs ?? null,
+      mxSpf:            r.mxSpf ?? null,
+      riskScore:        r.riskScore,
+      isSuspicious:     r.isSuspicious,
+      whoisRegistrar:   r.whoisRegistrar ?? null,
+      whoisCreated:     r.whoisCreated ?? null,
+      whoisAgeDays:     r.whoisAgeDays ?? null,
+      geoCountry:       r.geoCountry ?? null,
+      vtMalicious:      r.vtMalicious ?? null,
+      isPhishing:       r.isPhishing ?? false,
+      phishingSource:   r.phishingSource ?? null,
+      registrationStatus: r.registrationStatus ?? null,
+    })),
+    // Pillar 2: Data Leak / HIBP
+    dataLeaks: dataLeaks.map(d => ({
+      id:           d.id,
+      source:       d.source,
+      title:        d.title,
+      breachDate:   d.breachDate ?? null,
+      description:  d.description ?? null,
+      exposedData:  d.exposedData ?? null,
+      domainMatch:  d.domainMatch ?? null,
+      emailMatch:   d.emailMatch ?? null,
+      severity:     d.severity,
+      url:          d.url ?? null,
+    })),
+    // Pillar 3: Phishing Detections (PhishTank / OpenPhish / GSB)
+    phishingDetections: phishingDetections.map(p => ({
+      id:           p.id,
+      url:          p.url,
+      source:       p.source,
+      threatType:   p.threatType ?? null,
+      verified:     p.verified,
+      targetBrand:  p.targetBrand ?? null,
+      submittedAt:  p.submittedAt ?? null,
+    })),
+    // Pillar 4: Brand Abuse (CT certs, app store, social, lookalike domains)
+    brandAbuse: brandAbuse.map(b => ({
+      id:              b.id,
+      type:            b.type,
+      platform:        b.platform ?? null,
+      url:             b.url ?? null,
+      title:           b.title ?? null,
+      description:     b.description ?? null,
+      evidenceSnippet: b.evidenceSnippet ?? null,
+      risk:            b.risk,
     })),
     generatedAt: new Date().toISOString(),
   });
