@@ -8,7 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   ShieldAlert, Plus, Trash2, Loader2, Globe, AlertTriangle,
   CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap, Shield,
-  TrendingUp, Activity, Search, ChevronRight,
+  TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -62,8 +62,10 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
             </div>
             <h2 className="text-base font-semibold">New Brand Threat Scan</h2>
           </div>
-          <p className="text-xs text-muted-foreground mt-1 ml-11">
-            Detects typosquatting, homoglyph substitution, TLD abuse, and brand-impersonation permutations via live DNS.
+          <p className="text-xs text-muted-foreground mt-2 ml-11 leading-relaxed">
+            Full intelligence pipeline: typosquatting via dnstwist engine, RDAP enrichment,
+            GeoIP, VirusTotal reputation, PhishTank/OpenPhish/Google Safe Browsing phishing feeds,
+            HIBP data leak check, CT abuse detection, and brand abuse scanning.
           </p>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -81,6 +83,19 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
               />
             </div>
             <p className="text-[10px] text-muted-foreground/60 mt-1.5">Enter a root domain without protocol — e.g. acme.com</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { icon: <Globe className="w-3 h-3" />,    label: "Typosquatting",  sub: "dnstwist + DNS" },
+              { icon: <Fish className="w-3 h-3" />,     label: "Phishing feeds", sub: "PhishTank · OpenPhish" },
+              { icon: <Database className="w-3 h-3" />, label: "Data leaks",     sub: "HIBP breach lookup" },
+            ].map(item => (
+              <div key={item.label} className="bg-background/80 border border-border/50 rounded-xl p-2.5 text-center">
+                <div className="flex justify-center mb-1 text-muted-foreground">{item.icon}</div>
+                <p className="text-[10px] font-semibold">{item.label}</p>
+                <p className="text-[9px] text-muted-foreground/60 leading-tight mt-0.5">{item.sub}</p>
+              </div>
+            ))}
           </div>
           <div className="flex gap-2">
             <Button type="button" variant="outline" size="sm" onClick={onClose} className="flex-1">Cancel</Button>
@@ -143,11 +158,7 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
 
         {/* Stats row — only when done */}
         {scan.status === "done" && (
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <div className="bg-background rounded-xl p-2.5 text-center">
-              <p className="text-[10px] text-muted-foreground mb-0.5">Permutations</p>
-              <p className="text-base font-bold tabular-nums">{(scan.totalPermutations ?? 0).toLocaleString()}</p>
-            </div>
+          <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="bg-background rounded-xl p-2.5 text-center">
               <p className="text-[10px] text-muted-foreground mb-0.5">Live</p>
               <p className={cn("text-base font-bold tabular-nums", liveCount > 0 ? "text-red-400" : "text-green-400")}>
@@ -155,11 +166,23 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
               </p>
             </div>
             <div className="bg-background rounded-xl p-2.5 text-center">
-              <p className="text-[10px] text-muted-foreground mb-0.5">Registered</p>
-              <p className={cn("text-base font-bold tabular-nums", mxCount > 0 ? "text-orange-400" : "text-muted-foreground")}>
-                {mxCount}
+              <p className="text-[10px] text-muted-foreground mb-0.5">Phishing</p>
+              <p className={cn("text-base font-bold tabular-nums", (scan.phishingCount ?? 0) > 0 ? "text-red-400" : "text-muted-foreground")}>
+                {scan.phishingCount ?? 0}
               </p>
             </div>
+            <div className="bg-background rounded-xl p-2.5 text-center">
+              <p className="text-[10px] text-muted-foreground mb-0.5">Leaks</p>
+              <p className={cn("text-base font-bold tabular-nums", (scan.dataLeakCount ?? 0) > 0 ? "text-orange-400" : "text-muted-foreground")}>
+                {scan.dataLeakCount ?? 0}
+              </p>
+            </div>
+          </div>
+        )}
+        {scan.status === "done" && (scan.brandAbuseCount ?? 0) > 0 && (
+          <div className="mb-3 flex items-center gap-2 bg-orange-500/5 border border-orange-500/20 rounded-lg px-3 py-2">
+            <Target className="w-3 h-3 text-orange-400 shrink-0" />
+            <p className="text-[11px] text-orange-400 font-medium">{scan.brandAbuseCount} brand abuse finding{scan.brandAbuseCount !== 1 ? "s" : ""}</p>
           </div>
         )}
 
@@ -168,9 +191,11 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
           <div className="mb-4 bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 flex items-center gap-2.5">
             <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
             <div>
-              <p className="text-xs font-medium text-blue-400">Scanning in progress</p>
+              <p className="text-xs font-medium text-blue-400">Full intelligence scan in progress</p>
               <p className="text-[10px] text-muted-foreground">
-                {scan.totalPermutations > 0 ? `${scan.totalPermutations} domains queued` : "Generating permutations…"}
+                {scan.totalPermutations > 0
+                  ? `${scan.totalPermutations} permutations · RDAP + GeoIP + VT + phishing feeds + HIBP…`
+                  : "Generating permutations + running intelligence engines…"}
               </p>
             </div>
           </div>
@@ -251,10 +276,10 @@ export default function BrandThreatPage() {
     ? scanList.filter((s: any) => s.domain.includes(search.trim().toLowerCase()))
     : scanList;
 
-  const totalLive        = scanList.reduce((n: number, s: any) => n + (s.liveCount ?? 0), 0);
-  const totalPermutations = scanList.filter((s: any) => s.status === "done").reduce((n: number, s: any) => n + (s.totalPermutations ?? 0), 0);
-  const activeScans       = scanList.filter((s: any) => s.status === "running" || s.status === "pending").length;
-  const criticalHigh      = scanList.filter((s: any) => s.phishingRisk === "critical" || s.phishingRisk === "high").length;
+  const totalLive     = scanList.reduce((n: number, s: any) => n + (s.liveCount ?? 0), 0);
+  const totalPhishing = scanList.reduce((n: number, s: any) => n + (s.phishingCount ?? 0), 0);
+  const totalLeaks    = scanList.reduce((n: number, s: any) => n + (s.dataLeakCount ?? 0), 0);
+  const activeScans   = scanList.filter((s: any) => s.status === "running" || s.status === "pending").length;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -266,9 +291,9 @@ export default function BrandThreatPage() {
               <ShieldAlert className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight">Brand Threat Monitor</h1>
+              <h1 className="text-xl font-bold tracking-tight">Brand Threat Intelligence</h1>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Typosquatting · Homoglyph · TLD abuse · Phishing domain detection
+                Typosquatting · Phishing detection · Data leaks · Brand abuse · CT monitoring
               </p>
             </div>
           </div>
@@ -290,15 +315,8 @@ export default function BrandThreatPage() {
             <div className="flex items-center gap-3 bg-background/60 border border-border rounded-xl px-4 py-3">
               <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
               <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Domains Monitored</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Domains Scanned</p>
                 <p className="text-xl font-bold leading-tight">{new Set(scanList.map((s: any) => s.domain)).size}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 bg-background/60 border border-border rounded-xl px-4 py-3">
-              <TrendingUp className="w-4 h-4 text-muted-foreground shrink-0" />
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Permutations Checked</p>
-                <p className="text-xl font-bold leading-tight">{totalPermutations.toLocaleString()}</p>
               </div>
             </div>
             <div className="flex items-center gap-3 bg-background/60 border border-red-500/20 rounded-xl px-4 py-3">
@@ -308,14 +326,23 @@ export default function BrandThreatPage() {
                 <p className={cn("text-xl font-bold leading-tight", totalLive > 0 ? "text-red-400" : "")}>{totalLive}</p>
               </div>
             </div>
+            <div className="flex items-center gap-3 bg-background/60 border border-orange-500/20 rounded-xl px-4 py-3">
+              <Fish className="w-4 h-4 text-orange-400 shrink-0" />
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Phishing Detected</p>
+                <p className={cn("text-xl font-bold leading-tight", totalPhishing > 0 ? "text-orange-400" : "")}>{totalPhishing}</p>
+              </div>
+            </div>
             <div className="flex items-center gap-3 bg-background/60 border border-border rounded-xl px-4 py-3">
-              <Activity className="w-4 h-4 text-muted-foreground shrink-0" />
+              {activeScans > 0
+                ? <Activity className="w-4 h-4 text-blue-400 shrink-0" />
+                : <Database className="w-4 h-4 text-muted-foreground shrink-0" />}
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                  {activeScans > 0 ? "Active Scans" : "High Risk Scans"}
+                  {activeScans > 0 ? "Active Scans" : "Data Leaks"}
                 </p>
-                <p className={cn("text-xl font-bold leading-tight", activeScans > 0 ? "text-blue-400" : criticalHigh > 0 ? "text-orange-400" : "")}>
-                  {activeScans > 0 ? activeScans : criticalHigh}
+                <p className={cn("text-xl font-bold leading-tight", activeScans > 0 ? "text-blue-400" : totalLeaks > 0 ? "text-yellow-400" : "")}>
+                  {activeScans > 0 ? activeScans : totalLeaks}
                 </p>
               </div>
             </div>

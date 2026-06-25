@@ -5,7 +5,8 @@ import {
   ArrowLeft, Globe, AlertTriangle, CheckCircle2, XCircle,
   Loader2, Mail, Server, ChevronDown, ChevronUp, RefreshCw,
   ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
-  Hash, Search, ChevronRight, Download,
+  Hash, Search, ChevronRight, Download, Fish, Database, Target,
+  MapPin, Building2, Calendar, Shield, Info, Lock,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -51,16 +52,14 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
   "Validin":      { color: "text-violet-400", bg: "bg-violet-500/10", border: "border-violet-500/25" },
 };
 
-type FilterMode = "all" | "live" | "mx" | "suspicious";
+type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "favicon";
 
 function RiskScoreBar({ score }: { score: number }) {
   return (
     <div className="flex items-center gap-2 w-full">
       <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${score}%`, backgroundColor: SCORE_COLOR(score) }}
-        />
+        <div className="h-full rounded-full transition-all" style={{ width: `${score}%`, backgroundColor: SCORE_COLOR(score) }} />
       </div>
       <span className="text-xs font-bold tabular-nums w-6 text-right" style={{ color: SCORE_COLOR(score) }}>
         {score}
@@ -97,21 +96,18 @@ function FaviconIntelPanel({ scan }: { scan: any }) {
 
   if (status === "pending" || status === "running") {
     return (
-      <div className="mx-6 mt-4 bg-violet-500/5 border border-violet-500/20 rounded-xl p-4 flex items-center gap-3">
+      <div className="bg-violet-500/5 border border-violet-500/20 rounded-xl p-4 flex items-center gap-3">
         <Loader2 className="w-4 h-4 animate-spin text-violet-400 shrink-0" />
         <div>
           <p className="text-sm font-medium text-violet-400">Favicon intelligence scan in progress</p>
-          <p className="text-xs text-muted-foreground">
-            favihunter is computing favicon hashes and generating search engine pivot URLs…
-          </p>
+          <p className="text-xs text-muted-foreground">favihunter is computing favicon hashes and generating search engine pivot URLs…</p>
         </div>
       </div>
     );
   }
-
   if (status === "skipped" || status === "error" || !scan.faviconMd5) {
     return (
-      <div className="mx-6 mt-4 bg-muted/30 border border-border rounded-xl p-4 flex items-center gap-3">
+      <div className="bg-muted/30 border border-border rounded-xl p-4 flex items-center gap-3">
         <Fingerprint className="w-4 h-4 text-muted-foreground/40 shrink-0" />
         <p className="text-xs text-muted-foreground">
           {status === "error"
@@ -125,12 +121,8 @@ function FaviconIntelPanel({ scan }: { scan: any }) {
   const engines = Object.entries(searchUrls).filter(([k]) => k !== "_error");
 
   return (
-    <div className="mx-6 mt-4 border border-violet-500/20 rounded-xl overflow-hidden bg-violet-500/3">
-      {/* Header */}
-      <button
-        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-violet-500/5 transition-colors"
-        onClick={() => setCollapsed(c => !c)}
-      >
+    <div className="border border-violet-500/20 rounded-xl overflow-hidden bg-violet-500/3">
+      <button className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-violet-500/5 transition-colors" onClick={() => setCollapsed(c => !c)}>
         <Fingerprint className="w-4 h-4 text-violet-400 shrink-0" />
         <span className="text-sm font-semibold text-violet-300">Favicon Intelligence</span>
         <span className="text-[10px] text-violet-400/60 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full font-mono ml-1">
@@ -138,37 +130,21 @@ function FaviconIntelPanel({ scan }: { scan: any }) {
         </span>
         <div className="flex-1" />
         <span className="text-xs text-muted-foreground mr-1">{engines.length} search engines</span>
-        {collapsed
-          ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-          : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-        }
+        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
       </button>
-
       {!collapsed && (
         <div className="border-t border-violet-500/15 px-5 py-4">
           <div className="flex gap-6 flex-wrap">
-            {/* Favicon preview */}
             <div className="flex flex-col items-center gap-2 shrink-0">
               <div className="w-12 h-12 rounded-xl border border-border bg-background flex items-center justify-center overflow-hidden">
-                <img
-                  src={scan.faviconUrl}
-                  alt="favicon"
-                  className="w-10 h-10 object-contain"
-                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
+                <img src={scan.faviconUrl} alt="favicon" className="w-10 h-10 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
               </div>
-              <p className="text-[9px] text-muted-foreground text-center max-w-[60px] break-all leading-tight font-mono">
-                favicon.ico
-              </p>
+              <p className="text-[9px] text-muted-foreground text-center max-w-[60px] break-all leading-tight font-mono">favicon.ico</p>
             </div>
-
-            {/* Hash values */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 mb-2">
                 <Hash className="w-3 h-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
-                  Favicon Hashes
-                </span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Favicon Hashes</span>
                 <span className="text-[9px] text-muted-foreground/50">(click to copy)</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5">
@@ -179,48 +155,252 @@ function FaviconIntelPanel({ scan }: { scan: any }) {
               </div>
             </div>
           </div>
-
-          {/* Search engine pivot links */}
           {engines.length > 0 && (
             <div className="mt-4">
               <div className="flex items-center gap-1.5 mb-2">
                 <Search className="w-3 h-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
-                  Search Engine Pivots
-                </span>
-                <span className="text-[9px] text-muted-foreground/50 ml-1">
-                  — click to find hosts using the same favicon
-                </span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Search Engine Pivots</span>
+                <span className="text-[9px] text-muted-foreground/50 ml-1">— click to find hosts using the same favicon</span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {engines.map(([name, { url, hash_type }]) => {
                   const meta = ENGINE_META[name] ?? { color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" };
                   return (
-                    <a
-                      key={name}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all",
-                        "hover:scale-105 hover:shadow-sm",
-                        meta.color, meta.bg, meta.border,
-                      )}
+                    <a key={name} href={url} target="_blank" rel="noopener noreferrer"
+                      className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all hover:scale-105 hover:shadow-sm", meta.color, meta.bg, meta.border)}
                       title={`Search ${name} using ${hash_type} hash`}
                     >
-                      {name}
-                      <ExternalLink className="w-3 h-3 opacity-60" />
+                      {name} <ExternalLink className="w-3 h-3 opacity-60" />
                     </a>
                   );
                 })}
               </div>
               <p className="text-[10px] text-muted-foreground/40 mt-2">
-                These links pivot on the domain's actual favicon fingerprint to find clones, phishing infrastructure, or related assets across internet scan databases.
+                These links pivot on the domain's actual favicon fingerprint to find clones, phishing infrastructure, or related assets.
               </p>
             </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function PhishingTab({ phishing }: { phishing: any[] }) {
+  if (!phishing.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <Shield className="w-10 h-10 text-green-400/40 mb-3" />
+        <p className="text-base font-semibold text-green-400">No phishing domains detected</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          PhishTank, OpenPhish, and Google Safe Browsing found no confirmed phishing domains in this scan.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="p-5 space-y-3">
+      <div className="flex items-center gap-2 mb-4">
+        <Fish className="w-4 h-4 text-red-400" />
+        <span className="font-semibold">{phishing.length} confirmed phishing domain{phishing.length !== 1 ? "s" : ""}</span>
+        <span className="text-xs text-muted-foreground">— live confirmed phishing infrastructure</span>
+      </div>
+      {phishing.map((p: any) => (
+        <div key={p.id} className="bg-card border border-red-500/20 rounded-xl p-4 space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
+              <span className="font-mono text-sm text-red-300 truncate">{p.url}</span>
+            </div>
+            <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold shrink-0">
+              {p.source}
+            </span>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+            {p.targetBrand && <span><span className="font-medium text-foreground/70">Target:</span> {p.targetBrand}</span>}
+            {p.threatType && <span><span className="font-medium text-foreground/70">Type:</span> {p.threatType.replace(/_/g, " ")}</span>}
+            {p.submittedAt && <span><span className="font-medium text-foreground/70">Detected:</span> {formatDate(p.submittedAt)}</span>}
+            {p.verified && <span className="text-green-400 flex items-center gap-0.5"><CheckCircle2 className="w-3 h-3" /> Verified</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <a href={`https://www.virustotal.com/gui/url/${Buffer.from(p.url).toString("base64")}`} target="_blank" rel="noopener noreferrer"
+              className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+              <ExternalLink className="w-3 h-3" /> VirusTotal
+            </a>
+            <a href={`https://phishtank.org/phish_search.php?valid=y&active=y&Search=Search&q=${encodeURIComponent(p.url)}`} target="_blank" rel="noopener noreferrer"
+              className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+              <ExternalLink className="w-3 h-3" /> PhishTank
+            </a>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DataLeaksTab({ leaks }: { leaks: any[] }) {
+  if (!leaks.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <Shield className="w-10 h-10 text-green-400/40 mb-3" />
+        <p className="text-base font-semibold text-green-400">No data breaches found</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          HIBP (Have I Been Pwned) found no known data breaches associated with this domain.
+        </p>
+      </div>
+    );
+  }
+  const SEV_META: Record<string, { color: string; bg: string; border: string }> = {
+    critical: { color: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/20" },
+    high:     { color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
+    medium:   { color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" },
+    low:      { color: "text-green-400", bg: "bg-green-500/10", border: "border-green-500/20" },
+  };
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex items-center gap-2 mb-4">
+        <Database className="w-4 h-4 text-orange-400" />
+        <span className="font-semibold">{leaks.length} data breach record{leaks.length !== 1 ? "s" : ""}</span>
+        <span className="text-xs text-muted-foreground">— sourced from HIBP (Have I Been Pwned)</span>
+      </div>
+      {leaks.map((leak: any) => {
+        const sev = SEV_META[leak.severity] ?? SEV_META.low;
+        const dataClasses: string[] = Array.isArray(leak.exposedData) ? leak.exposedData : [];
+        return (
+          <div key={leak.id} className={cn("bg-card border rounded-xl p-4 space-y-3", sev.border)}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Database className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                  <span className="font-semibold text-sm">{leak.title}</span>
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", sev.color, sev.bg, sev.border)}>
+                    {leak.severity}
+                  </span>
+                </div>
+                {leak.domainMatch && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5 ml-5">Domain: {leak.domainMatch}</p>
+                )}
+              </div>
+              {leak.breachDate && (
+                <span className="text-[11px] text-muted-foreground flex items-center gap-1 shrink-0">
+                  <Calendar className="w-3 h-3" /> {leak.breachDate}
+                </span>
+              )}
+            </div>
+            {leak.description && (
+              <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{leak.description}</p>
+            )}
+            {dataClasses.length > 0 && (
+              <div className="ml-5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Exposed Data Classes</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {dataClasses.map((dc: string) => (
+                    <span key={dc} className="text-[10px] bg-muted/50 border border-border px-2 py-0.5 rounded-full text-foreground/70">
+                      {dc}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {leak.url && (
+              <div className="ml-5">
+                <a href={leak.url} target="_blank" rel="noopener noreferrer"
+                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
+                  <ExternalLink className="w-3 h-3" /> View on HIBP
+                </a>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BrandAbuseTab({ abuse }: { abuse: any[] }) {
+  if (!abuse.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <Shield className="w-10 h-10 text-green-400/40 mb-3" />
+        <p className="text-base font-semibold text-green-400">No brand abuse found</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Certificate transparency, DNS lookalike, and app store checks found no brand abuse.
+        </p>
+      </div>
+    );
+  }
+  const RISK_COLOR: Record<string, string> = {
+    critical: "text-red-400 bg-red-500/10 border-red-500/20",
+    high: "text-orange-400 bg-orange-500/10 border-orange-500/20",
+    medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
+    low: "text-green-400 bg-green-500/10 border-green-500/20",
+  };
+  const TYPE_ICON: Record<string, React.ReactNode> = {
+    suspicious_certificate: <Lock className="w-3.5 h-3.5 text-violet-400 shrink-0" />,
+    lookalike_domain: <Globe className="w-3.5 h-3.5 text-red-400 shrink-0" />,
+    rogue_app: <Target className="w-3.5 h-3.5 text-orange-400 shrink-0" />,
+  };
+
+  const grouped = abuse.reduce((acc: Record<string, any[]>, r: any) => {
+    if (!acc[r.type]) acc[r.type] = [];
+    acc[r.type]!.push(r);
+    return acc;
+  }, {});
+
+  return (
+    <div className="p-5 space-y-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Target className="w-4 h-4 text-orange-400" />
+        <span className="font-semibold">{abuse.length} brand abuse finding{abuse.length !== 1 ? "s" : ""}</span>
+      </div>
+      {Object.entries(grouped).map(([type, items]) => (
+        <div key={type}>
+          <div className="flex items-center gap-2 mb-3">
+            {TYPE_ICON[type] ?? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              {type.replace(/_/g, " ")} ({(items as any[]).length})
+            </p>
+          </div>
+          <div className="space-y-2">
+            {(items as any[]).map((item: any) => (
+              <div key={item.id} className={cn("bg-card border rounded-xl p-4", "border-border")}>
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {TYPE_ICON[item.type] ?? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+                    <span className="text-sm font-medium truncate">{item.title ?? item.url ?? item.platform}</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {item.platform && (
+                      <span className="text-[10px] bg-muted/50 border border-border px-2 py-0.5 rounded-full text-muted-foreground">
+                        {item.platform}
+                      </span>
+                    )}
+                    <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.low)}>
+                      {item.risk}
+                    </span>
+                  </div>
+                </div>
+                {item.description && (
+                  <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{item.description}</p>
+                )}
+                {item.evidenceSnippet && (
+                  <p className="text-[11px] font-mono bg-muted/30 rounded-lg px-3 py-1.5 mt-2 text-muted-foreground/70">
+                    {item.evidenceSnippet}
+                  </p>
+                )}
+                {item.url && (
+                  <div className="ml-5 mt-2">
+                    <a href={item.url} target="_blank" rel="noopener noreferrer"
+                      className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
+                      <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 60)}{item.url.length > 60 ? "…" : ""}
+                    </a>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -235,6 +415,7 @@ export default function BrandThreatDetailPage() {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabMode>("typosquatting");
   const PAGE_SIZE = 50;
 
   const { data: scan, isLoading, refetch } = useGetBrandThreatScan(id, {
@@ -252,11 +433,15 @@ export default function BrandThreatDetailPage() {
 
   const s = scan as any;
   const results: any[] = s?.results ?? [];
+  const phishingDetections: any[] = s?.phishingDetections ?? [];
+  const dataLeaks: any[] = s?.dataLeaks ?? [];
+  const brandAbuse: any[] = s?.brandAbuse ?? [];
 
   const filtered = results.filter((r: any) => {
     if (filter === "live"       && !(r.dnsA?.length > 0)) return false;
     if (filter === "mx"         && !(r.dnsMx?.length > 0)) return false;
     if (filter === "suspicious" && !r.isSuspicious) return false;
+    if (filter === "phishing"   && !r.isPhishing) return false;
     if (fuzzerFilter !== "all"  && r.fuzzer !== fuzzerFilter) return false;
     if (search && !r.permutation.includes(search.toLowerCase())) return false;
     return true;
@@ -266,11 +451,7 @@ export default function BrandThreatDetailPage() {
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <div className="flex items-center justify-center h-64"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
   }
 
   if (!s) {
@@ -288,6 +469,7 @@ export default function BrandThreatDetailPage() {
   const liveResults = results.filter((r: any) => r.dnsA?.length > 0);
   const mxResults   = results.filter((r: any) => r.dnsMx?.length > 0);
   const suspResults = results.filter((r: any) => r.isSuspicious);
+  const phishResults = results.filter((r: any) => r.isPhishing);
   const risk        = RISK_META[s.phishingRisk] ?? RISK_META.low;
 
   const chartData = Object.entries(fuzzerBreakdown)
@@ -299,17 +481,20 @@ export default function BrandThreatDetailPage() {
       color: FUZZER_META[fuzzer]?.chartColor ?? "#94a3b8",
     }));
 
-  const showFaviPanel = s.status !== "pending" && (
-    s.favihunterStatus === "running" ||
-    s.favihunterStatus === "done" ||
-    s.favihunterStatus === "skipped" ||
-    s.favihunterStatus === "error"
-  );
+  const showFaviPanel = s.status !== "pending";
+
+  const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
+    { id: "typosquatting", label: "Typosquatting", icon: <Globe className="w-3.5 h-3.5" />, count: results.length },
+    { id: "phishing",      label: "Phishing",      icon: <Fish className="w-3.5 h-3.5" />,  count: phishingDetections.length, color: phishingDetections.length > 0 ? "text-red-400" : undefined },
+    { id: "data_leaks",    label: "Data Leaks",    icon: <Database className="w-3.5 h-3.5" />, count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
+    { id: "brand_abuse",   label: "Brand Abuse",   icon: <Target className="w-3.5 h-3.5" />,   count: brandAbuse.length, color: brandAbuse.length > 0 ? "text-yellow-400" : undefined },
+    { id: "favicon",       label: "Favicon Intel", icon: <Fingerprint className="w-3.5 h-3.5" /> },
+  ];
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* ── Hero header ──────────────────────────────────────────────── */}
-      <div className="bg-gradient-to-r from-card via-card to-background border-b border-border px-6 py-5">
+      {/* ── Hero header ────────────────────────────────────────────────────── */}
+      <div className="bg-gradient-to-r from-card via-card to-background border-b border-border px-6 py-5 shrink-0">
         <div className="flex items-center gap-3 mb-1">
           <Button variant="ghost" size="sm" onClick={() => navigate("/brand-threats")} className="h-8 shrink-0">
             <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Back
@@ -334,9 +519,7 @@ export default function BrandThreatDetailPage() {
           )}
           <div className="flex-1" />
           <Button
-            variant="outline"
-            size="sm"
-            className="h-8 shrink-0 gap-1.5"
+            variant="outline" size="sm" className="h-8 shrink-0 gap-1.5"
             disabled={downloading || s.status !== "done"}
             onClick={async () => {
               setDownloading(true);
@@ -345,10 +528,8 @@ export default function BrandThreatDetailPage() {
               finally { setDownloading(false); }
             }}
           >
-            {downloading
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Download className="w-3.5 h-3.5" />}
-            {downloading ? "Generating…" : "Download PDF"}
+            {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            {downloading ? "Generating…" : "PDF"}
           </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8 shrink-0">
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
@@ -365,54 +546,41 @@ export default function BrandThreatDetailPage() {
           )}
         </p>
 
-        {/* Stat strip */}
         {s.status === "done" && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
-            <div className="bg-background/60 border border-border rounded-xl px-4 py-3">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Total Permutations</p>
-              <p className="text-2xl font-bold tabular-nums">{(s.totalPermutations ?? 0).toLocaleString()}</p>
-            </div>
-            <div className="bg-background/60 border border-red-500/20 rounded-xl px-4 py-3">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Live Domains</p>
-              <p className={cn("text-2xl font-bold tabular-nums", liveResults.length > 0 ? "text-red-400" : "text-green-400")}>
-                {liveResults.length}
-              </p>
-              <p className="text-[10px] text-muted-foreground">DNS A record resolves</p>
-            </div>
-            <div className="bg-background/60 border border-orange-500/20 rounded-xl px-4 py-3">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Phishing Ready</p>
-              <p className={cn("text-2xl font-bold tabular-nums", mxResults.length > 0 ? "text-orange-400" : "text-green-400")}>
-                {mxResults.length}
-              </p>
-              <p className="text-[10px] text-muted-foreground">Has MX records</p>
-            </div>
-            <div className="bg-background/60 border border-yellow-500/20 rounded-xl px-4 py-3">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Suspicious</p>
-              <p className={cn("text-2xl font-bold tabular-nums", suspResults.length > 0 ? "text-yellow-400" : "text-green-400")}>
-                {suspResults.length}
-              </p>
-              <p className="text-[10px] text-muted-foreground">Risk score ≥ 40</p>
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5">
+            {[
+              { label: "Permutations", value: (s.totalPermutations ?? 0).toLocaleString(), color: "", sub: "total" },
+              { label: "Live Domains", value: liveResults.length, color: liveResults.length > 0 ? "text-red-400" : "text-green-400", sub: "DNS A resolves" },
+              { label: "Phishing Ready", value: mxResults.length, color: mxResults.length > 0 ? "text-orange-400" : "text-green-400", sub: "Has MX records" },
+              { label: "Confirmed Phishing", value: phishingDetections.length, color: phishingDetections.length > 0 ? "text-red-400" : "text-green-400", sub: "feed verified" },
+              { label: "Data Breaches", value: dataLeaks.length, color: dataLeaks.length > 0 ? "text-yellow-400" : "text-green-400", sub: "HIBP matches" },
+            ].map(stat => (
+              <div key={stat.label} className="bg-background/60 border border-border rounded-xl px-4 py-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">{stat.label}</p>
+                <p className={cn("text-2xl font-bold tabular-nums", stat.color)}>{stat.value}</p>
+                <p className="text-[10px] text-muted-foreground">{stat.sub}</p>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* ── Running / error banner ────────────────────────────────────── */}
+      {/* ── Status banners ──────────────────────────────────────────────────── */}
       {(s.status === "running" || s.status === "pending") && (
-        <div className="mx-6 mt-4 bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 flex items-center gap-4">
+        <div className="mx-6 mt-4 bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 flex items-center gap-4 shrink-0">
           <Loader2 className="w-5 h-5 animate-spin text-blue-400 shrink-0" />
           <div>
-            <p className="text-sm font-medium text-blue-400">Scan in progress</p>
+            <p className="text-sm font-medium text-blue-400">Full intelligence scan in progress</p>
             <p className="text-xs text-muted-foreground">
               {s.totalPermutations > 0
-                ? `Resolving DNS for ${s.totalPermutations} domain permutations…`
+                ? `Resolving DNS for ${s.totalPermutations} domain permutations + running RDAP, GeoIP, VT, phishing feeds, HIBP, brand abuse checks…`
                 : "Generating permutations via dnstwist + running favihunter favicon analysis…"}
             </p>
           </div>
         </div>
       )}
       {s.status === "error" && (
-        <div className="mx-6 mt-4 bg-red-500/5 border border-red-500/20 rounded-xl p-4 flex items-center gap-3">
+        <div className="mx-6 mt-4 bg-red-500/5 border border-red-500/20 rounded-xl p-4 flex items-center gap-3 shrink-0">
           <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
           <div>
             <p className="text-sm font-medium text-red-400">Scan failed</p>
@@ -421,284 +589,361 @@ export default function BrandThreatDetailPage() {
         </div>
       )}
 
-      {/* ── Favicon Intelligence panel (favihunter) ───────────────────── */}
-      {showFaviPanel && <FaviconIntelPanel scan={s} />}
-
-      {/* ── Main two-column layout ────────────────────────────────────── */}
-      {results.length > 0 && (
-        <div className="flex-1 min-h-0 flex gap-0 overflow-hidden mt-4">
-          {/* ── Left sidebar ── */}
-          <div className="w-64 shrink-0 border-r border-border overflow-y-auto p-4 space-y-4 bg-card/50">
-            {/* Fuzzer breakdown chart */}
-            {chartData.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Permutation Types
-                </p>
-                <div style={{ height: Math.max(200, chartData.length * 28) }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
-                      <XAxis type="number" hide />
-                      <YAxis
-                        type="category"
-                        dataKey="label"
-                        width={80}
-                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                        tickLine={false}
-                        axisLine={false}
-                      />
-                      <Tooltip
-                        cursor={{ fill: "rgba(255,255,255,0.03)" }}
-                        contentStyle={{
-                          background: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: 8,
-                          fontSize: 11,
-                        }}
-                        formatter={(value: any) => [value, "permutations"]}
-                        labelFormatter={(label: string) => label}
-                      />
-                      <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
-                        {chartData.map((entry) => (
-                          <Cell key={entry.fuzzer} fill={entry.color} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            {/* Divider */}
-            <div className="border-t border-border" />
-
-            {/* Filters */}
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Filters</p>
-
-              <div className="space-y-1">
-                {([
-                  { key: "all",        label: "All results",         count: results.length,        icon: <Eye className="w-3.5 h-3.5" /> },
-                  { key: "live",       label: "Live (DNS resolves)", count: liveResults.length,    icon: <Server className="w-3.5 h-3.5" /> },
-                  { key: "mx",         label: "Has MX (phishing)",   count: mxResults.length,      icon: <Mail className="w-3.5 h-3.5" /> },
-                  { key: "suspicious", label: "Suspicious",          count: suspResults.length,    icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-                ] as const).map(({ key, label, count, icon }) => (
-                  <button
-                    key={key}
-                    onClick={() => { setFilter(key as FilterMode); setPage(0); }}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs transition-colors",
-                      filter === key
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "hover:bg-muted/50 text-muted-foreground",
-                    )}
-                  >
-                    <span className="flex items-center gap-2">{icon}{label}</span>
-                    <span className={cn(
-                      "text-[10px] font-semibold px-1.5 py-0.5 rounded-full",
-                      filter === key ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
-                    )}>
-                      {count}
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-3 border-t border-border pt-3">
-                <p className="text-[10px] text-muted-foreground mb-2">Permutation type</p>
-                <select
-                  value={fuzzerFilter}
-                  onChange={e => { setFuzzerFilter(e.target.value); setPage(0); }}
-                  className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none"
-                >
-                  <option value="all">All types</option>
-                  {Array.from(new Set(results.map((r: any) => r.fuzzer))).sort().map((f: string) => (
-                    <option key={f} value={f}>{FUZZER_META[f]?.label ?? f}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* ── Results table ── */}
-          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-            {/* Table toolbar */}
-            <div className="px-5 py-3 border-b border-border flex items-center gap-3 bg-card/30">
-              <Activity className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <span className="text-sm font-medium">
-                Domain Permutations
-                <span className="text-muted-foreground font-normal text-xs ml-2">
-                  {filtered.length} of {results.length}
+      {/* ── Tab navigation ──────────────────────────────────────────────────── */}
+      {s.status === "done" && (
+        <div className="px-6 pt-4 shrink-0">
+          <div className="flex items-center gap-1 bg-muted/30 rounded-xl p-1 w-fit">
+            {TABS.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all",
+                  activeTab === tab.id
+                    ? "bg-card shadow-sm text-foreground border border-border"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                )}
+              >
+                <span className={cn(activeTab === tab.id ? "text-primary" : "text-muted-foreground", tab.color && activeTab !== tab.id ? tab.color : "")}>
+                  {tab.icon}
                 </span>
-              </span>
-              <div className="flex-1" />
-              <input
-                type="text"
-                placeholder="Search domains…"
-                value={search}
-                onChange={e => { setSearch(e.target.value); setPage(0); }}
-                className="bg-background border border-border rounded-lg px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40 w-44"
-              />
-            </div>
-
-            {/* Table header */}
-            <div className="grid grid-cols-[28px_1fr_120px_80px_80px_100px] items-center px-5 py-2 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider">
-              <span />
-              <span>Domain</span>
-              <span className="text-center">Type</span>
-              <span className="text-center">DNS A</span>
-              <span className="text-center">MX</span>
-              <span className="text-center">Risk Score</span>
-            </div>
-
-            {/* Rows */}
-            <div className="flex-1 overflow-y-auto divide-y divide-border">
-              {paged.map((r: any) => {
-                const fm = FUZZER_META[r.fuzzer];
-                const isExpanded = expandedId === r.id;
-                return (
-                  <div key={r.id}>
-                    <div
-                      className={cn(
-                        "grid grid-cols-[28px_1fr_120px_80px_80px_100px] items-center px-5 py-2.5 hover:bg-muted/20 transition-colors cursor-pointer",
-                        r.isSuspicious && "bg-orange-500/3",
-                      )}
-                      onClick={() => setExpandedId(isExpanded ? null : r.id)}
-                    >
-                      <div className="flex items-center justify-center">
-                        {r.isSuspicious
-                          ? <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
-                          : <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground/20" />
-                        }
-                      </div>
-                      <div className="flex items-center gap-2 min-w-0 pr-2">
-                        <span className="text-sm font-mono truncate">{r.permutation}</span>
-                        {isExpanded
-                          ? <ChevronUp className="w-3 h-3 text-muted-foreground/40 shrink-0" />
-                          : <ChevronDown className="w-3 h-3 text-muted-foreground/40 shrink-0" />
-                        }
-                      </div>
-                      <div className="flex justify-center">
-                        <span className={cn(
-                          "text-[10px] px-2 py-0.5 rounded-full font-medium",
-                          fm ? `${fm.color} ${fm.bg}` : "text-muted-foreground bg-muted",
-                        )}>
-                          {fm?.label ?? r.fuzzer}
-                        </span>
-                      </div>
-                      <div className="flex justify-center">
-                        {r.dnsA?.length > 0 ? (
-                          <span className="flex items-center gap-1 text-[11px] text-red-400 font-mono font-medium">
-                            <Server className="w-2.5 h-2.5 shrink-0" />
-                            {r.dnsA[0].length > 11 ? r.dnsA[0].slice(0, 11) + "…" : r.dnsA[0]}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground/30">—</span>
-                        )}
-                      </div>
-                      <div className="flex justify-center">
-                        {r.dnsMx?.length > 0 ? (
-                          <span className="flex items-center gap-1 text-[11px] text-orange-400 font-medium">
-                            <Mail className="w-2.5 h-2.5" /> MX
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground/30">—</span>
-                        )}
-                      </div>
-                      <div className="px-2">
-                        <RiskScoreBar score={r.riskScore} />
-                      </div>
-                    </div>
-
-                    {/* Expanded detail */}
-                    {isExpanded && (
-                      <div className="bg-muted/10 border-t border-border/50 px-12 py-4">
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 text-xs">
-                          <div>
-                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">DNS A Records</p>
-                            {r.dnsA?.length > 0 ? (
-                              <div className="space-y-1">
-                                {r.dnsA.map((ip: string) => (
-                                  <div key={ip} className="flex items-center gap-1.5">
-                                    <Server className="w-3 h-3 text-red-400 shrink-0" />
-                                    <span className="font-mono text-foreground">{ip}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : <p className="text-muted-foreground/50 italic">No A records</p>}
-                          </div>
-                          <div>
-                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">MX Records</p>
-                            {r.dnsMx?.length > 0 ? (
-                              <div className="space-y-1">
-                                {r.dnsMx.map((mx: string) => (
-                                  <div key={mx} className="flex items-center gap-1.5">
-                                    <Mail className="w-3 h-3 text-orange-400 shrink-0" />
-                                    <span className="font-mono text-foreground">{mx}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : <p className="text-muted-foreground/50 italic">No MX records</p>}
-                          </div>
-                          <div>
-                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Permutation Type</p>
-                            <span className={cn(
-                              "inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg font-medium",
-                              fm ? `${fm.color} ${fm.bg}` : "text-muted-foreground bg-muted",
-                            )}>
-                              {fm?.label ?? r.fuzzer}
-                            </span>
-                            <p className="text-muted-foreground/50 mt-1 text-[10px]">
-                              {r.isSuspicious ? "⚠ Flagged suspicious" : "No threat indicators"}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">WHOIS Info</p>
-                            {r.whoisRegistrar || r.whoisCreated || r.whoisCountry ? (
-                              <div className="space-y-0.5">
-                                {r.whoisRegistrar && <p><span className="text-muted-foreground">Registrar: </span>{r.whoisRegistrar}</p>}
-                                {r.whoisCreated && <p><span className="text-muted-foreground">Created: </span>{r.whoisCreated}</p>}
-                                {r.whoisCountry && <p><span className="text-muted-foreground">Country: </span>{r.whoisCountry}</p>}
-                              </div>
-                            ) : (
-                              <p className="text-muted-foreground/50 italic">Not queried</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {filtered.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-32 text-center">
-                  <Globe className="w-6 h-6 text-muted-foreground/20 mb-2" />
-                  <p className="text-sm text-muted-foreground">No results match the current filters</p>
-                </div>
-              )}
-            </div>
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-card/30">
-                <span className="text-xs text-muted-foreground">
-                  Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
-                </span>
-                <div className="flex items-center gap-1">
-                  <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 text-xs">
-                    Previous
-                  </Button>
-                  <span className="text-xs text-muted-foreground px-3">{page + 1} / {totalPages}</span>
-                  <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="h-7 text-xs">
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
+                {tab.label}
+                {tab.count !== undefined && (
+                  <span className={cn(
+                    "text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center",
+                    activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+                    tab.color && tab.count > 0 ? "bg-current/10" : "",
+                  )}>
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         </div>
       )}
+
+      {/* ── Tab content ─────────────────────────────────────────────────────── */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+
+        {/* ── PHISHING tab ── */}
+        {activeTab === "phishing" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <PhishingTab phishing={phishingDetections} />
+          </div>
+        )}
+
+        {/* ── DATA LEAKS tab ── */}
+        {activeTab === "data_leaks" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <DataLeaksTab leaks={dataLeaks} />
+          </div>
+        )}
+
+        {/* ── BRAND ABUSE tab ── */}
+        {activeTab === "brand_abuse" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <BrandAbuseTab abuse={brandAbuse} />
+          </div>
+        )}
+
+        {/* ── FAVICON tab ── */}
+        {(activeTab === "favicon" || !["typosquatting","phishing","data_leaks","brand_abuse"].includes(activeTab)) && s.status === "done" && showFaviPanel && activeTab === "favicon" && (
+          <div className="h-full overflow-y-auto p-6">
+            <FaviconIntelPanel scan={s} />
+          </div>
+        )}
+
+        {/* ── TYPOSQUATTING tab ── */}
+        {(activeTab === "typosquatting" || s.status !== "done") && results.length > 0 && (
+          <div className="flex h-full overflow-hidden mt-0">
+            {/* Left sidebar */}
+            <div className="w-64 shrink-0 border-r border-border overflow-y-auto p-4 space-y-4 bg-card/50">
+              {chartData.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Permutation Types</p>
+                  <div style={{ height: Math.max(200, chartData.length * 28) }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
+                        <XAxis type="number" hide />
+                        <YAxis type="category" dataKey="label" width={80}
+                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          tickLine={false} axisLine={false} />
+                        <Tooltip
+                          cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
+                          formatter={(value: any) => [value, "permutations"]}
+                          labelFormatter={(label: string) => label}
+                        />
+                        <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
+                          {chartData.map((entry) => (<Cell key={entry.fuzzer} fill={entry.color} />))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t border-border" />
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Filters</p>
+                <div className="space-y-1">
+                  {([
+                    { key: "all",        label: "All results",         count: results.length,        icon: <Eye className="w-3.5 h-3.5" /> },
+                    { key: "live",       label: "Live (DNS A)",        count: liveResults.length,    icon: <Server className="w-3.5 h-3.5" /> },
+                    { key: "mx",         label: "Has MX",              count: mxResults.length,      icon: <Mail className="w-3.5 h-3.5" /> },
+                    { key: "suspicious", label: "Suspicious",          count: suspResults.length,    icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+                    { key: "phishing",   label: "Confirmed Phishing",  count: phishResults.length,   icon: <Fish className="w-3.5 h-3.5" /> },
+                  ] as const).map(({ key, label, count, icon }) => (
+                    <button
+                      key={key}
+                      onClick={() => { setFilter(key); setPage(0); }}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs transition-all",
+                        filter === key
+                          ? "bg-primary/10 text-primary border border-primary/20"
+                          : "text-muted-foreground hover:bg-muted/50",
+                      )}
+                    >
+                      {icon}
+                      <span className="flex-1 text-left">{label}</span>
+                      <span className={cn(
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center",
+                        filter === key ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
+                      )}>
+                        {count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-3 border-t border-border pt-3">
+                  <p className="text-[10px] text-muted-foreground mb-2">Permutation type</p>
+                  <select
+                    value={fuzzerFilter}
+                    onChange={e => { setFuzzerFilter(e.target.value); setPage(0); }}
+                    className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none"
+                  >
+                    <option value="all">All types</option>
+                    {Array.from(new Set(results.map((r: any) => r.fuzzer))).sort().map((f: string) => (
+                      <option key={f} value={f}>{FUZZER_META[f]?.label ?? f}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Results table */}
+            <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+              <div className="px-5 py-3 border-b border-border flex items-center gap-3 bg-card/30">
+                <Activity className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="text-sm font-medium">
+                  Domain Permutations
+                  <span className="text-muted-foreground font-normal text-xs ml-2">
+                    {filtered.length} of {results.length}
+                  </span>
+                </span>
+                <div className="flex-1" />
+                <input
+                  type="text"
+                  placeholder="Search domains…"
+                  value={search}
+                  onChange={e => { setSearch(e.target.value); setPage(0); }}
+                  className="bg-background border border-border rounded-lg px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40 w-44"
+                />
+              </div>
+
+              <div className="grid grid-cols-[28px_1fr_120px_80px_80px_90px_100px] items-center px-5 py-2 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider">
+                <span />
+                <span>Domain</span>
+                <span className="text-center">Type</span>
+                <span className="text-center">DNS A</span>
+                <span className="text-center">MX</span>
+                <span className="text-center">VT</span>
+                <span className="text-center">Risk Score</span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto divide-y divide-border">
+                {paged.map((r: any) => {
+                  const fm = FUZZER_META[r.fuzzer];
+                  const isExpanded = expandedId === r.id;
+                  return (
+                    <div key={r.id}>
+                      <div
+                        className={cn(
+                          "grid grid-cols-[28px_1fr_120px_80px_80px_90px_100px] items-center px-5 py-2.5 hover:bg-muted/20 transition-colors cursor-pointer",
+                          r.isSuspicious && "bg-orange-500/3",
+                          r.isPhishing && "bg-red-500/5",
+                        )}
+                        onClick={() => setExpandedId(isExpanded ? null : r.id)}
+                      >
+                        <div className="flex items-center justify-center">
+                          {r.isPhishing
+                            ? <Fish className="w-3.5 h-3.5 text-red-400" />
+                            : r.isSuspicious
+                            ? <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
+                            : <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground/20" />
+                          }
+                        </div>
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span className="text-sm font-mono truncate">{r.permutation}</span>
+                          {isExpanded ? <ChevronUp className="w-3 h-3 text-muted-foreground/40 shrink-0" /> : <ChevronDown className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
+                        </div>
+                        <div className="flex justify-center">
+                          <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", fm ? `${fm.color} ${fm.bg}` : "text-muted-foreground bg-muted")}>
+                            {fm?.label ?? r.fuzzer}
+                          </span>
+                        </div>
+                        <div className="flex justify-center">
+                          {r.dnsA?.length > 0 ? (
+                            <span className="flex items-center gap-1 text-[11px] text-red-400 font-mono font-medium">
+                              <Server className="w-2.5 h-2.5 shrink-0" />
+                              {r.dnsA[0].length > 11 ? r.dnsA[0].slice(0, 11) + "…" : r.dnsA[0]}
+                            </span>
+                          ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                        </div>
+                        <div className="flex justify-center">
+                          {r.dnsMx?.length > 0 ? (
+                            <span className="flex items-center gap-1 text-[11px] text-orange-400 font-medium">
+                              <Mail className="w-2.5 h-2.5" /> MX
+                            </span>
+                          ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                        </div>
+                        <div className="flex justify-center">
+                          {r.vtMalicious > 0 ? (
+                            <span className="text-[11px] text-red-400 font-bold">{r.vtMalicious} 🚩</span>
+                          ) : r.vtMalicious === 0 ? (
+                            <span className="text-[11px] text-green-400/60">clean</span>
+                          ) : <span className="text-xs text-muted-foreground/30">—</span>}
+                        </div>
+                        <div className="px-2">
+                          <RiskScoreBar score={r.riskScore} />
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="bg-muted/10 border-t border-border/50 px-8 py-4">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 text-xs">
+                            <div>
+                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">DNS Records</p>
+                              <div className="space-y-1">
+                                {r.dnsA?.length > 0 && r.dnsA.map((ip: string) => (
+                                  <div key={ip} className="flex items-center gap-1.5">
+                                    <Server className="w-3 h-3 text-red-400 shrink-0" />
+                                    <span className="font-mono">{ip}</span>
+                                    {r.geoCountry && r.dnsA[0] === ip && (
+                                      <span className="text-muted-foreground/60">({r.geoCountry})</span>
+                                    )}
+                                  </div>
+                                ))}
+                                {r.dnsNs?.length > 0 && r.dnsNs.slice(0, 2).map((ns: string) => (
+                                  <div key={ns} className="flex items-center gap-1.5">
+                                    <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
+                                    <span className="font-mono text-muted-foreground">{ns}</span>
+                                  </div>
+                                ))}
+                                {!r.dnsA?.length && !r.dnsNs?.length && <p className="text-muted-foreground/50 italic">No records</p>}
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">RDAP / WHOIS</p>
+                              {r.whoisRegistrar || r.whoisCreated || r.whoisCountry ? (
+                                <div className="space-y-1">
+                                  {r.whoisRegistrar && <p className="flex items-center gap-1"><Building2 className="w-3 h-3 text-muted-foreground" /> {r.whoisRegistrar.slice(0, 25)}{r.whoisRegistrar.length > 25 ? "…" : ""}</p>}
+                                  {r.whoisCreated && <p className="flex items-center gap-1"><Calendar className="w-3 h-3 text-muted-foreground" /> Created: {r.whoisCreated?.slice(0, 10)}</p>}
+                                  {r.whoisCountry && <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-muted-foreground" /> {r.whoisCountry}</p>}
+                                  {r.whoisAgeDays !== null && r.whoisAgeDays !== undefined && (
+                                    <p className={cn("flex items-center gap-1", r.whoisAgeDays < 90 ? "text-red-400" : "")}>
+                                      <Info className="w-3 h-3 text-muted-foreground" />
+                                      {r.whoisAgeDays < 90 ? `⚠ New domain (${r.whoisAgeDays}d old)` : `${r.whoisAgeDays}d old`}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : <p className="text-muted-foreground/50 italic">Not resolved</p>}
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">GeoIP</p>
+                              {r.geoCountry || r.geoOrg ? (
+                                <div className="space-y-1">
+                                  {r.geoCountry && <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-muted-foreground" /> {r.geoCity ? `${r.geoCity}, ` : ""}{r.geoCountry}</p>}
+                                  {r.geoAsn && <p className="flex items-center gap-1"><Globe className="w-3 h-3 text-muted-foreground" /> {r.geoAsn}</p>}
+                                  {r.geoOrg && <p className="flex items-center gap-1"><Building2 className="w-3 h-3 text-muted-foreground" /> {r.geoOrg.slice(0, 25)}{r.geoOrg.length > 25 ? "…" : ""}</p>}
+                                </div>
+                              ) : <p className="text-muted-foreground/50 italic">Not resolved</p>}
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Threat Intel</p>
+                              <div className="space-y-1.5">
+                                {r.isPhishing && (
+                                  <div className="flex items-center gap-1.5 text-red-400">
+                                    <Fish className="w-3 h-3 shrink-0" />
+                                    <span>Confirmed phishing ({r.phishingSource})</span>
+                                  </div>
+                                )}
+                                {r.vtMalicious !== null && r.vtMalicious !== undefined && (
+                                  <div className={cn("flex items-center gap-1.5", r.vtMalicious > 0 ? "text-red-400" : "text-green-400/70")}>
+                                    <ShieldAlert className="w-3 h-3 shrink-0" />
+                                    VT: {r.vtMalicious} malicious / {r.vtSuspicious ?? 0} suspicious
+                                  </div>
+                                )}
+                                {r.vtPermalink && (
+                                  <a href={r.vtPermalink} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+                                    <ExternalLink className="w-3 h-3" /> VirusTotal report
+                                  </a>
+                                )}
+                                {!r.isPhishing && (r.vtMalicious === null || r.vtMalicious === undefined) && (
+                                  <p className="text-muted-foreground/50 italic">No threat data</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {filtered.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-32 text-center">
+                    <Globe className="w-6 h-6 text-muted-foreground/20 mb-2" />
+                    <p className="text-sm text-muted-foreground">No results match the current filters</p>
+                  </div>
+                )}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-card/30">
+                  <span className="text-xs text-muted-foreground">
+                    Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 text-xs">
+                      Previous
+                    </Button>
+                    <span className="text-xs text-muted-foreground px-3">{page + 1} / {totalPages}</span>
+                    <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="h-7 text-xs">
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Empty state for typosquatting tab */}
+        {activeTab === "typosquatting" && results.length === 0 && s.status === "done" && (
+          <div className="flex flex-col items-center justify-center h-64 text-center">
+            <Globe className="w-8 h-8 text-green-400/40 mb-3" />
+            <p className="text-base font-semibold text-green-400">No permutations found</p>
+            <p className="text-sm text-muted-foreground">No domain permutations were generated for this scan.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

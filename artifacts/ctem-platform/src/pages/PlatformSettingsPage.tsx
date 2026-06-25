@@ -75,6 +75,15 @@ const CATEGORY_META: Record<string, {
     border: "border-purple-500/20",
     description: "Push notification channels — Slack, Discord, Telegram",
   },
+  brand_threat: {
+    label: "Brand Threat Intelligence",
+    icon: ShieldAlert,
+    color: "text-rose-400",
+    bg: "bg-rose-500/10",
+    border: "border-rose-500/20",
+    description: "HIBP, Google Safe Browsing, WhoisXML — powers the advanced brand threat module",
+    docsUrl: "https://haveibeenpwned.com/API/v3",
+  },
   general: {
     label: "General",
     icon: Key,
@@ -85,7 +94,7 @@ const CATEGORY_META: Record<string, {
   },
 };
 
-const CATEGORY_ORDER = ["scanning", "intelligence", "osint", "email", "notifications", "general"];
+const CATEGORY_ORDER = ["scanning", "intelligence", "osint", "brand_threat", "email", "notifications", "general"];
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function PlatformSettingsPage() {
