@@ -55,10 +55,13 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
   const filters = [tenantFilter];
 
   if (role === "client") {
+    // Cross-tenant: fetch assigned asset IDs without tenant restriction
     const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-      .where(and(eq(assetsTable.tenantId, req.user!.tenantId), eq(assetsTable.assignedClientId, req.user!.userId)));
+      .where(eq(assetsTable.assignedClientId, req.user!.userId));
     const assignedIds = assignedAssets.map(a => a.id);
     if (assignedIds.length === 0) { res.json([]); return; }
+    // Replace the tenant filter with an asset-scoped filter (findings span tenants via assets)
+    filters.length = 0;
     filters.push(inArray(findingsTable.assetId, assignedIds));
   }
 

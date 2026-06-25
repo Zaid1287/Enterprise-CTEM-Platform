@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { db, brandThreatScansTable, brandThreatResultsTable } from "@workspace/db";
+import { db, brandThreatScansTable, brandThreatResultsTable, assetsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { runBrandThreatScan } from "../lib/brandThreatRunner";
 
@@ -17,11 +17,35 @@ function toScanResponse(s: typeof brandThreatScansTable.$inferSelect) {
 
 // ── GET /brand-threats ────────────────────────────────────────────────────────
 router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
   let btWhere;
-  if (req.user!.role === "account_manager") {
+  if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     btWhere = inArray(brandThreatScansTable.tenantId, ids);
+  } else if (role === "client") {
+    // Clients see only brand threat scans whose domain matches their assigned assets
+    const assignedAssets = await db.select({ value: assetsTable.value })
+      .from(assetsTable)
+      .where(eq(assetsTable.assignedClientId, req.user!.userId));
+    // Collect all domain-like values from assigned assets (strip protocol/www/path)
+    const assignedDomains = new Set<string>();
+    for (const a of assignedAssets) {
+      if (a.value) {
+        const v = a.value.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0].split("?")[0];
+        if (v) assignedDomains.add(v);
+      }
+    }
+    if (assignedDomains.size === 0) { res.json([]); return; }
+    // Fetch all scans the client's tenant can see, then filter by matching domain
+    const allScans = await db.select().from(brandThreatScansTable)
+      .where(eq(brandThreatScansTable.tenantId, req.user!.tenantId))
+      .orderBy(desc(brandThreatScansTable.createdAt));
+    const filtered = allScans.filter(s =>
+      assignedDomains.has(s.domain.toLowerCase().replace(/^www\./, ""))
+    );
+    res.json(filtered.map(toScanResponse));
+    return;
   } else {
     btWhere = eq(brandThreatScansTable.tenantId, req.user!.tenantId);
   }

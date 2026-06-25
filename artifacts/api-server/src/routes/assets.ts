@@ -166,6 +166,9 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
   } else if (role === "super_admin" || role === "admin") {
     // Super admins and admins see ALL assets across all tenants (platform operator view)
     tenantFilter = undefined;
+  } else if (role === "client") {
+    // Clients see only their assigned assets — cross-tenant, no tenantId restriction
+    tenantFilter = undefined;
   } else {
     tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
   }
