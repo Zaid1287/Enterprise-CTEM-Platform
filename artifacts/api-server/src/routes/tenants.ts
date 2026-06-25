@@ -117,7 +117,18 @@ router.get("/tenants", requireAuth, requireRole("super_admin", "admin"), async (
     res.json(result); return;
   }
 
-  // Admin: own tenant + any tenant with parentTenantId = myTenantId
+  // Admin: check if they belong to the platform tenant — if so, full SA-level view
+  const [myTenantRow] = await db.select({ isPlatform: tenantsTable.isPlatform })
+    .from(tenantsTable).where(eq(tenantsTable.id, myTenantId));
+
+  if (myTenantRow?.isPlatform) {
+    // Platform admins see ALL tenants exactly like super_admin
+    const tenants = await db.select().from(tenantsTable).orderBy(tenantsTable.createdAt);
+    const result = await buildRichTenantList(tenants.map(t => t.id));
+    res.json(result); return;
+  }
+
+  // Non-platform admin: own tenant + any tenant with parentTenantId = myTenantId
   const tenants = await db.select().from(tenantsTable)
     .where(
       and(

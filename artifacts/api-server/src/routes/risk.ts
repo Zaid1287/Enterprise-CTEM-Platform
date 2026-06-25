@@ -7,13 +7,17 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 const router = Router();
 
 router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  let whereClause;
-  if (req.user!.role === "account_manager") {
+  const role = req.user!.role;
+  let whereClause: ReturnType<typeof eq> | ReturnType<typeof inArray> | undefined;
+  if (role === "super_admin" || role === "admin") {
+    // Platform operators see risk scores for ALL assets cross-tenant
+    whereClause = undefined;
+  } else if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
-    whereClause = inArray(assetsTable.tenantId, ids);
+    whereClause = inArray(assetsTable.tenantId, ids) as any;
   } else {
-    whereClause = eq(assetsTable.tenantId, req.user!.tenantId);
+    whereClause = eq(assetsTable.tenantId, req.user!.tenantId) as any;
   }
   const scores = await db.select({
     score: riskScoresTable,
@@ -21,7 +25,7 @@ router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): 
     assetType: assetsTable.type,
   }).from(riskScoresTable)
     .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
-    .where(whereClause);
+    .where(whereClause as any);
 
   res.json(scores.map(({ score, assetName, assetType }) => ({
     id: score.id, assetId: score.assetId, assetName: assetName ?? "Unknown",
@@ -36,12 +40,16 @@ router.get("/risk/scores/:assetId", requireAuth, async (req: AuthenticatedReques
   const assetId = parseInt(String(req.params.assetId), 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid asset ID" }); return; }
 
+  const role = req.user!.role;
+  const assetFilter = (role === "super_admin" || role === "admin")
+    ? eq(riskScoresTable.assetId, assetId)
+    : and(eq(riskScoresTable.assetId, assetId), eq(assetsTable.tenantId, req.user!.tenantId));
   const [row] = await db.select({
     score: riskScoresTable,
     assetName: assetsTable.name,
   }).from(riskScoresTable)
     .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
-    .where(and(eq(riskScoresTable.assetId, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    .where(assetFilter);
 
   if (!row) { res.status(404).json({ error: "Risk score not found" }); return; }
   const { score, assetName } = row;
