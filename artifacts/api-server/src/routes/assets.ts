@@ -4,7 +4,7 @@ import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db, assetsTable, usersTable, findingsTable, findingCommentsTable, riskScoresTable,
   technologyDetectionsTable, scanAssetResultsTable, assetGroupMembersTable, discoveryResultsTable,
-  tenantsTable,
+  tenantsTable, brandThreatScansTable,
 } from "@workspace/db";
 import {
   CreateAssetBody, GetAssetParams, UpdateAssetParams, UpdateAssetBody,
@@ -25,6 +25,13 @@ function getPlatformBaseUrl(req: { protocol: string; get: (h: string) => string 
   const domains = process.env.REPLIT_DOMAINS;
   if (domains) return `https://${domains.split(",")[0].trim()}`;
   return `${req.protocol}://${req.get("host") ?? "localhost:80"}`;
+}
+
+function normalizeDomain(v: string): string {
+  return v.toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]!.split("?")[0]!.split(":")[0]!;
 }
 
 const router = Router();
@@ -48,6 +55,15 @@ const upload = multer({
     cb(null, allowed.includes(file.mimetype));
   },
 });
+
+type BrandThreatSummary = {
+  scanId: number;
+  phishingRisk: string;
+  liveCount: number;
+  phishingCount: number;
+  dataLeakCount: number;
+  brandAbuseCount: number;
+};
 
 async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
   if (assets.length === 0) return [];
@@ -102,7 +118,42 @@ async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
     .where(inArray(riskScoresTable.assetId, assetIds));
   const riskMap = new Map(riskRows.map(r => [r.assetId, r]));
 
-  return assets.map(a => toAssetResponse(a, userMap, findingMap, riskMap, tenantMap));
+  // Fetch brand threat scan summaries — match on normalized domain, latest completed scan per domain
+  const btMap = new Map<string, BrandThreatSummary>();
+  if (tenantIds.length > 0) {
+    const btScans = await db
+      .select({
+        id: brandThreatScansTable.id,
+        tenantId: brandThreatScansTable.tenantId,
+        domain: brandThreatScansTable.domain,
+        phishingRisk: brandThreatScansTable.phishingRisk,
+        liveCount: brandThreatScansTable.liveCount,
+        phishingCount: brandThreatScansTable.phishingCount,
+        dataLeakCount: brandThreatScansTable.dataLeakCount,
+        brandAbuseCount: brandThreatScansTable.brandAbuseCount,
+      })
+      .from(brandThreatScansTable)
+      .where(and(
+        inArray(brandThreatScansTable.tenantId, tenantIds),
+        eq(brandThreatScansTable.status, "completed"),
+      ))
+      .orderBy(desc(brandThreatScansTable.createdAt));
+    for (const scan of btScans) {
+      const key = `${scan.tenantId}:${normalizeDomain(scan.domain)}`;
+      if (!btMap.has(key)) {
+        btMap.set(key, {
+          scanId: scan.id,
+          phishingRisk: scan.phishingRisk,
+          liveCount: scan.liveCount,
+          phishingCount: scan.phishingCount,
+          dataLeakCount: scan.dataLeakCount,
+          brandAbuseCount: scan.brandAbuseCount,
+        });
+      }
+    }
+  }
+
+  return assets.map(a => toAssetResponse(a, userMap, findingMap, riskMap, tenantMap, btMap));
 }
 
 /** WHERE clause for a single asset: SA can access any asset across all tenants. */
@@ -121,9 +172,12 @@ function toAssetResponse(
   findingMap?: Map<number, { total: number; open: number; critical: number; high: number }>,
   riskMap?: Map<number, { score: number; level: string }>,
   tenantMap?: Map<number, string>,
+  btMap?: Map<string, BrandThreatSummary>,
 ) {
   const findings = findingMap?.get(a.id);
   const risk = riskMap?.get(a.id);
+  const btKey = (a.tenantId && btMap) ? `${a.tenantId}:${normalizeDomain(a.value ?? "")}` : null;
+  const brandThreat = btKey ? (btMap?.get(btKey) ?? null) : null;
   return {
     id: a.id,
     tenantId: a.tenantId,
@@ -155,6 +209,7 @@ function toAssetResponse(
       critical: findings?.critical ?? 0,
       high: findings?.high ?? 0,
     },
+    brandThreatSummary: brandThreat,
   };
 }
 

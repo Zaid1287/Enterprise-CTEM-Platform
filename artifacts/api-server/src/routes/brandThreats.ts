@@ -15,6 +15,26 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
+/**
+ * Build a WHERE clause that restricts brand threat scan access by role.
+ * - super_admin / admin: unrestricted (operator view, same as assets list)
+ * - account_manager: restricted to client tenant IDs
+ * - others: own tenant only
+ */
+async function btScanAccessFilter(
+  scanId: number,
+  user: { tenantId: number; role: string; userId: number },
+) {
+  const byId = eq(brandThreatScansTable.id, scanId);
+  if (user.role === "super_admin" || user.role === "admin") return byId;
+  if (user.role === "account_manager") {
+    const amTids = await getAmClientTenantIds(user.userId);
+    if (amTids.length === 0) return null;
+    return and(byId, inArray(brandThreatScansTable.tenantId, amTids));
+  }
+  return and(byId, eq(brandThreatScansTable.tenantId, user.tenantId));
+}
+
 function toScanResponse(s: typeof brandThreatScansTable.$inferSelect) {
   return {
     ...s,
@@ -136,8 +156,9 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
 router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  const [scan] = await db.select().from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, id), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [scan] = await db.select().from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const [results, phishing, dataLeaks, brandAbuse] = await Promise.all([
     db.select().from(brandThreatResultsTable)
@@ -177,8 +198,9 @@ router.delete("/brand-threats/:id", requireAuth, async (req: AuthenticatedReques
 router.get("/brand-threats/:id/typosquatting", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, id), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const results = await db.select().from(brandThreatResultsTable)
     .where(eq(brandThreatResultsTable.scanId, id))
@@ -197,8 +219,9 @@ router.get("/brand-threats/:scanId/permutations/:permutationId", requireAuth, as
   const scanId = parseInt(String(req.params.scanId), 10);
   const permId = parseInt(String(req.params.permutationId), 10);
   if (isNaN(scanId) || isNaN(permId)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  const filter = await btScanAccessFilter(scanId, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const [result] = await db.select().from(brandThreatResultsTable)
     .where(and(eq(brandThreatResultsTable.id, permId), eq(brandThreatResultsTable.scanId, scanId)));
@@ -210,8 +233,9 @@ router.get("/brand-threats/:scanId/permutations/:permutationId", requireAuth, as
 router.get("/brand-threats/:id/phishing", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, id), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const results = await db.select().from(phishingDetectionsTable)
     .where(eq(phishingDetectionsTable.scanId, id))
@@ -223,8 +247,9 @@ router.get("/brand-threats/:id/phishing", requireAuth, async (req: Authenticated
 router.get("/brand-threats/:id/data-leaks", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, id), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const results = await db.select().from(dataLeakResultsTable)
     .where(eq(dataLeakResultsTable.scanId, id))
@@ -236,8 +261,9 @@ router.get("/brand-threats/:id/data-leaks", requireAuth, async (req: Authenticat
 router.get("/brand-threats/:id/brand-abuse", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, id), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const results = await db.select().from(brandAbuseResultsTable)
     .where(eq(brandAbuseResultsTable.scanId, id))

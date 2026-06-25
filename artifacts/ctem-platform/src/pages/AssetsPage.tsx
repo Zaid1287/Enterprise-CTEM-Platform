@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck,
   Zap, Square, Loader2, Pencil, Copy, CheckCircle2, XCircle, AlertTriangle, Globe,
-  Shield, Server, Filter, Cloud, Lock, Smartphone, Network, Code2, Cpu,
+  Shield, Server, Filter, Cloud, Lock, Smartphone, Network, Code2, Cpu, ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -465,6 +465,7 @@ export default function AssetsPage() {
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">IP / Port</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Vulnerabilities</th>
+              <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Threats</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Last Scan</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Scan</th>
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground text-right">Actions</th>
@@ -586,6 +587,11 @@ export default function AssetsPage() {
                     )}
                   </td>
 
+                  {/* Brand threat badge */}
+                  <td className="px-3 py-3">
+                    <BrandThreatBadge summary={(asset as any).brandThreatSummary} />
+                  </td>
+
                   {/* Last scan */}
                   <td className="px-3 py-3 text-xs text-muted-foreground whitespace-nowrap">
                     {asset.lastScannedAt ? formatDate(asset.lastScannedAt) : <span className="text-muted-foreground/40">Never</span>}
@@ -684,7 +690,7 @@ export default function AssetsPage() {
             })}
             {!isLoading && allAssets.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-16 text-center">
+                <td colSpan={13} className="px-4 py-16 text-center">
                   <Globe className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
                   <p className="text-sm font-medium text-muted-foreground">No assets found</p>
                   <p className="text-xs text-muted-foreground/60 mt-1">
@@ -1258,6 +1264,36 @@ function AssetMetadataFields({
   }
 
   return null;
+}
+
+function BrandThreatBadge({ summary }: { summary: any }) {
+  const [, navigate] = useLocation();
+  if (!summary) return <span className="text-xs text-muted-foreground/40">—</span>;
+
+  const risk = summary.phishingRisk as string;
+  const cfg = {
+    critical: { cls: "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30", label: "Critical" },
+    high:     { cls: "bg-orange-500/20 text-orange-400 border-orange-500/30 hover:bg-orange-500/30", label: "High" },
+    medium:   { cls: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30", label: "Medium" },
+    low:      { cls: "bg-green-500/15 text-green-400 border-green-500/30 hover:bg-green-500/25", label: "Low" },
+  }[risk] ?? { cls: "bg-muted text-muted-foreground border-border hover:bg-accent", label: risk };
+
+  const total = (summary.phishingCount ?? 0) + (summary.dataLeakCount ?? 0) + (summary.brandAbuseCount ?? 0);
+
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); navigate(`/brand-threats/${summary.scanId}`); }}
+      title={`${total} threat indicator${total !== 1 ? "s" : ""} — click to view`}
+      className={cn(
+        "inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium border cursor-pointer transition-colors",
+        cfg.cls,
+      )}
+    >
+      <ShieldAlert className="w-3 h-3 shrink-0" />
+      {cfg.label}
+      {total > 0 && <span className="tabular-nums">·{total}</span>}
+    </button>
+  );
 }
 
 function TypeBadge({ type }: { type: string }) {
