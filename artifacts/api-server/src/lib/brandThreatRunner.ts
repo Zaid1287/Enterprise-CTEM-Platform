@@ -276,6 +276,7 @@ function computeRisk(
   phishingSource: string | null,
   whoisAgeDays: number | null,
   geoCountry: string | null,
+  geoCountryCode: string | null,
 ): number {
   let score = 0;
 
@@ -307,8 +308,8 @@ function computeRisk(
     else score += 50; // PhishTank / OpenPhish
   }
 
-  // GeoIP high-risk country
-  if (geoCountry && HIGH_RISK_COUNTRIES.has(geoCountry)) score += 10;
+  // GeoIP high-risk country (match against ISO country code, not full name)
+  if (geoCountryCode && HIGH_RISK_COUNTRIES.has(geoCountryCode)) score += 10;
 
   return Math.min(100, score);
 }
@@ -488,6 +489,7 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         isPhishing, phishSource,
         rdap?.ageDays ?? null,
         geo?.country ?? null,
+        geo?.countryCode ?? null,
       );
       const isSuspicious = riskScore >= 40;
 
@@ -495,11 +497,12 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       if (r.dnsA.length > 0 || r.dnsMx.length > 0) registeredCount++;
       if (isPhishing) phishingCount++;
 
+      // Normalised registration status enum: registered | unregistered | active | parked
       const registrationStatus =
-        rdap?.status.includes("clientDeleteProhibited") ? "protected" :
-        rdap?.createdDate ? "registered" :
-        (r.dnsA.length > 0 || r.dnsMx.length > 0) ? "active" :
-        "unresolved";
+        r.dnsA.length > 0 ? "active" :
+        (r.dnsNs.length > 0 && r.dnsA.length === 0) ? "parked" :
+        (rdap?.createdDate || rdap?.status?.includes("clientDeleteProhibited")) ? "registered" :
+        "unregistered";
 
       pendingInserts.push({
         scanId,
@@ -605,12 +608,18 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     const intelxKey = await getPlatformSetting("intelx_api_key");
     const brandName = domain.split(".")[0] ?? domain;
 
-    // Build IntelX query terms: domain + brand name + watchlist email/domain/keyword items
+    // Build IntelX query terms: domain + brand name + all watchlist item values
+    // Covers: email, domain, keyword, social_handle, mobile_app, logo_url, ip
     const intelxTerms = [domain, brandName];
     for (const item of watchlistItems) {
-      if ((item.type === "email" || item.type === "domain" || item.type === "keyword") && item.value) {
+      if (!item.value) continue;
+      if (["email", "domain", "keyword", "mobile_app", "social_handle"].includes(item.type)) {
         intelxTerms.push(item.value);
+      } else if (item.type === "logo_url") {
+        // Extract host from logo URL so IntelX can find paste/forum references to the CDN domain
+        try { intelxTerms.push(new URL(item.value).hostname); } catch { /* ignore malformed URLs */ }
       }
+      // ip watchlist items are handled separately (cross-reference against live permutation A records)
     }
     const uniqueTerms = [...new Set(intelxTerms)].slice(0, 5);
 
@@ -642,7 +651,10 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       }
     }
 
-    // IntelX results → data_leak_results (deduplicated by name)
+    // IntelX results → route by bucket:
+    //   darkweb / credential / leaks / pastes → data_leak_results
+    //   forum / reddit / twitter / linkedin / documents → brand_abuse_results
+    const intelxAbuseInserts: typeof brandAbuseResultsTable.$inferInsert[] = [];
     if (intelxKey && intelxResultArrays.length > 0) {
       const seenNames = new Set<string>();
       for (const results of intelxResultArrays) {
@@ -651,20 +663,39 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
           if (seenNames.has(r.name)) continue;
           seenNames.add(r.name);
           const bucket = intelxTypeToBucket(r.type);
-          leakInserts.push({
-            tenantId,
-            scanId,
-            source: bucket === "darkweb" ? "IntelX-DarkWeb" : bucket === "pastes" ? "IntelX-Paste" : "IntelX",
-            title: r.name || "IntelX match",
-            breachDate: r.date ? r.date.slice(0, 10) : null,
-            description: r.preview ?? `Dark/deep web mention found via IntelX (bucket: ${bucket})`,
-            exposedData: [],
-            domainMatch: domain,
-            severity: bucket === "darkweb" ? "critical" : bucket === "credential" ? "high" : "medium",
-            url: r.storageid
-              ? `https://intelx.io/?did=${encodeURIComponent(r.storageid)}`
-              : "https://intelx.io",
-          });
+          const url = r.storageid
+            ? `https://intelx.io/?did=${encodeURIComponent(r.storageid)}`
+            : "https://intelx.io";
+
+          const isBrandAbuseBucket = ["forum", "reddit", "twitter", "linkedin", "documents"].includes(bucket);
+          if (isBrandAbuseBucket) {
+            // Forum / social / document mentions go to brand abuse pillar
+            intelxAbuseInserts.push({
+              tenantId,
+              scanId,
+              type: bucket === "forum" ? "impersonation" : "fake_social",
+              platform: bucket.charAt(0).toUpperCase() + bucket.slice(1),
+              url,
+              title: r.name || `IntelX ${bucket} mention`,
+              description: r.preview ?? `Brand mention found in ${bucket} via IntelX intelligence`,
+              evidenceSnippet: r.preview ?? undefined,
+              risk: bucket === "forum" ? "high" : "medium",
+            });
+          } else {
+            // Dark web / credential / paste / leak hits go to data leaks
+            leakInserts.push({
+              tenantId,
+              scanId,
+              source: bucket === "darkweb" ? "IntelX-DarkWeb" : bucket === "pastes" ? "IntelX-Paste" : "IntelX",
+              title: r.name || "IntelX match",
+              breachDate: r.date ? r.date.slice(0, 10) : null,
+              description: r.preview ?? `Dark/deep web mention found via IntelX (bucket: ${bucket})`,
+              exposedData: [],
+              domainMatch: domain,
+              severity: bucket === "darkweb" ? "critical" : bucket === "credential" ? "high" : "medium",
+              url,
+            });
+          }
         }
       }
     }
@@ -678,8 +709,16 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
 
     // Cross-reference watchlist items: flag any domain-type items found in results
     const watchlistDomains = watchlistItems.filter(w => w.type === "domain").map(w => w.value.toLowerCase());
+    const watchlistIps    = watchlistItems.filter(w => w.type === "ip").map(w => w.value.toLowerCase());
+
+    // Collect all A-record IPs exposed by live permutations for IP watchlist matching
+    const livePermutationIps = new Set<string>();
+    for (const r of liveResults) {
+      for (const ip of (r.dnsA ?? [])) livePermutationIps.add(ip.toLowerCase());
+    }
+
     let brandAbuseCount = 0;
-    if (brandAbuseList.length > 0) {
+    {
       const abuseInserts: typeof brandAbuseResultsTable.$inferInsert[] = brandAbuseList.map(a => ({
         tenantId,
         scanId,
@@ -691,7 +730,11 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         evidenceSnippet: a.evidenceSnippet ?? undefined,
         risk: a.risk,
       }));
-      // Also add watchlist domain hits found in live permutation results
+
+      // Merge IntelX forum/social/document brand-abuse hits
+      abuseInserts.push(...intelxAbuseInserts);
+
+      // Watchlist domain cross-reference: flag domains found in live permutation results
       for (const wdomain of watchlistDomains) {
         const hit = liveResults.find(r => r.permutation.toLowerCase().includes(wdomain));
         if (hit) {
@@ -707,10 +750,51 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
           });
         }
       }
-      for (let i = 0; i < abuseInserts.length; i += 50) {
-        await db.insert(brandAbuseResultsTable).values(abuseInserts.slice(i, i + 50));
+
+      // Watchlist IP cross-reference: flag monitored IPs hosting lookalike domains
+      for (const wip of watchlistIps) {
+        if (livePermutationIps.has(wip)) {
+          const hits = liveResults.filter(r => (r.dnsA ?? []).some(ip => ip.toLowerCase() === wip));
+          for (const hit of hits) {
+            abuseInserts.push({
+              tenantId,
+              scanId,
+              type: "infrastructure_reuse",
+              platform: "DNS",
+              url: `http://${hit.permutation}`,
+              title: `Watchlist IP hosting lookalike: ${hit.permutation}`,
+              description: `Monitored IP address ${wip} is resolving lookalike domain ${hit.permutation} — possible shared infrastructure abuse`,
+              risk: "critical",
+            });
+          }
+        }
       }
-      brandAbuseCount = abuseInserts.length;
+
+      // Watchlist mobile_app names: flag permutation domains that match app name patterns
+      const watchlistApps = watchlistItems.filter(w => w.type === "mobile_app").map(w => w.value.toLowerCase());
+      for (const appName of watchlistApps) {
+        const appSlug = appName.replace(/\s+/g, "").toLowerCase();
+        const hit = liveResults.find(r => r.permutation.toLowerCase().includes(appSlug));
+        if (hit) {
+          abuseInserts.push({
+            tenantId,
+            scanId,
+            type: "fake_app",
+            platform: "App Store",
+            url: `http://${hit.permutation}`,
+            title: `Mobile app name match: ${hit.permutation}`,
+            description: `Watchlist mobile app "${appName}" name pattern found in live lookalike domain ${hit.permutation}`,
+            risk: "high",
+          });
+        }
+      }
+
+      if (abuseInserts.length > 0) {
+        for (let i = 0; i < abuseInserts.length; i += 50) {
+          await db.insert(brandAbuseResultsTable).values(abuseInserts.slice(i, i + 50));
+        }
+        brandAbuseCount = abuseInserts.length;
+      }
     }
 
     // ── Final update ─────────────────────────────────────────────────────────
