@@ -50,14 +50,20 @@ router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Prom
     res.json(clientReports.map(toReportResponse)); return;
   }
 
-  let rWhere;
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
-    rWhere = inArray(reportsTable.tenantId, ids);
-  } else {
-    rWhere = eq(reportsTable.tenantId, req.user!.tenantId);
+    const clientAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(inArray(assetsTable.tenantId, ids));
+    const clientAssetIds = new Set(clientAssets.map(a => a.id));
+    if (clientAssetIds.size === 0) { res.json([]); return; }
+    const allReports = await db.select().from(reportsTable);
+    const amReports = allReports.filter(r =>
+      Array.isArray(r.assetIds) && (r.assetIds as number[]).some(id => clientAssetIds.has(id))
+    );
+    res.json(amReports.map(toReportResponse)); return;
   }
+  const rWhere = eq(reportsTable.tenantId, req.user!.tenantId);
   const reports = await db.select().from(reportsTable).where(rWhere);
   res.json(reports.map(toReportResponse));
 });

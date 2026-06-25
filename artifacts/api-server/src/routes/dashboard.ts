@@ -422,10 +422,9 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
   const clientTenantIds = assignments.map(a => a.clientTenantId);
 
   // Parallel fetch: clients + ALL assets of client tenants + scans + alerts + takedowns + client users
-  const [clients, rawAssets, allScans, rawAlerts, allTakedowns, clientUsers] = await Promise.all([
+  const [clients, rawAssets, rawAlerts, allTakedowns, clientUsers] = await Promise.all([
     db.select().from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds)),
     db.select().from(assetsTable).where(inArray(assetsTable.tenantId, clientTenantIds)),
-    db.select().from(scansTable).where(inArray(scansTable.tenantId, clientTenantIds)),
     db.select().from(alertsTable)
       .where(inArray(alertsTable.tenantId, clientTenantIds))
       .orderBy(desc(alertsTable.createdAt))
@@ -442,14 +441,22 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
   ]);
 
   const assignedAssetIds = rawAssets.map(a => a.id);
+  const assignedAssetIdSet = new Set(assignedAssetIds);
 
-  // Fetch findings + risk scores keyed by assigned asset IDs
-  const [allFindings, allRiskScores] = await (assignedAssetIds.length > 0
+  // Fetch findings, risk scores, and ALL scans (filter scans by asset IDs to handle cross-tenant)
+  const [allFindings, allRiskScores, allScansRaw] = await (assignedAssetIds.length > 0
     ? Promise.all([
         db.select().from(findingsTable).where(inArray(findingsTable.assetId, assignedAssetIds)),
         db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assignedAssetIds)),
+        db.select().from(scansTable),
       ])
-    : Promise.resolve([[], []] as [typeof findingsTable.$inferSelect[], typeof riskScoresTable.$inferSelect[]]));
+    : Promise.resolve([[], [], []] as [typeof findingsTable.$inferSelect[], typeof riskScoresTable.$inferSelect[], typeof scansTable.$inferSelect[]]));
+
+  // Filter scans to those touching client assets (regardless of which tenant created them)
+  const allScans = allScansRaw.filter(s =>
+    clientTenantIds.includes(s.tenantId) ||
+    (Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => assignedAssetIdSet.has(id)))
+  );
 
   // ── Portfolio risk score ─────────────────────────────────────────────────────
   const portfolioRiskScore = allRiskScores.length > 0
@@ -547,10 +554,26 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
       findingCount: clientFindings.length,
       criticalCount: clientFindings.filter(f => f.severity === "critical").length,
       openFindingCount: clientFindings.filter(f => f.status === "open").length,
-      activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
+      activeScans: allScans.filter(s =>
+        (s.status === "running" || s.status === "pending") &&
+        Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => clientAssetIds.includes(id))
+      ).length,
       assignedAt: assignments.find(a => a.clientTenantId === t.id)?.assignedAt?.toISOString() ?? null,
     };
   });
+
+  // ── False Positive Status ────────────────────────────────────────────────────
+  const fpSubmitted = allFindings.filter(f => f.falsePositiveStatus === "submitted").length;
+  const fpConfirmed = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpRejected  = allFindings.filter(f => f.falsePositiveStatus === "rejected").length;
+  const falsePositiveFindings = allFindings
+    .filter(f => f.falsePositiveStatus && f.falsePositiveStatus !== "none")
+    .map(f => ({
+      id: f.id, title: f.title, severity: f.severity, status: f.status,
+      cveId: f.cveId, falsePositiveStatus: f.falsePositiveStatus,
+      assetId: f.assetId, assetName: rawAssets.find(a => a.id === f.assetId)?.name ?? "Unknown",
+      updatedAt: f.updatedAt.toISOString(),
+    }));
 
   res.json({
     clientCount: clients.length,
@@ -566,6 +589,8 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
     recentAlerts,
     takedownRequests,
     clients: clientMetrics,
+    falsePositives: { submitted: fpSubmitted, confirmed: fpConfirmed, rejected: fpRejected },
+    falsePositiveFindings,
   });
 });
 

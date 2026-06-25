@@ -44,15 +44,43 @@ function toFindingResponse(
 router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListFindingsQueryParams.safeParse(req.query);
   const role = req.user!.role;
-  let tenantFilter;
+  // Account Manager: filter by assets from client tenants (data spans tenants via asset IDs)
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
-    tenantFilter = inArray(findingsTable.tenantId, ids);
-  } else {
-    tenantFilter = eq(findingsTable.tenantId, req.user!.tenantId);
+    const clientAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(inArray(assetsTable.tenantId, ids));
+    const clientAssetIds = clientAssets.map(a => a.id);
+    if (clientAssetIds.length === 0) { res.json([]); return; }
+    const amFilters: any[] = [inArray(findingsTable.assetId, clientAssetIds)];
+    if (q.success) {
+      if (q.data.status) amFilters.push(eq(findingsTable.status, q.data.status));
+      if (q.data.severity) amFilters.push(eq(findingsTable.severity, q.data.severity));
+      if (q.data.assetId) amFilters.push(eq(findingsTable.assetId, q.data.assetId));
+      if (q.data.search) amFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
+    }
+    const amFindings = await db.select({
+      finding: findingsTable,
+      assetName: assetsTable.name,
+      assetValue: assetsTable.value,
+      assetType: assetsTable.type,
+      assetLastScannedAt: assetsTable.lastScannedAt,
+      assetIpAddress: assetsTable.ipAddress,
+      assetPort: assetsTable.port,
+      assetTags: assetsTable.tags,
+      assetRiskScore: riskScoresTable.score,
+    }).from(findingsTable)
+      .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
+      .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+      .where(and(...amFilters));
+    res.json(amFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
+      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
+    return;
   }
-  const filters = [tenantFilter];
+
+  let tenantFilter;
+  tenantFilter = eq(findingsTable.tenantId, req.user!.tenantId);
+  const filters: any[] = [tenantFilter];
 
   if (role === "client") {
     // Cross-tenant: fetch assigned asset IDs without tenant restriction

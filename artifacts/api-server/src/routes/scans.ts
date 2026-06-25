@@ -118,10 +118,20 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
-    tenantFilter = inArray(scansTable.tenantId, ids);
-  } else {
-    tenantFilter = eq(scansTable.tenantId, req.user!.tenantId);
+    const clientAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(inArray(assetsTable.tenantId, ids));
+    const clientAssetIds = clientAssets.map(a => a.id);
+    if (clientAssetIds.length === 0) { res.json([]); return; }
+    const allScansRaw = await db.select().from(scansTable);
+    const amScans = allScansRaw.filter(s =>
+      Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => clientAssetIds.includes(id))
+    );
+    const filtered = q.success && q.data.status
+      ? amScans.filter(s => s.status === (q.data as any).status)
+      : amScans;
+    res.json(filtered.map(toScanResponse)); return;
   }
+  tenantFilter = eq(scansTable.tenantId, req.user!.tenantId);
   const filters = [tenantFilter];
   if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
   const scans = await db.select().from(scansTable).where(and(...filters));

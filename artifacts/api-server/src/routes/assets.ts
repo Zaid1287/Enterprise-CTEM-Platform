@@ -106,9 +106,12 @@ async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
 }
 
 /** WHERE clause for a single asset: SA can access any asset across all tenants. */
-function assetAccessFilter(assetId: number, user: { tenantId: number; role: string }) {
+function assetAccessFilter(assetId: number, user: { tenantId: number; role: string }, amTenantIds?: number[]) {
   const byId = eq(assetsTable.id, assetId);
   if (user.role === "super_admin") return byId;
+  if (user.role === "account_manager" && amTenantIds && amTenantIds.length > 0) {
+    return and(byId, inArray(assetsTable.tenantId, amTenantIds))!;
+  }
   return and(byId, eq(assetsTable.tenantId, user.tenantId))!;
 }
 
@@ -214,7 +217,8 @@ router.post("/assets", requireAuth, async (req: AuthenticatedRequest, res): Prom
 router.get("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const filters: ReturnType<typeof eq>[] = [assetAccessFilter(params.data.assetId, req.user!) as any];
+  const amTids = req.user!.role === "account_manager" ? await getAmClientTenantIds(req.user!.userId) : undefined;
+  const filters: ReturnType<typeof eq>[] = [assetAccessFilter(params.data.assetId, req.user!, amTids) as any];
   if (req.user!.role === "client") {
     filters.push(eq(assetsTable.assignedClientId, req.user!.userId) as any);
   }
@@ -330,8 +334,9 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
   const body = VerifyAssetBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
 
+  const amTidsV = req.user!.role === "account_manager" ? await getAmClientTenantIds(req.user!.userId) : undefined;
   const [existing] = await db.select().from(assetsTable)
-    .where(assetAccessFilter(params.data.assetId, req.user!));
+    .where(assetAccessFilter(params.data.assetId, req.user!, amTidsV));
   if (!existing) { res.status(404).json({ error: "Asset not found" }); return; }
 
   const method = (body.data as any).method ?? "dns_txt";
@@ -419,8 +424,9 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   const params = CheckAssetVerificationParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
+  const amTidsC = req.user!.role === "account_manager" ? await getAmClientTenantIds(req.user!.userId) : undefined;
   const [asset] = await db.select().from(assetsTable)
-    .where(assetAccessFilter(params.data.assetId, req.user!));
+    .where(assetAccessFilter(params.data.assetId, req.user!, amTidsC));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
   // Already verified (e.g. email confirm link clicked before this poll)
