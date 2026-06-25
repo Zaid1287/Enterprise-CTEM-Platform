@@ -161,31 +161,64 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
 
         {/* Stats row — only when done */}
         {scan.status === "done" && (
-          <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="grid grid-cols-4 gap-2 mb-3">
             <div className="bg-background rounded-xl p-2.5 text-center">
               <p className="text-[10px] text-muted-foreground mb-0.5">Live</p>
               <p className={cn("text-base font-bold tabular-nums", liveCount > 0 ? "text-red-400" : "text-green-400")}>
                 {liveCount}
               </p>
             </div>
-            <div className="bg-background rounded-xl p-2.5 text-center">
-              <p className="text-[10px] text-muted-foreground mb-0.5">Phishing</p>
-              <p className={cn("text-base font-bold tabular-nums", (scan.phishingCount ?? 0) > 0 ? "text-red-400" : "text-muted-foreground")}>
+            {/* Phishing badge — CRIT color when > 0 */}
+            <div className={cn(
+              "rounded-xl p-2.5 text-center border",
+              (scan.phishingCount ?? 0) > 0
+                ? "bg-red-500/10 border-red-500/25"
+                : "bg-background border-transparent",
+            )}>
+              <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
+                <Fish className="w-2.5 h-2.5" /> Phishing
+              </p>
+              <p className={cn(
+                "text-base font-bold tabular-nums",
+                (scan.phishingCount ?? 0) > 0 ? "text-red-400" : "text-muted-foreground/50",
+              )}>
                 {scan.phishingCount ?? 0}
               </p>
             </div>
-            <div className="bg-background rounded-xl p-2.5 text-center">
-              <p className="text-[10px] text-muted-foreground mb-0.5">Leaks</p>
-              <p className={cn("text-base font-bold tabular-nums", (scan.dataLeakCount ?? 0) > 0 ? "text-orange-400" : "text-muted-foreground")}>
+            {/* Data leaks badge — HIGH color when > 0 */}
+            <div className={cn(
+              "rounded-xl p-2.5 text-center border",
+              (scan.dataLeakCount ?? 0) > 0
+                ? "bg-orange-500/10 border-orange-500/25"
+                : "bg-background border-transparent",
+            )}>
+              <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
+                <Database className="w-2.5 h-2.5" /> Leaks
+              </p>
+              <p className={cn(
+                "text-base font-bold tabular-nums",
+                (scan.dataLeakCount ?? 0) > 0 ? "text-orange-400" : "text-muted-foreground/50",
+              )}>
                 {scan.dataLeakCount ?? 0}
               </p>
             </div>
-          </div>
-        )}
-        {scan.status === "done" && (scan.brandAbuseCount ?? 0) > 0 && (
-          <div className="mb-3 flex items-center gap-2 bg-orange-500/5 border border-orange-500/20 rounded-lg px-3 py-2">
-            <Target className="w-3 h-3 text-orange-400 shrink-0" />
-            <p className="text-[11px] text-orange-400 font-medium">{scan.brandAbuseCount} brand abuse finding{scan.brandAbuseCount !== 1 ? "s" : ""}</p>
+            {/* Brand abuse badge — MED color when > 0 */}
+            <div className={cn(
+              "rounded-xl p-2.5 text-center border",
+              (scan.brandAbuseCount ?? 0) > 0
+                ? "bg-yellow-500/10 border-yellow-500/25"
+                : "bg-background border-transparent",
+            )}>
+              <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
+                <Target className="w-2.5 h-2.5" /> Abuse
+              </p>
+              <p className={cn(
+                "text-base font-bold tabular-nums",
+                (scan.brandAbuseCount ?? 0) > 0 ? "text-yellow-400" : "text-muted-foreground/50",
+              )}>
+                {scan.brandAbuseCount ?? 0}
+              </p>
+            </div>
           </div>
         )}
 
