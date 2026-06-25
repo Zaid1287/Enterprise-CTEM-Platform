@@ -35,7 +35,7 @@ import { getPlatformSetting } from "./platformSettings";
 import { setNvdApiKey } from "../lib/nvdLookup";
 import { getVirusTotalDomain } from "../lib/virusTotal";
 import { hunterDomainSearch } from "../lib/hunterOsint";
-import { dispatchNotifications } from "../lib/notifier";
+import { dispatchMultiTenantNotifications } from "../lib/notifier";
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -176,19 +176,18 @@ async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> 
           const tenantIdsToNotify = new Set<number>([entry.tenantId]);
           for (const row of assetTenantRows) tenantIdsToNotify.add(row.tenantId);
 
-          for (const tenantId of tenantIdsToNotify) {
-            await dispatchNotifications({
-              tenantId,
-              eventType: criticalCount > 0 ? "critical_finding" : highCount > 0 ? "high_finding" : "scan_complete",
-              title: `Scan Complete — ${findingsCount} finding${findingsCount !== 1 ? "s" : ""} detected`,
-              message: `Pipeline scan #${entry.scanId} completed across ${entry.configs.length} asset${entry.configs.length !== 1 ? "s" : ""}. ${criticalCount} critical, ${highCount} high severity findings.`,
-              severity,
-              scanId: entry.scanId,
-              findingsCount,
-              criticalCount,
-              highCount,
-            });
-          }
+          // dispatchMultiTenantNotifications fires tenant rules for each tenant
+          // and platform-level fallbacks exactly ONCE — no duplicates.
+          await dispatchMultiTenantNotifications([...tenantIdsToNotify], {
+            eventType: criticalCount > 0 ? "critical_finding" : highCount > 0 ? "high_finding" : "scan_complete",
+            title: `Scan Complete — ${findingsCount} finding${findingsCount !== 1 ? "s" : ""} detected`,
+            message: `Pipeline scan #${entry.scanId} completed across ${entry.configs.length} asset${entry.configs.length !== 1 ? "s" : ""}. ${criticalCount} critical, ${highCount} high severity findings.`,
+            severity,
+            scanId: entry.scanId,
+            findingsCount,
+            criticalCount,
+            highCount,
+          });
         } catch (err) {
           logger.warn({ err, scanId: entry.scanId }, "Notification dispatch failed (non-fatal)");
         }

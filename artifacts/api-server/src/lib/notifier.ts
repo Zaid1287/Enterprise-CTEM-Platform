@@ -49,7 +49,6 @@ function slackPayload(event: NotificationEvent): object {
     fields.push({ type: "mrkdwn", text: `*Asset*\n${event.assetName}` });
   if (event.scanId)
     fields.push({ type: "mrkdwn", text: `*Scan ID*\n#${event.scanId}` });
-
   return {
     blocks: [
       { type: "header", text: { type: "plain_text", text: `${emoji} Sentinelware CTEM Alert`, emoji: true } },
@@ -72,13 +71,9 @@ function discordPayload(event: NotificationEvent): object {
   if ((event.highCount ?? 0) > 0) fields.push({ name: "High", value: String(event.highCount), inline: true });
   if (event.assetName) fields.push({ name: "Asset", value: event.assetName, inline: true });
   if (event.scanId) fields.push({ name: "Scan ID", value: `#${event.scanId}`, inline: true });
-
   return {
     embeds: [{
-      title: event.title,
-      description: event.message,
-      color,
-      fields,
+      title: event.title, description: event.message, color, fields,
       footer: { text: "Sentinelware CTEM" },
       timestamp: new Date().toISOString(),
     }],
@@ -105,10 +100,7 @@ function telegramText(event: NotificationEvent): string {
 }
 
 function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 async function sendTelegram(destination: string, event: NotificationEvent): Promise<void> {
@@ -134,29 +126,20 @@ async function postWebhook(url: string, body: object): Promise<void> {
   const ctrl = new AbortController();
   setTimeout(() => ctrl.abort(), 8000);
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: ctrl.signal,
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body), signal: ctrl.signal,
   });
   if (!res.ok) throw new Error(`Webhook POST failed: HTTP ${res.status}`);
 }
 
 function genericWebhookPayload(event: NotificationEvent): object {
   return {
-    source: "sentinelware",
-    eventType: event.eventType,
-    title: event.title,
-    message: event.message,
-    severity: event.severity,
-    tenantId: event.tenantId,
-    scanId: event.scanId,
-    findingsCount: event.findingsCount,
-    criticalCount: event.criticalCount,
-    highCount: event.highCount,
-    assetName: event.assetName,
-    relatedAssetId: event.relatedAssetId,
-    relatedFindingId: event.relatedFindingId,
+    source: "sentinelware", eventType: event.eventType,
+    title: event.title, message: event.message, severity: event.severity,
+    tenantId: event.tenantId, scanId: event.scanId,
+    findingsCount: event.findingsCount, criticalCount: event.criticalCount,
+    highCount: event.highCount, assetName: event.assetName,
+    relatedAssetId: event.relatedAssetId, relatedFindingId: event.relatedFindingId,
     timestamp: new Date().toISOString(),
   };
 }
@@ -164,23 +147,14 @@ function genericWebhookPayload(event: NotificationEvent): object {
 async function insertAlertRecord(event: NotificationEvent): Promise<void> {
   try {
     const [alert] = await db.insert(alertsTable).values({
-      tenantId: event.tenantId,
-      title: event.title,
-      message: event.message,
-      type: event.eventType,
-      severity: event.severity,
-      isRead: false,
+      tenantId: event.tenantId, title: event.title, message: event.message,
+      type: event.eventType, severity: event.severity, isRead: false,
       relatedAssetId: event.relatedAssetId ?? null,
       relatedFindingId: event.relatedFindingId ?? null,
     }).returning();
-
     pushSseEvent(event.tenantId, "new-alert", {
-      id: alert.id,
-      title: alert.title,
-      message: alert.message,
-      type: alert.type,
-      severity: alert.severity,
-      isRead: false,
+      id: alert.id, title: alert.title, message: alert.message,
+      type: alert.type, severity: alert.severity, isRead: false,
       createdAt: alert.createdAt.toISOString(),
     });
   } catch (err) {
@@ -188,9 +162,98 @@ async function insertAlertRecord(event: NotificationEvent): Promise<void> {
   }
 }
 
+async function fireTenantRules(event: NotificationEvent): Promise<void> {
+  const rules = await db.select().from(alertRulesTable)
+    .where(and(eq(alertRulesTable.tenantId, event.tenantId), eq(alertRulesTable.isActive, true)));
+
+  const firedKeys = new Set<string>();
+  for (const rule of rules) {
+    if (!shouldRuleFire(rule.triggerType, event)) continue;
+
+    const dest = rule.destination ||
+      await getPlatformSetting(
+        rule.channel === "slack"    ? "slack_webhook_url" :
+        rule.channel === "discord"  ? "discord_webhook_url" :
+        rule.channel === "telegram" ? "telegram_bot_token" : ""
+      );
+    if (!dest) continue;
+
+    const key = `${rule.channel}:${dest}`;
+    if (firedKeys.has(key)) continue;
+
+    try {
+      if (rule.channel === "slack") {
+        await postWebhook(dest, slackPayload(event));
+        firedKeys.add(key);
+        logger.info({ tenantId: event.tenantId, ruleId: rule.id }, "Slack notification sent");
+      } else if (rule.channel === "discord") {
+        await postWebhook(dest, discordPayload(event));
+        firedKeys.add(key);
+        logger.info({ tenantId: event.tenantId, ruleId: rule.id }, "Discord notification sent");
+      } else if (rule.channel === "email") {
+        await sendEmail({ to: dest, subject: `[Sentinelware] ${event.title}`, html: alertEmailHtml(event) });
+        firedKeys.add(key);
+        logger.info({ tenantId: event.tenantId, ruleId: rule.id }, "Alert email sent");
+      } else if (rule.channel === "telegram") {
+        const telegramDest = rule.destination
+          ? dest
+          : `${dest}:${await getPlatformSetting("telegram_chat_id") ?? ""}`;
+        await sendTelegram(telegramDest, event);
+        firedKeys.add(key);
+        logger.info({ tenantId: event.tenantId, ruleId: rule.id }, "Telegram notification sent");
+      } else if (rule.channel === "webhook") {
+        await postWebhook(dest, genericWebhookPayload(event));
+        firedKeys.add(key);
+        logger.info({ tenantId: event.tenantId, ruleId: rule.id }, "Webhook notification sent");
+      }
+    } catch (err) {
+      logger.warn({ err, channel: rule.channel, ruleId: rule.id }, "Rule notification delivery failed");
+    }
+  }
+}
+
 /**
- * Send a notification via a single channel rule — used by the test endpoint.
- * Does NOT insert a DB record or fire platform-level fallbacks.
+ * Fire platform-level global fallbacks configured in Platform Settings.
+ * These represent the super_admin's global monitoring channels.
+ * Should be called ONCE per event, not once per tenant.
+ */
+async function firePlatformFallbacks(event: NotificationEvent, firedKeys: Set<string>): Promise<void> {
+  const [platformSlack, platformDiscord, platformTelegramToken, platformTelegramChat] = await Promise.all([
+    getPlatformSetting("slack_webhook_url"),
+    getPlatformSetting("discord_webhook_url"),
+    getPlatformSetting("telegram_bot_token"),
+    getPlatformSetting("telegram_chat_id"),
+  ]);
+
+  if (platformSlack && !firedKeys.has(`slack:${platformSlack}`)) {
+    try {
+      await postWebhook(platformSlack, slackPayload(event));
+      firedKeys.add(`slack:${platformSlack}`);
+      logger.info({ tenantId: event.tenantId }, "Platform Slack notification sent");
+    } catch (err) { logger.warn({ err }, "Platform Slack webhook failed"); }
+  }
+  if (platformDiscord && !firedKeys.has(`discord:${platformDiscord}`)) {
+    try {
+      await postWebhook(platformDiscord, discordPayload(event));
+      firedKeys.add(`discord:${platformDiscord}`);
+      logger.info({ tenantId: event.tenantId }, "Platform Discord notification sent");
+    } catch (err) { logger.warn({ err }, "Platform Discord webhook failed"); }
+  }
+  if (platformTelegramToken && platformTelegramChat) {
+    const tKey = `telegram:${platformTelegramToken}:${platformTelegramChat}`;
+    if (!firedKeys.has(tKey)) {
+      try {
+        await sendTelegram(`${platformTelegramToken}:${platformTelegramChat}`, event);
+        firedKeys.add(tKey);
+        logger.info({ tenantId: event.tenantId }, "Platform Telegram notification sent");
+      } catch (err) { logger.warn({ err }, "Platform Telegram notification failed"); }
+    }
+  }
+}
+
+/**
+ * Send a notification via a single channel — used by the test endpoint.
+ * Does NOT insert a DB alert record or fire platform-level fallbacks.
  */
 export async function sendChannelNotification(
   channel: string,
@@ -212,88 +275,50 @@ export async function sendChannelNotification(
   }
 }
 
+/**
+ * Dispatch notifications for a SINGLE tenant only (alert record + tenant rules).
+ * Use this when dispatching for multiple tenants from the same scan event
+ * to avoid firing platform-level fallbacks multiple times.
+ */
+export async function dispatchTenantNotifications(event: NotificationEvent): Promise<void> {
+  try {
+    await insertAlertRecord(event);
+    await fireTenantRules(event);
+  } catch (err) {
+    logger.error({ err, tenantId: event.tenantId }, "dispatchTenantNotifications failed");
+  }
+}
+
+/**
+ * Full dispatch: alert record + tenant rules + platform-level fallbacks.
+ * Use this for single-tenant events (brand threats, individual scan completions).
+ */
 export async function dispatchNotifications(event: NotificationEvent): Promise<void> {
   try {
     await insertAlertRecord(event);
-
-    const rules = await db.select().from(alertRulesTable)
-      .where(and(eq(alertRulesTable.tenantId, event.tenantId), eq(alertRulesTable.isActive, true)));
-
     const firedKeys = new Set<string>();
-
-    for (const rule of rules) {
-      if (!shouldRuleFire(rule.triggerType, event)) continue;
-
-      const dest = rule.destination ||
-        await getPlatformSetting(
-          rule.channel === "slack"    ? "slack_webhook_url" :
-          rule.channel === "discord"  ? "discord_webhook_url" :
-          rule.channel === "telegram" ? "telegram_bot_token" : ""
-        );
-      if (!dest) continue;
-
-      const key = `${rule.channel}:${dest}`;
-      if (firedKeys.has(key)) continue;
-
-      try {
-        if (rule.channel === "slack") {
-          await postWebhook(dest, slackPayload(event));
-          firedKeys.add(key);
-          logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "slack" }, "Slack notification sent");
-        } else if (rule.channel === "discord") {
-          await postWebhook(dest, discordPayload(event));
-          firedKeys.add(key);
-          logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "discord" }, "Discord notification sent");
-        } else if (rule.channel === "email") {
-          await sendEmail({ to: dest, subject: `[Sentinelware] ${event.title}`, html: alertEmailHtml(event) });
-          firedKeys.add(key);
-          logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "email" }, "Alert email sent");
-        } else if (rule.channel === "telegram") {
-          const telegramDest = rule.destination
-            ? dest
-            : `${dest}:${await getPlatformSetting("telegram_chat_id") ?? ""}`;
-          await sendTelegram(telegramDest, event);
-          firedKeys.add(key);
-          logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "telegram" }, "Telegram notification sent");
-        } else if (rule.channel === "webhook") {
-          await postWebhook(dest, genericWebhookPayload(event));
-          firedKeys.add(key);
-          logger.info({ tenantId: event.tenantId, ruleId: rule.id, channel: "webhook" }, "Webhook notification sent");
-        }
-      } catch (err) {
-        logger.warn({ err, channel: rule.channel, ruleId: rule.id }, "Notification delivery failed");
-      }
-    }
-
-    const [platformSlack, platformDiscord, platformTelegramToken, platformTelegramChat] = await Promise.all([
-      getPlatformSetting("slack_webhook_url"),
-      getPlatformSetting("discord_webhook_url"),
-      getPlatformSetting("telegram_bot_token"),
-      getPlatformSetting("telegram_chat_id"),
-    ]);
-
-    if (platformSlack && !firedKeys.has(`slack:${platformSlack}`)) {
-      try {
-        await postWebhook(platformSlack, slackPayload(event));
-        logger.info({ tenantId: event.tenantId }, "Platform-level Slack notification sent");
-      } catch (err) { logger.warn({ err }, "Platform Slack webhook failed"); }
-    }
-    if (platformDiscord && !firedKeys.has(`discord:${platformDiscord}`)) {
-      try {
-        await postWebhook(platformDiscord, discordPayload(event));
-        logger.info({ tenantId: event.tenantId }, "Platform-level Discord notification sent");
-      } catch (err) { logger.warn({ err }, "Platform Discord webhook failed"); }
-    }
-    if (platformTelegramToken && platformTelegramChat) {
-      const tKey = `telegram:${platformTelegramToken}:${platformTelegramChat}`;
-      if (!firedKeys.has(tKey)) {
-        try {
-          await sendTelegram(`${platformTelegramToken}:${platformTelegramChat}`, event);
-          logger.info({ tenantId: event.tenantId }, "Platform-level Telegram notification sent");
-        } catch (err) { logger.warn({ err }, "Platform Telegram notification failed"); }
-      }
-    }
+    await fireTenantRules(event);
+    // Platform fallbacks fire once using the triggered tenant's event
+    await firePlatformFallbacks(event, firedKeys);
   } catch (err) {
     logger.error({ err, tenantId: event.tenantId }, "dispatchNotifications failed");
   }
+}
+
+/**
+ * Multi-tenant dispatch: fires tenant rules for EACH tenantId, platform fallbacks ONCE.
+ * Use this from pipeline scans where a single scan spans multiple tenant assets.
+ */
+export async function dispatchMultiTenantNotifications(
+  tenantIds: number[],
+  event: Omit<NotificationEvent, "tenantId">,
+): Promise<void> {
+  const unique = [...new Set(tenantIds)];
+  // Fire tenant rules for every affected tenant
+  for (const tenantId of unique) {
+    await dispatchTenantNotifications({ ...event, tenantId });
+  }
+  // Fire platform fallbacks once (using the first / primary tenant for context)
+  const firedKeys = new Set<string>();
+  await firePlatformFallbacks({ ...event, tenantId: unique[0] ?? 0 }, firedKeys);
 }

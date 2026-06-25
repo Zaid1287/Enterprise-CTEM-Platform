@@ -9,24 +9,27 @@ import {
   CheckCircle2, Mail, Copy, Sparkles, ArrowUpRight, Shield,
   Building2, UserPlus, X, KeyRound, Trash2, ExternalLink,
   Camera, SmartphoneNfc, Send, Clock, Check, Ticket,
-  Monitor, Globe, LogOut,
+  Monitor, Globe, LogOut, Bell, Hash, MessageSquare,
+  Webhook, ToggleLeft, ToggleRight, TestTube, AlertCircle, Save,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "profile" | "password" | "team" | "billing" | "aikeys" | "sessions";
+type Tab = "profile" | "password" | "team" | "billing" | "aikeys" | "sessions" | "notifications";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: "profile",  label: "Profile",       icon: User },
-  { id: "password", label: "Password",      icon: Lock },
-  { id: "team",     label: "Team Members",  icon: Users },
-  { id: "billing",  label: "Billing Plans", icon: CreditCard },
-  { id: "sessions", label: "Sessions",      icon: Monitor },
-  { id: "aikeys",   label: "AI Keys",       icon: KeyRound },
+  { id: "profile",       label: "Profile",       icon: User },
+  { id: "password",      label: "Password",      icon: Lock },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "team",          label: "Team Members",  icon: Users },
+  { id: "billing",       label: "Billing Plans", icon: CreditCard },
+  { id: "sessions",      label: "Sessions",      icon: Monitor },
+  { id: "aikeys",        label: "AI Keys",       icon: KeyRound },
 ];
 
 
@@ -63,12 +66,13 @@ export default function AccountSettingsPage() {
         })}
       </div>
 
-      {tab === "profile"  && <ProfileTab user={user} setUser={setUser} />}
-      {tab === "password" && <div className="space-y-5"><PasswordTab /><TwoFactorSection user={user} setUser={setUser} /></div>}
-      {tab === "team"     && <TeamTab />}
-      {tab === "billing"  && <BillingTab user={user} />}
-      {tab === "sessions" && <SessionsTab />}
-      {tab === "aikeys"   && <AiKeysTab />}
+      {tab === "profile"       && <ProfileTab user={user} setUser={setUser} />}
+      {tab === "password"      && <div className="space-y-5"><PasswordTab /><TwoFactorSection user={user} setUser={setUser} /></div>}
+      {tab === "notifications" && <NotificationsTab />}
+      {tab === "team"          && <TeamTab />}
+      {tab === "billing"       && <BillingTab user={user} />}
+      {tab === "sessions"      && <SessionsTab />}
+      {tab === "aikeys"        && <AiKeysTab />}
     </div>
   );
 }
@@ -1519,6 +1523,159 @@ function SessionsTab() {
         <p className="text-xs text-muted-foreground leading-relaxed">
           If you see a session you don't recognise, revoke it immediately and change your password.
           Sessions expire automatically after 30 days of inactivity.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Notifications Tab ─────────────────────────────────────────────────────────
+
+type ChannelKey = "email" | "slack" | "discord" | "telegram" | "webhook";
+interface ChannelConfig { enabled: boolean; destination: string; ruleId?: number }
+type ChannelMap = Record<ChannelKey, ChannelConfig>;
+
+const CHANNEL_META_ACCT: Record<ChannelKey, {
+  label: string; icon: React.ElementType; placeholder: string; hint: string; color: string;
+}> = {
+  email:    { label: "Email",    icon: Mail,          placeholder: "alerts@yourcompany.com",                         hint: "Alerts will be sent to this email address.",                                  color: "text-blue-400" },
+  slack:    { label: "Slack",    icon: Hash,          placeholder: "https://hooks.slack.com/services/T.../B.../...", hint: "Create an Incoming Webhook in your Slack workspace settings.",                 color: "text-purple-400" },
+  discord:  { label: "Discord",  icon: MessageSquare, placeholder: "https://discord.com/api/webhooks/123.../abc...", hint: "Go to Discord channel settings → Integrations → Webhooks.",                  color: "text-indigo-400" },
+  telegram: { label: "Telegram", icon: Send,          placeholder: "BotToken:ChatID  (e.g. 123456:ABCdef:-100123456)", hint: "Format: BotToken:ChatID — get your token from @BotFather.",               color: "text-sky-400" },
+  webhook:  { label: "Webhook",  icon: Webhook,       placeholder: "https://your-server.com/webhook",               hint: "Receives a JSON POST with the full alert payload on every event.",            color: "text-orange-400" },
+};
+
+const DEFAULT_CH: ChannelMap = {
+  email: { enabled: false, destination: "" }, slack: { enabled: false, destination: "" },
+  discord: { enabled: false, destination: "" }, telegram: { enabled: false, destination: "" },
+  webhook: { enabled: false, destination: "" },
+};
+
+function NotificationsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [channels, setChannels] = useState<ChannelMap>({ ...DEFAULT_CH });
+  const [testingChannel, setTestingChannel] = useState<ChannelKey | null>(null);
+  const [testResults, setTestResults] = useState<Partial<Record<ChannelKey, "ok" | "fail">>>({});
+
+  const { isLoading } = useQuery<ChannelMap>({
+    queryKey: ["notification-channels"],
+    queryFn: () => apiFetch(`${BASE}/api/notification-channels`),
+    onSuccess: (data: ChannelMap) => setChannels(data),
+  } as any);
+
+  const saveMutation = useMutation({
+    mutationFn: (body: ChannelMap) =>
+      apiFetch(`${BASE}/api/notification-channels`, { method: "PUT", body: JSON.stringify(body) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notification-channels"] });
+      toast({ title: "Notification channels saved" });
+    },
+    onError: (e: any) => toast({ title: "Failed to save", description: e.message, variant: "destructive" }),
+  });
+
+  const toggle = (ch: ChannelKey) =>
+    setChannels(p => ({ ...p, [ch]: { ...p[ch], enabled: !p[ch].enabled } }));
+  const setDest = (ch: ChannelKey, v: string) =>
+    setChannels(p => ({ ...p, [ch]: { ...p[ch], destination: v } }));
+
+  const test = async (ch: ChannelKey) => {
+    const dest = channels[ch].destination;
+    if (!dest) { toast({ title: "Enter a destination first", variant: "destructive" }); return; }
+    setTestingChannel(ch);
+    setTestResults(p => ({ ...p, [ch]: undefined }));
+    try {
+      await apiFetch(`${BASE}/api/notification-channels/${ch}/test`, {
+        method: "POST", body: JSON.stringify({ destination: dest }),
+      });
+      setTestResults(p => ({ ...p, [ch]: "ok" }));
+      toast({ title: `${CHANNEL_META_ACCT[ch].label} test sent!`, description: "Check your destination." });
+    } catch (e: any) {
+      setTestResults(p => ({ ...p, [ch]: "fail" }));
+      toast({ title: `Test failed`, description: e.message, variant: "destructive" });
+    } finally {
+      setTestingChannel(null);
+    }
+  };
+
+  const active = Object.values(channels).filter(c => c.enabled).length;
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <Bell className="w-4 h-4 text-muted-foreground" /> Notification Channels
+            {active > 0 && <Badge variant="secondary" className="text-xs h-5 px-1.5">{active} active</Badge>}
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Where your organization receives all security alerts — scans, findings, brand threats.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => saveMutation.mutate(channels)} disabled={saveMutation.isPending} className="gap-1.5">
+          {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          Save All
+        </Button>
+      </div>
+
+      {isLoading
+        ? <div className="space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>
+        : (
+          <div className="space-y-2">
+            {(Object.keys(CHANNEL_META_ACCT) as ChannelKey[]).map(ch => {
+              const m = CHANNEL_META_ACCT[ch];
+              const Icon = m.icon;
+              const cfg = channels[ch];
+              return (
+                <div key={ch} className={cn(
+                  "border rounded-xl p-4 transition-colors",
+                  cfg.enabled ? "border-primary/40 bg-primary/5" : "border-border bg-card",
+                )}>
+                  <div className="flex items-start gap-3">
+                    <button onClick={() => toggle(ch)} className="mt-0.5 shrink-0">
+                      {cfg.enabled
+                        ? <ToggleRight className="w-5 h-5 text-primary" />
+                        : <ToggleLeft className="w-5 h-5 text-muted-foreground" />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Icon className={cn("w-4 h-4", m.color)} />
+                        <span className="text-sm font-medium">{m.label}</span>
+                        {cfg.enabled && <Badge className="text-[10px] h-4 px-1 bg-green-500/20 text-green-400 border-green-500/30">Active</Badge>}
+                        {testResults[ch] === "ok"   && <Badge className="text-[10px] h-4 px-1 bg-green-500/20 text-green-400 border-green-500/30">✓ Sent</Badge>}
+                        {testResults[ch] === "fail" && <Badge className="text-[10px] h-4 px-1 bg-red-500/20 text-red-400 border-red-500/30">✗ Failed</Badge>}
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          value={cfg.destination} onChange={e => setDest(ch, e.target.value)}
+                          placeholder={m.placeholder} className="h-7 text-xs font-mono flex-1"
+                          type={ch === "email" ? "email" : "text"}
+                        />
+                        <Button
+                          size="sm" variant="outline" className="h-7 text-xs gap-1 shrink-0"
+                          disabled={!cfg.destination || testingChannel === ch}
+                          onClick={() => test(ch)}
+                        >
+                          {testingChannel === ch
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <TestTube className="w-3 h-3" />}
+                          Test
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1.5">{m.hint}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+      <div className="flex items-start gap-2 p-3 bg-accent/30 rounded-lg">
+        <AlertCircle className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+        <p className="text-[11px] text-muted-foreground">
+          These channels fire for <strong className="text-foreground">all</strong> your org's alerts.
+          For per-event rules (e.g. only on critical findings), use <strong className="text-foreground">Alerts → Alert Rules</strong>.
         </p>
       </div>
     </div>

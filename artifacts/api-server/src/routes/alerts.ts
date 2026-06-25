@@ -15,6 +15,12 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
+// Org-level notification channels are stored as alert rules with this name prefix.
+// They have triggerType="any" so they fire on every event for the tenant.
+const CHANNEL_PREFIX = "__channel__";
+const CHANNEL_KEYS = ["email", "slack", "discord", "telegram", "webhook"] as const;
+type ChannelKey = typeof CHANNEL_KEYS[number];
+
 function toAlertResponse(a: typeof alertsTable.$inferSelect) {
   return {
     id: a.id, tenantId: a.tenantId, title: a.title, message: a.message,
@@ -24,6 +30,15 @@ function toAlertResponse(a: typeof alertsTable.$inferSelect) {
   };
 }
 
+function toRuleResponse(r: typeof alertRulesTable.$inferSelect) {
+  return {
+    id: r.id, tenantId: r.tenantId, name: r.name, triggerType: r.triggerType,
+    channel: r.channel, destination: r.destination, isActive: r.isActive,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
+
+// ── SSE stream ────────────────────────────────────────────────────────────────
 router.get("/alerts/stream", (req: Request, res: Response): void => {
   const token = req.query.token as string;
   if (!token) { res.status(401).end(); return; }
@@ -49,14 +64,13 @@ router.get("/alerts/stream", (req: Request, res: Response): void => {
   });
 });
 
+// ── Alert rules ───────────────────────────────────────────────────────────────
+// List alert rules — excludes org-level channel rules (shown in /notification-channels)
 router.get("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const rules = await db.select().from(alertRulesTable)
     .where(eq(alertRulesTable.tenantId, req.user!.tenantId));
-  res.json(rules.map(r => ({
-    id: r.id, tenantId: r.tenantId, name: r.name, triggerType: r.triggerType,
-    channel: r.channel, destination: r.destination, isActive: r.isActive,
-    createdAt: r.createdAt.toISOString(),
-  })));
+  // Filter out internal __channel__ rules — those are managed via /notification-channels
+  res.json(rules.filter(r => !r.name.startsWith(CHANNEL_PREFIX)).map(toRuleResponse));
 });
 
 router.post("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -65,11 +79,7 @@ router.post("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res)
   const [rule] = await db.insert(alertRulesTable).values({
     ...parsed.data, tenantId: req.user!.tenantId,
   }).returning();
-  res.status(201).json({
-    id: rule.id, tenantId: rule.tenantId, name: rule.name, triggerType: rule.triggerType,
-    channel: rule.channel, destination: rule.destination, isActive: rule.isActive,
-    createdAt: rule.createdAt.toISOString(),
-  });
+  res.status(201).json(toRuleResponse(rule));
 });
 
 // ── Test a specific alert rule ────────────────────────────────────────────────
@@ -85,13 +95,10 @@ router.post("/alerts/rules/:ruleId/test", requireAuth, async (req: Authenticated
     tenantId: req.user!.tenantId,
     eventType: "scan_complete",
     title: "🧪 Test Notification — Sentinelware CTEM",
-    message: `This is a test notification for rule "${rule.name}". If you received this, your ${rule.channel} channel is configured correctly.`,
+    message: `Test for rule "${rule.name}". If you received this, your ${rule.channel} channel is configured correctly.`,
     severity: "info",
-    findingsCount: 3,
-    criticalCount: 1,
-    highCount: 2,
-    assetName: "test-asset.example.com",
-    scanId: 0,
+    findingsCount: 3, criticalCount: 1, highCount: 2,
+    assetName: "test-asset.example.com", scanId: 0,
   };
 
   let dest = rule.destination;
@@ -108,13 +115,13 @@ router.post("/alerts/rules/:ruleId/test", requireAuth, async (req: Authenticated
   }
 
   if (!dest) {
-    res.status(422).json({ error: `No destination configured for channel "${rule.channel}". Set a destination on the rule or configure platform-level settings.` });
+    res.status(422).json({ error: `No destination for "${rule.channel}". Set a destination on the rule or configure platform settings.` });
     return;
   }
 
   try {
     await sendChannelNotification(rule.channel, dest, testEvent);
-    logger.info({ ruleId, channel: rule.channel, tenantId: req.user!.tenantId }, "Test notification sent successfully");
+    logger.info({ ruleId, channel: rule.channel, tenantId: req.user!.tenantId }, "Test notification sent");
     res.json({ success: true, channel: rule.channel, destination: dest.length > 40 ? dest.slice(0, 37) + "…" : dest });
   } catch (err: any) {
     logger.warn({ err, ruleId, channel: rule.channel }, "Test notification failed");
@@ -122,7 +129,7 @@ router.post("/alerts/rules/:ruleId/test", requireAuth, async (req: Authenticated
   }
 });
 
-// ── Test a channel without saving a rule (platform-settings test) ─────────────
+// ── Test a channel without saving a rule ──────────────────────────────────────
 router.post("/alerts/test-channel", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { channel, destination } = req.body as { channel?: string; destination?: string };
   if (!channel || !destination) {
@@ -137,13 +144,9 @@ router.post("/alerts/test-channel", requireAuth, async (req: AuthenticatedReques
     tenantId: req.user!.tenantId,
     eventType: "scan_complete",
     title: "🧪 Test Notification — Sentinelware CTEM",
-    message: `This is a test notification via ${channel}. Your channel is configured correctly.`,
-    severity: "info",
-    findingsCount: 3,
-    criticalCount: 1,
-    highCount: 2,
-    assetName: "test-asset.example.com",
-    scanId: 0,
+    message: `Test notification via ${channel}. Your channel is configured correctly.`,
+    severity: "info", findingsCount: 3, criticalCount: 1, highCount: 2,
+    assetName: "test-asset.example.com", scanId: 0,
   };
 
   try {
@@ -154,6 +157,105 @@ router.post("/alerts/test-channel", requireAuth, async (req: AuthenticatedReques
   }
 });
 
+// ── Org-level notification channels ──────────────────────────────────────────
+// GET /notification-channels — returns the org's configured notification channels
+router.get("/notification-channels", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const rules = await db.select().from(alertRulesTable)
+    .where(eq(alertRulesTable.tenantId, req.user!.tenantId));
+
+  const channelRules = new Map<string, typeof alertRulesTable.$inferSelect>();
+  for (const rule of rules) {
+    if (rule.name.startsWith(CHANNEL_PREFIX)) {
+      channelRules.set(rule.name.slice(CHANNEL_PREFIX.length), rule);
+    }
+  }
+
+  const result: Record<string, { enabled: boolean; destination: string; ruleId?: number }> = {};
+  for (const ch of CHANNEL_KEYS) {
+    const rule = channelRules.get(ch);
+    result[ch] = {
+      enabled: rule ? rule.isActive : false,
+      destination: rule?.destination ?? "",
+      ruleId: rule?.id,
+    };
+  }
+  res.json(result);
+});
+
+// PUT /notification-channels — saves org-level notification channel config
+router.put("/notification-channels", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const channels = req.body as Record<string, { enabled: boolean; destination: string }>;
+  const tenantId = req.user!.tenantId;
+
+  // Load existing __channel__ rules for this tenant
+  const existing = await db.select().from(alertRulesTable)
+    .where(eq(alertRulesTable.tenantId, tenantId));
+  const existingMap = new Map<string, number>(); // channelKey → ruleId
+  for (const rule of existing) {
+    if (rule.name.startsWith(CHANNEL_PREFIX)) {
+      existingMap.set(rule.name.slice(CHANNEL_PREFIX.length), rule.id);
+    }
+  }
+
+  for (const ch of CHANNEL_KEYS) {
+    const config = channels[ch];
+    if (!config) continue;
+    const name = `${CHANNEL_PREFIX}${ch}`;
+    const existingId = existingMap.get(ch);
+
+    if (existingId) {
+      await db.update(alertRulesTable).set({
+        isActive: config.enabled,
+        destination: config.destination || null,
+      }).where(eq(alertRulesTable.id, existingId));
+    } else if (config.enabled || config.destination) {
+      await db.insert(alertRulesTable).values({
+        tenantId,
+        name,
+        triggerType: "any",
+        channel: ch,
+        destination: config.destination || null,
+        isActive: config.enabled,
+      });
+    }
+  }
+
+  res.json({ ok: true });
+});
+
+// ── Test a specific notification channel from org settings ────────────────────
+router.post("/notification-channels/:channel/test", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { channel } = req.params;
+  const { destination } = req.body as { destination?: string };
+  const allowed = ["email", "slack", "discord", "telegram", "webhook"];
+  if (!allowed.includes(channel)) {
+    res.status(400).json({ error: "Invalid channel" }); return;
+  }
+
+  if (!destination) {
+    res.status(422).json({ error: "destination is required" }); return;
+  }
+
+  const testEvent: NotificationEvent = {
+    tenantId: req.user!.tenantId,
+    eventType: "scan_complete",
+    title: "🧪 Test Notification — Sentinelware CTEM",
+    message: `Org-level ${channel} channel is configured correctly and ready to receive alerts.`,
+    severity: "info", findingsCount: 5, criticalCount: 2, highCount: 2,
+    assetName: "production-app.yourdomain.com", scanId: 0,
+  };
+
+  try {
+    await sendChannelNotification(channel, destination, testEvent);
+    logger.info({ channel, tenantId: req.user!.tenantId }, "Org channel test notification sent");
+    res.json({ success: true });
+  } catch (err: any) {
+    logger.warn({ err, channel }, "Org channel test failed");
+    res.status(502).json({ error: err?.message ?? "Delivery failed. Check your destination URL or credentials." });
+  }
+});
+
+// ── Alerts ────────────────────────────────────────────────────────────────────
 router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListAlertsQueryParams.safeParse(req.query);
   const role = req.user!.role;
@@ -204,11 +306,7 @@ router.patch("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedRequ
     .where(and(eq(alertRulesTable.id, params.data.ruleId), eq(alertRulesTable.tenantId, req.user!.tenantId)))
     .returning();
   if (!rule) { res.status(404).json({ error: "Rule not found" }); return; }
-  res.json({
-    id: rule.id, tenantId: rule.tenantId, name: rule.name, triggerType: rule.triggerType,
-    channel: rule.channel, destination: rule.destination, isActive: rule.isActive,
-    createdAt: rule.createdAt.toISOString(),
-  });
+  res.json(toRuleResponse(rule));
 });
 
 router.delete("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
