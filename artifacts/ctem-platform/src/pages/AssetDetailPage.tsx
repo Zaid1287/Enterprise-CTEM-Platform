@@ -3,14 +3,14 @@ import { useParams, useLocation } from "wouter";
 import {
   useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
   useListAssetTechnologies, useRunTechScan, useListAssetScreenshots, useRunScreenshotScan,
-  useUpdateAsset,
+  useUpdateAsset, useListBrandThreats,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
-  getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey,
+  getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey, getListBrandThreatsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw, Camera, AlertTriangle, X,
-  ChevronLeft, ChevronRight, Download,
+  ChevronLeft, ChevronRight, Download, ShieldAlert, Fish, DatabaseZap, Siren,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -92,6 +92,9 @@ export default function AssetDetailPage() {
   const { data: screenshots, refetch: refetchScreenshots } = useListAssetScreenshots(id, {
     query: { enabled: !!id, queryKey: getListAssetScreenshotsQueryKey(id) },
   });
+  const { data: brandThreats } = useListBrandThreats({
+    query: { enabled: !!id, queryKey: getListBrandThreatsQueryKey() },
+  });
 
   const verifyAsset  = useCheckAssetVerification();
   const runTechScan  = useRunTechScan();
@@ -137,6 +140,19 @@ export default function AssetDetailPage() {
 
   const a     = asset as any;
   const rs    = riskScore as any;
+
+  function normalizeDomain(val: string): string {
+    return val.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!;
+  }
+
+  const assetDomain = a?.value ? normalizeDomain(String(a.value)) : null;
+  const matchingBrandScan = assetDomain
+    ? ((brandThreats as any[]) ?? []).find(
+        (s: any) =>
+          normalizeDomain(s.domain) === assetDomain &&
+          ((s.phishingCount ?? 0) > 0 || (s.dataLeakCount ?? 0) > 0)
+      )
+    : null;
 
   // Sync local businessImpact state when asset loads
   useEffect(() => {
@@ -307,6 +323,75 @@ export default function AssetDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Brand Threat Summary */}
+      {matchingBrandScan && (
+        <div className="bg-card border border-orange-500/30 rounded-xl p-4">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-orange-400" />
+              <h3 className="text-sm font-medium">Brand Threat Intelligence</h3>
+              <span className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded font-bold",
+                matchingBrandScan.phishingRisk === "critical" ? "bg-red-500/20 text-red-400 border border-red-500/30" :
+                matchingBrandScan.phishingRisk === "high"     ? "bg-orange-500/20 text-orange-400 border border-orange-500/30" :
+                matchingBrandScan.phishingRisk === "medium"   ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" :
+                                                                "bg-green-500/20 text-green-400 border border-green-500/30"
+              )}>
+                {(matchingBrandScan.phishingRisk ?? "low").toUpperCase()} RISK
+              </span>
+            </div>
+            <Link href={`/brand-threats/${matchingBrandScan.id}`}>
+              <Button variant="outline" size="sm" className="h-6 px-2 text-xs gap-1 border-orange-500/30 text-orange-400 hover:bg-orange-500/10">
+                <ExternalLink className="w-3 h-3" /> View Details
+              </Button>
+            </Link>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className={cn(
+              "rounded-lg p-3 flex flex-col items-center gap-1 border",
+              (matchingBrandScan.phishingCount ?? 0) > 0
+                ? "bg-red-500/10 border-red-500/30"
+                : "bg-accent/40 border-border"
+            )}>
+              <Fish className={cn("w-4 h-4", (matchingBrandScan.phishingCount ?? 0) > 0 ? "text-red-400" : "text-muted-foreground")} />
+              <span className={cn("text-xl font-bold tabular-nums", (matchingBrandScan.phishingCount ?? 0) > 0 ? "text-red-400" : "text-foreground")}>
+                {matchingBrandScan.phishingCount ?? 0}
+              </span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Phishing</span>
+            </div>
+            <div className={cn(
+              "rounded-lg p-3 flex flex-col items-center gap-1 border",
+              (matchingBrandScan.dataLeakCount ?? 0) > 0
+                ? "bg-orange-500/10 border-orange-500/30"
+                : "bg-accent/40 border-border"
+            )}>
+              <DatabaseZap className={cn("w-4 h-4", (matchingBrandScan.dataLeakCount ?? 0) > 0 ? "text-orange-400" : "text-muted-foreground")} />
+              <span className={cn("text-xl font-bold tabular-nums", (matchingBrandScan.dataLeakCount ?? 0) > 0 ? "text-orange-400" : "text-foreground")}>
+                {matchingBrandScan.dataLeakCount ?? 0}
+              </span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Data Leaks</span>
+            </div>
+            <div className={cn(
+              "rounded-lg p-3 flex flex-col items-center gap-1 border",
+              (matchingBrandScan.brandAbuseCount ?? 0) > 0
+                ? "bg-yellow-500/10 border-yellow-500/30"
+                : "bg-accent/40 border-border"
+            )}>
+              <Siren className={cn("w-4 h-4", (matchingBrandScan.brandAbuseCount ?? 0) > 0 ? "text-yellow-400" : "text-muted-foreground")} />
+              <span className={cn("text-xl font-bold tabular-nums", (matchingBrandScan.brandAbuseCount ?? 0) > 0 ? "text-yellow-400" : "text-foreground")}>
+                {matchingBrandScan.brandAbuseCount ?? 0}
+              </span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Brand Abuse</span>
+            </div>
+          </div>
+          {matchingBrandScan.liveCount > 0 && (
+            <p className="text-[11px] text-muted-foreground mt-2">
+              {matchingBrandScan.liveCount} live lookalike domain{matchingBrandScan.liveCount !== 1 ? "s" : ""} detected across {matchingBrandScan.totalPermutations} permutations.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Findings */}
       {(() => {
