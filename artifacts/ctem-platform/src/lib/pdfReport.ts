@@ -742,28 +742,38 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
     scan: {
       id: number; domain: string; status: string; totalPermutations: number;
       liveCount: number; registeredCount: number; phishingRisk: string;
+      dataLeakCount: number; phishingCount: number; brandAbuseCount: number; darkWebCount: number;
       fuzzerBreakdown?: Record<string, number>;
       faviconUrl?: string; faviconMmh3?: number; faviconMd5?: string; faviconSha256?: string;
       faviconSearchUrls?: Record<string, { url: string; hash_type: string }>;
       favihunterStatus?: string; createdAt: string; completedAt?: string;
     };
-    topResults:  { permutation: string; fuzzer: string; dnsA?: string[]; dnsMx?: string[]; mxSpf?: string; riskScore: number; isSuspicious: boolean }[];
-    liveResults: { permutation: string; fuzzer: string; dnsA?: string[]; dnsMx?: string[]; mxSpf?: string; riskScore: number; isSuspicious: boolean }[];
+    topResults:  { permutation: string; fuzzer: string; dnsA?: string[]; dnsMx?: string[]; mxSpf?: string; riskScore: number; isSuspicious: boolean; geoCountry?: string; vtMalicious?: number; whoisRegistrar?: string; whoisCreated?: string; whoisAgeDays?: number; isPhishing?: boolean; phishingSource?: string; registrationStatus?: string }[];
+    liveResults: { permutation: string; fuzzer: string; dnsA?: string[]; dnsMx?: string[]; mxSpf?: string; riskScore: number; isSuspicious: boolean; geoCountry?: string; vtMalicious?: number; whoisRegistrar?: string; whoisCreated?: string; whoisAgeDays?: number }[];
+    phishingDetections: { id: number; url: string; source: string; threatType?: string | null; verified: boolean; targetBrand?: string | null; submittedAt?: string | null }[];
+    dataLeaks: { id: number; source: string; title: string; breachDate?: string | null; description?: string | null; exposedData?: string[] | null; domainMatch?: string | null; emailMatch?: string | null; severity: string; url?: string | null }[];
+    brandAbuse: { id: number; type: string; platform?: string | null; url?: string | null; title?: string | null; description?: string | null; evidenceSnippet?: string | null; risk: string }[];
   };
 
   const phishRisk = d.scan.phishingRisk ?? "low";
   const rc        = sevColor(phishRisk);
 
+  const phishCount    = d.scan.phishingCount   ?? d.phishingDetections.length;
+  const leakCount     = d.scan.dataLeakCount   ?? d.dataLeaks.length;
+  const abuseCount    = d.scan.brandAbuseCount ?? d.brandAbuse.length;
+
   const cover = makeCover({
     title:      `${d.scan.domain} — Brand Threat Intelligence Report`,
     reportKind: "Domain & Phishing Threat Analysis",
     metaPairs:  [
-      ["Target Domain",    d.scan.domain],
-      ["Phishing Risk",    phishRisk.toUpperCase()],
-      ["Permutations",     String(d.scan.totalPermutations)],
-      ["Live Domains",     String(d.scan.liveCount)],
-      ["Favicon Analysis", d.scan.favihunterStatus === "done" ? "Completed" : "Not Run"],
-      ["Scan Date",        new Date(d.scan.createdAt).toLocaleDateString()],
+      ["Target Domain",      d.scan.domain],
+      ["Phishing Risk",      phishRisk.toUpperCase()],
+      ["Permutations",       String(d.scan.totalPermutations)],
+      ["Live Domains",       String(d.scan.liveCount)],
+      ["Phishing Detections", String(phishCount)],
+      ["Data Leaks",         String(leakCount)],
+      ["Brand Abuse Cases",  String(abuseCount)],
+      ["Scan Date",          new Date(d.scan.createdAt).toLocaleDateString()],
     ],
     riskLabel:  `Phishing Risk: ${phishRisk.toUpperCase()}`,
     riskColor:  rc,
@@ -781,6 +791,12 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
     { label: "Live Domains",       value: d.scan.liveCount,         color: CRIT },
     { label: "Registered",         value: d.scan.registeredCount,   color: HIGH },
     { label: "Suspicious",         value: suspCount,                color: MED  },
+  ]);
+  doc.statCards([
+    { label: "Phishing Detections", value: phishCount,  color: CRIT },
+    { label: "Data Leaks",          value: leakCount,   color: HIGH },
+    { label: "Brand Abuse Cases",   value: abuseCount,  color: MED  },
+    { label: "Dark Web Mentions",   value: d.scan.darkWebCount ?? 0, color: NAVY },
   ]);
   doc.gap(8);
 
@@ -866,6 +882,157 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
       { size: 10, color: LOW },
     );
     doc.gap(8);
+  }
+
+  // ── Pillar 2: Phishing Detections ──────────────────────────────────────────
+  if (d.phishingDetections.length > 0) {
+    doc.gap(4);
+    doc.sectionHeader("Phishing Detections", CRIT);
+    doc.gap(4);
+    doc.text(
+      `${d.phishingDetections.length} active phishing URL${d.phishingDetections.length !== 1 ? "s" : ""} detected targeting the "${d.scan.domain}" brand.`,
+      { size: 9, color: TEXT2 },
+    );
+    doc.gap(6);
+
+    const verified   = d.phishingDetections.filter(p => p.verified);
+    const unverified = d.phishingDetections.filter(p => !p.verified);
+
+    if (verified.length > 0) {
+      doc.text(`Confirmed Phishing (${verified.length}):`, { size: 9, color: CRIT, weight: "bold" });
+      doc.gap(3);
+      doc.table(
+        ["URL", "Source Feed", "Threat Type", "Target Brand", "Submitted"],
+        [210, 90, 90, 100, 108],
+        verified.slice(0, 30).map(p => [
+          p.url,
+          p.source,
+          p.threatType ?? "Phishing",
+          p.targetBrand ?? "—",
+          p.submittedAt ? new Date(p.submittedAt).toLocaleDateString() : "—",
+        ]),
+        { monoCol: [0] },
+      );
+      doc.gap(6);
+    }
+
+    if (unverified.length > 0) {
+      doc.text(`Reported / Unconfirmed (${unverified.length}):`, { size: 9, color: HIGH, weight: "bold" });
+      doc.gap(3);
+      doc.table(
+        ["URL", "Source Feed", "Threat Type", "Submitted"],
+        [240, 110, 110, 138],
+        unverified.slice(0, 20).map(p => [
+          p.url,
+          p.source,
+          p.threatType ?? "Phishing",
+          p.submittedAt ? new Date(p.submittedAt).toLocaleDateString() : "—",
+        ]),
+        { monoCol: [0] },
+      );
+      doc.gap(6);
+    }
+
+    if (d.phishingDetections.length > 50) {
+      doc.text(`…and ${d.phishingDetections.length - 50} more phishing URLs not shown in this report.`, { size: 8, color: TEXT2 });
+    }
+    doc.gap(4);
+  }
+
+  // ── Pillar 3: Data Leaks ────────────────────────────────────────────────────
+  if (d.dataLeaks.length > 0) {
+    doc.gap(4);
+    doc.sectionHeader("Data Leak Intelligence", HIGH);
+    doc.gap(4);
+    doc.text(
+      `${d.dataLeaks.length} breach record${d.dataLeaks.length !== 1 ? "s" : ""} found associated with "${d.scan.domain}". Review each entry and notify affected users.`,
+      { size: 9, color: TEXT2 },
+    );
+    doc.gap(6);
+
+    const critLeaks = d.dataLeaks.filter(l => l.severity === "critical" || l.severity === "high");
+    const otherLeaks = d.dataLeaks.filter(l => l.severity !== "critical" && l.severity !== "high");
+
+    if (critLeaks.length > 0) {
+      doc.text(`Critical / High-Severity Breaches (${critLeaks.length}):`, { size: 9, color: CRIT, weight: "bold" });
+      doc.gap(3);
+      for (const leak of critLeaks.slice(0, 10)) {
+        doc.findingCard(leak.title, leak.severity);
+        if (leak.source) doc.text(`Source: ${leak.source}`, { size: 8.5, color: TEXT2, indent: 12 });
+        if (leak.breachDate) doc.text(`Breach Date: ${new Date(leak.breachDate).toLocaleDateString()}`, { size: 8.5, color: TEXT2, indent: 12 });
+        if (leak.domainMatch) doc.text(`Domain Match: ${leak.domainMatch}`, { size: 8.5, color: TEXT2, indent: 12 });
+        if (leak.emailMatch)  doc.text(`Email Match: ${leak.emailMatch}`, { size: 8.5, color: TEXT2, indent: 12 });
+        if (leak.exposedData && leak.exposedData.length > 0) {
+          doc.text(`Exposed Data Types: ${leak.exposedData.slice(0, 8).join(", ")}`, { size: 8.5, color: MED, indent: 12 });
+        }
+        if (leak.description) doc.text(leak.description.slice(0, 200), { size: 8.5, color: TEXT2, indent: 12 });
+        doc.gap(3);
+      }
+      doc.gap(4);
+    }
+
+    if (otherLeaks.length > 0) {
+      doc.text(`Other Breaches (${otherLeaks.length}):`, { size: 9, color: TEXT, weight: "bold" });
+      doc.gap(3);
+      doc.table(
+        ["Title", "Source", "Breach Date", "Severity", "Exposed Data"],
+        [160, 90, 80, 68, 200],
+        otherLeaks.slice(0, 20).map(l => [
+          l.title,
+          l.source,
+          l.breachDate ? new Date(l.breachDate).toLocaleDateString() : "—",
+          l.severity,
+          l.exposedData ? l.exposedData.slice(0, 4).join(", ") : "—",
+        ]),
+        { severityCol: 3 },
+      );
+      doc.gap(6);
+    }
+
+    if (d.dataLeaks.length > 30) {
+      doc.text(`…and ${d.dataLeaks.length - 30} additional breach records not shown.`, { size: 8, color: TEXT2 });
+    }
+    doc.gap(4);
+  }
+
+  // ── Pillar 4: Brand Abuse ───────────────────────────────────────────────────
+  if (d.brandAbuse.length > 0) {
+    doc.gap(4);
+    doc.sectionHeader("Brand Abuse Findings", AMBER);
+    doc.gap(4);
+    doc.text(
+      `${d.brandAbuse.length} brand abuse case${d.brandAbuse.length !== 1 ? "s" : ""} identified across social media, certificate transparency, app stores, and lookalike infrastructure.`,
+      { size: 9, color: TEXT2 },
+    );
+    doc.gap(6);
+
+    const byType: Record<string, typeof d.brandAbuse> = {};
+    for (const b of d.brandAbuse) {
+      (byType[b.type] ??= []).push(b);
+    }
+
+    for (const [type, items] of Object.entries(byType)) {
+      const label = type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      doc.text(`${label} (${items.length}):`, { size: 9, color: TEXT, weight: "bold" });
+      doc.gap(3);
+      doc.table(
+        ["Title / Description", "Platform", "Risk", "URL / Evidence"],
+        [190, 80, 58, 270],
+        items.slice(0, 15).map(b => [
+          b.title ?? b.description ?? "—",
+          b.platform ?? "—",
+          b.risk,
+          b.url ?? b.evidenceSnippet ?? "—",
+        ]),
+        { severityCol: 2, monoCol: [3] },
+      );
+      doc.gap(6);
+    }
+
+    if (d.brandAbuse.length > 45) {
+      doc.text(`…and ${d.brandAbuse.length - 45} more brand abuse cases not shown.`, { size: 8, color: TEXT2 });
+    }
+    doc.gap(4);
   }
 
   const filename = `${d.scan.domain.replace(/\./g, "_")}_brand_threat_report.pdf`;
