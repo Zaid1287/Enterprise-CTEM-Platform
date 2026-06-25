@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useGetBrandThreatScan, getGetBrandThreatScanQueryKey } from "@workspace/api-client-react";
 import {
@@ -6,13 +6,14 @@ import {
   Loader2, Mail, Server, ChevronDown, ChevronUp, RefreshCw,
   ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
   Hash, Search, ChevronRight, Download, Fish, Database, Target,
-  MapPin, Building2, Calendar, Shield, Info, Lock,
+  MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
 import { downloadBrandThreatPdf } from "@/lib/pdfReport";
 import { getToken } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
 
 const RISK_META: Record<string, { label: string; color: string; bg: string; border: string; bar: string }> = {
   critical: { label: "Critical",  color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30",    bar: "#f87171" },
@@ -53,7 +54,7 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
 };
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "favicon";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "takedowns";
 
 function RiskScoreBar({ score }: { score: number }) {
   return (
@@ -405,6 +406,198 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
   );
 }
 
+const TAKEDOWN_STATUS_COLORS: Record<string, string> = {
+  pending:     "text-yellow-400 bg-yellow-500/10 border-yellow-500/25",
+  submitted:   "text-blue-400 bg-blue-500/10 border-blue-500/25",
+  in_review:   "text-violet-400 bg-violet-500/10 border-violet-500/25",
+  resolved:    "text-green-400 bg-green-500/10 border-green-500/25",
+  rejected:    "text-red-400 bg-red-500/10 border-red-500/25",
+};
+
+function TakedownsTab({ scanDomain, results }: { scanId: number; scanDomain: string; results: any[] }) {
+  const { toast } = useToast();
+  const [takedowns, setTakedowns] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ targetDomain: "", type: "phishing", title: "", description: "" });
+
+  const permutationSet = new Set(results.map((r: any) => r.permutation as string));
+
+  async function fetchTakedowns() {
+    setLoading(true);
+    try {
+      const token = getToken();
+      const res = await fetch("/api/takedowns", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const all = await res.json() as any[];
+        setTakedowns(all.filter((t: any) => t.targetDomain && permutationSet.has(t.targetDomain)));
+      }
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void fetchTakedowns(); }, [scanDomain]);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.targetDomain.trim() || !form.title.trim()) return;
+    setSubmitting(true);
+    try {
+      const token = getToken();
+      const res = await fetch("/api/takedowns", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: form.type,
+          targetUrl: `https://${form.targetDomain.trim()}`,
+          targetDomain: form.targetDomain.trim(),
+          title: form.title.trim(),
+          description: form.description,
+          brandAbused: scanDomain,
+          priority: "high",
+        }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast({ title: "Takedown request submitted" });
+      setShowForm(false);
+      setForm({ targetDomain: "", type: "phishing", title: "", description: "" });
+      void fetchTakedowns();
+    } catch {
+      toast({ title: "Failed to submit takedown request", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm("Delete this takedown request?")) return;
+    try {
+      const token = getToken();
+      await fetch(`/api/takedowns/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      void fetchTakedowns();
+    } catch { /* ignore */ }
+  }
+
+  const liveDomains = results
+    .filter((r: any) => r.hasA || r.registrationStatus === "registered" || r.registrationStatus === "active")
+    .map((r: any) => r.permutation as string);
+
+  return (
+    <div className="p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">Takedown Requests</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Submit and track DMCA/abuse takedown requests for infringing domains detected in this scan.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => setShowForm(v => !v)} className="h-8 gap-1.5">
+          <Plus className="w-3.5 h-3.5" /> New Request
+        </Button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={handleCreate} className="bg-muted/20 border border-border rounded-xl p-4 space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">New Takedown Request</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Infringing Domain *</label>
+              <input
+                list="td-domains-list"
+                value={form.targetDomain}
+                onChange={e => setForm(v => ({ ...v, targetDomain: e.target.value }))}
+                placeholder="e.g. examp1e.com"
+                className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <datalist id="td-domains-list">
+                {liveDomains.map((d: string) => <option key={d} value={d} />)}
+              </datalist>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Abuse Type</label>
+              <select
+                value={form.type}
+                onChange={e => setForm(v => ({ ...v, type: e.target.value }))}
+                className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+              >
+                {["phishing","brand_impersonation","domain_squatting","fake_social","malware_hosting","other"].map(r => (
+                  <option key={r} value={r}>{r.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Title *</label>
+            <input
+              value={form.title}
+              onChange={e => setForm(v => ({ ...v, title: e.target.value }))}
+              placeholder={`Brand impersonation of ${scanDomain}`}
+              className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Description</label>
+            <textarea
+              value={form.description}
+              onChange={e => setForm(v => ({ ...v, description: e.target.value }))}
+              rows={2}
+              placeholder="Evidence and additional context…"
+              className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none resize-none"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={submitting || !form.targetDomain.trim() || !form.title.trim()}>
+              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+              Submit Request
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center h-24">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : takedowns.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-40 text-center">
+          <Shield className="w-8 h-8 text-muted-foreground/20 mb-3" />
+          <p className="text-sm text-muted-foreground font-medium">No takedown requests yet</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            Submit requests for domains in this scan that are infringing on <span className="font-mono">{scanDomain}</span>.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {takedowns.map((td: any) => (
+            <div key={td.id} className="flex items-start gap-3 bg-muted/10 border border-border rounded-xl px-4 py-3">
+              <Shield className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-mono font-medium">{td.targetDomain ?? td.targetUrl}</span>
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", TAKEDOWN_STATUS_COLORS[td.status] ?? TAKEDOWN_STATUS_COLORS.submitted)}>
+                    {td.status?.replace(/_/g, " ") ?? "submitted"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground capitalize">{td.type?.replace(/_/g, " ")}</span>
+                </div>
+                <p className="text-xs font-medium mt-0.5">{td.title}</p>
+                {td.description && <p className="text-xs text-muted-foreground/70 mt-0.5">{td.description}</p>}
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => handleDelete(td.id)} className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400 shrink-0">
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BrandThreatDetailPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -481,14 +674,12 @@ export default function BrandThreatDetailPage() {
       color: FUZZER_META[fuzzer]?.chartColor ?? "#94a3b8",
     }));
 
-  const showFaviPanel = s.status !== "pending";
-
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
     { id: "typosquatting", label: "Typosquatting", icon: <Globe className="w-3.5 h-3.5" />, count: results.length },
     { id: "phishing",      label: "Phishing",      icon: <Fish className="w-3.5 h-3.5" />,  count: phishingDetections.length, color: phishingDetections.length > 0 ? "text-red-400" : undefined },
     { id: "data_leaks",    label: "Data Leaks",    icon: <Database className="w-3.5 h-3.5" />, count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
     { id: "brand_abuse",   label: "Brand Abuse",   icon: <Target className="w-3.5 h-3.5" />,   count: brandAbuse.length, color: brandAbuse.length > 0 ? "text-yellow-400" : undefined },
-    { id: "favicon",       label: "Favicon Intel", icon: <Fingerprint className="w-3.5 h-3.5" /> },
+    { id: "takedowns",     label: "Takedowns",     icon: <Shield className="w-3.5 h-3.5" /> },
   ];
 
   return (
@@ -647,10 +838,10 @@ export default function BrandThreatDetailPage() {
           </div>
         )}
 
-        {/* ── FAVICON tab ── */}
-        {(activeTab === "favicon" || !["typosquatting","phishing","data_leaks","brand_abuse"].includes(activeTab)) && s.status === "done" && showFaviPanel && activeTab === "favicon" && (
-          <div className="h-full overflow-y-auto p-6">
-            <FaviconIntelPanel scan={s} />
+        {/* ── TAKEDOWNS tab ── */}
+        {activeTab === "takedowns" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <TakedownsTab scanId={Number(id)} scanDomain={s.domain} results={results} />
           </div>
         )}
 

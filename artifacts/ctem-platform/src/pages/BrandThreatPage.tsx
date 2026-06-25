@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import {
   useListBrandThreats, useCreateBrandThreatScan, useDeleteBrandThreatScan,
@@ -9,10 +9,12 @@ import {
   ShieldAlert, Plus, Trash2, Loader2, Globe, AlertTriangle,
   CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap, Shield,
   TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
+  BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { getToken } from "@/lib/auth";
 
 const RISK_META: Record<string, { color: string; bg: string; border: string; dot: string }> = {
   critical: { color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/25",    dot: "bg-red-400" },
@@ -241,6 +243,189 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
   );
 }
 
+const WATCHLIST_TYPE_ICONS: Record<string, React.ReactNode> = {
+  keyword:       <Tag className="w-3.5 h-3.5" />,
+  logo_url:      <Link className="w-3.5 h-3.5" />,
+  domain:        <Globe className="w-3.5 h-3.5" />,
+  ip:            <Target className="w-3.5 h-3.5" />,
+  email:         <Mail className="w-3.5 h-3.5" />,
+  social_handle: <AtSign className="w-3.5 h-3.5" />,
+  mobile_app:    <Smartphone className="w-3.5 h-3.5" />,
+};
+
+const WATCHLIST_TYPES = ["keyword","logo_url","domain","ip","email","social_handle","mobile_app"] as const;
+
+function WatchlistSection() {
+  const { toast } = useToast();
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [form, setForm] = useState({ value: "", type: "keyword", description: "" });
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  async function fetchItems() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/brand-watchlist", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (res.ok) setItems(await res.json());
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void fetchItems(); }, []);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.value.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/brand-watchlist", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ value: form.value.trim(), type: form.type, description: form.description }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast({ title: "Watchlist item added" });
+      setShowForm(false);
+      setForm({ value: "", type: "keyword", description: "" });
+      void fetchItems();
+    } catch {
+      toast({ title: "Failed to add watchlist item", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm("Remove this watchlist item?")) return;
+    setDeletingId(id);
+    try {
+      await fetch(`/api/brand-watchlist/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      void fetchItems();
+    } catch {
+      toast({ title: "Failed to remove item", variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="max-w-3xl">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h2 className="text-sm font-semibold">Brand Asset Watchlist</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Monitor keywords, domains, IPs, emails, social handles, and mobile app names for brand abuse across scans.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setShowForm(v => !v)} className="h-8 gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> Add Item
+          </Button>
+        </div>
+
+        {showForm && (
+          <form onSubmit={handleCreate} className="bg-muted/20 border border-border rounded-xl p-4 space-y-3 mb-5">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">New Watchlist Item</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Value *</label>
+                <input
+                  value={form.value}
+                  onChange={e => setForm(v => ({ ...v, value: e.target.value }))}
+                  placeholder="e.g. acme, acme.com, @acmecorp"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Type</label>
+                <select
+                  value={form.type}
+                  onChange={e => setForm(v => ({ ...v, type: e.target.value }))}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                >
+                  {WATCHLIST_TYPES.map(t => (
+                    <option key={t} value={t}>{t.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Description</label>
+              <input
+                value={form.description}
+                onChange={e => setForm(v => ({ ...v, description: e.target.value }))}
+                placeholder="Optional context for this watchlist item"
+                className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={submitting || !form.value.trim()}>
+                {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                Add to Watchlist
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center h-24">
+            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-primary/5 border border-primary/10 flex items-center justify-center mb-4">
+              <BookmarkCheck className="w-6 h-6 text-primary/30" />
+            </div>
+            <p className="text-sm font-medium text-muted-foreground">No watchlist items yet</p>
+            <p className="text-xs text-muted-foreground/60 mt-1 max-w-xs">
+              Add keywords, domains, or other assets you want to monitor for brand abuse across all scans.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {items.map((item: any) => (
+              <div key={item.id} className="flex items-center gap-3 bg-muted/10 border border-border rounded-xl px-4 py-3">
+                <span className="text-muted-foreground shrink-0">
+                  {WATCHLIST_TYPE_ICONS[item.type] ?? <Tag className="w-3.5 h-3.5" />}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-mono font-medium truncate">{item.value}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted border border-border text-muted-foreground capitalize shrink-0">
+                      {item.type?.replace(/_/g, " ")}
+                    </span>
+                  </div>
+                  {item.description && (
+                    <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{item.description}</p>
+                  )}
+                </div>
+                <span className="text-[10px] text-muted-foreground/50 shrink-0">{formatDate(item.createdAt)}</span>
+                <Button
+                  variant="ghost" size="sm"
+                  onClick={() => handleDelete(item.id)}
+                  disabled={deletingId === item.id}
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400 shrink-0"
+                >
+                  {deletingId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function BrandThreatPage() {
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
@@ -248,6 +433,7 @@ export default function BrandThreatPage() {
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<"scans" | "watchlist">("scans");
 
   const { data: scans, isLoading, refetch } = useListBrandThreats({
     query: { queryKey: getListBrandThreatsQueryKey(), refetchInterval: (query: any) => {
@@ -298,14 +484,37 @@ export default function BrandThreatPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Tab switcher */}
+            <div className="flex items-center gap-1 bg-muted/30 rounded-lg p-1 mr-1">
+              <button
+                onClick={() => setActiveTab("scans")}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                  activeTab === "scans" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <ShieldAlert className="w-3.5 h-3.5" /> Scans
+              </button>
+              <button
+                onClick={() => setActiveTab("watchlist")}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                  activeTab === "watchlist" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <BookmarkCheck className="w-3.5 h-3.5" /> Watchlist
+              </button>
+            </div>
             <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8">
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
               Refresh
             </Button>
-            <Button size="sm" onClick={() => setShowModal(true)} className="h-8">
-              <Plus className="w-3.5 h-3.5 mr-1.5" />
-              New Scan
-            </Button>
+            {activeTab === "scans" && (
+              <Button size="sm" onClick={() => setShowModal(true)} className="h-8">
+                <Plus className="w-3.5 h-3.5 mr-1.5" />
+                New Scan
+              </Button>
+            )}
           </div>
         </div>
 
@@ -350,7 +559,11 @@ export default function BrandThreatPage() {
         )}
       </div>
 
-      {/* ── Main content ───────────────────────────────────────────────── */}
+      {/* ── Watchlist tab content ──────────────────────────────────────── */}
+      {activeTab === "watchlist" && <WatchlistSection />}
+
+      {/* ── Scans tab content ──────────────────────────────────────────── */}
+      {activeTab === "scans" && (
       <div className="flex-1 overflow-y-auto px-6 py-5">
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
@@ -420,6 +633,7 @@ export default function BrandThreatPage() {
           </>
         )}
       </div>
+      )}
 
       {showModal && (
         <NewScanModal

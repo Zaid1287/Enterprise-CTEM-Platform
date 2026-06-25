@@ -1425,6 +1425,19 @@ async function executePipeline(
     const now = () => new Date().toISOString();
     const ms = (start: number) => Date.now() - start;
 
+    // ── Auto-trigger brand threat scan for Domain/Subdomain assets immediately ─
+    // This fires per-asset (not post-scan), so brand intel runs in parallel
+    // with the main pipeline rather than waiting for all assets to complete.
+    if ((asset.type === "Domain" || asset.type === "Subdomain") && domain && !isIp(domain)) {
+      setImmediate(async () => {
+        try {
+          await triggerBrandThreatScan(tenantId, domain, scanId);
+        } catch (err) {
+          logger.warn({ err, assetId: asset.id, domain }, "Per-asset brand threat trigger failed (non-fatal)");
+        }
+      });
+    }
+
     // ── Start subdomain scan early (runs in parallel with all phases) ────────
     // Hard 3-minute outer timeout — binary downloads + passive queries must finish
     // within this window or the scan proceeds without subdomain enrichment.

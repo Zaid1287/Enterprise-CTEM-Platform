@@ -16,7 +16,7 @@ import { geoIpBatch } from "./geoIpClient";
 import { checkPhishingFeed } from "./phishFeedClient";
 import { checkGoogleSafeBrowsing } from "./googleSafeBrowsing";
 import { hibpDomainLookup, severityFromBreach } from "./hibpClient";
-import { vtDomainLookup } from "./vtDomainClient";
+import { vtDomainLookup, vtUrlScan } from "./vtDomainClient";
 import { scanBrandAbuse } from "./brandAbuseScanner";
 import { intelxSearch, intelxTypeToBucket } from "./intelxClient";
 import { getPlatformSetting } from "../routes/platformSettings";
@@ -536,12 +536,15 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     await flushBatch();
 
     // ── Phase 4: Phishing detections from live domains ───────────────────────
+    // 4a) Phishing feed results (PhishTank / OpenPhish / GSB)
     const phishingInserts: typeof phishingDetectionsTable.$inferInsert[] = [];
+    const phishTenantId = (await db.select({ tenantId: brandThreatScansTable.tenantId })
+      .from(brandThreatScansTable).where(eq(brandThreatScansTable.id, scanId)))[0]?.tenantId ?? 0;
+
     for (const [domainKey, phish] of phishMap) {
       if (!phish.isPhishing) continue;
       phishingInserts.push({
-        tenantId: (await db.select({ tenantId: brandThreatScansTable.tenantId })
-          .from(brandThreatScansTable).where(eq(brandThreatScansTable.id, scanId)))[0]?.tenantId ?? 0,
+        tenantId: phishTenantId,
         scanId,
         url: `http://${domainKey}`,
         source: phish.source ?? "Unknown",
@@ -551,6 +554,37 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         submittedAt: new Date().toISOString(),
       });
     }
+
+    // 4b) VirusTotal URL scan for live permutations — adds malicious URL hits to phishing_detections
+    if (vtApiKey && liveResults.length > 0) {
+      const VT_URL_CONCURRENCY = 2;
+      const VT_URL_DELAY = 2000;
+      const vtUrlQueue = liveResults.filter(r => !phishMap.get(r.permutation)?.isPhishing).slice(0, 30);
+
+      async function vtUrlWorker() {
+        while (vtUrlQueue.length > 0) {
+          const item = vtUrlQueue.shift();
+          if (!item) break;
+          await new Promise(r => setTimeout(r, VT_URL_DELAY));
+          const scanUrl = `https://${item.permutation}`;
+          const vtResult = await vtUrlScan(scanUrl, vtApiKey as string).catch(() => null);
+          if (vtResult && vtResult.malicious >= 1) {
+            phishingInserts.push({
+              tenantId: phishTenantId,
+              scanId,
+              url: scanUrl,
+              source: "VirusTotal URL",
+              verified: true,
+              targetBrand: domain,
+              threatType: "MALICIOUS_URL",
+              submittedAt: new Date().toISOString(),
+            });
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: VT_URL_CONCURRENCY }, () => vtUrlWorker()));
+    }
+
     if (phishingInserts.length > 0) {
       for (let i = 0; i < phishingInserts.length; i += 50) {
         await db.insert(phishingDetectionsTable).values(phishingInserts.slice(i, i + 50));
@@ -571,17 +605,17 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     const intelxKey = await getPlatformSetting("intelx_api_key");
     const brandName = domain.split(".")[0] ?? domain;
 
-    // Build IntelX query terms: domain + brand name + any email/social_handle watchlist items
+    // Build IntelX query terms: domain + brand name + watchlist email/domain/keyword items
     const intelxTerms = [domain, brandName];
     for (const item of watchlistItems) {
-      if ((item.type === "email_pattern" || item.type === "domain") && item.value) {
+      if ((item.type === "email" || item.type === "domain" || item.type === "keyword") && item.value) {
         intelxTerms.push(item.value);
       }
     }
     const uniqueTerms = [...new Set(intelxTerms)].slice(0, 5);
 
     const [hibpResult, brandAbuseList] = await Promise.all([
-      hibpKey ? hibpDomainLookup(domain, hibpKey) : Promise.resolve(null),
+      hibpDomainLookup(domain, hibpKey ?? undefined),  // always runs; without key uses public /breaches fallback
       scanBrandAbuse(brandName, domain, watchlistItems.filter(w => w.type === "social_handle").map(w => w.value)),
     ]);
     const intelxResultArrays = intelxKey
