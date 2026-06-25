@@ -264,7 +264,7 @@ function TenantAssetsPanel({
 // ── Main Component ─────────────────────────────────────────────────────────────
 export default function TenantsPage() {
   const { user } = useAuth();
-  const isSuperAdmin = user?.role === "super_admin";
+  const isSuperAdmin = user?.role === "super_admin" || user?.role === "admin";
   const queryClient = useQueryClient();
   const { toast } = useToast();
 

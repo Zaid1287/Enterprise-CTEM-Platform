@@ -830,9 +830,10 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
 
   const tid = req.user!.tenantId;
 
+  // Admin sees ALL data cross-tenant (same scope as super_admin) for consistent metrics
   const [allAssets, allFindings, allScans, allAlerts, brandThreats, allTakedowns] = await Promise.all([
-    db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid)),
-    db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid)),
+    db.select().from(assetsTable),
+    db.select().from(findingsTable),
     db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
     db.select().from(alertsTable).where(eq(alertsTable.tenantId, tid)).orderBy(desc(alertsTable.createdAt)),
     db.select().from(brandThreatScansTable).where(eq(brandThreatScansTable.tenantId, tid)),
@@ -998,6 +999,26 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
     createdAt: a.createdAt.toISOString(),
   }));
 
+  // False positive breakdown (same logic as platform-overview)
+  const fpSubmittedAdmin = allFindings.filter(f => f.falsePositiveStatus === "submitted").length;
+  const fpConfirmedAdmin = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpRejectedAdmin  = allFindings.filter(f => f.falsePositiveStatus === "rejected").length;
+  const assetNameMapAdmin = new Map(allAssets.map(a => [a.id, a.name]));
+  const falsePositiveFindingsAdmin = allFindings
+    .filter(f => f.falsePositiveStatus && f.falsePositiveStatus !== "none")
+    .map(f => ({
+      id: f.id, title: f.title, severity: f.severity, status: f.status,
+      falsePositiveStatus: f.falsePositiveStatus,
+      isFalsePositive: f.isFalsePositive,
+      assetId: f.assetId,
+      assetName: assetNameMapAdmin.get(f.assetId ?? -1) ?? "Unknown Asset",
+      cveId: f.cve,
+      tenantId: f.tenantId,
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
+    }))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
   res.json({
     userCount: allTenantUsers.length,
     assetCount: allAssets.length,
@@ -1023,6 +1044,8 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
     criticalClients,
     clientRiskRankings: clientRiskRankings.slice(0, 6),
     allClientOrganizations: clientRiskRankings,
+    falsePositives: { submitted: fpSubmittedAdmin, confirmed: fpConfirmedAdmin, rejected: fpRejectedAdmin },
+    falsePositiveFindings: falsePositiveFindingsAdmin,
   });
 });
 

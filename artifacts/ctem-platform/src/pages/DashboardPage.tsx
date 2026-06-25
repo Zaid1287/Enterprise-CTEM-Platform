@@ -1121,6 +1121,8 @@ function AdminDashboard() {
   const recentAlerts: any[] = d.recentAlerts ?? [];
   const clientRiskRankings: any[] = d.clientRiskRankings ?? [];
   const allClientOrganizations: any[] = d.allClientOrganizations ?? [];
+  const fpData = d.falsePositives ?? { submitted: 0, confirmed: 0, rejected: 0 };
+  const fpFindings: any[] = d.falsePositiveFindings ?? [];
 
   const riskColor = d.riskScore >= 70 ? "text-red-400" : d.riskScore >= 40 ? "text-amber-400" : "text-green-400";
 
@@ -1565,6 +1567,83 @@ function AdminDashboard() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── False Positive Status ──────────────────────────────────────────── */}
+      <div>
+        <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+          <XCircle className="w-4 h-4 text-yellow-400" /> False Positive Status
+        </h3>
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <StatCard label="Submitted" value={fpData.submitted} icon={Clock}
+            color={fpData.submitted > 0 ? "text-yellow-400" : undefined} />
+          <StatCard label="Confirmed FPs" value={fpData.confirmed} icon={CheckCircle2}
+            color={fpData.confirmed > 0 ? "text-green-400" : undefined} />
+          <StatCard label="Rejected" value={fpData.rejected} icon={XCircle}
+            color={fpData.rejected > 0 ? "text-red-400" : undefined} />
+        </div>
+        {fpFindings.length > 0 ? (
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <h4 className="text-sm font-medium flex items-center gap-2">
+                <XCircle className="w-4 h-4 text-yellow-400" /> False Positive Findings
+              </h4>
+              <span className="text-xs text-muted-foreground">{fpFindings.length} finding{fpFindings.length !== 1 ? "s" : ""}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-accent/20">
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Finding</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Asset</th>
+                    <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">Severity</th>
+                    <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">Finding Status</th>
+                    <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">FP Status</th>
+                    <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Last Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fpFindings.map((f: any) => (
+                    <tr key={f.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
+                      <td className="px-4 py-3 max-w-[260px]">
+                        <Link href={`/findings/${f.id}`}>
+                          <p className="text-xs font-medium hover:text-primary transition-colors cursor-pointer line-clamp-2">{f.title}</p>
+                        </Link>
+                        {f.cveId && <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{f.cveId}</p>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-xs text-muted-foreground truncate max-w-[120px]">{f.assetName}</p>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="text-[10px] font-semibold capitalize px-1.5 py-0.5 rounded border"
+                          style={{
+                            background: `${SEVERITY_COLORS[f.severity] ?? "#64748b"}22`,
+                            color: SEVERITY_COLORS[f.severity] ?? "#64748b",
+                            borderColor: `${SEVERITY_COLORS[f.severity] ?? "#64748b"}44`,
+                          }}>
+                          {f.severity}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="text-[10px] capitalize text-muted-foreground">{(f.status ?? "").replace(/_/g, " ")}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <FpStatusBadge status={f.falsePositiveStatus ?? "none"} />
+                      </td>
+                      <td className="px-4 py-3 text-right text-[10px] text-muted-foreground whitespace-nowrap">
+                        {new Date(f.updatedAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-card border border-border rounded-xl px-4 py-8 text-center text-sm text-muted-foreground">
+            No false positive findings submitted yet.
           </div>
         )}
       </div>

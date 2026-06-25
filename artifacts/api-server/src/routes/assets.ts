@@ -163,8 +163,8 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(assetsTable.tenantId, ids);
-  } else if (role === "super_admin") {
-    // Super admins see ALL assets across all tenants (platform operator view)
+  } else if (role === "super_admin" || role === "admin") {
+    // Super admins and admins see ALL assets across all tenants (platform operator view)
     tenantFilter = undefined;
   } else {
     tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
