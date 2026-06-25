@@ -12,7 +12,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
-import { downloadBrandThreatPdf } from "@/lib/pdfReport";
+import { downloadBrandThreatPdf, downloadBrandThreatCsv } from "@/lib/pdfReport";
 import { getToken } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 
@@ -609,6 +609,7 @@ export default function BrandThreatDetailPage() {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
   const [activeTab, setActiveTab] = useState<TabMode>("typosquatting");
   const [watchlistItem, setWatchlistItem] = useState<any | null>(null);
   const PAGE_SIZE = 50;
@@ -733,6 +734,19 @@ export default function BrandThreatDetailPage() {
             </span>
           )}
           <div className="flex-1" />
+          <Button
+            variant="outline" size="sm" className="h-8 shrink-0 gap-1.5"
+            disabled={downloadingCsv || s.status !== "done"}
+            onClick={async () => {
+              setDownloadingCsv(true);
+              try { await downloadBrandThreatCsv(id, getToken()); }
+              catch { /* ignore */ }
+              finally { setDownloadingCsv(false); }
+            }}
+          >
+            {downloadingCsv ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            {downloadingCsv ? "Exporting…" : "CSV"}
+          </Button>
           <Button
             variant="outline" size="sm" className="h-8 shrink-0 gap-1.5"
             disabled={downloading || s.status !== "done"}

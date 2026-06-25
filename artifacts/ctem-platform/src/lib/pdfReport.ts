@@ -730,6 +730,125 @@ export async function downloadAssetPdf(assetId: number, token: string | null): P
 
 // ── Brand Threat PDF ───────────────────────────────────────────────────
 
+// ── Brand Threat CSV ──────────────────────────────────────────────────
+
+function csvEscapeCell(v: unknown): string {
+  const s = v == null ? "" : String(v);
+  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function toCsvRows(headers: string[], rows: unknown[][]): string {
+  const lines = [headers.map(csvEscapeCell).join(",")];
+  for (const row of rows) lines.push(row.map(csvEscapeCell).join(","));
+  return lines.join("\n");
+}
+
+export async function downloadBrandThreatCsv(scanId: number, token: string | null): Promise<void> {
+  const res = await fetch(`/api/reports/pdf-data/brand-threat/${scanId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("Failed to fetch brand threat data");
+  const d = await res.json() as {
+    scan: { id: number; domain: string; status: string; totalPermutations: number; liveCount: number; registeredCount: number; phishingRisk: string; dataLeakCount: number; phishingCount: number; brandAbuseCount: number; darkWebCount: number; createdAt: string; completedAt?: string };
+    topResults:  { permutation: string; fuzzer: string; dnsA?: string[]; dnsMx?: string[]; mxSpf?: string; riskScore: number; isSuspicious: boolean; geoCountry?: string; vtMalicious?: number; whoisRegistrar?: string; whoisCreated?: string; whoisAgeDays?: number; isPhishing?: boolean; phishingSource?: string; registrationStatus?: string }[];
+    liveResults: { permutation: string; fuzzer: string; dnsA?: string[]; dnsMx?: string[]; mxSpf?: string; riskScore: number; isSuspicious: boolean; geoCountry?: string; vtMalicious?: number; whoisRegistrar?: string; whoisCreated?: string; whoisAgeDays?: number }[];
+    phishingDetections: { id: number; url: string; source: string; threatType?: string | null; verified: boolean; targetBrand?: string | null; submittedAt?: string | null }[];
+    dataLeaks: { id: number; source: string; title: string; breachDate?: string | null; description?: string | null; exposedData?: string[] | null; domainMatch?: string | null; emailMatch?: string | null; severity: string; url?: string | null }[];
+    brandAbuse: { id: number; type: string; platform?: string | null; url?: string | null; title?: string | null; description?: string | null; evidenceSnippet?: string | null; risk: string }[];
+  };
+
+  const sections: string[] = [];
+
+  // ── Section 1: Typosquatting Permutations ──
+  const typoHeaders = [
+    "pillar", "permutation", "fuzzer_type", "dns_a", "has_mx", "spf_policy",
+    "risk_score", "is_suspicious", "geo_country", "vt_malicious",
+    "registrar", "registered_date", "domain_age_days",
+    "is_phishing", "phishing_source", "registration_status",
+  ];
+  const typoRows = d.topResults.map(r => [
+    "typosquatting",
+    r.permutation,
+    r.fuzzer,
+    (r.dnsA ?? []).join("; "),
+    r.dnsMx && r.dnsMx.length > 0 ? "yes" : "no",
+    r.mxSpf ?? "",
+    r.riskScore,
+    r.isSuspicious ? "yes" : "no",
+    r.geoCountry ?? "",
+    r.vtMalicious ?? "",
+    r.whoisRegistrar ?? "",
+    r.whoisCreated ?? "",
+    r.whoisAgeDays ?? "",
+    r.isPhishing ? "yes" : "no",
+    r.phishingSource ?? "",
+    r.registrationStatus ?? "",
+  ]);
+  sections.push("# TYPOSQUATTING PERMUTATIONS\n" + toCsvRows(typoHeaders, typoRows));
+
+  // ── Section 2: Phishing Detections ──
+  const phishHeaders = [
+    "pillar", "url", "source", "threat_type", "verified", "target_brand", "submitted_at",
+  ];
+  const phishRows = d.phishingDetections.map(p => [
+    "phishing",
+    p.url,
+    p.source,
+    p.threatType ?? "",
+    p.verified ? "yes" : "no",
+    p.targetBrand ?? "",
+    p.submittedAt ?? "",
+  ]);
+  sections.push("# PHISHING DETECTIONS\n" + toCsvRows(phishHeaders, phishRows));
+
+  // ── Section 3: Data Leaks ──
+  const leakHeaders = [
+    "pillar", "title", "source", "severity", "breach_date",
+    "domain_match", "email_match", "exposed_data", "url", "description",
+  ];
+  const leakRows = d.dataLeaks.map(l => [
+    "data_leak",
+    l.title,
+    l.source,
+    l.severity,
+    l.breachDate ?? "",
+    l.domainMatch ?? "",
+    l.emailMatch ?? "",
+    (l.exposedData ?? []).join("; "),
+    l.url ?? "",
+    l.description ?? "",
+  ]);
+  sections.push("# DATA LEAKS\n" + toCsvRows(leakHeaders, leakRows));
+
+  // ── Section 4: Brand Abuse ──
+  const abuseHeaders = [
+    "pillar", "type", "platform", "risk", "url", "title", "description", "evidence_snippet",
+  ];
+  const abuseRows = d.brandAbuse.map(a => [
+    "brand_abuse",
+    a.type,
+    a.platform ?? "",
+    a.risk,
+    a.url ?? "",
+    a.title ?? "",
+    a.description ?? "",
+    a.evidenceSnippet ?? "",
+  ]);
+  sections.push("# BRAND ABUSE\n" + toCsvRows(abuseHeaders, abuseRows));
+
+  const csvContent = sections.join("\n\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `brand-threat-${d.scan.domain}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 6000);
+}
+
 export async function downloadBrandThreatPdf(scanId: number, token: string | null): Promise<void> {
   const [logo, res] = await Promise.all([
     getLogo(),
