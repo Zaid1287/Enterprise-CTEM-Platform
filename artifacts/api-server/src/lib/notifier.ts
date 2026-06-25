@@ -7,7 +7,7 @@ import { pushSseEvent } from "./sseManager";
 
 export interface NotificationEvent {
   tenantId: number;
-  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat";
+  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat" | "phishing_detected" | "data_leak_found" | "brand_abuse_found";
   title: string;
   message: string;
   severity: string;
@@ -17,19 +17,25 @@ export interface NotificationEvent {
   highCount?: number;
   assetName?: string;
   domain?: string;
+  sourceFeed?: string;
   relatedAssetId?: number;
   relatedFindingId?: number;
 }
 
+const BRAND_THREAT_EVENTS = new Set<NotificationEvent["eventType"]>(["brand_threat", "phishing_detected", "data_leak_found", "brand_abuse_found"]);
+
 function shouldRuleFire(triggerType: string, event: NotificationEvent): boolean {
   switch (triggerType) {
-    case "scan_complete":    return event.eventType === "scan_complete";
-    case "critical_finding": return (event.criticalCount ?? 0) > 0;
-    case "high_finding":     return (event.highCount ?? 0) > 0 || (event.criticalCount ?? 0) > 0;
-    case "new_finding":      return (event.findingsCount ?? 0) > 0;
-    case "brand_threat":     return event.eventType === "brand_threat";
-    case "any":              return true;
-    default:                 return event.eventType === "scan_complete";
+    case "scan_complete":      return event.eventType === "scan_complete";
+    case "critical_finding":   return (event.criticalCount ?? 0) > 0;
+    case "high_finding":       return (event.highCount ?? 0) > 0 || (event.criticalCount ?? 0) > 0;
+    case "new_finding":        return (event.findingsCount ?? 0) > 0;
+    case "brand_threat":       return BRAND_THREAT_EVENTS.has(event.eventType);
+    case "phishing_detected":  return event.eventType === "phishing_detected";
+    case "data_leak_found":    return event.eventType === "data_leak_found";
+    case "brand_abuse_found":  return event.eventType === "brand_abuse_found";
+    case "any":                return true;
+    default:                   return event.eventType === "scan_complete";
   }
 }
 
@@ -139,6 +145,7 @@ function genericWebhookPayload(event: NotificationEvent): object {
     tenantId: event.tenantId, scanId: event.scanId,
     findingsCount: event.findingsCount, criticalCount: event.criticalCount,
     highCount: event.highCount, assetName: event.assetName,
+    domain: event.domain, sourceFeed: event.sourceFeed,
     relatedAssetId: event.relatedAssetId, relatedFindingId: event.relatedFindingId,
     timestamp: new Date().toISOString(),
   };

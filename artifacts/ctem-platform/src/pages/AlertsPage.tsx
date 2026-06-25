@@ -6,7 +6,7 @@ import {
   getListAlertsQueryKey, getListAlertRulesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,21 @@ import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function AlertTypeIcon({ type, className }: { type: string; className?: string }) {
+  const cls = className ?? "w-4 h-4 shrink-0";
+  switch (type) {
+    case "phishing_detected":  return <ShieldAlert className={cn(cls, "text-red-400")} />;
+    case "data_leak_found":    return <DatabaseZap className={cn(cls, "text-orange-400")} />;
+    case "brand_abuse_found":  return <Crosshair className={cn(cls, "text-purple-400")} />;
+    case "brand_threat":       return <AlertTriangle className={cn(cls, "text-yellow-400")} />;
+    case "scan_complete":      return <ScanSearch className={cn(cls, "text-blue-400")} />;
+    case "critical_finding":
+    case "high_finding":
+    case "new_finding":        return <Activity className={cn(cls, "text-muted-foreground")} />;
+    default:                   return <Bell className={cn(cls, "text-muted-foreground")} />;
+  }
+}
 
 const CHANNEL_PLACEHOLDER: Record<string, string> = {
   email:    "alerts@company.com",
@@ -150,6 +165,7 @@ export default function AlertsPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                  <AlertTypeIcon type={alert.type} className="w-4 h-4 shrink-0 mt-0.5" />
                   {!alert.isRead && <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
@@ -296,7 +312,10 @@ export default function AlertsPage() {
                   <SelectItem value="critical_finding">Critical Finding</SelectItem>
                   <SelectItem value="high_finding">High Finding</SelectItem>
                   <SelectItem value="scan_complete">Scan Complete</SelectItem>
-                  <SelectItem value="brand_threat">Brand Threat Detected</SelectItem>
+                  <SelectItem value="brand_threat">Any Brand Threat</SelectItem>
+                  <SelectItem value="phishing_detected">🎣 Phishing Detected</SelectItem>
+                  <SelectItem value="data_leak_found">💧 Data Leak Found</SelectItem>
+                  <SelectItem value="brand_abuse_found">🎯 Brand Abuse Found</SelectItem>
                 </SelectContent>
               </Select>
             </div>

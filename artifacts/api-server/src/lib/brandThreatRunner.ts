@@ -20,6 +20,7 @@ import { vtDomainLookup, vtUrlScan } from "./vtDomainClient";
 import { scanBrandAbuse } from "./brandAbuseScanner";
 import { intelxSearch, intelxTypeToBucket } from "./intelxClient";
 import { getPlatformSetting } from "../routes/platformSettings";
+import { dispatchNotifications } from "./notifier";
 
 const execFileAsync = promisify(execFile);
 
@@ -593,6 +594,18 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       for (let i = 0; i < phishingInserts.length; i += 50) {
         await db.insert(phishingDetectionsTable).values(phishingInserts.slice(i, i + 50));
       }
+      const uniqueSources = [...new Set(phishingInserts.map(p => p.source).filter(Boolean))];
+      void dispatchNotifications({
+        tenantId: phishTenantId,
+        eventType: "phishing_detected",
+        title: `Phishing Detected: ${domain}`,
+        message: `${phishingInserts.length} confirmed phishing URL${phishingInserts.length > 1 ? "s" : ""} detected targeting your brand "${domain}".`,
+        severity: "critical",
+        scanId,
+        domain,
+        sourceFeed: uniqueSources.join(", "),
+        findingsCount: phishingInserts.length,
+      });
     }
 
     // ── Phase 5: Data leaks (HIBP + IntelX + watchlist) + Brand abuse ─────────
@@ -706,6 +719,20 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         await db.insert(dataLeakResultsTable).values(leakInserts.slice(i, i + 50));
       }
       dataLeakCount = leakInserts.length;
+      const worstSeverity = leakInserts.some(l => l.severity === "critical") ? "critical"
+        : leakInserts.some(l => l.severity === "high") ? "high" : "medium";
+      const uniqueLeakSources = [...new Set(leakInserts.map(l => l.source).filter(Boolean))];
+      void dispatchNotifications({
+        tenantId,
+        eventType: "data_leak_found",
+        title: `Data Leak Detected: ${domain}`,
+        message: `${leakInserts.length} data leak record${leakInserts.length > 1 ? "s" : ""} found for "${domain}" — credentials or sensitive data may be exposed.`,
+        severity: worstSeverity,
+        scanId,
+        domain,
+        sourceFeed: uniqueLeakSources.join(", "),
+        findingsCount: leakInserts.length,
+      });
     }
 
     // Cross-reference watchlist items: flag any domain-type items found in results
@@ -795,6 +822,20 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
           await db.insert(brandAbuseResultsTable).values(abuseInserts.slice(i, i + 50));
         }
         brandAbuseCount = abuseInserts.length;
+        const worstAbuseRisk = abuseInserts.some(a => a.risk === "critical") ? "critical"
+          : abuseInserts.some(a => a.risk === "high") ? "high" : "medium";
+        const uniquePlatforms = [...new Set(abuseInserts.map(a => a.platform).filter(Boolean))];
+        void dispatchNotifications({
+          tenantId,
+          eventType: "brand_abuse_found",
+          title: `Brand Abuse Detected: ${domain}`,
+          message: `${abuseInserts.length} brand abuse instance${abuseInserts.length > 1 ? "s" : ""} found targeting "${domain}" across ${uniquePlatforms.length > 0 ? uniquePlatforms.join(", ") : "multiple platforms"}.`,
+          severity: worstAbuseRisk,
+          scanId,
+          domain,
+          sourceFeed: uniquePlatforms.join(", "),
+          findingsCount: abuseInserts.length,
+        });
       }
     }
 
