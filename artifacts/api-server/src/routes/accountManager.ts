@@ -43,26 +43,52 @@ router.get("/account-manager/clients", requireAuth, async (req: AuthenticatedReq
   if (assignments.length === 0) { res.json([]); return; }
 
   const clientTenantIds = assignments.map(a => a.clientTenantId);
-  const [clients, allAssets, allFindings, allScans] = await Promise.all([
+
+  // Step 1: fetch clients + assets (needed to resolve asset IDs before querying findings/scans)
+  const [clients, allAssets] = await Promise.all([
     db.select().from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds)),
     db.select().from(assetsTable).where(inArray(assetsTable.tenantId, clientTenantIds)),
-    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, clientTenantIds)),
-    db.select().from(scansTable).where(inArray(scansTable.tenantId, clientTenantIds)),
   ]);
 
-  const result = clients.map(t => ({
-    tenantId: t.id,
-    tenantName: t.name,
-    plan: t.plan,
-    isActive: t.isActive,
-    assetCount: allAssets.filter(a => a.tenantId === t.id).length,
-    findingCount: allFindings.filter(f => f.tenantId === t.id).length,
-    criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
-    openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
-    activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
-    assignedAt: assignments.find(a => a.clientTenantId === t.id)?.assignedAt?.toISOString() ?? null,
-    createdAt: t.createdAt.toISOString(),
-  }));
+  const allAssetIds = allAssets.map(a => a.id);
+  const assetIdSet = new Set(allAssetIds);
+
+  // Step 2: fetch findings by assetId and all scans (filter scans by assetId overlap in JS)
+  // Findings may have a different tenantId than the client tenant (e.g. created by platform admin)
+  const [allFindings, allScansRaw] = await (allAssetIds.length > 0
+    ? Promise.all([
+        db.select().from(findingsTable).where(inArray(findingsTable.assetId, allAssetIds)),
+        db.select().from(scansTable),
+      ])
+    : Promise.resolve([[], []] as [typeof findingsTable.$inferSelect[], typeof scansTable.$inferSelect[]]));
+
+  // Filter scans to those that reference client assets (regardless of which tenant created them)
+  const allScans = allScansRaw.filter(s =>
+    clientTenantIds.includes(s.tenantId) ||
+    (Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => assetIdSet.has(id)))
+  );
+
+  const result = clients.map(t => {
+    const clientAssets = allAssets.filter(a => a.tenantId === t.id);
+    const clientAssetIds = clientAssets.map(a => a.id);
+    const clientFindings = allFindings.filter(f => clientAssetIds.includes(f.assetId));
+    return {
+      tenantId: t.id,
+      tenantName: t.name,
+      plan: t.plan,
+      isActive: t.isActive,
+      assetCount: clientAssets.length,
+      findingCount: clientFindings.length,
+      criticalCount: clientFindings.filter(f => f.severity === "critical").length,
+      openFindingCount: clientFindings.filter(f => f.status === "open").length,
+      activeScans: allScans.filter(s =>
+        (s.status === "running" || s.status === "pending") &&
+        Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => clientAssetIds.includes(id))
+      ).length,
+      assignedAt: assignments.find(a => a.clientTenantId === t.id)?.assignedAt?.toISOString() ?? null,
+      createdAt: t.createdAt.toISOString(),
+    };
+  });
 
   res.json(result);
 });
