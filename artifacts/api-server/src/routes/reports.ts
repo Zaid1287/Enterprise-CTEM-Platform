@@ -306,15 +306,41 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
 
   const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
   const assetIds = assets.map(a => a.id);
+  const assetDomains = assets.map(a => a.value).filter(Boolean);
 
-  const [allFindings, riskRows] = await Promise.all([
+  const [allFindings, riskRows, brandScans] = await Promise.all([
     db.select().from(findingsTable)
       .where(eq(findingsTable.tenantId, tenantId))
       .orderBy(desc(findingsTable.id)),
     assetIds.length > 0
       ? db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
       : Promise.resolve([]),
+    assetDomains.length > 0
+      ? db.select().from(brandThreatScansTable)
+          .where(and(eq(brandThreatScansTable.tenantId, tenantId), inArray(brandThreatScansTable.domain, assetDomains)))
+          .orderBy(desc(brandThreatScansTable.id))
+          .limit(30)
+      : Promise.resolve([]),
   ]);
+
+  const brandScanIds = brandScans.map(s => s.id);
+  const brandResults = brandScanIds.length > 0
+    ? await db.select({
+        scanId:       brandThreatResultsTable.scanId,
+        permutation:  brandThreatResultsTable.permutation,
+        fuzzer:       brandThreatResultsTable.fuzzer,
+        dnsA:         brandThreatResultsTable.dnsA,
+        riskScore:    brandThreatResultsTable.riskScore,
+        isSuspicious: brandThreatResultsTable.isSuspicious,
+        geoCountry:   brandThreatResultsTable.geoCountry,
+        vtMalicious:  brandThreatResultsTable.vtMalicious,
+        whoisRegistrar: brandThreatResultsTable.whoisRegistrar,
+        whoisCreated:   brandThreatResultsTable.whoisCreated,
+      }).from(brandThreatResultsTable)
+        .where(inArray(brandThreatResultsTable.scanId, brandScanIds))
+        .orderBy(desc(brandThreatResultsTable.riskScore))
+        .limit(300)
+    : [];
 
   const assetMap: Record<number, typeof assets[0]> = Object.fromEntries(assets.map(a => [a.id, a]));
 
@@ -348,6 +374,7 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
       status:      f.status,
       cve:         f.cve ?? null,
       cvss:        f.cvss ?? null,
+      cwe:         f.cwe ?? null,
       description: f.description ?? null,
       remediation: f.remediation ?? null,
       assetId:     f.assetId ?? 0,
@@ -357,6 +384,31 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
       assetId: r.assetId,
       score:   r.score,
       level:   r.level,
+    })),
+    brandScans: brandScans.map(s => ({
+      id:                s.id,
+      domain:            s.domain,
+      status:            s.status,
+      totalPermutations: s.totalPermutations,
+      liveCount:         s.liveCount,
+      registeredCount:   s.registeredCount,
+      phishingRisk:      s.phishingRisk,
+      dataLeakCount:     s.dataLeakCount ?? 0,
+      phishingCount:     s.phishingCount ?? 0,
+      brandAbuseCount:   s.brandAbuseCount ?? 0,
+      completedAt:       s.completedAt?.toISOString() ?? null,
+    })),
+    brandResults: brandResults.map(r => ({
+      scanId:         r.scanId,
+      permutation:    r.permutation,
+      fuzzer:         r.fuzzer,
+      dnsA:           r.dnsA ?? [],
+      riskScore:      r.riskScore,
+      isSuspicious:   r.isSuspicious,
+      geoCountry:     r.geoCountry ?? null,
+      vtMalicious:    r.vtMalicious ?? null,
+      whoisRegistrar: r.whoisRegistrar ?? null,
+      whoisCreated:   r.whoisCreated ?? null,
     })),
     findingCounts,
     generatedAt: new Date().toISOString(),
