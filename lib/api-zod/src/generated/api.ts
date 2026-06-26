@@ -1947,7 +1947,8 @@ export const ListBrandThreatsResponse = zod.array(ListBrandThreatsResponseItem)
  * @summary Start a new brand threat scan
  */
 export const CreateBrandThreatScanBody = zod.object({
-  "domain": zod.string()
+  "domain": zod.string().optional().describe('Root domain to scan (e.g. example.com). Required if assetId is not provided.'),
+  "assetId": zod.number().nullish().describe('Asset ID from inventory. When provided, the domain is derived from the asset and role-based access is validated.')
 })
 
 export const CreateBrandThreatScanResponse = zod.object({

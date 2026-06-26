@@ -7,5 +7,8 @@
  */
 
 export interface NewBrandThreatScan {
-  domain: string;
+  /** Root domain to scan (e.g. example.com). Required if assetId is not provided. */
+  domain?: string;
+  /** Asset ID from inventory. When provided, the domain is derived from the asset and role-based access is validated. */
+  assetId?: number | null;
 }

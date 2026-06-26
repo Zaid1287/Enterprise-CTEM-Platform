@@ -81,13 +81,48 @@ router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res)
 
 // ── POST /brand-threats ───────────────────────────────────────────────────────
 router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const raw = String(req.body?.domain ?? "").trim().toLowerCase()
+  const user = req.user!;
+  let domainSource: string | undefined;
+  let scanTenantId = user.tenantId;
+
+  // If assetId is provided, derive domain from the asset and validate role access
+  const assetId = req.body?.assetId ? parseInt(String(req.body.assetId), 10) : null;
+  if (assetId && !isNaN(assetId)) {
+    // Fetch asset and validate role-based access
+    const [asset] = await db.select().from(assetsTable).where(eq(assetsTable.id, assetId));
+    if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+    // Role-based access check
+    const role = user.role;
+    if (role === "client") {
+      if (asset.assignedClientId !== user.userId) {
+        res.status(403).json({ error: "Access denied to this asset" }); return;
+      }
+    } else if (role === "account_manager") {
+      const amTids = await getAmClientTenantIds(user.userId);
+      if (!amTids.includes(asset.tenantId)) {
+        res.status(403).json({ error: "Access denied to this asset" }); return;
+      }
+    } else if (role !== "admin" && role !== "super_admin") {
+      if (asset.tenantId !== user.tenantId) {
+        res.status(403).json({ error: "Access denied to this asset" }); return;
+      }
+    }
+
+    // Derive domain from asset value (strip protocol, www, path)
+    domainSource = asset.value;
+    scanTenantId = asset.tenantId;
+  } else {
+    domainSource = String(req.body?.domain ?? "").trim();
+  }
+
+  const raw = (domainSource ?? "").toLowerCase()
     .replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!;
   if (!raw || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(raw)) {
     res.status(400).json({ error: "Invalid domain. Expected format: example.com" }); return;
   }
 
-  const tenantId = req.user!.tenantId;
+  const tenantId = scanTenantId;
   const [existing] = await db.select({ id: brandThreatScansTable.id })
     .from(brandThreatScansTable)
     .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, raw)));

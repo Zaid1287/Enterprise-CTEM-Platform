@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import {
   useListBrandThreats, useCreateBrandThreatScan, useDeleteBrandThreatScan,
-  getListBrandThreatsQueryKey,
+  getListBrandThreatsQueryKey, useListAssets,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,22 +31,51 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; label: string; colo
   error:   { icon: <XCircle className="w-3.5 h-3.5" />,                        label: "Error",    color: "text-red-400" },
 };
 
+const SCANNABLE_TYPES = ["domain", "subdomain", "url"] as const;
+const TYPE_LABEL: Record<string, string> = { domain: "Domain", subdomain: "Subdomain", url: "URL" };
+
+function normalizeDomainPreview(value: string): string {
+  return value.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!;
+}
+
 function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
-  const [domain, setDomain] = useState("");
+  const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
+  const [search, setSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const { mutateAsync } = useCreateBrandThreatScan();
   const { toast } = useToast();
 
+  const { data: allAssets = [], isLoading: assetsLoading } = useListAssets(
+    {},
+    { query: { queryKey: ["assets", "brand-threat-modal"], staleTime: 30_000 } },
+  );
+
+  const eligibleAssets = (allAssets as any[]).filter(
+    (a: any) => SCANNABLE_TYPES.includes(a.type) && a.value,
+  );
+
+  const filtered = search.trim()
+    ? eligibleAssets.filter((a: any) =>
+        a.name?.toLowerCase().includes(search.toLowerCase()) ||
+        a.value?.toLowerCase().includes(search.toLowerCase()),
+      )
+    : eligibleAssets;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!domain.trim()) return;
+    if (!selectedAsset) return;
     setSubmitting(true);
     try {
-      await mutateAsync({ data: { domain: domain.trim() } });
-      toast({ title: "Scan started", description: `Running brand threat scan for ${domain.trim()}` });
+      await mutateAsync({ data: { assetId: selectedAsset.id } });
+      toast({
+        title: "Scan started",
+        description: `Running brand threat scan for ${normalizeDomainPreview(selectedAsset.value)}`,
+      });
       onSuccess();
-    } catch {
-      toast({ title: "Failed to start scan", variant: "destructive" });
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? "Failed to start scan";
+      toast({ title: msg, variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -55,10 +84,11 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl"
+        className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]"
         onClick={e => e.stopPropagation()}
       >
-        <div className="p-6 border-b border-border">
+        {/* Header */}
+        <div className="p-6 border-b border-border shrink-0">
           <div className="flex items-center gap-3 mb-1">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <ShieldAlert className="w-4 h-4 text-primary" />
@@ -66,43 +96,124 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
             <h2 className="text-base font-semibold">New Brand Threat Scan</h2>
           </div>
           <p className="text-xs text-muted-foreground mt-2 ml-11 leading-relaxed">
-            Full intelligence pipeline: typosquatting via dnstwist engine, RDAP enrichment,
-            GeoIP, VirusTotal reputation, PhishTank/OpenPhish/Google Safe Browsing phishing feeds,
-            HIBP data leak check, CT abuse detection, and brand abuse scanning.
+            Select an asset from your inventory to scan for typosquatting, phishing, and brand abuse.
           </p>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Target Domain</label>
-            <div className="relative">
-              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-6 space-y-4 flex-1 overflow-hidden flex flex-col">
+            {/* Search */}
+            <div className="relative shrink-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <input
+                ref={searchRef}
                 type="text"
-                placeholder="example.com"
-                value={domain}
-                onChange={e => setDomain(e.target.value)}
-                className="w-full bg-background border border-border rounded-lg pl-8 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+                placeholder="Search assets by name or domain…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full bg-background border border-border rounded-lg pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 autoFocus
               />
             </div>
-            <p className="text-[10px] text-muted-foreground/60 mt-1.5">Enter a root domain without protocol — e.g. acme.com</p>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { icon: <Globe className="w-3 h-3" />,    label: "Typosquatting",  sub: "dnstwist + DNS" },
-              { icon: <Fish className="w-3 h-3" />,     label: "Phishing feeds", sub: "PhishTank · OpenPhish" },
-              { icon: <Database className="w-3 h-3" />, label: "Data leaks",     sub: "HIBP breach lookup" },
-            ].map(item => (
-              <div key={item.label} className="bg-background/80 border border-border/50 rounded-xl p-2.5 text-center">
-                <div className="flex justify-center mb-1 text-muted-foreground">{item.icon}</div>
-                <p className="text-[10px] font-semibold">{item.label}</p>
-                <p className="text-[9px] text-muted-foreground/60 leading-tight mt-0.5">{item.sub}</p>
+
+            {/* Asset list */}
+            <div className="flex-1 overflow-y-auto space-y-1 min-h-0 pr-0.5">
+              {assetsLoading ? (
+                <div className="flex items-center justify-center py-10 text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span className="text-sm">Loading assets…</span>
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">
+                  <Globe className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm font-medium">No domain assets found</p>
+                  <p className="text-xs mt-1 opacity-60">
+                    {eligibleAssets.length === 0
+                      ? "Add domain, subdomain, or URL assets to your inventory first."
+                      : "No assets match your search."}
+                  </p>
+                </div>
+              ) : (
+                filtered.map((asset: any) => {
+                  const isSelected = selectedAsset?.id === asset.id;
+                  const preview = normalizeDomainPreview(asset.value);
+                  return (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      onClick={() => setSelectedAsset(isSelected ? null : asset)}
+                      className={cn(
+                        "w-full text-left px-3 py-2.5 rounded-xl border transition-all flex items-center gap-3",
+                        isSelected
+                          ? "border-primary/60 bg-primary/8 ring-1 ring-primary/30"
+                          : "border-border bg-background/50 hover:border-border/80 hover:bg-muted/30",
+                      )}
+                    >
+                      <div className={cn(
+                        "w-7 h-7 rounded-lg flex items-center justify-center shrink-0",
+                        isSelected ? "bg-primary/15" : "bg-muted/40",
+                      )}>
+                        <Globe className={cn("w-3.5 h-3.5", isSelected ? "text-primary" : "text-muted-foreground")} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium truncate">{asset.name || preview}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded border bg-muted/50 border-border text-muted-foreground shrink-0">
+                            {TYPE_LABEL[asset.type] ?? asset.type}
+                          </span>
+                          {asset.tenantName && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-blue-500/10 border-blue-500/25 text-blue-400 shrink-0 hidden sm:inline">
+                              {asset.tenantName}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-mono truncate mt-0.5">{preview}</p>
+                      </div>
+                      {isSelected && (
+                        <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
+                          <Check className="w-2.5 h-2.5 text-primary-foreground" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Selected preview */}
+            {selectedAsset && (
+              <div className="shrink-0 bg-primary/5 border border-primary/20 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+                <Target className="w-3.5 h-3.5 text-primary shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs text-muted-foreground">Scanning: </span>
+                  <span className="text-xs font-mono font-semibold text-foreground">{normalizeDomainPreview(selectedAsset.value)}</span>
+                </div>
+                <button type="button" onClick={() => setSelectedAsset(null)} className="text-muted-foreground hover:text-foreground">
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-            ))}
+            )}
+
+            {/* Pipeline info */}
+            <div className="grid grid-cols-3 gap-2 shrink-0">
+              {[
+                { icon: <Globe className="w-3 h-3" />,    label: "Typosquatting",  sub: "dnstwist + DNS" },
+                { icon: <Fish className="w-3 h-3" />,     label: "Phishing feeds", sub: "PhishTank · OpenPhish" },
+                { icon: <Database className="w-3 h-3" />, label: "Data leaks",     sub: "HIBP breach lookup" },
+              ].map(item => (
+                <div key={item.label} className="bg-background/80 border border-border/50 rounded-xl p-2.5 text-center">
+                  <div className="flex justify-center mb-1 text-muted-foreground">{item.icon}</div>
+                  <p className="text-[10px] font-semibold">{item.label}</p>
+                  <p className="text-[9px] text-muted-foreground/60 leading-tight mt-0.5">{item.sub}</p>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="flex gap-2">
+
+          {/* Footer */}
+          <div className="px-6 pb-6 shrink-0 flex gap-2">
             <Button type="button" variant="outline" size="sm" onClick={onClose} className="flex-1">Cancel</Button>
-            <Button type="submit" size="sm" disabled={submitting || !domain.trim()} className="flex-1">
+            <Button type="submit" size="sm" disabled={submitting || !selectedAsset} className="flex-1">
               {submitting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Shield className="w-3.5 h-3.5 mr-1.5" />}
               Start Scan
             </Button>

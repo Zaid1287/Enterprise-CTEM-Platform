@@ -3513,10 +3513,14 @@ components:
 
     NewBrandThreatScan:
       type: object
-      required: [domain]
       properties:
         domain:
           type: string
+          description: Root domain to scan (e.g. example.com). Required if assetId is not provided.
+        assetId:
+          type: integer
+          nullable: true
+          description: Asset ID from inventory. When provided, the domain is derived from the asset and role-based access is validated.
 
     BrandThreatScan:
       type: object
