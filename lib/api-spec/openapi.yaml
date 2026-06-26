@@ -1888,15 +1888,21 @@ paths:
           in: query
           schema:
             type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
       responses:
         "200":
           description: Tool run history
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ToolRun"
+                $ref: "#/components/schemas/ToolRunsPage"
 
   /tool-runs/{runId}:
     get:
@@ -3327,6 +3333,21 @@ components:
                 type: integer
               isEnabled:
                 type: boolean
+
+    ToolRunsPage:
+      type: object
+      required: [runs, total, page, pageSize]
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolRun"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
 
     ToolRun:
       type: object

@@ -72,16 +72,22 @@ export default function SecurityToolsPage() {
   const { data: pipelineData, isLoading: pipelineLoading } = useGetToolPipeline({
     query: { queryKey: getGetToolPipelineQueryKey() },
   });
-  const { data: runsData, isLoading: runsLoading } = useListToolRuns({}, {
-    query: { queryKey: getListToolRunsQueryKey({}) },
-  });
+  const [runsPage, setRunsPage] = useState(1);
+  const RUNS_PAGE_SIZE = 20;
+  const { data: runsData, isLoading: runsLoading } = useListToolRuns(
+    { page: runsPage, pageSize: RUNS_PAGE_SIZE } as any,
+    { query: { queryKey: getListToolRunsQueryKey({ page: runsPage, pageSize: RUNS_PAGE_SIZE } as any) } },
+  );
   const { data: runDetail } = useGetToolRun(selectedRun ?? 0, {
     query: { enabled: !!selectedRun, queryKey: getGetToolRunQueryKey(selectedRun ?? 0) },
   });
 
   const tools = (toolsData as any[]) ?? [];
   const pipeline = (pipelineData as any[]) ?? [];
-  const runs = (runsData as any[]) ?? [];
+  const runsPage_ = (runsData as any);
+  const runs: any[] = runsPage_?.runs ?? [];
+  const runsTotal: number = runsPage_?.total ?? 0;
+  const runsTotalPages = Math.max(1, Math.ceil(runsTotal / RUNS_PAGE_SIZE));
 
   const { data: assetsData } = useListAssets();
   const allAssets = (assetsData as any[]) ?? [];
@@ -814,6 +820,30 @@ export default function SecurityToolsPage() {
                 })}
               </tbody>
             </table>
+            {/* Pagination */}
+            {runsTotalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-card/50">
+                <span className="text-xs text-muted-foreground">
+                  {runsTotal} run{runsTotal !== 1 ? "s" : ""} · page {runsPage} of {runsTotalPages}
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost" size="icon" className="h-7 w-7"
+                    disabled={runsPage <= 1}
+                    onClick={() => setRunsPage(p => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="icon" className="h-7 w-7"
+                    disabled={runsPage >= runsTotalPages}
+                    onClick={() => setRunsPage(p => Math.min(runsTotalPages, p + 1))}
+                  >
+                    <ChevronRightIcon className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
           {selectedRun && (

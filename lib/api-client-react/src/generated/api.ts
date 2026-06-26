@@ -102,6 +102,7 @@ import type {
   TenantUpdate,
   ToolPipelineStep,
   ToolRun,
+  ToolRunsPage,
   TrendPoint,
   User,
   UserInput,
@@ -7069,9 +7070,9 @@ export const getListToolRunsUrl = (params?: ListToolRunsParams,) => {
 /**
  * @summary List all tool run history
  */
-export const listToolRuns = async (params?: ListToolRunsParams, options?: RequestInit): Promise<ToolRun[]> => {
+export const listToolRuns = async (params?: ListToolRunsParams, options?: RequestInit): Promise<ToolRunsPage> => {
 
-  return customFetch<ToolRun[]>(getListToolRunsUrl(params),
+  return customFetch<ToolRunsPage>(getListToolRunsUrl(params),
   {
     ...options,
     method: 'GET'

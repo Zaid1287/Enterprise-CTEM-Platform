@@ -813,6 +813,13 @@ export interface ToolRun {
   createdAt: string;
 }
 
+export interface ToolRunsPage {
+  runs: ToolRun[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface RunToolBody {
   assetId?: number;
   assetIds?: number[];
@@ -1002,6 +1009,8 @@ export type ListToolRunsParams = {
 toolId?: number;
 assetId?: number;
 status?: string;
+page?: number;
+pageSize?: number;
 };
 
 export type DeleteBrandThreatScan200 = {

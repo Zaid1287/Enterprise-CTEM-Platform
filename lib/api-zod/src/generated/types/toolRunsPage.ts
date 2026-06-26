@@ -5,11 +5,11 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+import type { ToolRun } from './toolRun';
 
-export type ListToolRunsParams = {
-toolId?: number;
-assetId?: number;
-status?: string;
-page?: number;
-pageSize?: number;
-};
+export interface ToolRunsPage {
+  runs: ToolRun[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

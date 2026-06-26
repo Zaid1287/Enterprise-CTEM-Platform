@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable } from "@workspace/db";
 import {
   CreateSecurityToolBody, GetSecurityToolParams,
@@ -421,15 +421,21 @@ router.get("/tool-runs", requireAuth, async (req: AuthenticatedRequest, res): Pr
   const q = ListToolRunsQueryParams.safeParse(req.query);
   const filters = [eq(toolRunsTable.tenantId, req.user!.tenantId)];
   if (q.success) {
-    if ((q.data as any).toolId) filters.push(eq(toolRunsTable.toolId, Number((q.data as any).toolId)));
+    if ((q.data as any).toolId)  filters.push(eq(toolRunsTable.toolId, Number((q.data as any).toolId)));
     if ((q.data as any).assetId) filters.push(eq(toolRunsTable.assetId, Number((q.data as any).assetId)));
-    if ((q.data as any).status) filters.push(eq(toolRunsTable.status, (q.data as any).status));
+    if ((q.data as any).status)  filters.push(eq(toolRunsTable.status, (q.data as any).status));
   }
-  const runs = await db.select().from(toolRunsTable)
-    .where(and(...filters))
-    .orderBy(desc(toolRunsTable.createdAt))
-    .limit(100);
-  res.json(await enrichRuns(runs));
+  const page     = Math.max(1, Number((q.success && (q.data as any).page)     || 1));
+  const pageSize = Math.min(100, Math.max(1, Number((q.success && (q.data as any).pageSize) || 20)));
+  const offset   = (page - 1) * pageSize;
+
+  const [countRow, runsRaw] = await Promise.all([
+    db.select({ total: sql<number>`count(*)::int` }).from(toolRunsTable).where(and(...filters)),
+    db.select().from(toolRunsTable).where(and(...filters)).orderBy(desc(toolRunsTable.createdAt)).limit(pageSize).offset(offset),
+  ]);
+  const total = countRow[0]?.total ?? 0;
+  const runs  = await enrichRuns(runsRaw);
+  res.json({ runs, total, page, pageSize });
 });
 
 router.get("/tool-runs/:runId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

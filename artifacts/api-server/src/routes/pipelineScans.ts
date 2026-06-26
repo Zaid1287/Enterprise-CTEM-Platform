@@ -4,7 +4,7 @@ import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray } from "drizzle-orm";
-import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable } from "@workspace/db";
+import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
@@ -2285,6 +2285,30 @@ async function executePipeline(
     // Batch-insert results
     for (let i = 0; i < results.length; i += 50) {
       await db.insert(scanAssetResultsTable).values(results.slice(i, i + 50));
+    }
+
+    // ── Record tool runs in tool_runs table ─────────────────────────────────
+    try {
+      const toolRunInserts = toolsForAsset.map(tool => {
+        const tp = toolProgress.find(t => t.toolName === tool.name);
+        const r  = results.find(res => res.toolName === tool.name);
+        const status = tp?.status === "failed" ? "failed" : "completed";
+        return {
+          tenantId,
+          toolId:      tool.id,
+          assetId:     asset.id,
+          status,
+          output:      r?.rawOutput ? r.rawOutput.slice(0, 50_000) : null,
+          triggeredBy: null as null,
+          startedAt:   tp?.startedAt   ? new Date(tp.startedAt)   : new Date(),
+          completedAt: tp?.completedAt ? new Date(tp.completedAt) : new Date(),
+        };
+      });
+      for (let i = 0; i < toolRunInserts.length; i += 50) {
+        await db.insert(toolRunsTable).values(toolRunInserts.slice(i, i + 50));
+      }
+    } catch (err) {
+      logger.warn({ err, scanId, assetId: asset.id }, "Failed to record pipeline tool runs (non-fatal)");
     }
 
     // ── JS Analysis: store result + create secret findings ─────────────────────

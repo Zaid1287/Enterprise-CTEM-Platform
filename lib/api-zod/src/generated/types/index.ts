@@ -118,6 +118,7 @@ export * from './tenantInput';
 export * from './tenantUpdate';
 export * from './toolPipelineStep';
 export * from './toolRun';
+export * from './toolRunsPage';
 export * from './trendPoint';
 export * from './user';
 export * from './userInput';

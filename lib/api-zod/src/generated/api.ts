@@ -1839,10 +1839,13 @@ export const SetToolPipelineResponse = zod.array(SetToolPipelineResponseItem)
 export const ListToolRunsQueryParams = zod.object({
   "toolId": zod.coerce.number().optional(),
   "assetId": zod.coerce.number().optional(),
-  "status": zod.coerce.string().optional()
+  "status": zod.coerce.string().optional(),
+  "page": zod.coerce.number().optional(),
+  "pageSize": zod.coerce.number().optional()
 })
 
-export const ListToolRunsResponseItem = zod.object({
+export const ListToolRunsResponse = zod.object({
+  "runs": zod.array(zod.object({
   "id": zod.number(),
   "tenantId": zod.number(),
   "toolId": zod.number(),
@@ -1855,8 +1858,11 @@ export const ListToolRunsResponseItem = zod.object({
   "startedAt": zod.string().nullish(),
   "completedAt": zod.string().nullish(),
   "createdAt": zod.string()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
 })
-export const ListToolRunsResponse = zod.array(ListToolRunsResponseItem)
 
 
 /**
