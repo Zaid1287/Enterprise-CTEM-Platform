@@ -7,6 +7,7 @@ import {
   brandWatchlistItemsTable, dataLeakResultsTable,
   phishingDetectionsTable, brandAbuseResultsTable,
   adMonitoringResultsTable,
+  platformSettingsTable,
   assetsTable,
 } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
@@ -135,6 +136,7 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
     await db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, existing.id));
     await db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, existing.id));
     await db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, existing.id));
+    await db.delete(adMonitoringResultsTable).where(eq(adMonitoringResultsTable.scanId, existing.id));
     const [updated] = await db.update(brandThreatScansTable)
       .set({
         status: "pending",
@@ -196,7 +198,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
   if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
   const [scan] = await db.select().from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
-  const [results, phishing, dataLeaks, brandAbuse, adMonitoring] = await Promise.all([
+  const [results, phishing, dataLeaks, brandAbuse, adMonitoring, metaAdsSetting] = await Promise.all([
     db.select().from(brandThreatResultsTable)
       .where(eq(brandThreatResultsTable.scanId, id))
       .orderBy(desc(brandThreatResultsTable.riskScore)),
@@ -212,9 +214,18 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
     db.select().from(adMonitoringResultsTable)
       .where(eq(adMonitoringResultsTable.scanId, id))
       .orderBy(desc(adMonitoringResultsTable.createdAt)),
+    db.select({ value: platformSettingsTable.value })
+      .from(platformSettingsTable)
+      .where(and(
+        eq(platformSettingsTable.tenantId, scan.tenantId),
+        eq(platformSettingsTable.key, "meta_ads_access_token"),
+      ))
+      .limit(1),
   ]);
+  const metaAdsChecked = !!(metaAdsSetting[0]?.value);
   res.json({
     ...toScanResponse(scan),
+    metaAdsChecked,
     results: results.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     phishingDetections: phishing.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     dataLeaks: dataLeaks.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),

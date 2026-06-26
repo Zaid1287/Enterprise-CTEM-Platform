@@ -423,9 +423,16 @@ function MaliciousAdsTab({ ads, hasMetaToken }: { ads: any[]; hasMetaToken?: boo
         <div>
           <p className="text-sm font-medium text-muted-foreground">No suspicious ad activity detected</p>
           <p className="text-xs text-muted-foreground/60 mt-1">
-            {hasMetaToken === false
-              ? "Configure a Meta Ads access token in Platform Settings → Brand Intelligence to enable ad library monitoring."
-              : "No brand-impersonating ads were found in the Meta Ads Library for this brand."}
+            {hasMetaToken === false ? (
+              <>
+                A Meta Ads access token is required to monitor the ad library.{" "}
+                <a href="/settings/platform" className="text-blue-400 hover:underline">
+                  Configure it in Platform Settings → Brand Intelligence.
+                </a>
+              </>
+            ) : (
+              "No brand-impersonating ads were found in the Meta Ads Library for this brand."
+            )}
           </p>
         </div>
       </div>

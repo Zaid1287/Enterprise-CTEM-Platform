@@ -544,8 +544,15 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     await flushBatch();
 
     // ── Phase 4 pre-fetch: abuse.ch feeds (URLhaus + ThreatFox) ──────────────
-    // Run concurrently with phase 3/4 DNS loop — no API key required
-    const abuseChList = await queryAbuseChFeeds(domain);
+    // Query each live permutation domain — no API key required
+    const ABUSE_CH_CONCURRENCY = 5;
+    const abuseChList: Awaited<ReturnType<typeof queryAbuseChFeeds>> = [];
+    const livePermDomains = liveResults.map(r => r.permutation);
+    for (let i = 0; i < livePermDomains.length; i += ABUSE_CH_CONCURRENCY) {
+      const batch = livePermDomains.slice(i, i + ABUSE_CH_CONCURRENCY);
+      const batchResults = await Promise.all(batch.map(d => queryAbuseChFeeds(d).catch(() => [])));
+      for (const hits of batchResults) abuseChList.push(...hits);
+    }
 
     // ── Phase 4: Phishing detections from live domains ───────────────────────
     // 4a) Phishing feed results (PhishTank / OpenPhish / GSB)

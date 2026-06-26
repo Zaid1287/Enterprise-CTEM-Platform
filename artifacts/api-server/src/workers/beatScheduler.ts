@@ -290,7 +290,7 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
   if (dueItems.length === 0) return;
 
   const { runBrandThreatScan } = await import("../lib/brandThreatRunner");
-  const { brandThreatResultsTable, phishingDetectionsTable, dataLeakResultsTable, brandAbuseResultsTable } = await import("@workspace/db");
+  const { brandThreatResultsTable, phishingDetectionsTable, dataLeakResultsTable, brandAbuseResultsTable, adMonitoringResultsTable } = await import("@workspace/db");
 
   for (const item of dueItems) {
     try {
@@ -332,6 +332,7 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
           db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, existing.id)),
           db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, existing.id)),
           db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, existing.id)),
+          db.delete(adMonitoringResultsTable).where(eq(adMonitoringResultsTable.scanId, existing.id)),
         ]);
         await db.update(brandThreatScansTable)
           .set({
