@@ -1677,6 +1677,9 @@ export const ListSecurityToolsResponseItem = zod.object({
   "updateCommand": zod.string().nullish(),
   "outputFormat": zod.string().nullish(),
   "isActive": zod.boolean(),
+  "currentVersion": zod.string().nullish(),
+  "latestVersion": zod.string().nullish(),
+  "toolUpdateCheckedAt": zod.string().nullish(),
   "createdBy": zod.number().nullish(),
   "createdAt": zod.string()
 })
@@ -1717,6 +1720,9 @@ export const GetSecurityToolResponse = zod.object({
   "updateCommand": zod.string().nullish(),
   "outputFormat": zod.string().nullish(),
   "isActive": zod.boolean(),
+  "currentVersion": zod.string().nullish(),
+  "latestVersion": zod.string().nullish(),
+  "toolUpdateCheckedAt": zod.string().nullish(),
   "createdBy": zod.number().nullish(),
   "createdAt": zod.string()
 })
@@ -1753,6 +1759,9 @@ export const UpdateSecurityToolResponse = zod.object({
   "updateCommand": zod.string().nullish(),
   "outputFormat": zod.string().nullish(),
   "isActive": zod.boolean(),
+  "currentVersion": zod.string().nullish(),
+  "latestVersion": zod.string().nullish(),
+  "toolUpdateCheckedAt": zod.string().nullish(),
   "createdBy": zod.number().nullish(),
   "createdAt": zod.string()
 })

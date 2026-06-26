@@ -24,6 +24,12 @@ export interface SecurityTool {
   outputFormat?: string | null;
   isActive: boolean;
   /** @nullable */
+  currentVersion?: string | null;
+  /** @nullable */
+  latestVersion?: string | null;
+  /** @nullable */
+  toolUpdateCheckedAt?: string | null;
+  /** @nullable */
   createdBy?: number | null;
   createdAt: string;
 }

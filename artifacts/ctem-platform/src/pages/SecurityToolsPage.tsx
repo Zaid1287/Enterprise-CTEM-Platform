@@ -12,6 +12,7 @@ import {
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
   ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
   Zap, Cpu, Network, Globe, Shield, Search, Wifi, Pencil, ChevronLeft, ChevronRight as ChevronRightIcon,
+  ArrowUpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -562,7 +563,7 @@ export default function SecurityToolsPage() {
                 <GitBranch className="w-4 h-4 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
+                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                   <span className="font-medium text-sm">{tool.name}</span>
                   <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", categoryColor[tool.category] ?? categoryColor.recon)}>
                     {tool.category}
@@ -571,6 +572,33 @@ export default function SecurityToolsPage() {
                     <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-accent/40 text-muted-foreground border-border flex items-center gap-1">
                       <FileText className="w-2.5 h-2.5" />{tool.outputFormat}
                     </span>
+                  )}
+                  {tool.currentVersion && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-accent/40 text-muted-foreground border-border">
+                      {tool.currentVersion}
+                    </span>
+                  )}
+                  {tool.latestVersion && tool.currentVersion && tool.latestVersion !== tool.currentVersion && (
+                    <a
+                      href={`${tool.githubUrl}/releases/latest`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-amber-500/15 text-amber-400 border-amber-500/30 flex items-center gap-1 hover:bg-amber-500/25 transition-colors"
+                      title={`Update available: ${tool.latestVersion}`}
+                    >
+                      <ArrowUpCircle className="w-2.5 h-2.5" /> {tool.latestVersion}
+                    </a>
+                  )}
+                  {tool.latestVersion && !tool.currentVersion && (
+                    <a
+                      href={`${tool.githubUrl}/releases/latest`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] px-1.5 py-0.5 rounded border font-medium bg-blue-500/15 text-blue-400 border-blue-500/30 flex items-center gap-1 hover:bg-blue-500/25 transition-colors"
+                      title={`Latest: ${tool.latestVersion}`}
+                    >
+                      <ArrowUpCircle className="w-2.5 h-2.5" /> {tool.latestVersion}
+                    </a>
                   )}
                   {!tool.isActive && <span className="text-[10px] text-muted-foreground bg-accent/50 px-1.5 py-0.5 rounded">inactive</span>}
                 </div>

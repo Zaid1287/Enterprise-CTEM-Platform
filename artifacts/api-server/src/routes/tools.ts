@@ -247,7 +247,11 @@ function mapTool(t: typeof securityToolsTable.$inferSelect) {
     id: t.id, tenantId: t.tenantId, name: t.name, description: t.description,
     githubUrl: t.githubUrl, category: t.category, runCommand: t.runCommand,
     installCommand: t.installCommand, updateCommand: t.updateCommand, outputFormat: t.outputFormat,
-    isActive: t.isActive, createdBy: t.createdBy, createdAt: t.createdAt.toISOString(),
+    isActive: t.isActive, createdBy: t.createdBy,
+    currentVersion: t.currentVersion ?? null,
+    latestVersion: t.latestVersion ?? null,
+    toolUpdateCheckedAt: t.toolUpdateCheckedAt ? t.toolUpdateCheckedAt.toISOString() : null,
+    createdAt: t.createdAt.toISOString(),
   };
 }
 

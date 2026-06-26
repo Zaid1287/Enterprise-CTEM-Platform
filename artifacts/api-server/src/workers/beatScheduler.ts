@@ -8,9 +8,10 @@
  */
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
-import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable } from "@workspace/db";
+import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable } from "@workspace/db";
 import { and, eq, sql, lte, isNotNull } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
+import { fetchLatestVersion } from "../lib/githubVersionChecker";
 
 let _port = 8080;
 let _intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -383,6 +384,98 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
   }
 }
 
+async function dispatchToolUpdateCheck(): Promise<void> {
+  const SETTING_KEY = "tool_update_last_checked";
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  try {
+    const [setting] = await db
+      .select()
+      .from(platformSettingsTable)
+      .where(eq(platformSettingsTable.key, SETTING_KEY))
+      .limit(1);
+
+    if (setting?.value === todayStr) return;
+
+    const tools = await db
+      .select({
+        id:                 securityToolsTable.id,
+        tenantId:           securityToolsTable.tenantId,
+        name:               securityToolsTable.name,
+        githubUrl:          securityToolsTable.githubUrl,
+        currentVersion:     securityToolsTable.currentVersion,
+        latestVersion:      securityToolsTable.latestVersion,
+        updateCommand:      securityToolsTable.updateCommand,
+      })
+      .from(securityToolsTable);
+
+    const urlToTools = new Map<string, typeof tools>();
+    for (const tool of tools) {
+      if (!tool.githubUrl) continue;
+      const arr = urlToTools.get(tool.githubUrl) ?? [];
+      arr.push(tool);
+      urlToTools.set(tool.githubUrl, arr);
+    }
+
+    let checked = 0;
+    for (const [githubUrl, toolGroup] of urlToTools) {
+      if (checked > 0) await new Promise((r) => setTimeout(r, 1_000));
+      checked++;
+
+      const { latestVersion, error } = await fetchLatestVersion(githubUrl);
+      if (error || !latestVersion) continue;
+
+      const now = new Date();
+
+      for (const tool of toolGroup) {
+        await db
+          .update(securityToolsTable)
+          .set({ latestVersion, toolUpdateCheckedAt: now })
+          .where(eq(securityToolsTable.id, tool.id));
+
+        const prevLatest = tool.latestVersion;
+        if (!latestVersion || latestVersion === prevLatest) continue;
+        if (tool.currentVersion && latestVersion === tool.currentVersion) continue;
+
+        const alertTitle = `Update available: ${tool.name} ${latestVersion}`;
+        const [existing] = await db
+          .select({ id: alertsTable.id })
+          .from(alertsTable)
+          .where(
+            and(
+              eq(alertsTable.tenantId, tool.tenantId),
+              eq(alertsTable.type, "tool_update"),
+              eq(alertsTable.isRead, false),
+              eq(alertsTable.title, alertTitle),
+            ),
+          )
+          .limit(1);
+
+        if (existing) continue;
+
+        await db.insert(alertsTable).values({
+          tenantId:  tool.tenantId,
+          title:     alertTitle,
+          message:   `A new version of ${tool.name} is available (${latestVersion}).${tool.updateCommand ? ` Update command: ${tool.updateCommand}` : " See the tool's GitHub page for update instructions."}`,
+          type:      "tool_update",
+          severity:  "medium",
+        });
+
+        logger.info({ toolName: tool.name, latestVersion, tenantId: tool.tenantId }, "Beat: tool update alert created");
+      }
+    }
+
+    await db
+      .insert(platformSettingsTable)
+      .values({ key: SETTING_KEY, value: todayStr, label: "Tool Update Last Checked", category: "system" })
+      .onConflictDoUpdate({ target: platformSettingsTable.key, set: { value: todayStr } });
+
+    logger.info({ urlsChecked: checked }, "Beat: tool update check complete");
+  } catch (err) {
+    logger.error({ err }, "Beat: tool update check failed");
+  }
+}
+
 async function dispatchDueScans(): Promise<void> {
   try {
     await Promise.all([dispatchDueAssets(), dispatchDueSchedules(), dispatchDueWatchlistDomains()]);
@@ -403,6 +496,7 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     await dispatchDueScans();
     _intervalHandle = setInterval(dispatchDueScans, 60 * 1_000);
     logger.info("Beat scheduler polling started (60 s interval)");
+    setImmediate(() => dispatchToolUpdateCheck().catch(() => {}));
   }, 30_000);
 }
 

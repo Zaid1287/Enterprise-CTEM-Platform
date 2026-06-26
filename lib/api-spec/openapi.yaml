@@ -3250,6 +3250,12 @@ components:
           type: ["string", "null"]
         isActive:
           type: boolean
+        currentVersion:
+          type: ["string", "null"]
+        latestVersion:
+          type: ["string", "null"]
+        toolUpdateCheckedAt:
+          type: ["string", "null"]
         createdBy:
           type: ["integer", "null"]
         createdAt:
