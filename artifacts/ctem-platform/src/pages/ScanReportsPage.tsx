@@ -52,10 +52,11 @@ export default function ScanReportsPage() {
   const { data: scansRaw, isLoading, refetch } = useListScans({} as any, {
     query: {
       queryKey: getListScansQueryKey({} as any),
+      staleTime: 0,
       refetchInterval: (q) => {
         const data = q.state.data as any[];
-        if (data?.some((s: any) => s.status === "running" || s.status === "pending")) return 4000;
-        return false;
+        if (!data || data?.some((s: any) => s.status === "running" || s.status === "pending")) return 4000;
+        return 30_000;
       },
     },
   });

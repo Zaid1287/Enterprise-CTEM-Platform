@@ -884,9 +884,10 @@ export default function BrandThreatDetailPage() {
     query: {
       enabled: !!id,
       queryKey: getGetBrandThreatScanQueryKey(id),
+      staleTime: 0,
       refetchInterval: (query: any) => {
         const d = query?.state?.data as any;
-        if (d?.status === "running" || d?.status === "pending") return 3000;
+        if (!d || d?.status === "running" || d?.status === "pending") return 3000;
         if (d?.favihunterStatus === "running" || d?.favihunterStatus === "pending") return 4000;
         return false;
       },

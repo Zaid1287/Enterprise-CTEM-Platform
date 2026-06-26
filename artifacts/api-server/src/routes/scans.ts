@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable } from "@workspace/db";
 import {
@@ -83,12 +83,18 @@ async function finalizeScannedAssets(assetIds: number[]) {
     score = Math.round(Math.min(100, Math.max(0, score)));
     const level = scoreToLevel(score);
 
+    const cvssComponent = Math.round((avgCvss / 10) * 25 * 10) / 10;
+    const epssComponent = Math.round(maxEpss * 15 * 10) / 10;
+    const kevBonus      = kevCount * 8;
+
     const [existing] = await db.select({ id: riskScoresTable.id })
       .from(riskScoresTable).where(eq(riskScoresTable.assetId, assetId));
     if (existing) {
-      await db.update(riskScoresTable).set({ score, level }).where(eq(riskScoresTable.assetId, assetId));
+      await db.update(riskScoresTable)
+        .set({ score, level, cvssComponent, epssComponent, kevBonus })
+        .where(eq(riskScoresTable.assetId, assetId));
     } else {
-      await db.insert(riskScoresTable).values({ assetId, score, level });
+      await db.insert(riskScoresTable).values({ assetId, score, level, cvssComponent, epssComponent, kevBonus });
     }
 
     await db.update(assetsTable).set({ riskLevel: level }).where(eq(assetsTable.id, assetId));
@@ -107,7 +113,8 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
     if (assignedIds.size === 0) { res.json([]); return; }
     const filters: ReturnType<typeof eq>[] = [eq(scansTable.tenantId, req.user!.tenantId) as any];
     if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status) as any);
-    const allScans = await db.select().from(scansTable).where(and(...filters));
+    const allScans = await db.select().from(scansTable).where(and(...filters))
+      .orderBy(desc(scansTable.createdAt));
     const clientScans = allScans.filter(s =>
       Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => assignedIds.has(id))
     );
@@ -122,7 +129,7 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
       .where(inArray(assetsTable.tenantId, ids));
     const clientAssetIds = clientAssets.map(a => a.id);
     if (clientAssetIds.length === 0) { res.json([]); return; }
-    const allScansRaw = await db.select().from(scansTable);
+    const allScansRaw = await db.select().from(scansTable).orderBy(desc(scansTable.createdAt));
     const amScans = allScansRaw.filter(s =>
       Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => clientAssetIds.includes(id))
     );
@@ -134,7 +141,8 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
   tenantFilter = eq(scansTable.tenantId, req.user!.tenantId);
   const filters = [tenantFilter];
   if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
-  const scans = await db.select().from(scansTable).where(and(...filters));
+  const scans = await db.select().from(scansTable).where(and(...filters))
+    .orderBy(desc(scansTable.createdAt));
   res.json(scans.map(toScanResponse));
 });
 

@@ -62,12 +62,18 @@ export async function finalizeScannedAssets(assetIds: number[]) {
     score = Math.round(Math.min(100, Math.max(0, score)));
     const level = scoreToLevel(score);
 
+    const cvssComponent = Math.round((avgCvss / 10) * 25 * 10) / 10;
+    const epssComponent = Math.round(maxEpss * 15 * 10) / 10;
+    const kevBonus      = kevCount * 8;
+
     const [existing] = await db.select({ id: riskScoresTable.id }).from(riskScoresTable)
       .where(eq(riskScoresTable.assetId, assetId));
     if (existing) {
-      await db.update(riskScoresTable).set({ score, level }).where(eq(riskScoresTable.assetId, assetId));
+      await db.update(riskScoresTable)
+        .set({ score, level, cvssComponent, epssComponent, kevBonus })
+        .where(eq(riskScoresTable.assetId, assetId));
     } else {
-      await db.insert(riskScoresTable).values({ assetId, score, level });
+      await db.insert(riskScoresTable).values({ assetId, score, level, cvssComponent, epssComponent, kevBonus });
     }
     await db.update(assetsTable).set({ riskLevel: level }).where(eq(assetsTable.id, assetId));
   }
