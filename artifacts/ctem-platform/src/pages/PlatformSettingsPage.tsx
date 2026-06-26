@@ -446,7 +446,13 @@ export default function PlatformSettingsPage() {
                         </div>
                         {isComingSoon && (
                           <p className="text-[10px] text-violet-400/70 mt-1">
-                            Scanning support coming soon — you can save this token now so it activates automatically when enabled.
+                            {setting.key === "twitter_x_bearer_token"
+                              ? "Requires a Twitter/X paid developer account (Basic tier or above). Save your token now — scanning activates once the paid tier is enabled."
+                              : setting.key === "instagram_graph_api_token"
+                              ? "Requires Facebook for Business App Review approval before the Graph API can monitor brand content. Save your token now — scanning activates once approved."
+                              : setting.key === "tiktok_research_api_token"
+                              ? "Requires TikTok Research API developer program approval. Save your token now — scanning activates once your application is approved."
+                              : "Scanning support coming soon — save your token now so it activates automatically when enabled."}
                           </p>
                         )}
                       </div>

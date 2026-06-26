@@ -216,10 +216,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
       .orderBy(desc(adMonitoringResultsTable.createdAt)),
     db.select({ value: platformSettingsTable.value })
       .from(platformSettingsTable)
-      .where(and(
-        eq(platformSettingsTable.tenantId, scan.tenantId),
-        eq(platformSettingsTable.key, "meta_ads_access_token"),
-      ))
+      .where(eq(platformSettingsTable.key, "meta_ads_access_token"))
       .limit(1),
   ]);
   const metaAdsChecked = !!(metaAdsSetting[0]?.value);

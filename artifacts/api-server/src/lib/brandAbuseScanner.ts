@@ -417,11 +417,12 @@ async function checkRedditAbuse(
 ): Promise<void> {
   const brandLower = brand.toLowerCase();
   const domainLower = domain.toLowerCase();
-  // Minimum subscribers for a subreddit to be flagged as brand-squatting
-  const SUBREDDIT_SUBSCRIBER_THRESHOLD = 10;
+  // Subreddits with <1 000 subscribers that contain the brand name are squatting suspects.
+  // Large well-established communities (>1 000 subs) whose name exactly equals the brand
+  // are more likely the legitimate community, so we skip them.
+  const SQUATTING_SUBSCRIBER_MAX = 1_000;
 
-  // Step 1: Search for subreddits (communities) whose name contains the brand
-  // This catches brand-squatting subreddits like r/brandnameofficial, r/realbrandname etc.
+  // Step 1: Search for subreddits whose name contains the brand (community squatting)
   try {
     const srRes = await fetch(
       `https://www.reddit.com/subreddits/search.json?q=${encodeURIComponent(brand)}&type=sr&limit=25`,
@@ -445,26 +446,28 @@ async function checkRedditAbuse(
         const nameLower = sr.display_name.toLowerCase();
         const titleLower = (sr.title ?? "").toLowerCase();
         const descLower = (sr.public_description ?? "").toLowerCase();
-        // Only flag subreddits whose name contains the brand name (community squatting)
+        // Only flag subreddits whose name contains the brand name
         if (!nameLower.includes(brandLower)) continue;
-        // Skip if it IS exactly the brand name with no modifiers and has many subscribers
-        // (may be the official brand community)
-        const isExactName = nameLower === brandLower;
-        if (isExactName && sr.subscribers > 10_000) continue;
-        // Must have at least a few subscribers to be worth flagging
-        if (sr.subscribers < SUBREDDIT_SUBSCRIBER_THRESHOLD) continue;
+        // Skip established communities (exact brand name match + >1 000 subscribers)
+        if (nameLower === brandLower && sr.subscribers > SQUATTING_SUBSCRIBER_MAX) continue;
+        // Must have at least 1 subscriber to avoid ghost subreddits
+        if (sr.subscribers < 1) continue;
         const claimsOfficial =
-          descLower.includes("official") ||
-          titleLower.includes("official") ||
           nameLower.includes("official") ||
-          nameLower.includes("real");
-        const risk = claimsOfficial && !isExactName ? "high" : "medium";
+          nameLower.includes("real") ||
+          titleLower.includes("official") ||
+          descLower.includes("official") ||
+          descLower.includes("this is the official");
+        // Flag if: subscriber count is low (<1 000) OR explicitly claims to be official
+        const isSquatting = sr.subscribers < SQUATTING_SUBSCRIBER_MAX || claimsOfficial;
+        if (!isSquatting) continue;
+        const risk = claimsOfficial ? "high" : "medium";
         out.push({
           type: "fake_social",
           platform: "Reddit",
           url: `https://www.reddit.com${sr.url}`,
           title: `r/${sr.display_name}`,
-          description: `Subreddit r/${sr.display_name} uses brand name "${brand}" in its community name${claimsOfficial ? " and claims to be official" : ""} — may be brand-squatting. ${sr.subscribers.toLocaleString()} subscribers.`,
+          description: `Subreddit r/${sr.display_name} uses brand name "${brand}" in its community name${claimsOfficial ? " and claims to be official" : ""} — possible brand-squatting community. ${sr.subscribers.toLocaleString()} subscribers.`,
           evidenceSnippet: `subscribers: ${sr.subscribers}; title: "${sr.title}"; official claim: ${claimsOfficial}`,
           risk,
         });
