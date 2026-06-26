@@ -257,10 +257,12 @@ async function checkGooglePlayStore(
 
     for (const app of apps) {
       const titleLower: string = (app.title ?? "").toLowerCase();
+      const descLower: string  = (app.summary ?? app.description ?? "").toLowerCase();
       const devLower: string   = (app.developer ?? "").toLowerCase();
       const pkgId: string      = (app.appId ?? app.packageName ?? "");
 
-      if (!titleLower.includes(brandLower)) continue;
+      // Flag if brand appears in title OR description (required detection predicate)
+      if (!titleLower.includes(brandLower) && !descLower.includes(brandLower)) continue;
 
       // Heuristic: skip if developer name contains brand (likely official)
       if (devLower.includes(brandLower) || devLower.includes(brandSlug)) continue;
@@ -413,16 +415,17 @@ async function checkAptoide(
     // API v7 returns { datalist: { list: [...] } }
     const apps: any[] = data?.datalist?.list ?? data?.list ?? [];
 
+    const brandSlugAptoide = brandLower.replace(/\s+/g, "");
+
     for (const app of apps) {
       const appName: string = (app.name ?? app.package ?? "").toLowerCase();
-      const devName: string = (
-        app.developer?.name ?? app.developer?.id ??
-        app.store?.name ?? ""
-      ).toLowerCase();
       const pkgId: string = app.package ?? "";
 
       if (!appName.includes(brandLower)) continue;
-      if (devName.includes(brandLower)) continue;
+
+      // Required predicate: exclude when package ID contains brand slug (likely official app)
+      const pkgLower = pkgId.toLowerCase();
+      if (pkgLower.includes(brandSlugAptoide) || pkgLower.includes(brandLower.replace(/\s+/g, "."))) continue;
 
       const downloads: number | undefined = app.stats?.downloads ?? app.stats?.pdownloads;
       const rating: number | undefined = app.stats?.rating?.avg;
@@ -473,8 +476,8 @@ async function checkSamsungGalaxyStore(
     if (!res.ok) return;
 
     const data = await res.json() as any;
-    // Response shape: { list: [...] } or { content: [...] } or { contents: [...] }
-    const apps: any[] = data?.list ?? data?.content ?? data?.contents ?? (Array.isArray(data) ? data : []);
+    // Galaxy Store search response uses contentList as the primary key
+    const apps: any[] = data?.contentList ?? data?.list ?? data?.content ?? data?.contents ?? (Array.isArray(data) ? data : []);
 
     for (const app of apps.slice(0, 20)) {
       // Field names vary across store API versions
@@ -524,9 +527,10 @@ async function checkHuaweiAppGallery(
   try {
     const brandLower = brand.toLowerCase();
 
-    // Huawei AppGallery — try JSON API, then parse any embedded JSON from HTML fallback
+    // Huawei AppGallery — apigw search endpoint used by the web portal
+    // Response shape: { layoutData: [{ dataList: [...] }] } or fallback shapes
     const hwRes = await fetch(
-      `https://appgallery.cloud.huawei.com/bo/search/freeKeywordSearch?keyword=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
+      `https://appgallery.cloud.huawei.com/apigw/search/keyword?keyword=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
       {
         headers: {
           "User-Agent": "Mozilla/5.0 (Linux; Android 12; HarmonyOS) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
@@ -542,27 +546,16 @@ async function checkHuaweiAppGallery(
     const rawText = await hwRes.text();
     let apps: any[] = [];
 
-    // Attempt 1: parse as JSON directly
+    // Parse response as JSON if possible
     const contentType = hwRes.headers.get("content-type") ?? "";
     if (contentType.includes("application/json") || rawText.trimStart().startsWith("{") || rawText.trimStart().startsWith("[")) {
       try {
         const data = JSON.parse(rawText) as any;
-        apps = data?.data?.apps ?? data?.apps ?? data?.list ?? (Array.isArray(data) ? data : []);
+        // Primary shape: { layoutData: [{ dataList: [...] }] }
+        // Fallback shapes: { data: { apps: [...] } } | { apps: [...] } | { list: [...] }
+        apps = data?.layoutData?.[0]?.dataList ?? data?.data?.apps ?? data?.apps ?? data?.list ?? (Array.isArray(data) ? data : []);
       } catch {
         apps = [];
-      }
-    }
-
-    // Attempt 2: HTML fallback — look for embedded __INITIAL_DATA__ / window.__data__ JSON
-    if (apps.length === 0 && rawText.includes("<html")) {
-      const jsonMatch = rawText.match(/window\.__(?:INITIAL_DATA|data|state)__\s*=\s*(\{[\s\S]+?\})(?:\s*;|\s*<\/script>)/i);
-      if (jsonMatch) {
-        try {
-          const embedded = JSON.parse(jsonMatch[1]!) as any;
-          apps = embedded?.data?.apps ?? embedded?.apps ?? embedded?.list ?? [];
-        } catch {
-          apps = [];
-        }
       }
     }
 
@@ -819,12 +812,13 @@ async function checkJailbreakRepos(
     logger.debug(`Chariz jailbreak check failed for ${brand}: ${e.message}`);
   }
 
-  // ── 3. Sileo repo aggregator (ios-repo-updates.com) ──────────────────────
-  // ios-repo-updates.com indexes hundreds of Sileo/Cydia repos and exposes a
-  // REST search API covering BigBoss, Chariz, Havoc, Zebra, and many more.
+  // ── 3. Sileo — Canister.me search API ────────────────────────────────────
+  // Canister.me is the official Sileo community package search service,
+  // indexing the repos that Sileo itself queries. Response:
+  //   { status: "Successful", data: [{ package, name, author, latestVersion, repository, ... }] }
   try {
-    const sileoPkgRes = await fetch(
-      `https://api.ios-repo-updates.com/api/1/packages/?search=${encodeURIComponent(brand)}`,
+    const canisterRes = await fetch(
+      `https://api.canister.me/v1/community/packages/search?q=${encodeURIComponent(brand)}&count=25`,
       {
         headers: {
           "User-Agent": "Sileo/2.4 Darwin/21.0.0",
@@ -833,10 +827,10 @@ async function checkJailbreakRepos(
         signal: AbortSignal.timeout(10_000),
       },
     );
-    if (sileoPkgRes.ok) {
-      const sileoPkgData = await sileoPkgRes.json() as any;
-      // Response: { data: [...] }  or  { packages: [...] }  or top-level array
-      const packages: any[] = sileoPkgData?.data ?? sileoPkgData?.packages ?? (Array.isArray(sileoPkgData) ? sileoPkgData : []);
+    if (canisterRes.ok) {
+      const canisterData = await canisterRes.json() as any;
+      // Response: { status: "Successful", data: [...] }
+      const packages: any[] = canisterData?.data ?? (Array.isArray(canisterData) ? canisterData : []);
 
       let sileoCount = 0;
       for (const pkg of packages.slice(0, 50)) {
@@ -844,7 +838,7 @@ async function checkJailbreakRepos(
         const pkgName: string  = (pkg.name ?? pkg.package ?? "").toLowerCase();
         const pkgId: string    = pkg.package ?? pkg.id ?? "";
         const author: string   = (pkg.author ?? pkg.maintainer ?? "").toLowerCase();
-        const repoName: string = pkg.repository?.name ?? pkg.repo ?? "Sileo repo";
+        const repoName: string = pkg.repository?.name ?? pkg.repositorySlug ?? "Sileo repo";
 
         if (!pkgName.includes(brandLower)) continue;
         if (author.includes(brandLower)) continue;
@@ -852,10 +846,10 @@ async function checkJailbreakRepos(
         out.push({
           type: "rogue_app",
           platform: "Cydia/Sileo",
-          url: pkg.depiction ?? pkg.url ?? `https://ios-repo-updates.com/package/${encodeURIComponent(pkgId)}`,
+          url: pkg.depiction ?? `https://canister.me/package/${encodeURIComponent(pkgId)}`,
           title: `Jailbreak package using brand name: ${pkg.name ?? pkgId}`,
-          description: `Package '${pkg.name ?? pkgId}' found in the '${repoName}' Sileo/Cydia repository using brand name '${brand}'. Jailbreak packages are not signed and can modify or impersonate official apps.`,
-          evidenceSnippet: `Package ID: ${pkgId}, Repo: ${repoName}, Author: ${pkg.author ?? "unknown"}, Version: ${pkg.version ?? "unknown"}`,
+          description: `Package '${pkg.name ?? pkgId}' found in the '${repoName}' Sileo repository via Canister.me search using brand name '${brand}'. Jailbreak packages are not code-signed and can modify or impersonate official apps.`,
+          evidenceSnippet: `Package ID: ${pkgId}, Repo: ${repoName}, Author: ${pkg.author ?? "unknown"}, Version: ${pkg.latestVersion ?? "unknown"}`,
           installCount: null,
           iconUrl: pkg.icon ?? null,
           risk: "high",
@@ -864,7 +858,7 @@ async function checkJailbreakRepos(
       }
     }
   } catch (e: any) {
-    logger.debug(`Sileo aggregator check failed for ${brand}: ${e.message}`);
+    logger.debug(`Sileo (Canister) check failed for ${brand}: ${e.message}`);
   }
 }
 
