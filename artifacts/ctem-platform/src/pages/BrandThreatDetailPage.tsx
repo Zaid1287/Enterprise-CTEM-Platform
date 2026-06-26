@@ -329,6 +329,8 @@ const PLATFORM_META: Record<string, { color: string; bg: string; border: string 
   "Amazon Appstore":        { color: "text-yellow-400",  bg: "bg-yellow-500/10",  border: "border-yellow-500/25" },
   "Cydia/Sileo (Chariz)":   { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25" },
   "Cydia/Sileo (Havoc)":    { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25" },
+  "Cydia/Sileo (BigBoss)":  { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25" },
+  "Cydia/Sileo":            { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25" },
   "Certificate Transparency": { color: "text-violet-400", bg: "bg-violet-500/10", border: "border-violet-500/25" },
   "DNS":                    { color: "text-blue-400",    bg: "bg-blue-500/10",    border: "border-blue-500/25" },
   "YouTube":                { color: "text-red-400",     bg: "bg-red-500/10",     border: "border-red-500/25" },
@@ -342,7 +344,7 @@ const PLATFORM_META: Record<string, { color: string; bg: string; border: string 
 const APP_STORE_PLATFORMS = new Set([
   "Google Play Store", "Apple App Store", "APKPure", "Aptoide",
   "Samsung Galaxy Store", "Huawei AppGallery", "Amazon Appstore",
-  "Cydia/Sileo (Chariz)", "Cydia/Sileo (Havoc)",
+  "Cydia/Sileo (Chariz)", "Cydia/Sileo (Havoc)", "Cydia/Sileo (BigBoss)", "Cydia/Sileo",
 ]);
 
 function PlatformBadge({ platform }: { platform: string }) {
@@ -403,7 +405,7 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
   const PLATFORM_ORDER = [
     "Google Play Store", "Apple App Store", "APKPure", "Aptoide",
     "Samsung Galaxy Store", "Huawei AppGallery", "Amazon Appstore",
-    "Cydia/Sileo (Chariz)", "Cydia/Sileo (Havoc)",
+    "Cydia/Sileo (BigBoss)", "Cydia/Sileo (Chariz)", "Cydia/Sileo (Havoc)", "Cydia/Sileo",
   ];
   const sortedPlatforms = [
     ...PLATFORM_ORDER.filter(p => appsByPlatform[p]),

@@ -397,8 +397,9 @@ async function checkAptoide(
   try {
     const brandLower = brand.toLowerCase();
 
-    // Aptoide public REST API v7 — search endpoint uses query-string params (not path params)
-    const searchUrl = `https://ws75.aptoide.com/api/7/apps/search?q=${encodeURIComponent(brand)}&limit=25&sort=downloads`;
+    // Aptoide public REST API v7 — path-style parameters on ws2 host
+    // Correct format: /api/7/apps/search/query/{TERM}/limit/{N}[/sort/{field}]
+    const searchUrl = `https://ws2.aptoide.com/api/7/apps/search/query/${encodeURIComponent(brand)}/limit/25`;
     const res = await fetch(searchUrl, {
       headers: {
         "User-Agent": "Aptoide/9.20.6.1 (Linux; Android 12)",
@@ -457,10 +458,9 @@ async function checkSamsungGalaxyStore(
   try {
     const brandLower = brand.toLowerCase();
 
-    // Samsung Galaxy Store — public partner API for app search
-    // Documented endpoint: /api/search/apps with JSON response
+    // Samsung Galaxy Store — keyword search endpoint used by the web portal
     const res = await fetch(
-      `https://galaxystore.samsung.com/api/search/apps?searchTxt=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
+      `https://galaxystore.samsung.com/api/detail/getSearchKeywordContent?searchTxt=${encodeURIComponent(brand)}&contentType=app&cpStatus=0&startIndex=0&endIndex=20&language=EN&country=US`,
       {
         headers: {
           "User-Agent": "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
@@ -473,8 +473,8 @@ async function checkSamsungGalaxyStore(
     if (!res.ok) return;
 
     const data = await res.json() as any;
-    // Response shape: { content: [...] } or { contents: [...] } or top-level array
-    const apps: any[] = data?.content ?? data?.contents ?? (Array.isArray(data) ? data : []);
+    // Response shape: { list: [...] } or { content: [...] } or { contents: [...] }
+    const apps: any[] = data?.list ?? data?.content ?? data?.contents ?? (Array.isArray(data) ? data : []);
 
     for (const app of apps.slice(0, 20)) {
       // Field names vary across store API versions
@@ -524,8 +524,8 @@ async function checkHuaweiAppGallery(
   try {
     const brandLower = brand.toLowerCase();
 
-    // Huawei AppGallery cloud search API (used by the AppGallery web portal)
-    const res = await fetch(
+    // Huawei AppGallery — try JSON API, then parse any embedded JSON from HTML fallback
+    const hwRes = await fetch(
       `https://appgallery.cloud.huawei.com/bo/search/freeKeywordSearch?keyword=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
       {
         headers: {
@@ -537,14 +537,34 @@ async function checkHuaweiAppGallery(
         signal: AbortSignal.timeout(12_000),
       },
     );
-    if (!res.ok) return;
-    const data = await res.json() as any;
+    if (!hwRes.ok) return;
 
-    // Response shapes across API versions:
-    //   { code: 0, data: { apps: [...] } }  — most common
-    //   { apps: [...] }
-    //   { list: [...] }
-    const apps: any[] = data?.data?.apps ?? data?.apps ?? data?.list ?? [];
+    const rawText = await hwRes.text();
+    let apps: any[] = [];
+
+    // Attempt 1: parse as JSON directly
+    const contentType = hwRes.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json") || rawText.trimStart().startsWith("{") || rawText.trimStart().startsWith("[")) {
+      try {
+        const data = JSON.parse(rawText) as any;
+        apps = data?.data?.apps ?? data?.apps ?? data?.list ?? (Array.isArray(data) ? data : []);
+      } catch {
+        apps = [];
+      }
+    }
+
+    // Attempt 2: HTML fallback — look for embedded __INITIAL_DATA__ / window.__data__ JSON
+    if (apps.length === 0 && rawText.includes("<html")) {
+      const jsonMatch = rawText.match(/window\.__(?:INITIAL_DATA|data|state)__\s*=\s*(\{[\s\S]+?\})(?:\s*;|\s*<\/script>)/i);
+      if (jsonMatch) {
+        try {
+          const embedded = JSON.parse(jsonMatch[1]!) as any;
+          apps = embedded?.data?.apps ?? embedded?.apps ?? embedded?.list ?? [];
+        } catch {
+          apps = [];
+        }
+      }
+    }
 
     for (const app of apps.slice(0, 20)) {
       const appName: string = (app.appName ?? app.name ?? "").toLowerCase();
