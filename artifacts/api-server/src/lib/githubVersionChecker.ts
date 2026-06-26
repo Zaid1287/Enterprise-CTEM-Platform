@@ -7,14 +7,18 @@ function extractRepoPath(githubUrl: string): string | null {
   return match ? match[1]!.replace(/\.git$/, "") : null;
 }
 
-export interface VersionCheckResult {
-  latestVersion: string | null;
-  error?: string;
+function stripLeadingV(tag: string): string {
+  return tag.replace(/^v/i, "").trim();
 }
 
-export async function fetchLatestVersion(githubUrl: string): Promise<VersionCheckResult> {
+/**
+ * Fetch the latest release/tag version for a GitHub repo URL.
+ * Returns the version string with any leading 'v' stripped (e.g. "1.2.3"),
+ * or null if the repo has no releases/tags or the URL is not a GitHub URL.
+ */
+export async function fetchLatestVersion(githubUrl: string): Promise<string | null> {
   const repo = extractRepoPath(githubUrl);
-  if (!repo) return { latestVersion: null, error: "Not a GitHub URL" };
+  if (!repo) return null;
 
   try {
     const relRes = await fetch(`${GITHUB_API}/repos/${repo}/releases/latest`, {
@@ -23,7 +27,7 @@ export async function fetchLatestVersion(githubUrl: string): Promise<VersionChec
     });
     if (relRes.ok) {
       const data = await relRes.json() as { tag_name?: string };
-      if (data.tag_name) return { latestVersion: data.tag_name };
+      if (data.tag_name) return stripLeadingV(data.tag_name);
     }
 
     const tagsRes = await fetch(`${GITHUB_API}/repos/${repo}/tags?per_page=1`, {
@@ -32,12 +36,12 @@ export async function fetchLatestVersion(githubUrl: string): Promise<VersionChec
     });
     if (tagsRes.ok) {
       const tags = await tagsRes.json() as { name: string }[];
-      if (tags.length > 0) return { latestVersion: tags[0]!.name };
+      if (tags.length > 0) return stripLeadingV(tags[0]!.name);
     }
 
-    return { latestVersion: null, error: "No releases or tags found" };
+    return null;
   } catch (err: any) {
     logger.warn({ repo, err: err?.message }, "GitHub version check failed");
-    return { latestVersion: null, error: String(err?.message ?? err) };
+    return null;
   }
 }

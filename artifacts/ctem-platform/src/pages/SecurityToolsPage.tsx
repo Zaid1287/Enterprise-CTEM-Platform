@@ -578,7 +578,7 @@ export default function SecurityToolsPage() {
                       {tool.currentVersion}
                     </span>
                   )}
-                  {tool.latestVersion && tool.currentVersion && tool.latestVersion !== tool.currentVersion && (
+                  {tool.latestVersion && tool.currentVersion && tool.latestVersion.replace(/^v/i,'') !== tool.currentVersion.replace(/^v/i,'') && (
                     <a
                       href={`${tool.githubUrl}/releases/latest`}
                       target="_blank"

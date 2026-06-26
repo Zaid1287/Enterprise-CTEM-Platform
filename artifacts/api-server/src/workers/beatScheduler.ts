@@ -16,6 +16,7 @@ import { pushSseEvent } from "../lib/sseManager";
 
 let _port = 8080;
 let _intervalHandle: ReturnType<typeof setInterval> | null = null;
+let _toolUpdateCheckRunning = false;
 
 function isDue(asset: { scanFrequency: string; lastScannedAt: Date | null }): boolean {
   if (asset.scanFrequency === "manual" || asset.scanFrequency === "once") return false;
@@ -385,11 +386,10 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
   }
 }
 
-function normalizeVersion(v: string): string {
-  return v.replace(/^v/i, "").trim();
-}
-
 async function dispatchToolUpdateCheck(): Promise<void> {
+  // In-memory lock prevents overlapping runs when the check takes >60s
+  if (_toolUpdateCheckRunning) return;
+
   const SETTING_KEY = "tool_update_last_checked";
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -400,7 +400,16 @@ async function dispatchToolUpdateCheck(): Promise<void> {
       .where(eq(platformSettingsTable.key, SETTING_KEY))
       .limit(1);
 
+    // Skip if already completed today
     if (setting?.value === todayStr) return;
+
+    _toolUpdateCheckRunning = true;
+
+    // Write in-progress marker immediately so concurrent ticks skip this pass
+    await db
+      .insert(platformSettingsTable)
+      .values({ key: SETTING_KEY, value: `${todayStr}:running`, label: "Tool Update Last Checked", category: "system" })
+      .onConflictDoUpdate({ target: platformSettingsTable.key, set: { value: `${todayStr}:running` } });
 
     const tools = await db
       .select({
@@ -414,7 +423,7 @@ async function dispatchToolUpdateCheck(): Promise<void> {
       })
       .from(securityToolsTable);
 
-    // Group by GitHub URL to make one API call per repo (not per tool/tenant)
+    // Group by GitHub URL — one API call per repo (handles multiple tenants/tools sharing same URL)
     const urlToTools = new Map<string, typeof tools>();
     for (const tool of tools) {
       if (!tool.githubUrl) continue;
@@ -428,11 +437,11 @@ async function dispatchToolUpdateCheck(): Promise<void> {
       if (checked > 0) await new Promise((r) => setTimeout(r, 1_000));
       checked++;
 
-      const { latestVersion, error } = await fetchLatestVersion(githubUrl);
-      if (error || !latestVersion) continue;
+      // fetchLatestVersion returns pre-normalized version (leading 'v' stripped)
+      const latestVersion = await fetchLatestVersion(githubUrl);
+      if (!latestVersion) continue;
 
       const now = new Date();
-      const normalizedLatest = normalizeVersion(latestVersion);
 
       for (const tool of toolGroup) {
         await db
@@ -440,16 +449,16 @@ async function dispatchToolUpdateCheck(): Promise<void> {
           .set({ latestVersion, toolUpdateCheckedAt: now })
           .where(eq(securityToolsTable.id, tool.id));
 
-        // Only alert when version is genuinely newer (different after stripping 'v')
-        const normalizedCurrent = tool.currentVersion ? normalizeVersion(tool.currentVersion) : null;
-        const normalizedPrevLatest = tool.latestVersion ? normalizeVersion(tool.latestVersion) : null;
+        // Normalize stored versions the same way (strip leading 'v') for comparison
+        const prevLatest   = tool.latestVersion  ? tool.latestVersion.replace(/^v/i, "")  : null;
+        const installedVer = tool.currentVersion ? tool.currentVersion.replace(/^v/i, "") : null;
 
-        // Skip if latestVersion is the same as what we already have stored
-        if (normalizedLatest === normalizedPrevLatest) continue;
-        // Skip if current installed version already matches
-        if (normalizedCurrent && normalizedCurrent === normalizedLatest) continue;
+        // Skip if nothing changed from last known latest
+        if (latestVersion === prevLatest) continue;
+        // Skip if user has already installed this version
+        if (installedVer && installedVer === latestVersion) continue;
 
-        const alertTitle = `Tool update available: ${tool.name} ${latestVersion}`;
+        const alertTitle  = `Tool update available: ${tool.name} ${latestVersion}`;
         const releasesUrl = `${githubUrl.replace(/\.git$/, "")}/releases/latest`;
 
         const [existing] = await db
@@ -470,7 +479,7 @@ async function dispatchToolUpdateCheck(): Promise<void> {
         const [alert] = await db.insert(alertsTable).values({
           tenantId:  tool.tenantId,
           title:     alertTitle,
-          message:   `A new version of ${tool.name} is available (${latestVersion}).${normalizedCurrent ? ` Installed: ${tool.currentVersion}.` : ""} View release notes and update instructions at ${releasesUrl}${tool.updateCommand ? ` — or run: ${tool.updateCommand}` : ""}.`,
+          message:   `A new version of ${tool.name} is available (${latestVersion}).${installedVer ? ` Installed: ${tool.currentVersion}.` : ""} View release notes at ${releasesUrl}${tool.updateCommand ? ` — or run: ${tool.updateCommand}` : ""}.`,
           type:      "tool_update",
           severity:  "medium",
         }).returning();
@@ -487,6 +496,7 @@ async function dispatchToolUpdateCheck(): Promise<void> {
       }
     }
 
+    // Mark complete for today
     await db
       .insert(platformSettingsTable)
       .values({ key: SETTING_KEY, value: todayStr, label: "Tool Update Last Checked", category: "system" })
@@ -495,6 +505,8 @@ async function dispatchToolUpdateCheck(): Promise<void> {
     logger.info({ urlsChecked: checked }, "Beat: tool update check complete");
   } catch (err) {
     logger.error({ err }, "Beat: tool update check failed");
+  } finally {
+    _toolUpdateCheckRunning = false;
   }
 }
 
