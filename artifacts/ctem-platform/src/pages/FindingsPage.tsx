@@ -451,7 +451,12 @@ export default function FindingsPage() {
   };
 
   const { data: findings, isLoading } = useListFindings(params as any, {
-    query: { queryKey: getListFindingsQueryKey(params as any) },
+    query: {
+      queryKey: getListFindingsQueryKey(params as any),
+      staleTime: 0,
+      refetchOnWindowFocus: true,
+      refetchInterval: 30_000,
+    },
   });
 
   const list = (findings as any[]) ?? [];

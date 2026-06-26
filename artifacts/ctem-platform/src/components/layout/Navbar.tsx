@@ -3,7 +3,8 @@ import { useLocation, Link } from "wouter";
 import { Bell, LogOut, ChevronDown, User } from "lucide-react";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { useAuth } from "@/hooks/useAuth";
-import { useListAlerts, useLogout } from "@workspace/api-client-react";
+import { useListAlerts, useLogout, getListAlertsQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,7 +39,14 @@ export function Navbar() {
   const { user, logout, isAuthenticated } = useAuth();
   const logoutMutation = useLogout();
 
-  const { data: alerts } = useListAlerts();
+  const queryClient = useQueryClient();
+  const { data: alerts } = useListAlerts({} as any, {
+    query: {
+      queryKey: getListAlertsQueryKey({} as any),
+      refetchInterval: 15_000,
+      staleTime: 0,
+    },
+  });
   const baseUnread = Array.isArray(alerts) ? alerts.filter((a: any) => !a.isRead).length : 0;
   const [sseExtra, setSseExtra] = useState(0);
   const esRef = useRef<EventSource | null>(null);
@@ -55,6 +63,7 @@ export function Navbar() {
 
     es.addEventListener("new-alert", () => {
       setSseExtra(n => n + 1);
+      queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
     });
 
     es.onerror = () => {
@@ -66,7 +75,15 @@ export function Navbar() {
       es.close();
       esRef.current = null;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, queryClient]);
+
+  // Reset SSE counter and re-fetch when user visits the alerts page
+  useEffect(() => {
+    if (location === "/alerts") {
+      setSseExtra(0);
+      queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
+    }
+  }, [location, queryClient]);
 
   const unreadCount = baseUnread + sseExtra;
 

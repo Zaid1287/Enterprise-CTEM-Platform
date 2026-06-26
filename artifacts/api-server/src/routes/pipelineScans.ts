@@ -2821,7 +2821,9 @@ router.get("/scans/:scanId/progress", requireAuth, async (req: AuthenticatedRequ
   if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scan ID" }); return; }
   const scan = await db.select({ tenantId: scansTable.tenantId, status: scansTable.status }).from(scansTable)
     .where(eq(scansTable.id, scanId)).then(r => r[0]);
-  if (!scan || scan.tenantId !== req.user!.tenantId) { res.status(404).json({ error: "Scan not found" }); return; }
+  const role = req.user!.role;
+  const isPrivileged = role === "super_admin" || role === "admin" || role === "manager";
+  if (!scan || (!isPrivileged && scan.tenantId !== req.user!.tenantId)) { res.status(404).json({ error: "Scan not found" }); return; }
   const progress = scanProgressMap.get(scanId) ?? [];
   const pos = queuePosition(scanId);
   // Attach queue metadata as a synthetic first entry when scan is waiting
@@ -2933,18 +2935,27 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
   const parsed = GetScanAssetReportParams.safeParse({ scanId: Number(req.params.scanId) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid scan ID" }); return; }
   const { scanId } = parsed.data;
-  const tenantId = req.user!.tenantId;
+  const callerTenantId = req.user!.tenantId;
+  const role = req.user!.role;
+  const isPrivileged = role === "super_admin" || role === "admin" || role === "manager";
 
-  const scan = await db.select().from(scansTable)
-    .where(and(eq(scansTable.id, scanId), eq(scansTable.tenantId, tenantId))).then(r => r[0]);
+  // Privileged users (admin/SA/manager) can view scans across tenants — important when they
+  // run a pipeline scan against a client's asset (scan stored under the client's tenantId).
+  const scan = isPrivileged
+    ? await db.select().from(scansTable).where(eq(scansTable.id, scanId)).then(r => r[0])
+    : await db.select().from(scansTable)
+        .where(and(eq(scansTable.id, scanId), eq(scansTable.tenantId, callerTenantId))).then(r => r[0]);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+
+  // Use the scan's actual tenantId for tool/result lookups
+  const tenantId = isPrivileged ? scan.tenantId : callerTenantId;
 
   // Fetch all enabled tools for this tenant so we know which tools were configured
   const enabledToolRecords = await db
     .select({ name: securityToolsTable.name, category: securityToolsTable.category })
     .from(toolPipelineStepsTable)
     .innerJoin(securityToolsTable, eq(toolPipelineStepsTable.toolId, securityToolsTable.id))
-    .where(and(eq(toolPipelineStepsTable.tenantId, tenantId), eq(toolPipelineStepsTable.isEnabled, true)));
+    .where(and(eq(toolPipelineStepsTable.tenantId, callerTenantId), eq(toolPipelineStepsTable.isEnabled, true)));
   const configuredTools = enabledToolRecords.map(t => ({
     name: t.name,
     phase: TOOL_PHASE[t.name] ?? 1,
@@ -2953,7 +2964,9 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
   })).sort((a, b) => a.phase - b.phase);
 
   const scanResults = await db.select().from(scanAssetResultsTable)
-    .where(and(eq(scanAssetResultsTable.scanId, scanId), eq(scanAssetResultsTable.tenantId, tenantId)));
+    .where(isPrivileged
+      ? eq(scanAssetResultsTable.scanId, scanId)
+      : and(eq(scanAssetResultsTable.scanId, scanId), eq(scanAssetResultsTable.tenantId, tenantId)));
   if (scanResults.length === 0) { res.json([]); return; }
 
   const aIds = [...new Set(scanResults.map(r => r.assetId))];

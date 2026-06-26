@@ -6,7 +6,7 @@ import {
   getListAlertsQueryKey, getListAlertRulesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity } from "lucide-react";
+import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const ARCHIVE_PAGE_SIZE = 20;
 
 function AlertTypeIcon({ type, className }: { type: string; className?: string }) {
   const cls = className ?? "w-4 h-4 shrink-0";
@@ -49,6 +50,7 @@ export default function AlertsPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [severityFilter, setSeverityFilter] = useState("");
+  const [archivePage, setArchivePage] = useState(0);
   const [showCreateRule, setShowCreateRule] = useState(false);
   const [ruleForm, setRuleForm] = useState({ name: "", triggerType: "new_finding", channel: "email", destination: "" });
   const [testStates, setTestStates] = useState<Record<number, TestState>>({});
@@ -56,7 +58,11 @@ export default function AlertsPage() {
 
   const alertParams = { severity: severityFilter || undefined };
   const { data: alerts, isLoading } = useListAlerts(alertParams as any, {
-    query: { queryKey: getListAlertsQueryKey(alertParams as any) },
+    query: {
+      queryKey: getListAlertsQueryKey(alertParams as any),
+      refetchInterval: 15_000,
+      staleTime: 0,
+    },
   });
   const { data: rules } = useListAlertRules({
     query: { queryKey: getListAlertRulesQueryKey() },
@@ -68,6 +74,13 @@ export default function AlertsPage() {
 
   const markRead = async (id: number) => {
     await updateAlert.mutateAsync({ alertId: id, data: { isRead: true } });
+    queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
+  };
+
+  const markAllRead = async () => {
+    for (const a of unreadAlerts) {
+      await updateAlert.mutateAsync({ alertId: a.id, data: { isRead: true } });
+    }
     queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
   };
 
@@ -111,25 +124,57 @@ export default function AlertsPage() {
   };
 
   const alertList = alerts as any[] ?? [];
-  const unread = alertList.filter((a: any) => !a.isRead).length;
+  const unreadAlerts = alertList.filter((a: any) => !a.isRead);
+  const archivedAlerts = alertList.filter((a: any) => a.isRead);
+  const unreadCount = unreadAlerts.length;
+
+  const filteredUnread = severityFilter
+    ? unreadAlerts.filter((a: any) => a.severity === severityFilter)
+    : unreadAlerts;
+  const filteredArchive = severityFilter
+    ? archivedAlerts.filter((a: any) => a.severity === severityFilter)
+    : archivedAlerts;
+
+  const archiveTotalPages = Math.max(1, Math.ceil(filteredArchive.length / ARCHIVE_PAGE_SIZE));
+  const archivePaged = filteredArchive.slice(archivePage * ARCHIVE_PAGE_SIZE, (archivePage + 1) * ARCHIVE_PAGE_SIZE);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Alerts</h1>
-          <p className="text-sm text-muted-foreground">{unread} unread of {alertList.length} total</p>
+          <p className="text-sm text-muted-foreground">
+            {unreadCount} unread · {archivedAlerts.length} archived
+          </p>
         </div>
       </div>
 
       <Tabs defaultValue="inbox">
         <TabsList className="h-8">
-          <TabsTrigger value="inbox" className="text-xs">Inbox</TabsTrigger>
+          <TabsTrigger value="inbox" className="text-xs gap-1.5">
+            <Inbox className="w-3 h-3" />
+            Inbox
+            {unreadCount > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none">
+                {unreadCount}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="archive" className="text-xs gap-1.5">
+            <Archive className="w-3 h-3" />
+            Archive
+            {archivedAlerts.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-semibold leading-none">
+                {archivedAlerts.length}
+              </span>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="rules" className="text-xs">Alert Rules</TabsTrigger>
         </TabsList>
 
+        {/* ── Inbox — unread alerts ─────────────────────────────── */}
         <TabsContent value="inbox" className="space-y-3 mt-3">
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <Select value={severityFilter || "_all_"} onValueChange={(v) => setSeverityFilter(v === "_all_" ? "" : v)}>
               <SelectTrigger className="w-32 h-7 text-xs"><SelectValue placeholder="All severity" /></SelectTrigger>
               <SelectContent>
@@ -140,33 +185,29 @@ export default function AlertsPage() {
                 <SelectItem value="low">Low</SelectItem>
               </SelectContent>
             </Select>
-            <Button
-              variant="outline" size="sm" className="h-7 text-xs"
-              onClick={async () => {
-                for (const a of alertList.filter((x: any) => !x.isRead)) {
-                  await updateAlert.mutateAsync({ alertId: a.id, data: { isRead: true } });
-                }
-                queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
-              }}
-            >
-              <BellOff className="w-3 h-3 mr-1" /> Mark all read
-            </Button>
+            {unreadCount > 0 && (
+              <Button
+                variant="outline" size="sm" className="h-7 text-xs"
+                onClick={markAllRead}
+                disabled={updateAlert.isPending}
+              >
+                <BellOff className="w-3 h-3 mr-1" /> Mark all read
+              </Button>
+            )}
           </div>
 
           {isLoading && [...Array(4)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
-          {!isLoading && alertList.map((alert: any) => (
+
+          {!isLoading && filteredUnread.map((alert: any) => (
             <div
               key={alert.id}
-              className={cn(
-                "bg-card border rounded-xl p-4 transition-all cursor-pointer hover:border-primary/30 hover:bg-accent/10 group",
-                !alert.isRead ? "border-primary/30" : "border-border opacity-70"
-              )}
-              onClick={() => navigate(`/alerts/${alert.id}`)}
+              className="bg-card border border-primary/30 rounded-xl p-4 transition-all cursor-pointer hover:border-primary/50 hover:bg-accent/10 group"
+              onClick={() => { markRead(alert.id); navigate(`/alerts/${alert.id}`); }}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-2.5 flex-1 min-w-0">
                   <AlertTypeIcon type={alert.type} className="w-4 h-4 shrink-0 mt-0.5" />
-                  {!alert.isRead && <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />}
+                  <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
                       <p className="text-sm font-medium truncate">{alert.title}</p>
@@ -177,25 +218,99 @@ export default function AlertsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {!alert.isRead && (
-                    <Button
-                      variant="ghost" size="icon" className="h-7 w-7"
-                      onClick={(e) => { e.stopPropagation(); markRead(alert.id); }}
-                      title="Mark as read"
-                    >
-                      <Bell className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
+                  <Button
+                    variant="ghost" size="icon" className="h-7 w-7"
+                    onClick={(e) => { e.stopPropagation(); markRead(alert.id); }}
+                    title="Archive (mark as read)"
+                  >
+                    <Archive className="w-3.5 h-3.5" />
+                  </Button>
                   <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
                 </div>
               </div>
             </div>
           ))}
-          {!isLoading && alertList.length === 0 && (
-            <div className="bg-card border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">No alerts.</div>
+
+          {!isLoading && filteredUnread.length === 0 && (
+            <div className="bg-card border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">
+              <CheckCircle2 className="w-8 h-8 text-green-400 mx-auto mb-2" />
+              Inbox is clear — no unread alerts.
+            </div>
           )}
         </TabsContent>
 
+        {/* ── Archive — read alerts with pagination ────────────── */}
+        <TabsContent value="archive" className="space-y-3 mt-3">
+          <div className="flex gap-2 items-center justify-between">
+            <Select value={severityFilter || "_all_"} onValueChange={(v) => { setSeverityFilter(v === "_all_" ? "" : v); setArchivePage(0); }}>
+              <SelectTrigger className="w-32 h-7 text-xs"><SelectValue placeholder="All severity" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_all_">All</SelectItem>
+                <SelectItem value="critical">Critical</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="low">Low</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {filteredArchive.length} archived alert{filteredArchive.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+
+          {isLoading && [...Array(4)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
+
+          {!isLoading && archivePaged.map((alert: any) => (
+            <div
+              key={alert.id}
+              className="bg-card border border-border rounded-xl p-4 transition-all cursor-pointer hover:border-primary/30 hover:bg-accent/10 group opacity-75 hover:opacity-100"
+              onClick={() => navigate(`/alerts/${alert.id}`)}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                  <AlertTypeIcon type={alert.type} className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <p className="text-sm font-medium truncate">{alert.title}</p>
+                      <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium shrink-0", severityBgColor(alert.severity))}>{alert.severity}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{alert.message}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">{formatDateTime(alert.createdAt)}</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors shrink-0" />
+              </div>
+            </div>
+          ))}
+
+          {!isLoading && filteredArchive.length === 0 && (
+            <div className="bg-card border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">
+              <Archive className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+              No archived alerts yet.
+            </div>
+          )}
+
+          {archiveTotalPages > 1 && (
+            <div className="flex items-center justify-between pt-1">
+              <p className="text-xs text-muted-foreground">
+                Page {archivePage + 1} of {archiveTotalPages}
+              </p>
+              <div className="flex gap-1">
+                <Button
+                  variant="outline" size="sm" className="h-7 text-xs"
+                  disabled={archivePage === 0}
+                  onClick={() => setArchivePage(p => p - 1)}
+                >← Prev</Button>
+                <Button
+                  variant="outline" size="sm" className="h-7 text-xs"
+                  disabled={archivePage >= archiveTotalPages - 1}
+                  onClick={() => setArchivePage(p => p + 1)}
+                >Next →</Button>
+              </div>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── Alert Rules ──────────────────────────────────────── */}
         <TabsContent value="rules" className="space-y-3 mt-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">Alert rules fire on matching scan events and deliver notifications to your configured channel.</p>

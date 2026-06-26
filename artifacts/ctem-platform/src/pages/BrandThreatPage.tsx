@@ -726,9 +726,9 @@ export default function BrandThreatPage() {
   const [activeTab, setActiveTab] = useState<"scans" | "watchlist">("scans");
 
   const { data: scans, isLoading, refetch } = useListBrandThreats({
-    query: { queryKey: getListBrandThreatsQueryKey(), refetchInterval: (query: any) => {
+    query: { queryKey: getListBrandThreatsQueryKey(), staleTime: 0, refetchInterval: (query: any) => {
       const list = (query?.state?.data as any[]) ?? [];
-      return list.some((s: any) => s.status === "running" || s.status === "pending") ? 4000 : false;
+      return list.some((s: any) => s.status === "running" || s.status === "pending") ? 4000 : 30_000;
     }},
   });
   const { mutateAsync: deleteScan } = useDeleteBrandThreatScan();

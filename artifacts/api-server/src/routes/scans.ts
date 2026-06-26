@@ -190,8 +190,14 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
 router.get("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const [scan] = await db.select().from(scansTable)
-    .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)));
+  const role = req.user!.role;
+  let scan: typeof scansTable.$inferSelect | undefined;
+  if (role === "super_admin" || role === "admin" || role === "manager") {
+    [scan] = await db.select().from(scansTable).where(eq(scansTable.id, params.data.scanId));
+  } else {
+    [scan] = await db.select().from(scansTable)
+      .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)));
+  }
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   res.json(toScanResponse(scan));
 });

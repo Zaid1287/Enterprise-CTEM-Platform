@@ -15,10 +15,20 @@ const RISK_COLORS: Record<string, string> = {
 
 export default function RiskPage() {
   const { data: scores, isLoading } = useListRiskScores({
-    query: { queryKey: getListRiskScoresQueryKey() },
+    query: {
+      queryKey: getListRiskScoresQueryKey(),
+      staleTime: 0,
+      refetchOnWindowFocus: true,
+      refetchInterval: 30_000,
+    },
   });
   const { data: topRisky } = useGetTopRiskyAssets({ limit: 10 }, {
-    query: { queryKey: getGetTopRiskyAssetsQueryKey({ limit: 10 }) },
+    query: {
+      queryKey: getGetTopRiskyAssetsQueryKey({ limit: 10 }),
+      staleTime: 0,
+      refetchOnWindowFocus: true,
+      refetchInterval: 30_000,
+    },
   });
 
   const list = scores as any[] ?? [];

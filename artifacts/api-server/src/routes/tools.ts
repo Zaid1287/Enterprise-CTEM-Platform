@@ -2,7 +2,7 @@ import { Router } from "express";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable } from "@workspace/db";
+import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable, alertsTable } from "@workspace/db";
 import {
   CreateSecurityToolBody, GetSecurityToolParams,
   UpdateSecurityToolParams, UpdateSecurityToolBody,
@@ -377,6 +377,23 @@ router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest,
   }
 
   await logAudit(req.user!, "run_tool", "security_tool", tool.id);
+
+  // Create an alert for each completed/failed tool run
+  for (const run of runs) {
+    const failed = run.output?.startsWith("[ERROR]") ?? false;
+    const targetName = run.assetId
+      ? (await db.select({ name: assetsTable.name }).from(assetsTable).where(eq(assetsTable.id, run.assetId)).then(r => r[0]?.name ?? `Asset #${run.assetId}`))
+      : "no target";
+    await db.insert(alertsTable).values({
+      tenantId: req.user!.tenantId,
+      title: `${tool.name} run ${failed ? "failed" : "completed"}`,
+      message: `Tool "${tool.name}" ${failed ? "failed" : "completed successfully"} against ${targetName}.`,
+      severity: failed ? "high" : "low",
+      type: "scan_complete",
+      isRead: false,
+    });
+  }
+
   res.json(await enrichRuns(runs));
 });
 

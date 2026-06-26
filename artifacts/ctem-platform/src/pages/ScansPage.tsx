@@ -50,7 +50,15 @@ export default function ScansPage() {
   const { toast } = useToast();
 
   const { data: scans, isLoading } = useListScans({} as any, {
-    query: { queryKey: getListScansQueryKey({} as any) },
+    query: {
+      queryKey: getListScansQueryKey({} as any),
+      refetchInterval: (q) => {
+        const data = q.state.data as any[];
+        if (data?.some((s: any) => s.status === "running" || s.status === "pending")) return 3000;
+        return 30_000;
+      },
+      staleTime: 0,
+    },
   });
   const { data: assets } = useListAssets({} as any, {
     query: { queryKey: getListAssetsQueryKey({} as any) },
