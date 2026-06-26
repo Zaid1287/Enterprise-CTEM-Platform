@@ -302,44 +302,55 @@ async function checkAPKPure(
         headers: {
           "User-Agent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36",
           "Accept-Language": "en-US,en;q=0.9",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(12_000),
       },
     );
     if (!res.ok) return;
     const html = await res.text();
 
-    // Extract app cards from APKPure HTML
-    const appCardPattern = /<div[^>]*class="[^"]*search-dl[^"]*"[^>]*>[\s\S]*?<\/div>/gi;
-    const namePattern = /<p[^>]*class="[^"]*search-title[^"]*"[^>]*>([^<]+)<\/p>/i;
-    const developerPattern = /<p[^>]*class="[^"]*developer[^"]*"[^>]*>([^<]+)<\/p>/i;
-    const urlPattern = /href="(\/[a-z0-9._-]+\/[a-z0-9._-]+)"/i;
-    const iconPattern = /<img[^>]*src="(https:\/\/image\.winudf[^"]+)"[^>]*>/i;
-    const installPattern = /(\d[\d,.]+[KMB]?\+?\s*(?:downloads|installs))/i;
-
+    // Split into individual app cards — APKPure wraps each result in <li class="search-res ...">
     const cards = html.match(/<li[^>]*class="[^"]*search-res[^"]*"[\s\S]*?<\/li>/gi) ?? [];
 
-    for (const card of cards.slice(0, 20)) {
+    // Per-card extraction patterns
+    const namePattern    = /<p[^>]*class="[^"]*search-title[^"]*"[^>]*>\s*([^<]+?)\s*<\/p>/i;
+    const developerPattern = /<p[^>]*class="[^"]*developer[^"]*"[^>]*>\s*([^<]+?)\s*<\/p>/i;
+    const urlPattern     = /href="(\/[a-zA-Z0-9._%-]+(?:\/[a-zA-Z0-9._%-]+)+)"/i;
+    const iconPattern    = /<img[^>]+src="(https:\/\/(?:image\.winudf|cdn[^"]+apkpure)[^"]+)"[^>]*>/i;
+    // Per-card download count: "1,000,000 downloads", "1M+ Downloads", "500K+"
+    const installPattern = /([\d,.]+(?:\.\d+)?[KMB]?\+?)\s*(?:downloads?|installs?)/i;
+    // Version pattern: "Version: 1.2.3" or "v1.2.3"
+    const versionPattern = /(?:version:|v)\s*([\d.]+(?:[-_]\w+)?)/i;
+
+    for (const card of cards.slice(0, 25)) {
       const nameMatch = card.match(namePattern);
       const appName = (nameMatch?.[1] ?? "").trim();
       if (!appName.toLowerCase().includes(brandLower)) continue;
 
       const devMatch = card.match(developerPattern);
-      const devName  = (devMatch?.[1] ?? "").trim().toLowerCase();
-      if (devName.includes(brandLower)) continue;
+      const devName  = (devMatch?.[1] ?? "").replace(/^by\s+/i, "").trim().toLowerCase();
+      if (devName && devName.includes(brandLower)) continue;
 
-      const urlMatch  = card.match(urlPattern);
-      const iconMatch = card.match(iconPattern);
-      const installMatch = html.match(installPattern);
+      const urlMatch     = card.match(urlPattern);
+      const iconMatch    = card.match(iconPattern);
+      // Extract install count and version FROM THIS CARD specifically
+      const installMatch = card.match(installPattern);
+      const versionMatch = card.match(versionPattern);
+      const appUrl = urlMatch ? `https://apkpure.com${urlMatch[1]}` : `https://apkpure.com/search?q=${encodeURIComponent(brand)}`;
 
       out.push({
         type: "rogue_app",
         platform: "APKPure",
-        url: urlMatch ? `https://apkpure.com${urlMatch[1]}` : `https://apkpure.com/search?q=${encodeURIComponent(brand)}`,
+        url: appUrl,
         title: `Potential rogue APK: ${appName}`,
-        description: `App '${appName}' by '${devName || "unknown developer"}' found on APKPure (unofficial APK distribution) using brand name '${brand}'. Third-party APK stores carry higher risk of repackaging.`,
-        evidenceSnippet: `Developer: ${devName || "unknown"}; source: APKPure (third-party store)`,
-        installCount: installMatch?.[1] ?? null,
+        description: `App '${appName}' by '${devName || "unknown developer"}' found on APKPure (unofficial APK distribution) using brand name '${brand}'. Third-party APK stores carry higher risk of repackaged malware.`,
+        evidenceSnippet: [
+          `Developer: ${devName || "unknown"}`,
+          versionMatch ? `Version: ${versionMatch[1]}` : null,
+          `Source: APKPure (third-party store)`,
+        ].filter(Boolean).join("; "),
+        installCount: installMatch ? installMatch[1]! : null,
         iconUrl: iconMatch?.[1] ?? null,
         risk: "high",
       });
@@ -347,24 +358,28 @@ async function checkAPKPure(
       if (out.filter(r => r.platform === "APKPure").length >= 5) break;
     }
 
-    // Fallback: simple brand-slug URL probe
+    // Fallback: brand-slug URL probe when search returned no cards
     if (out.filter(r => r.platform === "APKPure").length === 0) {
       const probeRes = await fetch(
         `https://apkpure.com/${brandSlug}`,
         { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(6_000) },
       ).catch(() => null);
-      if (probeRes?.ok && probeRes.status === 200) {
+      if (probeRes?.ok) {
         const probeHtml = await probeRes.text().catch(() => "");
-        if (probeHtml.toLowerCase().includes(brandLower)) {
+        const titleMatch = probeHtml.match(/<title[^>]*>([^<]+)<\/title>/i);
+        const pageTitle  = (titleMatch?.[1] ?? "").toLowerCase();
+        if (pageTitle.includes(brandLower) || probeHtml.toLowerCase().includes(`"${brandLower}"`)) {
+          const probeIconMatch = probeHtml.match(/<img[^>]+src="(https:\/\/(?:image\.winudf|cdn[^"]+apkpure)[^"]+)"[^>]*>/i);
+          const probeInstallMatch = probeHtml.match(installPattern);
           out.push({
             type: "rogue_app",
             platform: "APKPure",
             url: `https://apkpure.com/${brandSlug}`,
             title: `Brand-name APK page on APKPure: ${brand}`,
             description: `A page for '${brand}' exists on APKPure, a third-party Android APK distribution site. Verify this is the official publisher before trusting downloads.`,
-            evidenceSnippet: `URL probe: https://apkpure.com/${brandSlug} returned 200 OK`,
-            installCount: null,
-            iconUrl: null,
+            evidenceSnippet: `URL: https://apkpure.com/${brandSlug}; Page title: ${pageTitle || "(none)"}`,
+            installCount: probeInstallMatch ? probeInstallMatch[1]! : null,
+            iconUrl: probeIconMatch?.[1] ?? null,
             risk: "medium",
           });
         }
@@ -382,34 +397,49 @@ async function checkAptoide(
   try {
     const brandLower = brand.toLowerCase();
 
-    const res = await fetch(
-      `https://ws75.aptoide.com/api/7/apps/search/query=${encodeURIComponent(brand)}/limit=20/sort=downloads`,
-      {
-        headers: { "User-Agent": "Aptoide/9.0 (Android)" },
-        signal: AbortSignal.timeout(10_000),
+    // Aptoide public REST API v7 — search endpoint uses query-string params (not path params)
+    const searchUrl = `https://ws75.aptoide.com/api/7/apps/search?q=${encodeURIComponent(brand)}&limit=25&sort=downloads`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        "User-Agent": "Aptoide/9.20.6.1 (Linux; Android 12)",
+        "Accept": "application/json",
       },
-    );
+      signal: AbortSignal.timeout(12_000),
+    });
     if (!res.ok) return;
     const data = await res.json() as any;
-    const apps: any[] = data?.datalist?.list ?? [];
+
+    // API v7 returns { datalist: { list: [...] } }
+    const apps: any[] = data?.datalist?.list ?? data?.list ?? [];
 
     for (const app of apps) {
-      const appName: string  = (app.name ?? app.package ?? "").toLowerCase();
-      const devName: string  = (app.developer?.name ?? app.store?.name ?? "").toLowerCase();
-      const pkgId: string    = app.package ?? "";
+      const appName: string = (app.name ?? app.package ?? "").toLowerCase();
+      const devName: string = (
+        app.developer?.name ?? app.developer?.id ??
+        app.store?.name ?? ""
+      ).toLowerCase();
+      const pkgId: string = app.package ?? "";
 
       if (!appName.includes(brandLower)) continue;
       if (devName.includes(brandLower)) continue;
 
+      const downloads: number | undefined = app.stats?.downloads ?? app.stats?.pdownloads;
+      const rating: number | undefined = app.stats?.rating?.avg;
+      const appUrl = app.urls?.w ?? (pkgId ? `https://aptoide.com/app/${pkgId}` : `https://aptoide.com/apps/search?q=${encodeURIComponent(brand)}`);
+
       out.push({
         type: "rogue_app",
         platform: "Aptoide",
-        url: app.urls?.w ?? `https://aptoide.com/app/${pkgId}`,
+        url: appUrl,
         title: `Potential rogue Aptoide app: ${app.name ?? pkgId}`,
-        description: `App '${app.name}' by '${app.developer?.name ?? "unknown"}' found on Aptoide (community APK store) using brand name '${brand}'. Aptoide apps bypass Google Play review.`,
-        evidenceSnippet: `Package: ${pkgId}, Downloads: ${app.stats?.downloads ?? "unknown"}, Rating: ${app.stats?.rating?.avg ?? "N/A"}`,
-        installCount: app.stats?.downloads ? `${app.stats.downloads.toLocaleString()}` : null,
-        iconUrl: app.icon ?? app.graphic ?? null,
+        description: `App '${app.name ?? pkgId}' by '${app.developer?.name ?? "unknown"}' found on Aptoide (community APK store) using brand name '${brand}'. Aptoide apps bypass Google Play review and may be repackaged.`,
+        evidenceSnippet: [
+          `Package: ${pkgId}`,
+          downloads != null ? `Downloads: ${downloads.toLocaleString()}` : null,
+          rating != null ? `Rating: ${rating.toFixed(1)}` : null,
+        ].filter(Boolean).join(", "),
+        installCount: downloads != null ? downloads.toLocaleString() : null,
+        iconUrl: app.icon ?? app.graphic?.url ?? null,
         risk: "high",
       });
 
@@ -427,39 +457,55 @@ async function checkSamsungGalaxyStore(
   try {
     const brandLower = brand.toLowerCase();
 
-    // Samsung Galaxy Store public search API (unofficial)
+    // Samsung Galaxy Store — public partner API for app search
+    // Documented endpoint: /api/search/apps with JSON response
     const res = await fetch(
-      `https://galaxystore.samsung.com/api/search?searchTxt=${encodeURIComponent(brand)}&contentType=app`,
+      `https://galaxystore.samsung.com/api/search/apps?searchTxt=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
       {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Linux; Android 12; SM-S908B) AppleWebKit/537.36",
-          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
+          "Accept": "application/json, text/plain, */*",
+          "Referer": "https://galaxystore.samsung.com/",
         },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(12_000),
       },
     );
     if (!res.ok) return;
+
     const data = await res.json() as any;
-    const apps: any[] = data?.contents ?? data?.list ?? data?.data ?? [];
+    // Response shape: { content: [...] } or { contents: [...] } or top-level array
+    const apps: any[] = data?.content ?? data?.contents ?? (Array.isArray(data) ? data : []);
 
     for (const app of apps.slice(0, 20)) {
-      const appName: string  = (app.appTitle ?? app.name ?? app.contentName ?? "").toLowerCase();
-      const seller: string   = (app.sellerName ?? app.developerName ?? app.developer ?? "").toLowerCase();
+      // Field names vary across store API versions
+      const appName: string = (
+        app.appTitle ?? app.contentName ?? app.name ?? ""
+      ).toLowerCase();
+      const seller: string = (
+        app.sellerName ?? app.developerName ?? app.publisherName ?? app.developer ?? ""
+      ).toLowerCase();
 
       if (!appName.includes(brandLower)) continue;
       if (seller.includes(brandLower)) continue;
 
-      const appId   = app.contentId ?? app.id ?? "";
-      const iconUrl = app.iconUrl ?? app.imageUrl ?? app.thumbnail ?? null;
+      const contentId = app.contentId ?? app.id ?? app.packageName ?? "";
+      const iconUrl   = app.iconImgUrl ?? app.iconUrl ?? app.imageUrl ?? null;
+      const dlCount   = app.downloadCount ?? app.installCount;
 
       out.push({
         type: "rogue_app",
         platform: "Samsung Galaxy Store",
-        url: appId ? `https://galaxystore.samsung.com/detail/${appId}` : `https://galaxystore.samsung.com/search?searchTxt=${encodeURIComponent(brand)}`,
-        title: `Potential rogue Samsung app: ${app.appTitle ?? app.name}`,
-        description: `App '${app.appTitle ?? app.name}' by '${app.sellerName ?? app.developerName ?? "unknown"}' found on Samsung Galaxy Store using brand name '${brand}'.`,
-        evidenceSnippet: `Content ID: ${appId}, Seller: ${app.sellerName ?? "unknown"}`,
-        installCount: app.downloadCount ? `${Number(app.downloadCount).toLocaleString()}` : null,
+        url: contentId
+          ? `https://galaxystore.samsung.com/detail/${contentId}`
+          : `https://galaxystore.samsung.com/search/apps?searchTxt=${encodeURIComponent(brand)}`,
+        title: `Potential rogue Samsung Galaxy Store app: ${app.appTitle ?? app.contentName ?? contentId}`,
+        description: `App '${app.appTitle ?? app.contentName}' by '${app.sellerName ?? app.developerName ?? "unknown"}' found on Samsung Galaxy Store using brand name '${brand}'. Galaxy Store is pre-installed on all Samsung devices.`,
+        evidenceSnippet: [
+          contentId ? `Content ID: ${contentId}` : null,
+          `Seller: ${app.sellerName ?? app.developerName ?? "unknown"}`,
+          app.averageRating != null ? `Rating: ${app.averageRating}` : null,
+        ].filter(Boolean).join(", "),
+        installCount: dlCount != null ? Number(dlCount).toLocaleString() : null,
         iconUrl,
         risk: "medium",
       });
@@ -478,39 +524,55 @@ async function checkHuaweiAppGallery(
   try {
     const brandLower = brand.toLowerCase();
 
+    // Huawei AppGallery cloud search API (used by the AppGallery web portal)
     const res = await fetch(
-      `https://appgallery.huawei.com/bo/search/freeKeywordSearch?keyword=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
+      `https://appgallery.cloud.huawei.com/bo/search/freeKeywordSearch?keyword=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
       {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Linux; Android 12; HarmonyOS) AppleWebKit/537.36",
-          "Accept": "application/json",
-          "Origin": "https://appgallery.huawei.com",
+          "User-Agent": "Mozilla/5.0 (Linux; Android 12; HarmonyOS) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+          "Accept": "application/json, text/plain, */*",
+          "Origin": "https://appgallery.cloud.huawei.com",
+          "Referer": "https://appgallery.cloud.huawei.com/",
         },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(12_000),
       },
     );
     if (!res.ok) return;
     const data = await res.json() as any;
+
+    // Response shapes across API versions:
+    //   { code: 0, data: { apps: [...] } }  — most common
+    //   { apps: [...] }
+    //   { list: [...] }
     const apps: any[] = data?.data?.apps ?? data?.apps ?? data?.list ?? [];
 
     for (const app of apps.slice(0, 20)) {
-      const appName: string  = (app.appName ?? app.name ?? "").toLowerCase();
-      const devName: string  = (app.developer ?? app.developerName ?? app.sellerName ?? "").toLowerCase();
+      const appName: string = (app.appName ?? app.name ?? "").toLowerCase();
+      const devName: string = (
+        app.developer ?? app.developerName ?? app.sellerName ?? ""
+      ).toLowerCase();
 
       if (!appName.includes(brandLower)) continue;
       if (devName.includes(brandLower)) continue;
 
       const appId   = app.appid ?? app.id ?? app.packageName ?? "";
       const iconUrl = app.iconUri ?? app.icon ?? app.iconUrl ?? null;
+      const dlCount = app.downloadCount ?? app.downloads;
 
       out.push({
         type: "rogue_app",
         platform: "Huawei AppGallery",
-        url: appId ? `https://appgallery.huawei.com/app/${appId}` : `https://appgallery.huawei.com/#/search/${encodeURIComponent(brand)}`,
-        title: `Potential rogue Huawei app: ${app.appName ?? app.name}`,
-        description: `App '${app.appName ?? app.name}' by '${app.developer ?? "unknown"}' found on Huawei AppGallery using brand name '${brand}'. AppGallery is the default store on Huawei/Honor devices.`,
-        evidenceSnippet: `App ID: ${appId}, Developer: ${app.developer ?? "unknown"}, Downloads: ${app.downloadCount ?? "unknown"}`,
-        installCount: app.downloadCount ? `${app.downloadCount}` : null,
+        url: appId
+          ? `https://appgallery.huawei.com/app/${appId}`
+          : `https://appgallery.huawei.com/#/search/${encodeURIComponent(brand)}`,
+        title: `Potential rogue Huawei AppGallery app: ${app.appName ?? app.name}`,
+        description: `App '${app.appName ?? app.name}' by '${app.developer ?? "unknown"}' found on Huawei AppGallery using brand name '${brand}'. AppGallery is the default and only store on Huawei/Honor devices (no Google Play).`,
+        evidenceSnippet: [
+          appId ? `App ID: ${appId}` : null,
+          `Developer: ${app.developer ?? "unknown"}`,
+          dlCount != null ? `Downloads: ${dlCount}` : null,
+        ].filter(Boolean).join(", "),
+        installCount: dlCount != null ? String(dlCount) : null,
         iconUrl,
         risk: "medium",
       });
@@ -583,82 +645,206 @@ async function checkAmazonAppstore(
   }
 }
 
+/**
+ * Parse a Debian APT control-file block (key: value pairs) into a plain object.
+ * Fields are separated from each other by a blank line.
+ */
+function parseAptBlock(block: string): Record<string, string> {
+  const obj: Record<string, string> = {};
+  let currentKey = "";
+  for (const line of block.split("\n")) {
+    if (/^\s/.test(line)) {
+      // Continuation line
+      if (currentKey) obj[currentKey] += "\n" + line.trim();
+    } else {
+      const colon = line.indexOf(":");
+      if (colon > 0) {
+        currentKey = line.slice(0, colon).trim().toLowerCase();
+        obj[currentKey] = line.slice(colon + 1).trim();
+      }
+    }
+  }
+  return obj;
+}
+
 async function checkJailbreakRepos(
   brand: string,
   out: BrandAbuseResult[],
 ): Promise<void> {
+  const brandLower = brand.toLowerCase();
+
+  // ── 1. BigBoss (largest Cydia repo) ──────────────────────────────────────
+  // BigBoss publishes a plain-text APT Packages index we can download and grep.
+  // We limit the body read to 2 MB to stay within budget.
   try {
-    const brandLower = brand.toLowerCase();
-
-    // Well-known Cydia/Sileo-compatible repositories with searchable package indexes
-    const repos = [
-      { name: "Chariz",       url: `https://repo.chariz.com/packages.json` },
-      { name: "BigBoss",      url: `http://apt.thebigboss.org/repofiles/cydia/dists/stable/main/binary-iphoneos-arm/Packages.bz2` },
-      { name: "Havoc",        url: `https://havoc.app/depiction.php?&package=${encodeURIComponent(brand)}` },
-    ];
-
-    // Chariz has a JSON API
-    try {
-      const res = await fetch(repos[0]!.url, {
-        headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (res.ok) {
-        const data = await res.json() as any[];
-        for (const pkg of (Array.isArray(data) ? data : []).slice(0, 200)) {
-          const pkgName: string = (pkg.name ?? pkg.id ?? "").toLowerCase();
-          const pkgId: string   = pkg.id ?? "";
-          const devName: string = (pkg.author?.name ?? pkg.maintainer ?? "").toLowerCase();
-          if (!pkgName.includes(brandLower)) continue;
-          if (devName.includes(brandLower)) continue;
-          out.push({
-            type: "rogue_app",
-            platform: "Cydia/Sileo (Chariz)",
-            url: pkg.depiction ?? `https://repo.chariz.com/package/${pkgId}`,
-            title: `Jailbreak tweak using brand name: ${pkg.name ?? pkgId}`,
-            description: `Package '${pkg.name ?? pkgId}' found in the Chariz jailbreak repository using brand name '${brand}'. Jailbreak tweaks are unsigned and can modify/intercept app behaviour.`,
-            evidenceSnippet: `Package ID: ${pkgId}, Author: ${pkg.author?.name ?? "unknown"}, Version: ${pkg.latestVersion ?? "unknown"}`,
-            installCount: null,
-            iconUrl: pkg.headerURL ?? pkg.icon ?? null,
-            risk: "high",
-          });
-          if (out.filter(r => r.type === "rogue_app" && r.platform?.startsWith("Cydia")).length >= 3) break;
-        }
-      }
-    } catch {
-      // Chariz is best-effort
-    }
-
-    // Havoc probe: any HTTP 200 for brand-name package URL is suspicious
-    try {
-      const havocRes = await fetch(
-        `https://havoc.app/package/${brandLower.replace(/\s+/g, "-")}`,
-        {
-          headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
-          signal: AbortSignal.timeout(6_000),
+    const bbRes = await fetch(
+      "http://apt.thebigboss.org/repofiles/cydia/dists/stable/main/binary-iphoneos-arm/Packages",
+      {
+        headers: {
+          "User-Agent": "Cydia/1.1.32 CFNetwork/1325.0.1 Darwin/21.1.0",
+          "Accept-Encoding": "identity", // request plain text, not compressed
         },
-      );
-      if (havocRes.ok) {
-        const html = await havocRes.text();
-        if (html.toLowerCase().includes(brandLower)) {
-          out.push({
-            type: "rogue_app",
-            platform: "Cydia/Sileo (Havoc)",
-            url: `https://havoc.app/package/${brandLower.replace(/\s+/g, "-")}`,
-            title: `Brand-name jailbreak package on Havoc: ${brand}`,
-            description: `A jailbreak package for '${brand}' exists on the Havoc repository. Jailbreak tweaks may inject code into the legitimate app or impersonate it.`,
-            evidenceSnippet: `Havoc package URL probe returned 200 OK for brand name`,
-            installCount: null,
-            iconUrl: null,
-            risk: "high",
-          });
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (bbRes.ok) {
+      // Read up to 2 MB then drop the rest
+      const reader = bbRes.body?.getReader();
+      let raw = "";
+      let bytes = 0;
+      const MAX_BYTES = 2 * 1024 * 1024;
+      if (reader) {
+        const decoder = new TextDecoder();
+        while (bytes < MAX_BYTES) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          raw += decoder.decode(value, { stream: true });
+          bytes += value?.length ?? 0;
         }
+        reader.cancel().catch(() => undefined);
       }
-    } catch {
-      // Havoc is best-effort
+      // Split on double newline — each block is one package
+      const blocks = raw.split(/\n\n+/);
+      let bbCount = 0;
+      for (const block of blocks) {
+        if (bbCount >= 5) break;
+        const pkg = parseAptBlock(block);
+        const pkgName   = (pkg["name"] ?? pkg["package"] ?? "").toLowerCase();
+        const pkgId     = pkg["package"] ?? "";
+        const author    = (pkg["author"] ?? pkg["maintainer"] ?? "").toLowerCase();
+        const desc      = (pkg["description"] ?? "").toLowerCase();
+
+        // Match brand name in package name or description
+        if (!pkgName.includes(brandLower) && !desc.includes(brandLower)) continue;
+        if (pkgName.includes(brandLower) && author.includes(brandLower)) continue;
+
+        out.push({
+          type: "rogue_app",
+          platform: "Cydia/Sileo (BigBoss)",
+          url: pkg["depiction"] ?? `https://apt.thebigboss.org/onepackage.php?bundleid=${encodeURIComponent(pkgId)}`,
+          title: `Jailbreak package using brand name: ${pkg["name"] ?? pkgId}`,
+          description: `Package '${pkg["name"] ?? pkgId}' found in the BigBoss Cydia repository using brand name '${brand}'. BigBoss is the largest Cydia/Sileo repo, with hundreds of thousands of installs. Unsigned packages can modify app behaviour or steal credentials.`,
+          evidenceSnippet: `Package ID: ${pkgId}, Author: ${pkg["author"] ?? pkg["maintainer"] ?? "unknown"}, Version: ${pkg["version"] ?? "unknown"}, Section: ${pkg["section"] ?? "unknown"}`,
+          installCount: null,
+          iconUrl: null,
+          risk: "high",
+        });
+        bbCount++;
+      }
     }
   } catch (e: any) {
-    logger.debug(`Jailbreak repo check failed for ${brand}: ${e.message}`);
+    logger.debug(`BigBoss jailbreak check failed for ${brand}: ${e.message}`);
+  }
+
+  // ── 2. Chariz (modern premium Cydia/Sileo repo) ───────────────────────────
+  // Chariz exposes a packages.json listing all packages; we filter by brand name.
+  // Their search API endpoint is also available at /api/search.
+  try {
+    // Try the native search API first (faster), fall back to full packages.json
+    let charizPkgs: any[] = [];
+    const searchRes = await fetch(
+      `https://repo.chariz.com/api/search?q=${encodeURIComponent(brand)}`,
+      {
+        headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
+        signal: AbortSignal.timeout(8_000),
+      },
+    ).catch(() => null);
+
+    if (searchRes?.ok) {
+      const searchData = await searchRes.json().catch(() => null);
+      // Response: { packages: [...] } or top-level array
+      charizPkgs = searchData?.packages ?? (Array.isArray(searchData) ? searchData : []);
+    }
+
+    // Fallback: full packages.json (filter client-side)
+    if (charizPkgs.length === 0) {
+      const listRes = await fetch("https://repo.chariz.com/packages.json", {
+        headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
+        signal: AbortSignal.timeout(10_000),
+      }).catch(() => null);
+      if (listRes?.ok) {
+        const listData = await listRes.json().catch(() => []);
+        charizPkgs = Array.isArray(listData)
+          ? listData.filter((p: any) =>
+              (p.name ?? p.id ?? "").toLowerCase().includes(brandLower),
+            )
+          : [];
+      }
+    }
+
+    let charizCount = 0;
+    for (const pkg of charizPkgs.slice(0, 200)) {
+      if (charizCount >= 3) break;
+      const pkgName: string = (pkg.name ?? pkg.id ?? "").toLowerCase();
+      const pkgId: string   = pkg.id ?? "";
+      const author: string  = (pkg.author?.name ?? pkg.maintainer ?? "").toLowerCase();
+
+      if (!pkgName.includes(brandLower)) continue;
+      if (author.includes(brandLower)) continue;
+
+      out.push({
+        type: "rogue_app",
+        platform: "Cydia/Sileo (Chariz)",
+        url: pkg.depiction ?? `https://repo.chariz.com/package/${pkgId}`,
+        title: `Jailbreak tweak using brand name: ${pkg.name ?? pkgId}`,
+        description: `Package '${pkg.name ?? pkgId}' found in the Chariz jailbreak repository using brand name '${brand}'. Chariz is a curated premium Cydia/Sileo repo. Unsigned packages can modify or impersonate apps.`,
+        evidenceSnippet: `Package ID: ${pkgId}, Author: ${pkg.author?.name ?? "unknown"}, Version: ${pkg.latestVersion ?? "unknown"}`,
+        installCount: null,
+        iconUrl: pkg.headerURL ?? pkg.icon ?? null,
+        risk: "high",
+      });
+      charizCount++;
+    }
+  } catch (e: any) {
+    logger.debug(`Chariz jailbreak check failed for ${brand}: ${e.message}`);
+  }
+
+  // ── 3. Sileo repo aggregator (ios-repo-updates.com) ──────────────────────
+  // ios-repo-updates.com indexes hundreds of Sileo/Cydia repos and exposes a
+  // REST search API covering BigBoss, Chariz, Havoc, Zebra, and many more.
+  try {
+    const sileoPkgRes = await fetch(
+      `https://api.ios-repo-updates.com/api/1/packages/?search=${encodeURIComponent(brand)}`,
+      {
+        headers: {
+          "User-Agent": "Sileo/2.4 Darwin/21.0.0",
+          "Accept": "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (sileoPkgRes.ok) {
+      const sileoPkgData = await sileoPkgRes.json() as any;
+      // Response: { data: [...] }  or  { packages: [...] }  or top-level array
+      const packages: any[] = sileoPkgData?.data ?? sileoPkgData?.packages ?? (Array.isArray(sileoPkgData) ? sileoPkgData : []);
+
+      let sileoCount = 0;
+      for (const pkg of packages.slice(0, 50)) {
+        if (sileoCount >= 3) break;
+        const pkgName: string  = (pkg.name ?? pkg.package ?? "").toLowerCase();
+        const pkgId: string    = pkg.package ?? pkg.id ?? "";
+        const author: string   = (pkg.author ?? pkg.maintainer ?? "").toLowerCase();
+        const repoName: string = pkg.repository?.name ?? pkg.repo ?? "Sileo repo";
+
+        if (!pkgName.includes(brandLower)) continue;
+        if (author.includes(brandLower)) continue;
+
+        out.push({
+          type: "rogue_app",
+          platform: "Cydia/Sileo",
+          url: pkg.depiction ?? pkg.url ?? `https://ios-repo-updates.com/package/${encodeURIComponent(pkgId)}`,
+          title: `Jailbreak package using brand name: ${pkg.name ?? pkgId}`,
+          description: `Package '${pkg.name ?? pkgId}' found in the '${repoName}' Sileo/Cydia repository using brand name '${brand}'. Jailbreak packages are not signed and can modify or impersonate official apps.`,
+          evidenceSnippet: `Package ID: ${pkgId}, Repo: ${repoName}, Author: ${pkg.author ?? "unknown"}, Version: ${pkg.version ?? "unknown"}`,
+          installCount: null,
+          iconUrl: pkg.icon ?? null,
+          risk: "high",
+        });
+        sileoCount++;
+      }
+    }
+  } catch (e: any) {
+    logger.debug(`Sileo aggregator check failed for ${brand}: ${e.message}`);
   }
 }
 
