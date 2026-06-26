@@ -319,6 +319,41 @@ function DataLeaksTab({ leaks }: { leaks: any[] }) {
   );
 }
 
+const PLATFORM_META: Record<string, { color: string; bg: string; border: string }> = {
+  "Google Play Store":      { color: "text-green-400",   bg: "bg-green-500/10",   border: "border-green-500/25" },
+  "Apple App Store":        { color: "text-blue-400",    bg: "bg-blue-500/10",    border: "border-blue-500/25" },
+  "APKPure":                { color: "text-orange-400",  bg: "bg-orange-500/10",  border: "border-orange-500/25" },
+  "Aptoide":                { color: "text-purple-400",  bg: "bg-purple-500/10",  border: "border-purple-500/25" },
+  "Samsung Galaxy Store":   { color: "text-teal-400",    bg: "bg-teal-500/10",    border: "border-teal-500/25" },
+  "Huawei AppGallery":      { color: "text-red-400",     bg: "bg-red-500/10",     border: "border-red-500/25" },
+  "Amazon Appstore":        { color: "text-yellow-400",  bg: "bg-yellow-500/10",  border: "border-yellow-500/25" },
+  "Cydia/Sileo (Chariz)":   { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25" },
+  "Cydia/Sileo (Havoc)":    { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25" },
+  "Certificate Transparency": { color: "text-violet-400", bg: "bg-violet-500/10", border: "border-violet-500/25" },
+  "DNS":                    { color: "text-blue-400",    bg: "bg-blue-500/10",    border: "border-blue-500/25" },
+  "YouTube":                { color: "text-red-400",     bg: "bg-red-500/10",     border: "border-red-500/25" },
+  "Reddit":                 { color: "text-orange-400",  bg: "bg-orange-500/10",  border: "border-orange-500/25" },
+  "Twitter/X":              { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25" },
+  "Instagram":              { color: "text-pink-400",    bg: "bg-pink-500/10",    border: "border-pink-500/25" },
+  "Facebook":               { color: "text-blue-400",    bg: "bg-blue-500/10",    border: "border-blue-500/25" },
+  "TikTok":                 { color: "text-cyan-400",    bg: "bg-cyan-500/10",    border: "border-cyan-500/25" },
+};
+
+const APP_STORE_PLATFORMS = new Set([
+  "Google Play Store", "Apple App Store", "APKPure", "Aptoide",
+  "Samsung Galaxy Store", "Huawei AppGallery", "Amazon Appstore",
+  "Cydia/Sileo (Chariz)", "Cydia/Sileo (Havoc)",
+]);
+
+function PlatformBadge({ platform }: { platform: string }) {
+  const meta = PLATFORM_META[platform] ?? { color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" };
+  return (
+    <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-medium shrink-0", meta.color, meta.bg, meta.border)}>
+      {platform}
+    </span>
+  );
+}
+
 function BrandAbuseTab({ abuse }: { abuse: any[] }) {
   if (!abuse.length) {
     return (
@@ -331,31 +366,135 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
       </div>
     );
   }
+
   const RISK_COLOR: Record<string, string> = {
     critical: "text-red-400 bg-red-500/10 border-red-500/20",
     high: "text-orange-400 bg-orange-500/10 border-orange-500/20",
     medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
     low: "text-green-400 bg-green-500/10 border-green-500/20",
   };
+
   const TYPE_ICON: Record<string, React.ReactNode> = {
     suspicious_certificate: <Lock className="w-3.5 h-3.5 text-violet-400 shrink-0" />,
-    lookalike_domain: <Globe className="w-3.5 h-3.5 text-red-400 shrink-0" />,
-    rogue_app: <Target className="w-3.5 h-3.5 text-orange-400 shrink-0" />,
+    lookalike_domain:       <Globe className="w-3.5 h-3.5 text-red-400 shrink-0" />,
+    rogue_app:              <Target className="w-3.5 h-3.5 text-orange-400 shrink-0" />,
+    fake_social:            <Target className="w-3.5 h-3.5 text-pink-400 shrink-0" />,
+    brand_abuse:            <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 shrink-0" />,
+    impersonation:          <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />,
   };
 
-  const grouped = abuse.reduce((acc: Record<string, any[]>, r: any) => {
+  // Group rogue_app items by platform; group everything else by type
+  const appStoreItems = abuse.filter(r => r.type === "rogue_app" && r.platform && APP_STORE_PLATFORMS.has(r.platform));
+  const otherItems    = abuse.filter(r => !(r.type === "rogue_app" && r.platform && APP_STORE_PLATFORMS.has(r.platform)));
+
+  const appsByPlatform = appStoreItems.reduce((acc: Record<string, any[]>, r: any) => {
+    const key = r.platform ?? "Unknown Store";
+    if (!acc[key]) acc[key] = [];
+    acc[key]!.push(r);
+    return acc;
+  }, {});
+
+  const otherByType = otherItems.reduce((acc: Record<string, any[]>, r: any) => {
     if (!acc[r.type]) acc[r.type] = [];
     acc[r.type]!.push(r);
     return acc;
   }, {});
 
+  const PLATFORM_ORDER = [
+    "Google Play Store", "Apple App Store", "APKPure", "Aptoide",
+    "Samsung Galaxy Store", "Huawei AppGallery", "Amazon Appstore",
+    "Cydia/Sileo (Chariz)", "Cydia/Sileo (Havoc)",
+  ];
+  const sortedPlatforms = [
+    ...PLATFORM_ORDER.filter(p => appsByPlatform[p]),
+    ...Object.keys(appsByPlatform).filter(p => !PLATFORM_ORDER.includes(p)),
+  ];
+
   return (
     <div className="p-5 space-y-6">
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-2">
         <Target className="w-4 h-4 text-orange-400" />
         <span className="font-semibold">{abuse.length} brand abuse finding{abuse.length !== 1 ? "s" : ""}</span>
       </div>
-      {Object.entries(grouped).map(([type, items]) => (
+
+      {/* App Store section — per-platform grouping */}
+      {sortedPlatforms.length > 0 && (
+        <div className="space-y-5">
+          <div className="flex items-center gap-2">
+            <Target className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Rogue Apps — App Stores ({appStoreItems.length})
+            </p>
+          </div>
+          {sortedPlatforms.map(platform => {
+            const items: any[] = appsByPlatform[platform] ?? [];
+            const pmeta = PLATFORM_META[platform] ?? { color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" };
+            return (
+              <div key={platform}>
+                <div className={cn("flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg border w-fit", pmeta.bg, pmeta.border)}>
+                  <span className={cn("text-[11px] font-semibold", pmeta.color)}>{platform}</span>
+                  <span className={cn("text-[10px] opacity-60", pmeta.color)}>({items.length})</span>
+                </div>
+                <div className="space-y-2">
+                  {items.map((item: any) => (
+                    <div key={item.id} className="bg-card border border-border rounded-xl p-3.5">
+                      <div className="flex items-start gap-3">
+                        {/* App icon */}
+                        {item.iconUrl ? (
+                          <img
+                            src={item.iconUrl}
+                            alt=""
+                            className="w-10 h-10 rounded-xl border border-border object-cover shrink-0 mt-0.5"
+                            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-xl border border-border bg-muted/30 flex items-center justify-center shrink-0 mt-0.5">
+                            <Target className="w-4 h-4 text-muted-foreground/40" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className="text-sm font-medium leading-snug">
+                              {item.title ?? item.url ?? item.platform}
+                            </span>
+                            <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize shrink-0", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>
+                              {item.risk}
+                            </span>
+                          </div>
+                          {item.description && (
+                            <p className="text-xs text-muted-foreground/80 leading-relaxed">{item.description}</p>
+                          )}
+                          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                            {item.installCount && (
+                              <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                                <TrendingUp className="w-3 h-3" /> {item.installCount}
+                              </span>
+                            )}
+                            {item.evidenceSnippet && (
+                              <span className="text-[11px] font-mono text-muted-foreground/60 truncate max-w-xs">
+                                {item.evidenceSnippet}
+                              </span>
+                            )}
+                          </div>
+                          {item.url && (
+                            <a href={item.url} target="_blank" rel="noopener noreferrer"
+                              className="mt-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
+                              <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 55)}{item.url.length > 55 ? "…" : ""}
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Other findings — grouped by type */}
+      {Object.entries(otherByType).map(([type, items]) => (
         <div key={type}>
           <div className="flex items-center gap-2 mb-3">
             {TYPE_ICON[type] ?? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
@@ -365,19 +504,15 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
           </div>
           <div className="space-y-2">
             {(items as any[]).map((item: any) => (
-              <div key={item.id} className={cn("bg-card border rounded-xl p-4", "border-border")}>
+              <div key={item.id} className="bg-card border border-border rounded-xl p-4">
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     {TYPE_ICON[item.type] ?? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
                     <span className="text-sm font-medium truncate">{item.title ?? item.url ?? item.platform}</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {item.platform && (
-                      <span className="text-[10px] bg-muted/50 border border-border px-2 py-0.5 rounded-full text-muted-foreground">
-                        {item.platform}
-                      </span>
-                    )}
-                    <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.low)}>
+                    {item.platform && <PlatformBadge platform={item.platform} />}
+                    <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>
                       {item.risk}
                     </span>
                   </div>

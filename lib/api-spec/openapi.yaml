@@ -3655,6 +3655,43 @@ components:
         createdAt:
           type: string
 
+    BrandAbuseResult:
+      type: object
+      required: [id, scanId, type, risk, createdAt]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+          nullable: true
+        type:
+          type: string
+        platform:
+          type: string
+          nullable: true
+        url:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        evidenceSnippet:
+          type: string
+          nullable: true
+        installCount:
+          type: string
+          nullable: true
+        iconUrl:
+          type: string
+          nullable: true
+        risk:
+          type: string
+        createdAt:
+          type: string
+
     BrandThreatScanDetail:
       allOf:
         - $ref: "#/components/schemas/BrandThreatScan"
@@ -3665,6 +3702,10 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/BrandThreatResult"
+            brandAbuse:
+              type: array
+              items:
+                $ref: "#/components/schemas/BrandAbuseResult"
             adMonitoringResults:
               type: array
               items:

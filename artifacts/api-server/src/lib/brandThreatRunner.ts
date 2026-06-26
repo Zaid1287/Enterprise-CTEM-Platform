@@ -788,6 +788,8 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         title: a.title ?? undefined,
         description: a.description ?? undefined,
         evidenceSnippet: a.evidenceSnippet ?? undefined,
+        installCount: a.installCount ?? undefined,
+        iconUrl: a.iconUrl ?? undefined,
         risk: a.risk,
       }));
 

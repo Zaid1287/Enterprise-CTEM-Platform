@@ -955,8 +955,24 @@ export interface AdMonitoringResult {
   createdAt: string;
 }
 
+export interface BrandAbuseResult {
+  id: number;
+  scanId: number | null;
+  type: string;
+  platform?: string | null;
+  url?: string | null;
+  title?: string | null;
+  description?: string | null;
+  evidenceSnippet?: string | null;
+  installCount?: string | null;
+  iconUrl?: string | null;
+  risk: string;
+  createdAt: string;
+}
+
 export type BrandThreatScanDetail = BrandThreatScan & {
   results: BrandThreatResult[];
+  brandAbuse?: BrandAbuseResult[];
   adMonitoringResults?: AdMonitoringResult[];
 };
 

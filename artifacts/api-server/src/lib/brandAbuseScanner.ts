@@ -1,4 +1,6 @@
 import { logger } from "./logger";
+// @ts-ignore — google-play-scraper ships CJS; the types are bundled
+import gplay from "google-play-scraper";
 
 export interface BrandAbuseResult {
   type: string;
@@ -7,6 +9,8 @@ export interface BrandAbuseResult {
   title: string | null;
   description: string | null;
   evidenceSnippet: string | null;
+  installCount: string | null;
+  iconUrl: string | null;
   risk: string;
 }
 
@@ -23,6 +27,12 @@ export async function scanBrandAbuse(
     checkDNSTwistLookalikePatterns(brand, domain, results),
     checkAppleAppStore(brand, results),
     checkGooglePlayStore(brand, results),
+    checkAPKPure(brand, results),
+    checkAptoide(brand, results),
+    checkSamsungGalaxyStore(brand, results),
+    checkHuaweiAppGallery(brand, results),
+    checkAmazonAppstore(brand, results),
+    checkJailbreakRepos(brand, results),
     checkYouTubeAbuse(brand, results, youtubeApiKey),
     checkRedditAbuse(brand, domain, results),
     ...socialHandles.map(handle => checkSocialHandle(handle, brand, results)),
@@ -95,6 +105,8 @@ async function checkSocialHandle(
         title: `@${handle} on ${p.name}`,
         description: `Watchlist handle @${handle} found on ${p.name} with brand name "${brand}" in ${handleContainsBrand ? "handle" : "page content"} — possible impersonation`,
         evidenceSnippet: `Page title: ${pageTitle || "(none)"}; handle contains brand: ${handleContainsBrand}; page mentions brand: ${bodyMentionsBrand}`,
+        installCount: null,
+        iconUrl: null,
         risk,
       });
     } catch {
@@ -131,6 +143,8 @@ async function checkCertTransparencyAbuse(
         title: `Suspicious cert CN: ${cn}`,
         description: `SSL certificate issued for '${cn}' may impersonate ${domain}. Issued: ${cert.not_before ?? "unknown"}.`,
         evidenceSnippet: `CN=${cn}, issuer=${cert.issuer_name ?? "unknown"}`,
+        installCount: null,
+        iconUrl: null,
         risk: "medium",
       });
 
@@ -169,6 +183,8 @@ async function checkDNSTwistLookalikePatterns(
             title: `Active lookalike: ${candidate}`,
             description: `Domain '${candidate}' is live and mimics brand '${brand}'. Resolves to: ${addrs.join(", ")}`,
             evidenceSnippet: `A records: ${addrs.join(", ")}`,
+            installCount: null,
+            iconUrl: null,
             risk: "high",
           });
         }
@@ -213,6 +229,8 @@ async function checkAppleAppStore(
           title: `Potential rogue iOS app: ${app.trackName}`,
           description: `App '${app.trackName}' by '${app.sellerName}' uses brand name but doesn't appear official. ${app.userRatingCountForCurrentVersion ?? 0} reviews.`,
           evidenceSnippet: `App ID: ${app.trackId}, Developer: ${app.sellerName}`,
+          installCount: null,
+          iconUrl: (app.artworkUrl60 ?? app.artworkUrl100 ?? null) as string | null,
           risk: "medium",
         });
       }
@@ -227,76 +245,420 @@ async function checkGooglePlayStore(
   out: BrandAbuseResult[],
 ): Promise<void> {
   try {
-    // Google Play Store public search (web scrape of play.google.com search results)
-    const searchUrl = `https://play.google.com/store/search?q=${encodeURIComponent(brand)}&c=apps&hl=en`;
-    const res = await fetch(searchUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return;
-
-    const html = await res.text();
     const brandLower = brand.toLowerCase();
+    const brandSlug  = brandLower.replace(/\s+/g, "");
 
-    // Extract app package IDs and titles from the Play Store HTML
-    const escapedBrand = brandLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const appPattern = new RegExp(`\\["(com\\.[a-z0-9._]+)"[,\\]].*?"([^"]*?(?:${escapedBrand})[^"]*?)"`, "gi");
-    const appMatches = html.matchAll(appPattern);
+    const apps = await (gplay as any).search({
+      term: brand,
+      num: 30,
+      lang: "en",
+      country: "us",
+    }) as any[];
 
-    const seen = new Set<string>();
-    for (const match of appMatches) {
-      const packageId = match[1];
-      const appTitle = match[2];
+    for (const app of apps) {
+      const titleLower: string = (app.title ?? "").toLowerCase();
+      const devLower: string   = (app.developer ?? "").toLowerCase();
+      const pkgId: string      = (app.appId ?? app.packageName ?? "");
 
-      if (seen.has(packageId)) continue;
-      seen.add(packageId);
+      if (!titleLower.includes(brandLower)) continue;
 
-      // Flag apps that mention the brand but whose package ID doesn't contain expected org name
-      const brandSlug = brandLower.replace(/\s+/g, "");
-      const isOfficialPackage = packageId.includes(brandSlug) ||
-        packageId.split(".").some(part => part === brandSlug || part.startsWith(brandSlug));
+      // Heuristic: skip if developer name contains brand (likely official)
+      if (devLower.includes(brandLower) || devLower.includes(brandSlug)) continue;
 
-      if (!isOfficialPackage) {
-        out.push({
-          type: "rogue_app",
-          platform: "Google Play Store",
-          url: `https://play.google.com/store/apps/details?id=${packageId}`,
-          title: `Potential rogue Android app: ${appTitle || packageId}`,
-          description: `Android app package '${packageId}' uses brand '${brand}' in its name but doesn't appear to be the official publisher package.`,
-          evidenceSnippet: `Package ID: ${packageId}`,
-          risk: "medium",
-        });
+      // Heuristic: skip if package org segment matches brand (e.g. com.brand.app)
+      const pkgOrgSegment = pkgId.split(".")[1] ?? "";
+      if (pkgOrgSegment === brandSlug || pkgId.includes(`.${brandSlug}.`) || pkgId.endsWith(`.${brandSlug}`)) continue;
 
-        if (out.filter(r => r.platform === "Google Play Store").length >= 10) break;
-      }
+      out.push({
+        type: "rogue_app",
+        platform: "Google Play Store",
+        url: app.url ?? `https://play.google.com/store/apps/details?id=${pkgId}`,
+        title: `Potential rogue Android app: ${app.title}`,
+        description: `Android app '${app.title}' by '${app.developer}' uses brand name '${brand}' but developer doesn't appear to be the official publisher. ${app.ratings ? `${app.ratings.toLocaleString()} ratings.` : ""}`,
+        evidenceSnippet: `Package: ${pkgId}, Developer: ${app.developer}, Score: ${app.score ?? "N/A"}`,
+        installCount: app.installs ?? null,
+        iconUrl: app.icon ?? null,
+        risk: "medium",
+      });
+
+      if (out.filter(r => r.platform === "Google Play Store").length >= 10) break;
+    }
+  } catch (e: any) {
+    logger.debug(`Play Store check failed for ${brand}: ${e.message}`);
+  }
+}
+
+async function checkAPKPure(
+  brand: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  try {
+    const brandLower = brand.toLowerCase();
+    const brandSlug  = brandLower.replace(/\s+/g, "-");
+
+    const res = await fetch(
+      `https://apkpure.com/search?q=${encodeURIComponent(brand)}`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return;
+    const html = await res.text();
+
+    // Extract app cards from APKPure HTML
+    const appCardPattern = /<div[^>]*class="[^"]*search-dl[^"]*"[^>]*>[\s\S]*?<\/div>/gi;
+    const namePattern = /<p[^>]*class="[^"]*search-title[^"]*"[^>]*>([^<]+)<\/p>/i;
+    const developerPattern = /<p[^>]*class="[^"]*developer[^"]*"[^>]*>([^<]+)<\/p>/i;
+    const urlPattern = /href="(\/[a-z0-9._-]+\/[a-z0-9._-]+)"/i;
+    const iconPattern = /<img[^>]*src="(https:\/\/image\.winudf[^"]+)"[^>]*>/i;
+    const installPattern = /(\d[\d,.]+[KMB]?\+?\s*(?:downloads|installs))/i;
+
+    const cards = html.match(/<li[^>]*class="[^"]*search-res[^"]*"[\s\S]*?<\/li>/gi) ?? [];
+
+    for (const card of cards.slice(0, 20)) {
+      const nameMatch = card.match(namePattern);
+      const appName = (nameMatch?.[1] ?? "").trim();
+      if (!appName.toLowerCase().includes(brandLower)) continue;
+
+      const devMatch = card.match(developerPattern);
+      const devName  = (devMatch?.[1] ?? "").trim().toLowerCase();
+      if (devName.includes(brandLower)) continue;
+
+      const urlMatch  = card.match(urlPattern);
+      const iconMatch = card.match(iconPattern);
+      const installMatch = html.match(installPattern);
+
+      out.push({
+        type: "rogue_app",
+        platform: "APKPure",
+        url: urlMatch ? `https://apkpure.com${urlMatch[1]}` : `https://apkpure.com/search?q=${encodeURIComponent(brand)}`,
+        title: `Potential rogue APK: ${appName}`,
+        description: `App '${appName}' by '${devName || "unknown developer"}' found on APKPure (unofficial APK distribution) using brand name '${brand}'. Third-party APK stores carry higher risk of repackaging.`,
+        evidenceSnippet: `Developer: ${devName || "unknown"}; source: APKPure (third-party store)`,
+        installCount: installMatch?.[1] ?? null,
+        iconUrl: iconMatch?.[1] ?? null,
+        risk: "high",
+      });
+
+      if (out.filter(r => r.platform === "APKPure").length >= 5) break;
     }
 
-    // Fallback: search for brand-impersonation keywords in the HTML
-    if (out.filter(r => r.platform === "Google Play Store").length === 0) {
-      const fraudPatterns = [
-        `${brand} - Official`, `${brand} App`, `${brand} Mobile`,
-        `Fake ${brand}`, `${brand} Clone`, `${brand} Premium`,
-      ];
-      for (const pattern of fraudPatterns) {
-        if (html.toLowerCase().includes(pattern.toLowerCase())) {
+    // Fallback: simple brand-slug URL probe
+    if (out.filter(r => r.platform === "APKPure").length === 0) {
+      const probeRes = await fetch(
+        `https://apkpure.com/${brandSlug}`,
+        { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(6_000) },
+      ).catch(() => null);
+      if (probeRes?.ok && probeRes.status === 200) {
+        const probeHtml = await probeRes.text().catch(() => "");
+        if (probeHtml.toLowerCase().includes(brandLower)) {
           out.push({
             type: "rogue_app",
-            platform: "Google Play Store",
-            url: searchUrl,
-            title: `Potential brand abuse: "${pattern}" on Play Store`,
-            description: `Google Play Store search for '${brand}' returned results matching '${pattern}', which may indicate brand impersonation.`,
-            evidenceSnippet: `Pattern '${pattern}' found in Play Store search results`,
-            risk: "low",
+            platform: "APKPure",
+            url: `https://apkpure.com/${brandSlug}`,
+            title: `Brand-name APK page on APKPure: ${brand}`,
+            description: `A page for '${brand}' exists on APKPure, a third-party Android APK distribution site. Verify this is the official publisher before trusting downloads.`,
+            evidenceSnippet: `URL probe: https://apkpure.com/${brandSlug} returned 200 OK`,
+            installCount: null,
+            iconUrl: null,
+            risk: "medium",
           });
-          break;
         }
       }
     }
   } catch (e: any) {
-    logger.debug(`Play Store check failed for ${brand}: ${e.message}`);
+    logger.debug(`APKPure check failed for ${brand}: ${e.message}`);
+  }
+}
+
+async function checkAptoide(
+  brand: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  try {
+    const brandLower = brand.toLowerCase();
+
+    const res = await fetch(
+      `https://ws75.aptoide.com/api/7/apps/search/query=${encodeURIComponent(brand)}/limit=20/sort=downloads`,
+      {
+        headers: { "User-Agent": "Aptoide/9.0 (Android)" },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return;
+    const data = await res.json() as any;
+    const apps: any[] = data?.datalist?.list ?? [];
+
+    for (const app of apps) {
+      const appName: string  = (app.name ?? app.package ?? "").toLowerCase();
+      const devName: string  = (app.developer?.name ?? app.store?.name ?? "").toLowerCase();
+      const pkgId: string    = app.package ?? "";
+
+      if (!appName.includes(brandLower)) continue;
+      if (devName.includes(brandLower)) continue;
+
+      out.push({
+        type: "rogue_app",
+        platform: "Aptoide",
+        url: app.urls?.w ?? `https://aptoide.com/app/${pkgId}`,
+        title: `Potential rogue Aptoide app: ${app.name ?? pkgId}`,
+        description: `App '${app.name}' by '${app.developer?.name ?? "unknown"}' found on Aptoide (community APK store) using brand name '${brand}'. Aptoide apps bypass Google Play review.`,
+        evidenceSnippet: `Package: ${pkgId}, Downloads: ${app.stats?.downloads ?? "unknown"}, Rating: ${app.stats?.rating?.avg ?? "N/A"}`,
+        installCount: app.stats?.downloads ? `${app.stats.downloads.toLocaleString()}` : null,
+        iconUrl: app.icon ?? app.graphic ?? null,
+        risk: "high",
+      });
+
+      if (out.filter(r => r.platform === "Aptoide").length >= 5) break;
+    }
+  } catch (e: any) {
+    logger.debug(`Aptoide check failed for ${brand}: ${e.message}`);
+  }
+}
+
+async function checkSamsungGalaxyStore(
+  brand: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  try {
+    const brandLower = brand.toLowerCase();
+
+    // Samsung Galaxy Store public search API (unofficial)
+    const res = await fetch(
+      `https://galaxystore.samsung.com/api/search?searchTxt=${encodeURIComponent(brand)}&contentType=app`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Linux; Android 12; SM-S908B) AppleWebKit/537.36",
+          "Accept": "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return;
+    const data = await res.json() as any;
+    const apps: any[] = data?.contents ?? data?.list ?? data?.data ?? [];
+
+    for (const app of apps.slice(0, 20)) {
+      const appName: string  = (app.appTitle ?? app.name ?? app.contentName ?? "").toLowerCase();
+      const seller: string   = (app.sellerName ?? app.developerName ?? app.developer ?? "").toLowerCase();
+
+      if (!appName.includes(brandLower)) continue;
+      if (seller.includes(brandLower)) continue;
+
+      const appId   = app.contentId ?? app.id ?? "";
+      const iconUrl = app.iconUrl ?? app.imageUrl ?? app.thumbnail ?? null;
+
+      out.push({
+        type: "rogue_app",
+        platform: "Samsung Galaxy Store",
+        url: appId ? `https://galaxystore.samsung.com/detail/${appId}` : `https://galaxystore.samsung.com/search?searchTxt=${encodeURIComponent(brand)}`,
+        title: `Potential rogue Samsung app: ${app.appTitle ?? app.name}`,
+        description: `App '${app.appTitle ?? app.name}' by '${app.sellerName ?? app.developerName ?? "unknown"}' found on Samsung Galaxy Store using brand name '${brand}'.`,
+        evidenceSnippet: `Content ID: ${appId}, Seller: ${app.sellerName ?? "unknown"}`,
+        installCount: app.downloadCount ? `${Number(app.downloadCount).toLocaleString()}` : null,
+        iconUrl,
+        risk: "medium",
+      });
+
+      if (out.filter(r => r.platform === "Samsung Galaxy Store").length >= 5) break;
+    }
+  } catch (e: any) {
+    logger.debug(`Samsung Galaxy Store check failed for ${brand}: ${e.message}`);
+  }
+}
+
+async function checkHuaweiAppGallery(
+  brand: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  try {
+    const brandLower = brand.toLowerCase();
+
+    const res = await fetch(
+      `https://appgallery.huawei.com/bo/search/freeKeywordSearch?keyword=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Linux; Android 12; HarmonyOS) AppleWebKit/537.36",
+          "Accept": "application/json",
+          "Origin": "https://appgallery.huawei.com",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return;
+    const data = await res.json() as any;
+    const apps: any[] = data?.data?.apps ?? data?.apps ?? data?.list ?? [];
+
+    for (const app of apps.slice(0, 20)) {
+      const appName: string  = (app.appName ?? app.name ?? "").toLowerCase();
+      const devName: string  = (app.developer ?? app.developerName ?? app.sellerName ?? "").toLowerCase();
+
+      if (!appName.includes(brandLower)) continue;
+      if (devName.includes(brandLower)) continue;
+
+      const appId   = app.appid ?? app.id ?? app.packageName ?? "";
+      const iconUrl = app.iconUri ?? app.icon ?? app.iconUrl ?? null;
+
+      out.push({
+        type: "rogue_app",
+        platform: "Huawei AppGallery",
+        url: appId ? `https://appgallery.huawei.com/app/${appId}` : `https://appgallery.huawei.com/#/search/${encodeURIComponent(brand)}`,
+        title: `Potential rogue Huawei app: ${app.appName ?? app.name}`,
+        description: `App '${app.appName ?? app.name}' by '${app.developer ?? "unknown"}' found on Huawei AppGallery using brand name '${brand}'. AppGallery is the default store on Huawei/Honor devices.`,
+        evidenceSnippet: `App ID: ${appId}, Developer: ${app.developer ?? "unknown"}, Downloads: ${app.downloadCount ?? "unknown"}`,
+        installCount: app.downloadCount ? `${app.downloadCount}` : null,
+        iconUrl,
+        risk: "medium",
+      });
+
+      if (out.filter(r => r.platform === "Huawei AppGallery").length >= 5) break;
+    }
+  } catch (e: any) {
+    logger.debug(`Huawei AppGallery check failed for ${brand}: ${e.message}`);
+  }
+}
+
+async function checkAmazonAppstore(
+  brand: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  try {
+    const brandLower = brand.toLowerCase();
+
+    const res = await fetch(
+      `https://www.amazon.com/s?k=${encodeURIComponent(brand)}&i=mobile-apps`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Linux; Android 12; Fire HD 10) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return;
+    const html = await res.text();
+
+    // Extract app results from Amazon search HTML
+    const appPattern = /data-asin="([A-Z0-9]{10})"[^>]*>[\s\S]*?<span[^>]*class="[^"]*a-text-normal[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
+    const developerPattern = /<span[^>]*class="[^"]*a-size-base[^"]*"[^>]*>by ([^<]+)<\/span>/gi;
+
+    const asinTitles: Array<{ asin: string; title: string }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = appPattern.exec(html)) !== null && asinTitles.length < 20) {
+      asinTitles.push({ asin: m[1] ?? "", title: (m[2] ?? "").replace(/<[^>]+>/g, "").trim() });
+    }
+
+    for (const { asin, title } of asinTitles) {
+      if (!title.toLowerCase().includes(brandLower)) continue;
+
+      // Try to find developer for this ASIN
+      let devName = "";
+      const devCtx = html.slice(html.indexOf(asin), html.indexOf(asin) + 2000);
+      const devM = /by ([A-Z][^<\n]{1,60})/.exec(devCtx);
+      devName = (devM?.[1] ?? "").trim().toLowerCase();
+
+      if (devName.includes(brandLower)) continue;
+
+      out.push({
+        type: "rogue_app",
+        platform: "Amazon Appstore",
+        url: `https://www.amazon.com/dp/${asin}`,
+        title: `Potential rogue Fire/Android app: ${title}`,
+        description: `App '${title}' found on Amazon Appstore${devName ? ` by '${devName}'` : ""} using brand name '${brand}'. Amazon Appstore is pre-installed on Fire tablets and sideloaded on Android.`,
+        evidenceSnippet: `ASIN: ${asin}${devName ? `, Developer: ${devName}` : ""}`,
+        installCount: null,
+        iconUrl: null,
+        risk: "medium",
+      });
+
+      if (out.filter(r => r.platform === "Amazon Appstore").length >= 5) break;
+    }
+  } catch (e: any) {
+    logger.debug(`Amazon Appstore check failed for ${brand}: ${e.message}`);
+  }
+}
+
+async function checkJailbreakRepos(
+  brand: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  try {
+    const brandLower = brand.toLowerCase();
+
+    // Well-known Cydia/Sileo-compatible repositories with searchable package indexes
+    const repos = [
+      { name: "Chariz",       url: `https://repo.chariz.com/packages.json` },
+      { name: "BigBoss",      url: `http://apt.thebigboss.org/repofiles/cydia/dists/stable/main/binary-iphoneos-arm/Packages.bz2` },
+      { name: "Havoc",        url: `https://havoc.app/depiction.php?&package=${encodeURIComponent(brand)}` },
+    ];
+
+    // Chariz has a JSON API
+    try {
+      const res = await fetch(repos[0]!.url, {
+        headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (res.ok) {
+        const data = await res.json() as any[];
+        for (const pkg of (Array.isArray(data) ? data : []).slice(0, 200)) {
+          const pkgName: string = (pkg.name ?? pkg.id ?? "").toLowerCase();
+          const pkgId: string   = pkg.id ?? "";
+          const devName: string = (pkg.author?.name ?? pkg.maintainer ?? "").toLowerCase();
+          if (!pkgName.includes(brandLower)) continue;
+          if (devName.includes(brandLower)) continue;
+          out.push({
+            type: "rogue_app",
+            platform: "Cydia/Sileo (Chariz)",
+            url: pkg.depiction ?? `https://repo.chariz.com/package/${pkgId}`,
+            title: `Jailbreak tweak using brand name: ${pkg.name ?? pkgId}`,
+            description: `Package '${pkg.name ?? pkgId}' found in the Chariz jailbreak repository using brand name '${brand}'. Jailbreak tweaks are unsigned and can modify/intercept app behaviour.`,
+            evidenceSnippet: `Package ID: ${pkgId}, Author: ${pkg.author?.name ?? "unknown"}, Version: ${pkg.latestVersion ?? "unknown"}`,
+            installCount: null,
+            iconUrl: pkg.headerURL ?? pkg.icon ?? null,
+            risk: "high",
+          });
+          if (out.filter(r => r.type === "rogue_app" && r.platform?.startsWith("Cydia")).length >= 3) break;
+        }
+      }
+    } catch {
+      // Chariz is best-effort
+    }
+
+    // Havoc probe: any HTTP 200 for brand-name package URL is suspicious
+    try {
+      const havocRes = await fetch(
+        `https://havoc.app/package/${brandLower.replace(/\s+/g, "-")}`,
+        {
+          headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
+          signal: AbortSignal.timeout(6_000),
+        },
+      );
+      if (havocRes.ok) {
+        const html = await havocRes.text();
+        if (html.toLowerCase().includes(brandLower)) {
+          out.push({
+            type: "rogue_app",
+            platform: "Cydia/Sileo (Havoc)",
+            url: `https://havoc.app/package/${brandLower.replace(/\s+/g, "-")}`,
+            title: `Brand-name jailbreak package on Havoc: ${brand}`,
+            description: `A jailbreak package for '${brand}' exists on the Havoc repository. Jailbreak tweaks may inject code into the legitimate app or impersonate it.`,
+            evidenceSnippet: `Havoc package URL probe returned 200 OK for brand name`,
+            installCount: null,
+            iconUrl: null,
+            risk: "high",
+          });
+        }
+      }
+    } catch {
+      // Havoc is best-effort
+    }
+  } catch (e: any) {
+    logger.debug(`Jailbreak repo check failed for ${brand}: ${e.message}`);
   }
 }
 
@@ -402,6 +764,8 @@ async function checkYouTubeAbuse(
         title: ch.title,
         description: `YouTube channel "${ch.title}" uses brand name "${brand}" and may be impersonating the official channel. Subscriber count: ${subscriberCount.toLocaleString()}${claimsOfficial ? " — claims to be official" : ""}`,
         evidenceSnippet: `Channel ID: ${ch.channelId}; subscribers: ${subscriberCount.toLocaleString()}; thumbnail: ${ch.thumbnailUrl ?? "none"}`,
+        installCount: null,
+        iconUrl: ch.thumbnailUrl ?? null,
         risk,
       });
     }
@@ -469,6 +833,8 @@ async function checkRedditAbuse(
           title: `r/${sr.display_name}`,
           description: `Subreddit r/${sr.display_name} uses brand name "${brand}" in its community name${claimsOfficial ? " and claims to be official" : ""} — possible brand-squatting community. ${sr.subscribers.toLocaleString()} subscribers.`,
           evidenceSnippet: `subscribers: ${sr.subscribers}; title: "${sr.title}"; official claim: ${claimsOfficial}`,
+          installCount: null,
+          iconUrl: null,
           risk,
         });
       }
@@ -512,6 +878,8 @@ async function checkRedditAbuse(
           title: p.title,
           description: `Reddit post in r/${p.subreddit} discussing "${brand}" with scam/fraud signals — may indicate active abuse campaign`,
           evidenceSnippet: p.selftext?.slice(0, 200) || null,
+          installCount: null,
+          iconUrl: null,
           risk: p.score > 50 ? "high" : "medium",
         });
       }

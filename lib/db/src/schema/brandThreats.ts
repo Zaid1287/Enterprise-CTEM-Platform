@@ -120,6 +120,8 @@ export const brandAbuseResultsTable = pgTable("brand_abuse_results", {
   title:           text("title"),
   description:     text("description"),
   evidenceSnippet: text("evidence_snippet"),
+  installCount:    text("install_count"),
+  iconUrl:         text("icon_url"),
   risk:            text("risk").notNull().default("medium"),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

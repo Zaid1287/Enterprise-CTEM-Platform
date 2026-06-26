@@ -39,6 +39,7 @@ export * from './assetUpdate';
 export * from './assetUpdateMetadata';
 export * from './auditLog';
 export * from './authResponse';
+export * from './brandAbuseResult';
 export * from './brandThreatResult';
 export * from './brandThreatScan';
 export * from './brandThreatScanDetail';

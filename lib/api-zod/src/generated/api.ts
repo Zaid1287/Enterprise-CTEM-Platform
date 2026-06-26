@@ -2007,6 +2007,20 @@ export const GetBrandThreatScanResponse = zod.object({
   "isSuspicious": zod.boolean(),
   "createdAt": zod.string()
 })),
+  "brandAbuse": zod.array(zod.object({
+  "id": zod.number(),
+  "scanId": zod.number().nullable(),
+  "type": zod.string(),
+  "platform": zod.string().nullish(),
+  "url": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "description": zod.string().nullish(),
+  "evidenceSnippet": zod.string().nullish(),
+  "installCount": zod.string().nullish(),
+  "iconUrl": zod.string().nullish(),
+  "risk": zod.string(),
+  "createdAt": zod.string()
+})).optional(),
   "adMonitoringResults": zod.array(zod.object({
   "id": zod.number(),
   "scanId": zod.number().nullable(),
