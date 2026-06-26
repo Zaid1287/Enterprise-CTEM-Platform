@@ -5,21 +5,38 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
 
-// Returns the account manager(s) assigned to the caller's tenant (for client-facing team page)
+// Returns the account manager(s) assigned to the caller's tenant.
+// Merges two sources:
+//   1. account_manager_clients — tenant-level AM assignments
+//   2. assets.assigned_account_manager_id — asset-level AM assignments
 router.get("/account-manager/my-manager", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { tenantId } = req.user!;
 
-  const assignments = await db
+  // Source 1: tenant-level assignments
+  const tenantAssignments = await db
     .select({ accountManagerUserId: accountManagerClientsTable.accountManagerUserId, assignedAt: accountManagerClientsTable.assignedAt })
     .from(accountManagerClientsTable)
     .where(eq(accountManagerClientsTable.clientTenantId, tenantId));
 
-  if (assignments.length === 0) {
+  // Source 2: asset-level assignments — distinct AM user IDs from assets in this tenant
+  const assetAssignments = await db
+    .selectDistinct({ accountManagerUserId: assetsTable.assignedAccountManagerId })
+    .from(assetsTable)
+    .where(eq(assetsTable.tenantId, tenantId));
+
+  // Merge and deduplicate AM user IDs
+  const amUserIdSet = new Set<number>();
+  for (const a of tenantAssignments) amUserIdSet.add(a.accountManagerUserId);
+  for (const a of assetAssignments) {
+    if (a.accountManagerUserId != null) amUserIdSet.add(a.accountManagerUserId);
+  }
+
+  if (amUserIdSet.size === 0) {
     res.json([]);
     return;
   }
 
-  const amUserIds = assignments.map(a => a.accountManagerUserId);
+  const amUserIds = Array.from(amUserIdSet);
   const amUsers = await db
     .select({
       id: usersTable.id,
@@ -33,9 +50,10 @@ router.get("/account-manager/my-manager", requireAuth, async (req: Authenticated
     .from(usersTable)
     .where(inArray(usersTable.id, amUserIds));
 
+  // Attach earliest assignedAt from tenant-level assignments when available
   const result = amUsers.map(u => ({
     ...u,
-    assignedAt: assignments.find(a => a.accountManagerUserId === u.id)?.assignedAt?.toISOString() ?? null,
+    assignedAt: tenantAssignments.find(a => a.accountManagerUserId === u.id)?.assignedAt?.toISOString() ?? null,
   }));
 
   res.json(result);
