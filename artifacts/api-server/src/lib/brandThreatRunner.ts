@@ -543,6 +543,10 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     }
     await flushBatch();
 
+    // ── Phase 4 pre-fetch: abuse.ch feeds (URLhaus + ThreatFox) ──────────────
+    // Run concurrently with phase 3/4 DNS loop — no API key required
+    const abuseChList = await queryAbuseChFeeds(domain);
+
     // ── Phase 4: Phishing detections from live domains ───────────────────────
     // 4a) Phishing feed results (PhishTank / OpenPhish / GSB)
     const phishingInserts: typeof phishingDetectionsTable.$inferInsert[] = [];
@@ -657,11 +661,10 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     const youtubeApiKey  = await getPlatformSetting("youtube_api_key");
     const metaAdsToken   = await getPlatformSetting("meta_ads_access_token");
 
-    const [hibpResult, brandAbuseList, metaAdsList, abuseChList] = await Promise.all([
+    const [hibpResult, brandAbuseList, metaAdsList] = await Promise.all([
       hibpDomainLookup(domain, hibpKey ?? undefined),  // always runs; without key uses public /breaches fallback
       scanBrandAbuse(brandName, domain, watchlistItems.filter(w => w.type === "social_handle").map(w => w.value), youtubeApiKey ?? undefined),
       metaAdsToken ? scanMetaAds(brandName, domain, metaAdsToken) : Promise.resolve([]),
-      queryAbuseChFeeds(domain),
     ]);
     const intelxResultArrays = intelxKey
       ? await Promise.all(uniqueTerms.map(term => intelxSearch(term, intelxKey, 10)))
@@ -904,7 +907,7 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       fuzzerBreakdown,
       dataLeakCount,
       phishingCount,
-      brandAbuseCount,
+      brandAbuseCount: brandAbuseCount + adMonitoringCount,
       completedAt: new Date(),
     }).where(eq(brandThreatScansTable.id, scanId));
 

@@ -414,16 +414,18 @@ const AD_RISK_META: Record<string, { label: string; color: string; bg: string; b
   low:      { label: "Low",      color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30" },
 };
 
-function MaliciousAdsTab({ ads }: { ads: any[] }) {
+function MaliciousAdsTab({ ads, hasMetaToken }: { ads: any[]; hasMetaToken?: boolean }) {
   const highRisk = ads.filter((a: any) => a.risk === "critical" || a.risk === "high").length;
   if (ads.length === 0) {
     return (
       <div className="p-10 text-center space-y-3">
         <Megaphone className="w-8 h-8 text-muted-foreground/30 mx-auto" />
         <div>
-          <p className="text-sm font-medium text-muted-foreground">No malicious ads detected</p>
+          <p className="text-sm font-medium text-muted-foreground">No suspicious ad activity detected</p>
           <p className="text-xs text-muted-foreground/60 mt-1">
-            Configure a Meta Ads access token in Platform Settings → Brand Intelligence to enable ad library monitoring.
+            {hasMetaToken === false
+              ? "Configure a Meta Ads access token in Platform Settings → Brand Intelligence to enable ad library monitoring."
+              : "No brand-impersonating ads were found in the Meta Ads Library for this brand."}
           </p>
         </div>
       </div>
@@ -1054,7 +1056,7 @@ export default function BrandThreatDetailPage() {
         {/* ── MALICIOUS ADS tab ── */}
         {activeTab === "malicious_ads" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <MaliciousAdsTab ads={adMonitoringResults} />
+            <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} />
           </div>
         )}
 

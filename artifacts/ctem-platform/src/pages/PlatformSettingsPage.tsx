@@ -392,63 +392,62 @@ export default function PlatformSettingsPage() {
 
                       {/* Input + actions */}
                       <div className="flex-1 min-w-0 space-y-2">
-                        {isComingSoon ? (
-                          <div className="h-9 flex items-center px-3 bg-muted/30 border border-border rounded-lg text-xs text-muted-foreground gap-2">
-                            <span className="w-2 h-2 rounded-full bg-violet-400/50 shrink-0" />
-                            Scanning support coming soon — store your token now for when it activates
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Input
+                              type={isRevealed ? "text" : "password"}
+                              className={cn(
+                                "h-9 text-sm font-mono pr-24 transition-colors",
+                                isEdited && "border-amber-500/50 bg-amber-500/3",
+                                hasValue && !isEdited && "border-green-500/30",
+                                isComingSoon && !isEdited && "opacity-70",
+                              )}
+                              placeholder={
+                                hasValue && !isEdited && !isRevealed
+                                  ? setting.maskedValue || "••••••••••••••••"
+                                  : `Paste ${setting.label}…`
+                              }
+                              value={
+                                isEdited ? editVal
+                                : isRevealed ? (revealedVal ?? "")
+                                : ""
+                              }
+                              onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
+                            />
                           </div>
-                        ) : (
-                          <div className="flex gap-2">
-                            <div className="relative flex-1">
-                              <Input
-                                type={isRevealed ? "text" : "password"}
-                                className={cn(
-                                  "h-9 text-sm font-mono pr-24 transition-colors",
-                                  isEdited && "border-amber-500/50 bg-amber-500/3",
-                                  hasValue && !isEdited && "border-green-500/30",
-                                )}
-                                placeholder={
-                                  hasValue && !isEdited && !isRevealed
-                                    ? setting.maskedValue || "••••••••••••••••"
-                                    : `Paste ${setting.label}…`
-                                }
-                                value={
-                                  isEdited ? editVal
-                                  : isRevealed ? (revealedVal ?? "")
-                                  : ""
-                                }
-                                onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
-                              />
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {setting.hasValue && (
-                                <button
-                                  onClick={() => handleReveal(setting.key)}
-                                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9"
-                                >
-                                  {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                  <span className="hidden sm:inline">{isRevealed ? "Hide" : "Reveal"}</span>
-                                </button>
-                              )}
-                              {setting.hasValue && !isEdited && (
-                                <button
-                                  onClick={() => setEdits(prev => ({ ...prev, [setting.key]: "" }))}
-                                  className="flex items-center gap-1 text-[10px] text-destructive hover:text-destructive/80 transition-colors px-2.5 py-2 rounded-lg hover:bg-destructive/10 border border-border h-9"
-                                  title="Clear this key"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                              {isEdited && (
-                                <button
-                                  onClick={() => setEdits(prev => { const n = { ...prev }; delete n[setting.key]; return n; })}
-                                  className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9 whitespace-nowrap"
-                                >
-                                  Discard
-                                </button>
-                              )}
-                            </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {setting.hasValue && (
+                              <button
+                                onClick={() => handleReveal(setting.key)}
+                                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9"
+                              >
+                                {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                <span className="hidden sm:inline">{isRevealed ? "Hide" : "Reveal"}</span>
+                              </button>
+                            )}
+                            {setting.hasValue && !isEdited && (
+                              <button
+                                onClick={() => setEdits(prev => ({ ...prev, [setting.key]: "" }))}
+                                className="flex items-center gap-1 text-[10px] text-destructive hover:text-destructive/80 transition-colors px-2.5 py-2 rounded-lg hover:bg-destructive/10 border border-border h-9"
+                                title="Clear this key"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {isEdited && (
+                              <button
+                                onClick={() => setEdits(prev => { const n = { ...prev }; delete n[setting.key]; return n; })}
+                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9 whitespace-nowrap"
+                              >
+                                Discard
+                              </button>
+                            )}
                           </div>
+                        </div>
+                        {isComingSoon && (
+                          <p className="text-[10px] text-violet-400/70 mt-1">
+                            Scanning support coming soon — you can save this token now so it activates automatically when enabled.
+                          </p>
                         )}
                       </div>
                     </div>
