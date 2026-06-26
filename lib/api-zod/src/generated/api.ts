@@ -2006,7 +2006,28 @@ export const GetBrandThreatScanResponse = zod.object({
   "riskScore": zod.number(),
   "isSuspicious": zod.boolean(),
   "createdAt": zod.string()
-}))
+})),
+  "adMonitoringResults": zod.array(zod.object({
+  "id": zod.number(),
+  "scanId": zod.number().nullable(),
+  "platform": zod.string(),
+  "adId": zod.string().nullish(),
+  "adType": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "body": zod.string().nullish(),
+  "advertiserName": zod.string().nullish(),
+  "advertiserPage": zod.string().nullish(),
+  "impressions": zod.string().nullish(),
+  "spend": zod.string().nullish(),
+  "currency": zod.string().nullish(),
+  "startDate": zod.string().nullish(),
+  "endDate": zod.string().nullish(),
+  "deliveryCountries": zod.array(zod.string()).nullish(),
+  "sourceUrl": zod.string().nullish(),
+  "snapshotUrl": zod.string().nullish(),
+  "risk": zod.string(),
+  "createdAt": zod.string()
+})).optional()
 }))
 
 

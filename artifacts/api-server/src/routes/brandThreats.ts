@@ -6,6 +6,7 @@ import {
   brandThreatScansTable, brandThreatResultsTable,
   brandWatchlistItemsTable, dataLeakResultsTable,
   phishingDetectionsTable, brandAbuseResultsTable,
+  adMonitoringResultsTable,
   assetsTable,
 } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
@@ -195,7 +196,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
   if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
   const [scan] = await db.select().from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
-  const [results, phishing, dataLeaks, brandAbuse] = await Promise.all([
+  const [results, phishing, dataLeaks, brandAbuse, adMonitoring] = await Promise.all([
     db.select().from(brandThreatResultsTable)
       .where(eq(brandThreatResultsTable.scanId, id))
       .orderBy(desc(brandThreatResultsTable.riskScore)),
@@ -208,6 +209,9 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
     db.select().from(brandAbuseResultsTable)
       .where(eq(brandAbuseResultsTable.scanId, id))
       .orderBy(desc(brandAbuseResultsTable.createdAt)),
+    db.select().from(adMonitoringResultsTable)
+      .where(eq(adMonitoringResultsTable.scanId, id))
+      .orderBy(desc(adMonitoringResultsTable.createdAt)),
   ]);
   res.json({
     ...toScanResponse(scan),
@@ -215,6 +219,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
     phishingDetections: phishing.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     dataLeaks: dataLeaks.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     brandAbuse: brandAbuse.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    adMonitoringResults: adMonitoring.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
   });
 });
 

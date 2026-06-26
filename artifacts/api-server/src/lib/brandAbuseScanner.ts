@@ -14,6 +14,7 @@ export async function scanBrandAbuse(
   brand: string,
   domain: string,
   socialHandles: string[] = [],
+  youtubeApiKey?: string,
 ): Promise<BrandAbuseResult[]> {
   const results: BrandAbuseResult[] = [];
 
@@ -22,6 +23,8 @@ export async function scanBrandAbuse(
     checkDNSTwistLookalikePatterns(brand, domain, results),
     checkAppleAppStore(brand, results),
     checkGooglePlayStore(brand, results),
+    checkYouTubeAbuse(brand, results, youtubeApiKey),
+    checkRedditAbuse(brand, domain, results),
     ...socialHandles.map(handle => checkSocialHandle(handle, brand, results)),
   ]);
 
@@ -294,5 +297,117 @@ async function checkGooglePlayStore(
     }
   } catch (e: any) {
     logger.debug(`Play Store check failed for ${brand}: ${e.message}`);
+  }
+}
+
+async function checkYouTubeAbuse(
+  brand: string,
+  out: BrandAbuseResult[],
+  apiKey?: string,
+): Promise<void> {
+  if (!apiKey) return;
+  try {
+    const params = new URLSearchParams({
+      part: "snippet",
+      q: `${brand} official scam fake`,
+      type: "video,channel",
+      maxResults: "20",
+      key: apiKey,
+    });
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?${params.toString()}`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    if (!res.ok) {
+      logger.warn({ status: res.status }, "YouTube API non-OK response");
+      return;
+    }
+    const data = await res.json() as {
+      items?: Array<{
+        id: { kind: string; videoId?: string; channelId?: string };
+        snippet: {
+          title?: string;
+          description?: string;
+          channelTitle?: string;
+          publishedAt?: string;
+        };
+      }>;
+      error?: { message: string };
+    };
+    if (data.error) {
+      logger.warn({ error: data.error }, "YouTube API error");
+      return;
+    }
+    const brandLower = brand.toLowerCase();
+    for (const item of data.items ?? []) {
+      const title = (item.snippet.title ?? "").toLowerCase();
+      const desc = (item.snippet.description ?? "").toLowerCase();
+      const channel = (item.snippet.channelTitle ?? "").toLowerCase();
+      if (!title.includes(brandLower) && !channel.includes(brandLower)) continue;
+      const isScam = title.includes("scam") || title.includes("fake") || title.includes("official") || desc.includes("scam");
+      const isImpersonation = channel.includes(brandLower) && !channel.startsWith(brandLower);
+      if (!isScam && !isImpersonation) continue;
+      const isVideo = item.id.kind === "youtube#video";
+      const url = isVideo
+        ? `https://www.youtube.com/watch?v=${item.id.videoId}`
+        : `https://www.youtube.com/channel/${item.id.channelId}`;
+      out.push({
+        type: isImpersonation ? "fake_social" : "brand_abuse",
+        platform: "YouTube",
+        url,
+        title: item.snippet.title ?? null,
+        description: `YouTube ${isVideo ? "video" : "channel"} with brand name "${brand}" in ${isImpersonation ? "channel title" : "content"} — possible impersonation or scam`,
+        evidenceSnippet: item.snippet.description?.slice(0, 200) ?? null,
+        risk: isScam ? "high" : "medium",
+      });
+    }
+  } catch (err: any) {
+    logger.warn({ err }, `YouTube abuse check failed for ${brand}`);
+  }
+}
+
+async function checkRedditAbuse(
+  brand: string,
+  domain: string,
+  out: BrandAbuseResult[],
+): Promise<void> {
+  const queries = [brand, `${brand} scam`, `${brand} fake`];
+  for (const q of queries) {
+    try {
+      const res = await fetch(
+        `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&type=link&sort=new&limit=15`,
+        {
+          headers: { "User-Agent": "SentinelwareBrandMonitor/1.0" },
+          signal: AbortSignal.timeout(8_000),
+        },
+      );
+      if (!res.ok) continue;
+      const data = await res.json() as {
+        data?: { children?: Array<{ data: { title: string; url: string; selftext: string; subreddit: string; permalink: string; score: number } }> };
+      };
+      const brandLower = brand.toLowerCase();
+      const domainLower = domain.toLowerCase();
+      for (const post of data.data?.children ?? []) {
+        const p = post.data;
+        const titleLower = p.title.toLowerCase();
+        const textLower = p.selftext.toLowerCase();
+        if (!titleLower.includes(brandLower) && !textLower.includes(brandLower)) continue;
+        const isAbuse = titleLower.includes("scam") || titleLower.includes("fake") ||
+          titleLower.includes("phish") || textLower.includes("scam") ||
+          (p.url.includes(domainLower) && (titleLower.includes("fake") || titleLower.includes("fraud")));
+        if (!isAbuse) continue;
+        out.push({
+          type: "brand_abuse",
+          platform: "Reddit",
+          url: `https://www.reddit.com${p.permalink}`,
+          title: p.title,
+          description: `Reddit post in r/${p.subreddit} discussing "${brand}" with abuse signals — may indicate active scam campaign`,
+          evidenceSnippet: p.selftext?.slice(0, 200) || null,
+          risk: p.score > 50 ? "high" : "medium",
+        });
+      }
+    } catch {
+      // Reddit is best-effort
+    }
   }
 }

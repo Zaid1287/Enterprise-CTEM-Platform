@@ -153,3 +153,31 @@ export const insertBrandAbuseResultSchema = createInsertSchema(brandAbuseResults
   .omit({ id: true, createdAt: true });
 export type InsertBrandAbuseResult = z.infer<typeof insertBrandAbuseResultSchema>;
 export type BrandAbuseResult = typeof brandAbuseResultsTable.$inferSelect;
+
+export const adMonitoringResultsTable = pgTable("ad_monitoring_results", {
+  id:              serial("id").primaryKey(),
+  tenantId:        integer("tenant_id").notNull().references(() => tenantsTable.id),
+  scanId:          integer("scan_id").references(() => brandThreatScansTable.id, { onDelete: "cascade" }),
+  platform:        text("platform").notNull(),
+  adId:            text("ad_id"),
+  adType:          text("ad_type"),
+  title:           text("title"),
+  body:            text("body"),
+  advertiserName:  text("advertiser_name"),
+  advertiserPage:  text("advertiser_page"),
+  impressions:     text("impressions"),
+  spend:           text("spend"),
+  currency:        text("currency"),
+  startDate:       text("start_date"),
+  endDate:         text("end_date"),
+  deliveryCountries: jsonb("delivery_countries"),
+  sourceUrl:       text("source_url"),
+  snapshotUrl:     text("snapshot_url"),
+  risk:            text("risk").notNull().default("medium"),
+  createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertAdMonitoringResultSchema = createInsertSchema(adMonitoringResultsTable)
+  .omit({ id: true, createdAt: true });
+export type InsertAdMonitoringResult = z.infer<typeof insertAdMonitoringResultSchema>;
+export type AdMonitoringResult = typeof adMonitoringResultsTable.$inferSelect;

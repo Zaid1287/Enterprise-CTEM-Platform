@@ -8,8 +8,11 @@ import {
   db,
   brandThreatScansTable, brandThreatResultsTable,
   dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable,
+  adMonitoringResultsTable,
   brandWatchlistItemsTable,
 } from "@workspace/db";
+import { scanMetaAds } from "./metaAdsClient";
+import { queryAbuseChFeeds } from "./abuseChFeeds";
 import { logger } from "./logger";
 import { rdapLookup } from "./rdapClient";
 import { geoIpBatch } from "./geoIpClient";
@@ -590,6 +593,20 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       await Promise.all(Array.from({ length: VT_URL_CONCURRENCY }, () => vtUrlWorker()));
     }
 
+    // 4c) abuse.ch feeds (URLhaus + ThreatFox) — no API key required, always runs
+    for (const entry of abuseChList) {
+      phishingInserts.push({
+        tenantId: phishTenantId,
+        scanId,
+        url: entry.url,
+        source: entry.source,
+        verified: true,
+        targetBrand: domain,
+        threatType: entry.threat.toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
+        submittedAt: entry.addedAt ?? new Date().toISOString(),
+      });
+    }
+
     if (phishingInserts.length > 0) {
       for (let i = 0; i < phishingInserts.length; i += 50) {
         await db.insert(phishingDetectionsTable).values(phishingInserts.slice(i, i + 50));
@@ -637,9 +654,14 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     }
     const uniqueTerms = [...new Set(intelxTerms)].slice(0, 5);
 
-    const [hibpResult, brandAbuseList] = await Promise.all([
+    const youtubeApiKey  = await getPlatformSetting("youtube_api_key");
+    const metaAdsToken   = await getPlatformSetting("meta_ads_access_token");
+
+    const [hibpResult, brandAbuseList, metaAdsList, abuseChList] = await Promise.all([
       hibpDomainLookup(domain, hibpKey ?? undefined),  // always runs; without key uses public /breaches fallback
-      scanBrandAbuse(brandName, domain, watchlistItems.filter(w => w.type === "social_handle").map(w => w.value)),
+      scanBrandAbuse(brandName, domain, watchlistItems.filter(w => w.type === "social_handle").map(w => w.value), youtubeApiKey ?? undefined),
+      metaAdsToken ? scanMetaAds(brandName, domain, metaAdsToken) : Promise.resolve([]),
+      queryAbuseChFeeds(domain),
     ]);
     const intelxResultArrays = intelxKey
       ? await Promise.all(uniqueTerms.map(term => intelxSearch(term, intelxKey, 10)))
@@ -837,6 +859,35 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
           findingsCount: abuseInserts.length,
         });
       }
+    }
+
+    // ── Phase 6: Malicious ad monitoring (Meta Ads Library) ──────────────────
+    let adMonitoringCount = 0;
+    if (metaAdsList.length > 0) {
+      const adInserts: typeof adMonitoringResultsTable.$inferInsert[] = metaAdsList.map(ad => ({
+        tenantId,
+        scanId,
+        platform: "Meta Ads",
+        adId: ad.adId ?? undefined,
+        adType: ad.adType ?? undefined,
+        title: ad.title ?? undefined,
+        body: ad.body ?? undefined,
+        advertiserName: ad.advertiserName ?? undefined,
+        advertiserPage: ad.advertiserPage ?? undefined,
+        impressions: ad.impressions ?? undefined,
+        spend: ad.spend ?? undefined,
+        currency: ad.currency ?? undefined,
+        startDate: ad.startDate ?? undefined,
+        endDate: ad.endDate ?? undefined,
+        deliveryCountries: ad.deliveryCountries?.length ? ad.deliveryCountries : undefined,
+        snapshotUrl: ad.snapshotUrl ?? undefined,
+        risk: ad.risk,
+      }));
+      for (let i = 0; i < adInserts.length; i += 50) {
+        await db.insert(adMonitoringResultsTable).values(adInserts.slice(i, i + 50));
+      }
+      adMonitoringCount = adInserts.length;
+      logger.info({ scanId, domain, adMonitoringCount }, "Meta Ads monitoring results inserted");
     }
 
     // ── Final update ─────────────────────────────────────────────────────────

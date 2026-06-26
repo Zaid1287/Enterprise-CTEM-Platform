@@ -3595,6 +3595,66 @@ components:
         createdAt:
           type: string
 
+    AdMonitoringResult:
+      type: object
+      required: [id, scanId, platform, risk, createdAt]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+          nullable: true
+        platform:
+          type: string
+        adId:
+          type: string
+          nullable: true
+        adType:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        advertiserName:
+          type: string
+          nullable: true
+        advertiserPage:
+          type: string
+          nullable: true
+        impressions:
+          type: string
+          nullable: true
+        spend:
+          type: string
+          nullable: true
+        currency:
+          type: string
+          nullable: true
+        startDate:
+          type: string
+          nullable: true
+        endDate:
+          type: string
+          nullable: true
+        deliveryCountries:
+          type: array
+          items:
+            type: string
+          nullable: true
+        sourceUrl:
+          type: string
+          nullable: true
+        snapshotUrl:
+          type: string
+          nullable: true
+        risk:
+          type: string
+        createdAt:
+          type: string
+
     BrandThreatScanDetail:
       allOf:
         - $ref: "#/components/schemas/BrandThreatScan"
@@ -3605,6 +3665,10 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/BrandThreatResult"
+            adMonitoringResults:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdMonitoringResult"
 
     AssetScanReport:
       type: object

@@ -933,8 +933,31 @@ export interface BrandThreatResult {
   createdAt: string;
 }
 
+export interface AdMonitoringResult {
+  id: number;
+  scanId: number | null;
+  platform: string;
+  adId?: string | null;
+  adType?: string | null;
+  title?: string | null;
+  body?: string | null;
+  advertiserName?: string | null;
+  advertiserPage?: string | null;
+  impressions?: string | null;
+  spend?: string | null;
+  currency?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  deliveryCountries?: string[] | null;
+  sourceUrl?: string | null;
+  snapshotUrl?: string | null;
+  risk: string;
+  createdAt: string;
+}
+
 export type BrandThreatScanDetail = BrandThreatScan & {
   results: BrandThreatResult[];
+  adMonitoringResults?: AdMonitoringResult[];
 };
 
 export type AssetScanReportSummary = { [key: string]: unknown };

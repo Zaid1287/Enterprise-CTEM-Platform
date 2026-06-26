@@ -20,6 +20,7 @@ interface PlatformSetting {
   category: string;
   hasValue: boolean;
   maskedValue: string;
+  comingSoon?: boolean;
 }
 
 const CATEGORY_META: Record<string, {
@@ -84,6 +85,15 @@ const CATEGORY_META: Record<string, {
     description: "HIBP, Google Safe Browsing, WhoisXML — powers the advanced brand threat module",
     docsUrl: "https://haveibeenpwned.com/API/v3",
   },
+  brand_intelligence: {
+    label: "Brand Intelligence",
+    icon: Search,
+    color: "text-violet-400",
+    bg: "bg-violet-500/10",
+    border: "border-violet-500/20",
+    description: "Meta Ads Library, YouTube, and social platform monitoring for brand impersonation and malicious ad campaigns",
+    docsUrl: "https://developers.facebook.com/docs/marketing-api/reference/ads-archive/",
+  },
   billing: {
     label: "Billing & Payments",
     icon: Key,
@@ -103,7 +113,7 @@ const CATEGORY_META: Record<string, {
   },
 };
 
-const CATEGORY_ORDER = ["billing", "scanning", "intelligence", "osint", "brand_threat", "email", "notifications", "general"];
+const CATEGORY_ORDER = ["billing", "scanning", "intelligence", "osint", "brand_threat", "brand_intelligence", "email", "notifications", "general"];
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function PlatformSettingsPage() {
@@ -344,25 +354,31 @@ export default function PlatformSettingsPage() {
                 const isRevealed = showKeys.has(setting.key);
                 const revealedVal = revealed[setting.key];
                 const hasValue = setting.hasValue && !isEdited;
+                const isComingSoon = setting.comingSoon === true;
 
                 return (
-                  <div key={setting.key} className={cn("px-6 py-5", isEdited && "bg-amber-500/3")}>
+                  <div key={setting.key} className={cn("px-6 py-5", isEdited && "bg-amber-500/3", isComingSoon && "opacity-60")}>
                     <div className="flex items-start justify-between gap-6">
                       {/* Label + description */}
                       <div className="w-72 shrink-0">
                         <div className="flex items-center gap-2 flex-wrap mb-1">
                           <p className="text-sm font-semibold">{setting.label}</p>
-                          {hasValue && !isEdited && (
+                          {isComingSoon && (
+                            <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/25 font-bold uppercase tracking-wide">
+                              Coming Soon
+                            </span>
+                          )}
+                          {!isComingSoon && hasValue && !isEdited && (
                             <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-green-500/12 text-green-400 border border-green-500/25 font-bold uppercase tracking-wide">
                               <Wifi className="w-2.5 h-2.5" /> Connected
                             </span>
                           )}
-                          {!hasValue && !isEdited && (
+                          {!isComingSoon && !hasValue && !isEdited && (
                             <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border font-bold uppercase tracking-wide">
                               <WifiOff className="w-2.5 h-2.5" /> Not Set
                             </span>
                           )}
-                          {isEdited && (
+                          {!isComingSoon && isEdited && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold uppercase tracking-wide">
                               Unsaved
                             </span>
@@ -376,57 +392,64 @@ export default function PlatformSettingsPage() {
 
                       {/* Input + actions */}
                       <div className="flex-1 min-w-0 space-y-2">
-                        <div className="flex gap-2">
-                          <div className="relative flex-1">
-                            <Input
-                              type={isRevealed ? "text" : "password"}
-                              className={cn(
-                                "h-9 text-sm font-mono pr-24 transition-colors",
-                                isEdited && "border-amber-500/50 bg-amber-500/3",
-                                hasValue && !isEdited && "border-green-500/30",
+                        {isComingSoon ? (
+                          <div className="h-9 flex items-center px-3 bg-muted/30 border border-border rounded-lg text-xs text-muted-foreground gap-2">
+                            <span className="w-2 h-2 rounded-full bg-violet-400/50 shrink-0" />
+                            Scanning support coming soon — store your token now for when it activates
+                          </div>
+                        ) : (
+                          <div className="flex gap-2">
+                            <div className="relative flex-1">
+                              <Input
+                                type={isRevealed ? "text" : "password"}
+                                className={cn(
+                                  "h-9 text-sm font-mono pr-24 transition-colors",
+                                  isEdited && "border-amber-500/50 bg-amber-500/3",
+                                  hasValue && !isEdited && "border-green-500/30",
+                                )}
+                                placeholder={
+                                  hasValue && !isEdited && !isRevealed
+                                    ? setting.maskedValue || "••••••••••••••••"
+                                    : `Paste ${setting.label}…`
+                                }
+                                value={
+                                  isEdited ? editVal
+                                  : isRevealed ? (revealedVal ?? "")
+                                  : ""
+                                }
+                                onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {setting.hasValue && (
+                                <button
+                                  onClick={() => handleReveal(setting.key)}
+                                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9"
+                                >
+                                  {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                  <span className="hidden sm:inline">{isRevealed ? "Hide" : "Reveal"}</span>
+                                </button>
                               )}
-                              placeholder={
-                                hasValue && !isEdited && !isRevealed
-                                  ? setting.maskedValue || "••••••••••••••••"
-                                  : `Paste ${setting.label}…`
-                              }
-                              value={
-                                isEdited ? editVal
-                                : isRevealed ? (revealedVal ?? "")
-                                : ""
-                              }
-                              onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
-                            />
+                              {setting.hasValue && !isEdited && (
+                                <button
+                                  onClick={() => setEdits(prev => ({ ...prev, [setting.key]: "" }))}
+                                  className="flex items-center gap-1 text-[10px] text-destructive hover:text-destructive/80 transition-colors px-2.5 py-2 rounded-lg hover:bg-destructive/10 border border-border h-9"
+                                  title="Clear this key"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {isEdited && (
+                                <button
+                                  onClick={() => setEdits(prev => { const n = { ...prev }; delete n[setting.key]; return n; })}
+                                  className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9 whitespace-nowrap"
+                                >
+                                  Discard
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {setting.hasValue && (
-                              <button
-                                onClick={() => handleReveal(setting.key)}
-                                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9"
-                              >
-                                {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                <span className="hidden sm:inline">{isRevealed ? "Hide" : "Reveal"}</span>
-                              </button>
-                            )}
-                            {setting.hasValue && !isEdited && (
-                              <button
-                                onClick={() => setEdits(prev => ({ ...prev, [setting.key]: "" }))}
-                                className="flex items-center gap-1 text-[10px] text-destructive hover:text-destructive/80 transition-colors px-2.5 py-2 rounded-lg hover:bg-destructive/10 border border-border h-9"
-                                title="Clear this key"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            {isEdited && (
-                              <button
-                                onClick={() => setEdits(prev => { const n = { ...prev }; delete n[setting.key]; return n; })}
-                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2.5 py-2 rounded-lg hover:bg-accent border border-border h-9 whitespace-nowrap"
-                              >
-                                Discard
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>

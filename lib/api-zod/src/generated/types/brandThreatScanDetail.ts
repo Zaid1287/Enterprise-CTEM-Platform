@@ -5,9 +5,11 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+import type { AdMonitoringResult } from './adMonitoringResult';
 import type { BrandThreatResult } from './brandThreatResult';
 import type { BrandThreatScan } from './brandThreatScan';
 
 export type BrandThreatScanDetail = BrandThreatScan & {
   results: BrandThreatResult[];
+  adMonitoringResults?: AdMonitoringResult[];
 };

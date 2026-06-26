@@ -7,6 +7,7 @@
  */
 
 export * from './activityItem';
+export * from './adMonitoringResult';
 export * from './aiComplianceInput';
 export * from './aiExplainFindingInput';
 export * from './aiExplanation';

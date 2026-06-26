@@ -5,7 +5,15 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
 
-const PLATFORM_KEYS = [
+interface PlatformKeyDef {
+  key: string;
+  label: string;
+  description: string;
+  category: string;
+  comingSoon?: boolean;
+}
+
+const PLATFORM_KEYS: PlatformKeyDef[] = [
   { key: "resend_api_key",       label: "Resend API Key",        description: "Used for sending alert emails, invitations, and notifications via Resend.com",   category: "email" },
   { key: "slack_webhook_url",    label: "Slack Webhook URL",     description: "Incoming webhook URL for posting alerts to a Slack channel",                     category: "notifications" },
   { key: "discord_webhook_url",  label: "Discord Webhook URL",   description: "Discord webhook URL for posting alerts to a Discord server",                      category: "notifications" },
@@ -34,6 +42,11 @@ const PLATFORM_KEYS = [
   { key: "stripe_secret_key",       label: "Stripe Secret Key",          description: "Stripe Secret Key (sk_live_... or sk_test_...) — enables subscription billing, checkout sessions, and customer portal. Never expose this client-side.", category: "billing" },
   { key: "stripe_webhook_secret",   label: "Stripe Webhook Secret",      description: "Stripe Webhook Signing Secret (whsec_...) — used to verify that webhook events originate from Stripe. Create it in your Stripe Dashboard → Developers → Webhooks.", category: "billing" },
   { key: "stripe_publishable_key",  label: "Stripe Publishable Key",     description: "Stripe Publishable Key (pk_live_... or pk_test_...) — used client-side to initialize Stripe.js for checkout. Safe to expose publicly.", category: "billing" },
+  { key: "meta_ads_access_token",        label: "Meta Ads Access Token",         description: "Meta (Facebook/Instagram) Marketing API access token — queries the Ads Library for brand-impersonating ads and unauthorized advertiser pages.", category: "brand_intelligence" },
+  { key: "youtube_api_key",              label: "YouTube Data API Key",          description: "YouTube Data API v3 key — searches for brand-impersonating channels, fake product videos, and scam promotions targeting your brand.", category: "brand_intelligence" },
+  { key: "twitter_x_bearer_token",       label: "Twitter/X Bearer Token",        description: "Twitter/X API v2 Bearer Token — monitors tweets, accounts, and trending topics for brand impersonation (scanning enabled when approved).", category: "brand_intelligence", comingSoon: true },
+  { key: "instagram_graph_api_token",    label: "Instagram Graph API Token",     description: "Instagram Graph API access token — tracks fake Instagram accounts and posts impersonating your brand (scanning enabled when approved).", category: "brand_intelligence", comingSoon: true },
+  { key: "tiktok_research_api_token",    label: "TikTok Research API Token",     description: "TikTok Research API access token — scans TikTok for scam videos and impersonating accounts targeting your brand (scanning enabled when approved).", category: "brand_intelligence", comingSoon: true },
 ];
 
 function isSuperAdmin(req: AuthenticatedRequest): boolean {
@@ -62,6 +75,7 @@ router.get("/platform/settings", requireAuth, async (req: AuthenticatedRequest, 
     category: def.category,
     hasValue: !!storedMap.get(def.key),
     maskedValue: maskValue(def.key, storedMap.get(def.key) ?? ""),
+    comingSoon: def.comingSoon ?? false,
   }));
 
   res.json(settings);

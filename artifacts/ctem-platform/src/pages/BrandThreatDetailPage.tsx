@@ -7,7 +7,7 @@ import {
   ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
   Hash, Search, ChevronRight, Download, Fish, Database, Target,
   MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
-  TrendingUp,
+  TrendingUp, Megaphone,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,7 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
 };
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "takedowns";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns";
 
 function RiskScoreBar({ score }: { score: number }) {
   return (
@@ -407,6 +407,126 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
   );
 }
 
+const AD_RISK_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  critical: { label: "Critical", color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30" },
+  high:     { label: "High",     color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/30" },
+  medium:   { label: "Medium",   color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/30" },
+  low:      { label: "Low",      color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30" },
+};
+
+function MaliciousAdsTab({ ads }: { ads: any[] }) {
+  const highRisk = ads.filter((a: any) => a.risk === "critical" || a.risk === "high").length;
+  if (ads.length === 0) {
+    return (
+      <div className="p-10 text-center space-y-3">
+        <Megaphone className="w-8 h-8 text-muted-foreground/30 mx-auto" />
+        <div>
+          <p className="text-sm font-medium text-muted-foreground">No malicious ads detected</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            Configure a Meta Ads access token in Platform Settings → Brand Intelligence to enable ad library monitoring.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="p-6 space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">Malicious Ad Monitoring</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {ads.length} suspicious ad{ads.length !== 1 ? "s" : ""} detected via Meta Ads Library
+            {highRisk > 0 && <span className="ml-1 text-red-400 font-medium">— {highRisk} high/critical risk</span>}
+          </p>
+        </div>
+        <span className="text-xs px-2.5 py-1 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium">
+          Meta Ads Library
+        </span>
+      </div>
+      <div className="space-y-3">
+        {ads.map((ad: any, i: number) => {
+          const risk = AD_RISK_META[ad.risk as string] ?? AD_RISK_META.medium;
+          return (
+            <div key={ad.id ?? i} className={cn("rounded-xl border p-4 space-y-3", risk.bg, risk.border)}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", risk.color, risk.bg, risk.border)}>
+                      {risk.label}
+                    </span>
+                    {ad.platform && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">
+                        {ad.platform}
+                      </span>
+                    )}
+                    {ad.adType && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted/50 text-muted-foreground border border-border capitalize">
+                        {ad.adType}
+                      </span>
+                    )}
+                  </div>
+                  {ad.title && (
+                    <p className="text-sm font-semibold text-foreground leading-snug">{ad.title}</p>
+                  )}
+                  {ad.body && (
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed line-clamp-3">{ad.body}</p>
+                  )}
+                </div>
+                {ad.snapshotUrl && (
+                  <a
+                    href={ad.snapshotUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors shrink-0"
+                  >
+                    <ExternalLink className="w-3 h-3" /> View Ad
+                  </a>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                {ad.advertiserName && (
+                  <div className="bg-background/50 rounded-lg px-2.5 py-1.5">
+                    <p className="text-muted-foreground text-[10px] mb-0.5 uppercase tracking-wide">Advertiser</p>
+                    <p className="font-medium truncate">{ad.advertiserName}</p>
+                  </div>
+                )}
+                {ad.impressions && (
+                  <div className="bg-background/50 rounded-lg px-2.5 py-1.5">
+                    <p className="text-muted-foreground text-[10px] mb-0.5 uppercase tracking-wide">Impressions</p>
+                    <p className="font-medium">{ad.impressions}</p>
+                  </div>
+                )}
+                {ad.spend && (
+                  <div className="bg-background/50 rounded-lg px-2.5 py-1.5">
+                    <p className="text-muted-foreground text-[10px] mb-0.5 uppercase tracking-wide">Spend</p>
+                    <p className="font-medium">{ad.spend} {ad.currency ?? ""}</p>
+                  </div>
+                )}
+                {ad.startDate && (
+                  <div className="bg-background/50 rounded-lg px-2.5 py-1.5">
+                    <p className="text-muted-foreground text-[10px] mb-0.5 uppercase tracking-wide">Active From</p>
+                    <p className="font-medium">{ad.startDate.slice(0, 10)}</p>
+                  </div>
+                )}
+              </div>
+              {ad.advertiserPage && (
+                <a
+                  href={ad.advertiserPage}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3" /> Advertiser Page
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const TAKEDOWN_STATUS_COLORS: Record<string, string> = {
   pending:     "text-yellow-400 bg-yellow-500/10 border-yellow-500/25",
   submitted:   "text-blue-400 bg-blue-500/10 border-blue-500/25",
@@ -649,6 +769,7 @@ export default function BrandThreatDetailPage() {
   const phishingDetections: any[] = s?.phishingDetections ?? [];
   const dataLeaks: any[] = s?.dataLeaks ?? [];
   const brandAbuse: any[] = s?.brandAbuse ?? [];
+  const adMonitoringResults: any[] = s?.adMonitoringResults ?? [];
 
   const filtered = results.filter((r: any) => {
     if (filter === "live"       && !(r.dnsA?.length > 0)) return false;
@@ -699,6 +820,7 @@ export default function BrandThreatDetailPage() {
     { id: "phishing",      label: "Phishing",      icon: <Fish className="w-3.5 h-3.5" />,  count: phishingDetections.length, color: phishingDetections.length > 0 ? "text-red-400" : undefined },
     { id: "data_leaks",    label: "Data Leaks",    icon: <Database className="w-3.5 h-3.5" />, count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
     { id: "brand_abuse",   label: "Brand Abuse",   icon: <Target className="w-3.5 h-3.5" />,   count: brandAbuse.length, color: brandAbuse.length > 0 ? "text-yellow-400" : undefined },
+    { id: "malicious_ads", label: "Malicious Ads", icon: <Megaphone className="w-3.5 h-3.5" />, count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
     { id: "takedowns",     label: "Takedowns",     icon: <Shield className="w-3.5 h-3.5" /> },
   ];
 
@@ -926,6 +1048,13 @@ export default function BrandThreatDetailPage() {
         {activeTab === "brand_abuse" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
             <BrandAbuseTab abuse={brandAbuse} />
+          </div>
+        )}
+
+        {/* ── MALICIOUS ADS tab ── */}
+        {activeTab === "malicious_ads" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <MaliciousAdsTab ads={adMonitoringResults} />
           </div>
         )}
 
