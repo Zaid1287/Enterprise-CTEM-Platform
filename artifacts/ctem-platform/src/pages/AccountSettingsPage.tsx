@@ -607,6 +607,12 @@ function TeamTab() {
     queryFn: () => apiFetch(`${BASE}/api/invitations`),
   });
 
+  // Fetch account managers actually assigned to this tenant (cross-tenant lookup via dedicated endpoint)
+  const { data: accountManagers = [], isLoading: amLoading } = useQuery<any[]>({
+    queryKey: ["my-account-managers"],
+    queryFn: () => apiFetch(`${BASE}/api/account-manager/my-manager`),
+  });
+
   // Build a set of emails that have an accepted invitation
   const acceptedEmails = new Set(
     (invitations as any[])
@@ -620,9 +626,6 @@ function TeamTab() {
   const members = (membersRaw as any[]).filter((m: any) =>
     !STAFF_ROLES.has(m.role) && acceptedEmails.has((m.email ?? "").toLowerCase()),
   );
-
-  // Account managers visible in this tenant
-  const accountManagers = (membersRaw as any[]).filter((m: any) => m.role === "account_manager");
 
   const deactivateMutation = useMutation({
     mutationFn: (userId: number) =>
@@ -744,13 +747,23 @@ function TeamTab() {
         </div>
       )}
 
-      {/* Assigned Account Managers */}
-      {accountManagers.length > 0 && (
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-border flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-primary" />
-            <p className="text-sm font-medium">Assigned Account Manager{accountManagers.length > 1 ? "s" : ""}</p>
+      {/* Assigned Account Manager — always shown; empty state when none assigned */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-5 py-3 border-b border-border flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-primary" />
+          <p className="text-sm font-medium">Assigned Account Manager</p>
+        </div>
+        {amLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
           </div>
+        ) : accountManagers.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            <ShieldCheck className="w-6 h-6 mx-auto mb-2 opacity-25" />
+            <p className="font-medium">Account Manager Not Assigned</p>
+            <p className="text-xs mt-1 text-muted-foreground/60">Contact your platform administrator to get an account manager assigned.</p>
+          </div>
+        ) : (
           <div className="divide-y divide-border">
             {accountManagers.map((m: any) => (
               <div key={m.id} className="flex items-center gap-3 px-5 py-3.5">
@@ -770,8 +783,8 @@ function TeamTab() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Team members — only invitation-accepted users */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">

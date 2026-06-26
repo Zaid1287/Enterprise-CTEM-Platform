@@ -5,6 +5,42 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
 
+// Returns the account manager(s) assigned to the caller's tenant (for client-facing team page)
+router.get("/account-manager/my-manager", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+
+  const assignments = await db
+    .select({ accountManagerUserId: accountManagerClientsTable.accountManagerUserId, assignedAt: accountManagerClientsTable.assignedAt })
+    .from(accountManagerClientsTable)
+    .where(eq(accountManagerClientsTable.clientTenantId, tenantId));
+
+  if (assignments.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const amUserIds = assignments.map(a => a.accountManagerUserId);
+  const amUsers = await db
+    .select({
+      id: usersTable.id,
+      firstName: usersTable.firstName,
+      lastName: usersTable.lastName,
+      email: usersTable.email,
+      role: usersTable.role,
+      avatarUrl: usersTable.avatarUrl,
+      isActive: usersTable.isActive,
+    })
+    .from(usersTable)
+    .where(inArray(usersTable.id, amUserIds));
+
+  const result = amUsers.map(u => ({
+    ...u,
+    assignedAt: assignments.find(a => a.accountManagerUserId === u.id)?.assignedAt?.toISOString() ?? null,
+  }));
+
+  res.json(result);
+});
+
 // Returns tenants that CAN be assigned to this AM — not already assigned + not the AM's own tenant
 router.get("/account-manager/available-tenants", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { role, userId, tenantId } = req.user!;
