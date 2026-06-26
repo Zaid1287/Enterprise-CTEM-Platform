@@ -12,7 +12,7 @@ import {
   ListToolRunsQueryParams, GetToolRunParams,
   RunPipelineForAssetParams,
 } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 
 const router = Router();
@@ -153,7 +153,7 @@ router.get("/tools/pipeline", requireAuth, async (req: AuthenticatedRequest, res
   res.json(await buildPipelineResponse(req.user!.tenantId));
 });
 
-router.put("/tools/pipeline", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+router.put("/tools/pipeline", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = SetToolPipelineBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
 
@@ -279,7 +279,7 @@ router.get("/tools", requireAuth, async (req: AuthenticatedRequest, res): Promis
   res.json(tools.map(mapTool));
 });
 
-router.post("/tools", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+router.post("/tools", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateSecurityToolBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
   const [tool] = await db.insert(securityToolsTable).values({
@@ -304,7 +304,7 @@ router.get("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, res)
   res.json({ ...tool, createdAt: tool.createdAt.toISOString() });
 });
 
-router.patch("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+router.patch("/tools/:toolId", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const p = UpdateSecurityToolParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
   const parsed = UpdateSecurityToolBody.safeParse(req.body);
@@ -316,7 +316,7 @@ router.patch("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, re
   res.json({ ...tool, createdAt: tool.createdAt.toISOString() });
 });
 
-router.delete("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+router.delete("/tools/:toolId", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const p = DeleteSecurityToolParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
   const [tool] = await db.delete(securityToolsTable)

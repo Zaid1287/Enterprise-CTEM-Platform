@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   useListUsers, useCreateUser, useDeleteUser,
   getListUsersQueryKey,
@@ -95,6 +95,11 @@ export default function UsersPage() {
   });
   const queryClient = useQueryClient();
 
+  const [invitations, setInvitations] = useState<any[]>([]);
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ name: "", email: "", role: "vendor" });
+
   const { data: users, isLoading } = useListUsers({
     query: { queryKey: getListUsersQueryKey() },
   });
@@ -167,6 +172,45 @@ export default function UsersPage() {
     await deleteUser.mutateAsync({ userId: id });
     queryClient.invalidateQueries({ queryKey: getListUsersQueryKey() });
     toast({ title: "User deleted" });
+  };
+
+  const fetchInvitations = async () => {
+    try {
+      const data = await apiFetch(`${BASE}/api/invitations`);
+      setInvitations(Array.isArray(data) ? data : []);
+    } catch { setInvitations([]); }
+  };
+
+  useEffect(() => { fetchInvitations(); }, []);
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteSending(true);
+    try {
+      await apiFetch(`${BASE}/api/invitations`, {
+        method: "POST",
+        body: JSON.stringify(inviteForm),
+      });
+      await fetchInvitations();
+      setShowInvite(false);
+      setInviteForm({ name: "", email: "", role: "vendor" });
+      toast({ title: "Invitation sent", description: `${inviteForm.email} has been invited.` });
+    } catch (err: any) {
+      toast({ title: "Failed to send invitation", description: err?.error ?? err?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setInviteSending(false);
+    }
+  };
+
+  const handleCancelInvite = async (id: number) => {
+    if (!confirm("Cancel this invitation?")) return;
+    try {
+      await apiFetch(`${BASE}/api/invitations/${id}`, { method: "DELETE" });
+      await fetchInvitations();
+      toast({ title: "Invitation cancelled" });
+    } catch {
+      toast({ title: "Failed to cancel invitation", variant: "destructive" });
+    }
   };
 
   const userList = Array.isArray(users) ? users as any[] : [];
@@ -322,6 +366,127 @@ export default function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* ── Invitations Panel ── */}
+      {(role === "admin" || role === "super_admin" || role === "account_manager") && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-2">
+              <Mail className="w-4 h-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">Invitations</h2>
+              {invitations.length > 0 && (
+                <span className="text-[10px] font-semibold bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
+                  {invitations.length}
+                </span>
+              )}
+            </div>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowInvite(true)}>
+              <Plus className="w-3.5 h-3.5 mr-1" /> Send Invitation
+            </Button>
+          </div>
+          {invitations.length === 0 ? (
+            <div className="px-4 py-8 text-center text-muted-foreground text-sm">No invitations sent yet</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/30">
+                  <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Name</th>
+                  <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Email</th>
+                  <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Role</th>
+                  <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Status</th>
+                  <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Expires</th>
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {invitations.map((inv: any) => (
+                  <tr key={inv.id} className="border-b border-border/40 hover:bg-accent/10 transition-colors">
+                    <td className="px-4 py-2.5 font-medium">{inv.name}</td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono">{inv.email}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border text-cyan-400 bg-cyan-500/10 border-cyan-500/30">
+                        {inv.role?.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={cn(
+                        "text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border",
+                        inv.status === "pending"  ? "text-amber-400 bg-amber-500/10 border-amber-500/30" :
+                        inv.status === "accepted" ? "text-green-400 bg-green-500/10 border-green-500/30" :
+                        "text-muted-foreground bg-muted border-border"
+                      )}>
+                        {inv.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                      {inv.expiresAt ? new Date(inv.expiresAt).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {inv.status === "pending" && (
+                        <Button
+                          variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={() => handleCancelInvite(inv.id)}
+                          title="Cancel invitation"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ── Send Invitation Dialog ── */}
+      <Dialog open={showInvite} onOpenChange={setShowInvite}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="w-4 h-4" /> Send Invitation
+            </DialogTitle>
+            <DialogDescription>Invite an external contact — they'll receive a welcome email.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSendInvite} className="space-y-3 mt-1">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Full Name</Label>
+              <Input
+                value={inviteForm.name}
+                onChange={e => setInviteForm(p => ({ ...p, name: e.target.value }))}
+                required placeholder="Jane Smith" className="h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Email Address</Label>
+              <Input
+                type="email"
+                value={inviteForm.email}
+                onChange={e => setInviteForm(p => ({ ...p, email: e.target.value }))}
+                required placeholder="jane@vendor.com" className="h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Role</Label>
+              <Select value={inviteForm.role} onValueChange={v => setInviteForm(p => ({ ...p, role: v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vendor">Vendor</SelectItem>
+                  <SelectItem value="employee">Employee</SelectItem>
+                  <SelectItem value="third_party">Third Party</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button variant="outline" type="button" onClick={() => setShowInvite(false)}>Cancel</Button>
+              <Button type="submit" disabled={inviteSending}>
+                {inviteSending ? "Sending…" : "Send Invitation"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Create User Dialog ── */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>

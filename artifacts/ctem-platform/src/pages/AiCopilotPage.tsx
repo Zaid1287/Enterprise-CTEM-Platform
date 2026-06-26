@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   useListFindings, useListComplianceControls,
   useExplainFinding, useGetRemediation, useGenerateExecutiveSummary, useGetComplianceGuidance,
@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Brain, Zap, FileText, ShieldCheck } from "lucide-react";
+import { Brain, Zap, FileText, ShieldCheck, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function AiResult({ content, isLoading }: { content: string | null; isLoading: boolean }) {
@@ -40,6 +40,16 @@ export default function AiCopilotPage() {
   const remediationMutation = useGetRemediation();
   const execSummaryMutation = useGenerateExecutiveSummary();
   const complianceMutation = useGetComplianceGuidance();
+
+  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const [aiStatus, setAiStatus] = useState<{ available: boolean; model: string; provider: string } | null>(null);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/ai/status`)
+      .then(r => r.json())
+      .then(d => setAiStatus(d))
+      .catch(() => setAiStatus({ available: false, model: "", provider: "" }));
+  }, [BASE]);
 
   const handleExplain = async () => {
     if (!selectedFinding) return;
@@ -77,6 +87,18 @@ export default function AiCopilotPage() {
         </h1>
         <p className="text-sm text-muted-foreground">AI-powered security analysis and guidance</p>
       </div>
+
+      {aiStatus !== null && !aiStatus.available && (
+        <div className="flex items-start gap-3 p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+          <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-300">AI Copilot is not configured</p>
+            <p className="text-xs text-amber-400/70 mt-0.5">
+              Add an <code className="font-mono">OPENAI_API_KEY</code> to Platform Settings → API Keys to enable AI-powered analysis.
+            </p>
+          </div>
+        </div>
+      )}
 
       <Tabs defaultValue="explain">
         <TabsList className="h-9">

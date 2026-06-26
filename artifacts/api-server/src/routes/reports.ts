@@ -8,7 +8,7 @@ import {
   riskScoresTable, technologyDetectionsTable,
 } from "@workspace/db";
 import { CreateReportBody, GetReportParams, DeleteReportParams } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 
 const router = Router();
@@ -69,7 +69,7 @@ router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Prom
   res.json(reports.map(toReportResponse));
 });
 
-router.post("/reports", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+router.post("/reports", requireAuth, requireRole("manager", "admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateReportBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const [report] = await db.insert(reportsTable).values({
@@ -612,7 +612,7 @@ router.get("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, 
   res.json(toReportResponse(report));
 });
 
-router.delete("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+router.delete("/reports/:reportId", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = DeleteReportParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const [report] = await db.delete(reportsTable)

@@ -382,7 +382,7 @@ router.delete("/tenants/:tenantId", requireAuth, requireRole("super_admin", "adm
 });
 
 // ── Update tenant ─────────────────────────────────────────────────────────────
-router.patch("/tenants/:tenantId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+router.patch("/tenants/:tenantId", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateTenantParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateTenantBody.safeParse(req.body);

@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable } from "@workspace/db";
+import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable } from "@workspace/db";
+import { enqueueAndRun, type AssetToolConfigItem } from "./pipelineScans";
 import {
   CreateScanBody, GetScanParams, DeleteScanParams, CancelScanParams,
   ListScansQueryParams, ListScanJobsParams,
@@ -174,22 +175,35 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
 
   if (scan.assetIds.length > 0) {
     await db.insert(scanJobsTable).values(
-      scan.assetIds.map(assetId => ({ scanId: scan.id, assetId, status: "pending" }))
+      (scan.assetIds as number[]).map(assetId => ({ scanId: scan.id, assetId, status: "pending" }))
     );
-    setTimeout(async () => {
+    setImmediate(async () => {
       try {
-        await db.update(scansTable).set({ status: "running" }).where(eq(scansTable.id, scan.id));
-        await db.update(scanJobsTable).set({ status: "running" }).where(eq(scanJobsTable.scanId, scan.id));
-      } catch { /* ignore */ }
-      setTimeout(async () => {
-        try {
-          const completedAt = new Date();
-          await db.update(scansTable).set({ status: "completed", completedAt }).where(eq(scansTable.id, scan.id));
-          await db.update(scanJobsTable).set({ status: "completed", completedAt }).where(eq(scanJobsTable.scanId, scan.id));
-          await finalizeScannedAssets(scan.assetIds as number[]);
-        } catch { /* ignore */ }
-      }, 8000);
-    }, 2000);
+        const [allTools, pipelineSteps] = await Promise.all([
+          db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, scan.tenantId)),
+          db.select({ toolId: toolPipelineStepsTable.toolId }).from(toolPipelineStepsTable)
+            .where(and(eq(toolPipelineStepsTable.tenantId, scan.tenantId), eq(toolPipelineStepsTable.isEnabled, true))),
+        ]);
+        const enabledToolIds = new Set(pipelineSteps.map(p => p.toolId));
+        const enabledTools = allTools.filter(t => enabledToolIds.has(t.id));
+        const toolsToRun = enabledTools.length > 0 ? enabledTools : allTools;
+        const configs: AssetToolConfigItem[] = (scan.assetIds as number[]).map(assetId => ({
+          assetId,
+          toolIds: toolsToRun.map(t => t.id),
+        }));
+        await enqueueAndRun({
+          scanId: scan.id,
+          tenantId: scan.tenantId,
+          userId: req.user!.userId,
+          configs,
+          allTools,
+          enabledTools: toolsToRun,
+        });
+      } catch {
+        await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
+          .where(eq(scansTable.id, scan.id)).catch(() => {});
+      }
+    });
   }
   await logAudit(req.user!, "create_scan", "scan", scan.id);
   res.status(201).json(toScanResponse(scan));

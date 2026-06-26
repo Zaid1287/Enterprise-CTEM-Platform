@@ -104,7 +104,7 @@ function drainQueue() {
   }
 }
 
-async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> {
+export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> {
   return new Promise<void>(resolve => {
     scanQueue.push({ ...entry, resolve });
     logger.info({ scanId: entry.scanId, queueLength: scanQueue.length }, "Scan queued");
@@ -287,7 +287,7 @@ interface HttpInfo         { url: string; status: number; title: string; server:
 interface DnsRecord        { type: string; value: string; ttl: number; priority?: number; weight?: number; port?: number; target?: string; notes?: string; }
 interface IntelItem        { type: string; key: string; value: string; severity?: string; }
 interface VulnFinding      { cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source?: string; }
-interface AssetToolConfigItem { assetId: number; toolIds: number[]; }
+export interface AssetToolConfigItem { assetId: number; toolIds: number[]; }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
