@@ -111,6 +111,50 @@ router.get("/platform/settings/raw/:key", requireAuth, async (req: Authenticated
   res.json({ value: row?.value ?? "" });
 });
 
+router.post("/platform/settings/test-key", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { key } = req.body as { key: string };
+  const TESTABLE: Record<string, (val: string, extra: string) => Promise<string>> = {
+    shodan_api_key: async (val) => {
+      const r = await fetch(`https://api.shodan.io/api-info?key=${encodeURIComponent(val)}`);
+      const j = await r.json() as any;
+      if (j.error) throw new Error(j.error);
+      return `Connected. Query credits: ${j.query_credits ?? "?"}, Scan credits: ${j.scan_credits ?? "?"}`;
+    },
+    virustotal_api_key: async (val) => {
+      const r = await fetch("https://www.virustotal.com/api/v3/users/self", { headers: { "x-apikey": val } });
+      if (!r.ok) throw new Error("Invalid API key");
+      const j = await r.json() as any;
+      return `Connected as ${j.data?.attributes?.email ?? "user"}`;
+    },
+    nvd_api_key: async (val) => {
+      const r = await fetch("https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=1", { headers: { apiKey: val } });
+      if (!r.ok) throw new Error(`NVD returned ${r.status}`);
+      return "NVD API key valid — enhanced rate limit active";
+    },
+    censys_api_id: async (val, secret) => {
+      const creds = Buffer.from(`${val}:${secret}`).toString("base64");
+      const r = await fetch("https://search.censys.io/api/v1/account", { headers: { Authorization: `Basic ${creds}` } });
+      if (!r.ok) throw new Error("Invalid credentials");
+      const j = await r.json() as any;
+      return `Connected as ${j.login ?? "user"}`;
+    },
+  };
+  if (!TESTABLE[key]) { res.status(400).json({ error: "Key not testable" }); return; }
+  const [row] = await db.select({ value: platformSettingsTable.value }).from(platformSettingsTable).where(eq(platformSettingsTable.key, key));
+  if (!row?.value) { res.status(400).json({ error: "Key not set. Save the key first." }); return; }
+  let extra = "";
+  if (key === "censys_api_id") {
+    const [secRow] = await db.select({ value: platformSettingsTable.value }).from(platformSettingsTable).where(eq(platformSettingsTable.key, "censys_api_secret"));
+    extra = secRow?.value ?? "";
+  }
+  try {
+    const message = await TESTABLE[key](row.value, extra);
+    res.json({ ok: true, message });
+  } catch (e: any) {
+    res.json({ ok: false, message: e.message ?? "Test failed" });
+  }
+});
+
 export async function getPlatformSetting(key: string): Promise<string | null> {
   const [row] = await db.select({ value: platformSettingsTable.value }).from(platformSettingsTable).where(eq(platformSettingsTable.key, key));
   return row?.value ?? null;

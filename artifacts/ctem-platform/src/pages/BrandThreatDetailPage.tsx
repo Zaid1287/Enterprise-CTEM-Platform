@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
-import { useGetBrandThreatScan, getGetBrandThreatScanQueryKey } from "@workspace/api-client-react";
+import { useGetBrandThreatScan, getGetBrandThreatScanQueryKey, useDeleteBrandThreatScan, getListBrandThreatsQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   ArrowLeft, Globe, AlertTriangle, CheckCircle2, XCircle,
   Loader2, Mail, Server, ChevronDown, ChevronUp, RefreshCw,
@@ -878,6 +880,9 @@ export default function BrandThreatDetailPage() {
   const [downloadingCsv, setDownloadingCsv] = useState(false);
   const [activeTab, setActiveTab] = useState<TabMode>("typosquatting");
   const [watchlistItem, setWatchlistItem] = useState<any | null>(null);
+  const [confirmDeleteScan, setConfirmDeleteScan] = useState(false);
+  const deleteScan = useDeleteBrandThreatScan();
+  const qc = useQueryClient();
   const PAGE_SIZE = 50;
 
   const { data: scan, isLoading, refetch } = useGetBrandThreatScan(id, {
@@ -1032,6 +1037,43 @@ export default function BrandThreatDetailPage() {
           <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8 shrink-0">
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
           </Button>
+          <Button
+            variant="outline" size="sm"
+            className="h-8 shrink-0 gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
+            onClick={() => setConfirmDeleteScan(true)}
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Delete
+          </Button>
+          <Dialog open={confirmDeleteScan} onOpenChange={setConfirmDeleteScan}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-destructive" /> Delete Scan?
+                </DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground">
+                Permanently delete this brand threat scan and all associated results? This cannot be undone.
+              </p>
+              <DialogFooter className="mt-2">
+                <Button variant="outline" onClick={() => setConfirmDeleteScan(false)} disabled={deleteScan.isPending}>Cancel</Button>
+                <Button
+                  variant="destructive"
+                  onClick={async () => {
+                    try {
+                      await deleteScan.mutateAsync({ id });
+                      qc.invalidateQueries({ queryKey: getListBrandThreatsQueryKey() });
+                      navigate("/brand-threats");
+                    } finally {
+                      setConfirmDeleteScan(false);
+                    }
+                  }}
+                  disabled={deleteScan.isPending}
+                >
+                  {deleteScan.isPending ? "Deleting…" : "Delete"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <p className="text-xs text-muted-foreground mt-2 ml-[72px]">

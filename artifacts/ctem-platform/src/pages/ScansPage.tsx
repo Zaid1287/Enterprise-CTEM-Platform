@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import {
   useListScans, useCreateScan, useCancelScan,
-  useListAssets, getListScansQueryKey, getListAssetsQueryKey,
+  useListAssets, useListScanJobs, getListScansQueryKey, getListAssetsQueryKey, getListScanJobsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,6 +19,29 @@ import { useToast } from "@/hooks/use-toast";
 
 const SCAN_TYPES = ["passive", "active", "vulnerability", "full"];
 const PAGE_SIZE = 10;
+
+function ScanJobsProgress({ scanId }: { scanId: number }) {
+  const { data: jobs } = useListScanJobs(scanId, {
+    query: { queryKey: getListScanJobsQueryKey(scanId), refetchInterval: 5000 },
+  });
+  const list = (jobs as any[]) ?? [];
+  if (list.length === 0) return null;
+  const done = list.filter((j: any) => j.status === "completed" || j.status === "failed").length;
+  const running = list.filter((j: any) => j.status === "running").length;
+  const total = list.length;
+  const pct = Math.round((done / total) * 100);
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+        <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-[10px] text-muted-foreground shrink-0">
+        {running > 0 && <span className="text-blue-400 mr-1">{running} running ·</span>}
+        {done}/{total} assets
+      </span>
+    </div>
+  );
+}
 
 function ScanStatusIcon({ status }: { status: string }) {
   if (status === "completed") return <CheckCircle2 className="w-4 h-4 text-green-400" />;
@@ -180,6 +203,9 @@ export default function ScansPage() {
                 )}
               </div>
             </div>
+            {(scan.status === "running" || scan.status === "pending") && (
+              <ScanJobsProgress scanId={scan.id} />
+            )}
             <div className="flex gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
               <span>Started: {formatDateTime(scan.startedAt)}</span>
               {scan.completedAt && <span>Completed: {formatDateTime(scan.completedAt)}</span>}

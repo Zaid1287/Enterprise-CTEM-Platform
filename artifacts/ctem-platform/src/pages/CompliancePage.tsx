@@ -4,13 +4,15 @@ import {
   getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Paperclip, Upload, FileText, X, Download, Trash2 } from "lucide-react";
+import { Paperclip, Upload, FileText, X, Download, Trash2, Bot, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn, statusBadgeClass } from "@/lib/utils";
 import { getToken } from "@/lib/auth";
+import { apiFetch } from "@/lib/apiFetch";
 
 const FRAMEWORK_COLORS: Record<string, string> = {
   ISO27001: "border-blue-500/40 bg-blue-500/5",
@@ -98,6 +100,28 @@ export default function CompliancePage() {
   const [uploadingId, setUploadingId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingControlId, setPendingControlId] = useState<number | null>(null);
+  const [aiGuidanceControl, setAiGuidanceControl] = useState<any | null>(null);
+  const [aiGuidanceText, setAiGuidanceText] = useState<string>("");
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const handleAiGuidance = async (control: any) => {
+    setAiGuidanceControl(control);
+    setAiGuidanceText("");
+    setAiLoading(true);
+    try {
+      const res = await apiFetch<{ guidance: string }>(`${BASE}/api/ai/compliance-guidance`, {
+        method: "POST",
+        body: JSON.stringify({ controlId: control.controlId, title: control.title, framework: control.frameworkName, status: control.status }),
+      });
+      setAiGuidanceText(res.guidance ?? "No guidance available.");
+    } catch {
+      setAiGuidanceText("Failed to fetch AI guidance. Ensure your OpenAI API key is configured.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
   const queryClient = useQueryClient();
 
   const { data: summary, isLoading: loadingSummary } = useGetComplianceSummary({
@@ -269,18 +293,28 @@ export default function CompliancePage() {
                     </Select>
                   </td>
                   <td className="px-4 py-2.5">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs gap-1 text-muted-foreground hover:text-foreground"
-                      disabled={uploadingId === c.id}
-                      onClick={() => handleUploadClick(c.id)}
-                    >
-                      {uploadingId === c.id
-                        ? <><Upload className="w-3 h-3 animate-pulse" /> Uploading…</>
-                        : <><Paperclip className="w-3 h-3" /> Attach</>
-                      }
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                        disabled={uploadingId === c.id}
+                        onClick={() => handleUploadClick(c.id)}
+                      >
+                        {uploadingId === c.id
+                          ? <><Upload className="w-3 h-3 animate-pulse" /> Uploading…</>
+                          : <><Paperclip className="w-3 h-3" /> Attach</>
+                        }
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs gap-1 text-primary/70 hover:text-primary"
+                        onClick={() => handleAiGuidance(c)}
+                      >
+                        <Bot className="w-3 h-3" /> AI
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -291,6 +325,25 @@ export default function CompliancePage() {
           </table>
         </div>
       </div>
+
+      <Dialog open={!!aiGuidanceControl} onOpenChange={open => { if (!open) { setAiGuidanceControl(null); setAiGuidanceText(""); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bot className="w-5 h-5 text-primary" />
+              AI Guidance — {aiGuidanceControl?.controlId}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground mb-3">
+            <span className="font-semibold text-foreground">{aiGuidanceControl?.title}</span>
+            {aiGuidanceControl?.frameworkName && ` · ${aiGuidanceControl.frameworkName}`}
+          </p>
+          {aiLoading
+            ? <div className="flex items-center gap-2 text-sm text-muted-foreground py-4"><Loader2 className="w-4 h-4 animate-spin" /> Fetching guidance…</div>
+            : <p className="text-sm leading-relaxed whitespace-pre-wrap">{aiGuidanceText}</p>
+          }
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

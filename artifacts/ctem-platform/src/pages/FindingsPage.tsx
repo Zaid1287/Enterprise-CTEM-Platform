@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   useListFindings, useUpdateFinding, getListFindingsQueryKey,
   useListFindingComments, useCreateFindingComment, getListFindingCommentsQueryKey,
@@ -422,7 +422,11 @@ function FindingDrawer({ finding, mode: initialMode, onClose }: { finding: any; 
 export default function FindingsPage() {
   const [, navigate] = useLocation();
   const [search, setSearch]   = useState("");
-  const [severity, setSeverity] = useState("");
+  const searchStr = useSearch();
+  const [severity, setSeverity] = useState(() => {
+    const p = new URLSearchParams(searchStr);
+    return p.get("severity") ?? "";
+  });
   const [status, setStatus]   = useState("");
   const [page, setPage]       = useState(1);
 

@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import {
   Key, Save, Eye, EyeOff, CheckCircle2, AlertTriangle, Mail, Bell,
   Search, Globe, ShieldAlert, Database, ExternalLink, Trash2,
-  Wifi, WifiOff, RefreshCw, ChevronRight,
+  Wifi, WifiOff, RefreshCw, ChevronRight, Loader2, FlaskConical,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -128,6 +128,25 @@ export default function PlatformSettingsPage() {
   const [showKeys, setShowKeys] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+  const [testingKey, setTestingKey] = useState<string | null>(null);
+
+  const TESTABLE_KEYS = new Set(["shodan_api_key", "virustotal_api_key", "nvd_api_key", "censys_api_id"]);
+
+  const handleTestKey = async (key: string) => {
+    setTestingKey(key);
+    try {
+      const res = await apiFetch<{ ok: boolean; message: string }>(`${BASE}/api/platform/settings/test-key`, {
+        method: "POST",
+        body: JSON.stringify({ key }),
+      });
+      setTestResults(prev => ({ ...prev, [key]: res }));
+    } catch (e: any) {
+      setTestResults(prev => ({ ...prev, [key]: { ok: false, message: e.message ?? "Test failed" } }));
+    } finally {
+      setTestingKey(null);
+    }
+  };
   const [selectedCat, setSelectedCat] = useState("scanning");
 
   useEffect(() => {
@@ -425,6 +444,17 @@ export default function PlatformSettingsPage() {
                                 <span className="hidden sm:inline">{isRevealed ? "Hide" : "Reveal"}</span>
                               </button>
                             )}
+                            {setting.hasValue && !isEdited && TESTABLE_KEYS.has(setting.key) && (
+                              <button
+                                onClick={() => handleTestKey(setting.key)}
+                                disabled={testingKey === setting.key}
+                                className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors px-2.5 py-2 rounded-lg hover:bg-blue-500/10 border border-border h-9 disabled:opacity-50"
+                                title="Test API key"
+                              >
+                                {testingKey === setting.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+                                <span className="hidden sm:inline">Test</span>
+                              </button>
+                            )}
                             {setting.hasValue && !isEdited && (
                               <button
                                 onClick={() => setEdits(prev => ({ ...prev, [setting.key]: "" }))}
@@ -444,6 +474,12 @@ export default function PlatformSettingsPage() {
                             )}
                           </div>
                         </div>
+                        {testResults[setting.key] && !isEdited && (
+                          <p className={cn("text-[10px] mt-1 flex items-center gap-1", testResults[setting.key].ok ? "text-green-400" : "text-red-400")}>
+                            {testResults[setting.key].ok ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                            {testResults[setting.key].message}
+                          </p>
+                        )}
                         {isComingSoon && (
                           <p className="text-[10px] text-violet-400/70 mt-1">
                             {setting.key === "twitter_x_bearer_token"

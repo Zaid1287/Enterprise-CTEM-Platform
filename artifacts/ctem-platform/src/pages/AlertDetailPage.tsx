@@ -4,16 +4,20 @@ import {
   getGetAlertQueryKey, getListAlertsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft, Bell, BellOff, AlertTriangle, ShieldAlert,
   Link2, Tag, Info, CheckCircle, DatabaseZap, Crosshair,
-  ScanSearch, Activity, Shield, Eye, Calendar,
+  ScanSearch, Activity, Shield, Eye, Calendar, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { cn, severityBgColor, formatDateTime } from "@/lib/utils";
+import { apiFetch } from "@/lib/apiFetch";
 import { Link } from "wouter";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const TYPE_LABEL: Record<string, string> = {
   new_vulnerability:  "New Vulnerability",
@@ -80,6 +84,20 @@ export default function AlertDetailPage() {
 
   const updateAlert = useUpdateAlert();
   const a = alert as any;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await apiFetch(`${BASE}/api/alerts/${alertId}`, { method: "DELETE" });
+      qc.invalidateQueries({ queryKey: getListAlertsQueryKey() });
+      navigate("/alerts");
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
 
   useEffect(() => {
     if (a && !a.isRead) {
@@ -304,7 +322,33 @@ export default function AlertDetailPage() {
             <Button variant="outline" size="sm" className="w-full h-9 gap-1.5" onClick={() => navigate("/alerts")}>
               <ArrowLeft className="w-3.5 h-3.5" /> Back to Alerts
             </Button>
+            <Button
+              variant="outline" size="sm"
+              className="w-full h-9 gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 className="w-4 h-4" /> Delete Alert
+            </Button>
           </div>
+
+          <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-destructive" /> Delete Alert
+                </DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground">
+                Permanently delete this alert? This cannot be undone.
+              </p>
+              <DialogFooter className="mt-2">
+                <Button variant="outline" onClick={() => setConfirmDelete(false)} disabled={deleting}>Cancel</Button>
+                <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+                  {deleting ? "Deleting…" : "Delete"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
     </div>

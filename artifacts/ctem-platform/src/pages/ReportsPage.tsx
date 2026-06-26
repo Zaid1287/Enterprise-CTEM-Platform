@@ -121,6 +121,10 @@ export default function ReportsPage() {
     if (selectedIds.size === 0) return;
     setDownloading(true);
     try {
+      await createReport.mutateAsync({
+        data: { title: form.title || "Asset Security Report", type: form.type as any, format: "pdf" as any },
+      } as any);
+      queryClient.invalidateQueries({ queryKey: getListReportsQueryKey() });
       await downloadSelectedAssetsPdf(
         form.title || "Asset Security Report",
         form.type,

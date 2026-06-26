@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import {
   useListAlerts, useUpdateAlert, useListAlertRules, useCreateAlertRule,
@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, severityBgColor, capitalize, formatDateTime } from "@/lib/utils";
 import { apiFetch } from "@/lib/apiFetch";
+import { getToken } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -56,11 +57,32 @@ export default function AlertsPage() {
   const [testStates, setTestStates] = useState<Record<number, TestState>>({});
   const queryClient = useQueryClient();
 
+  const sseRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    const url = `${BASE}/api/alerts/stream?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
+    sseRef.current = es;
+    es.onmessage = () => {
+      queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
+    };
+    es.onerror = () => {
+      es.close();
+      sseRef.current = null;
+    };
+    return () => {
+      es.close();
+      sseRef.current = null;
+    };
+  }, []);
+
   const alertParams = { severity: severityFilter || undefined };
   const { data: alerts, isLoading } = useListAlerts(alertParams as any, {
     query: {
       queryKey: getListAlertsQueryKey(alertParams as any),
-      refetchInterval: 15_000,
+      refetchInterval: 60_000,
       staleTime: 0,
     },
   });

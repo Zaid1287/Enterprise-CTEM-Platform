@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   useListRiskScores, getListRiskScoresQueryKey,
   useGetTopRiskyAssets, getGetTopRiskyAssetsQueryKey,
@@ -7,13 +8,38 @@ import {
   RadialBarChart, RadialBar, Cell,
 } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { cn, riskLevelBg, capitalize } from "@/lib/utils";
+import { apiFetch } from "@/lib/apiFetch";
+import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 
 const RISK_COLORS: Record<string, string> = {
   critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e",
 };
 
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
 export default function RiskPage() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [recalculating, setRecalculating] = useState(false);
+
+  const handleRecalculate = async () => {
+    setRecalculating(true);
+    try {
+      const result = await apiFetch<{ recalculated: number }>(`${BASE}/api/risk/recalculate`, { method: "POST" });
+      queryClient.invalidateQueries({ queryKey: getListRiskScoresQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetTopRiskyAssetsQueryKey({ limit: 10 }) });
+      toast({ title: "Risk scores recalculated", description: `Updated ${result.recalculated} asset score${result.recalculated !== 1 ? "s" : ""}.` });
+    } catch (err: any) {
+      toast({ title: "Recalculation failed", description: err?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
   const { data: scores, isLoading } = useListRiskScores({
     query: {
       queryKey: getListRiskScoresQueryKey(),
@@ -41,9 +67,19 @@ export default function RiskPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-lg font-semibold">Risk Scoring</h1>
-        <p className="text-sm text-muted-foreground">Quantified risk across all assets</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">Risk Scoring</h1>
+          <p className="text-sm text-muted-foreground">Quantified risk across all assets</p>
+        </div>
+        <Button
+          variant="outline" size="sm" className="h-8 gap-1.5"
+          onClick={handleRecalculate}
+          disabled={recalculating}
+        >
+          <RefreshCw className={cn("w-3.5 h-3.5", recalculating && "animate-spin")} />
+          {recalculating ? "Recalculating…" : "Recalculate Scores"}
+        </Button>
       </div>
 
       {/* Summary cards */}

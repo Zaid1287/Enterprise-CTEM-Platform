@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadScanReportPdf } from "@/lib/pdfReport";
@@ -508,6 +509,7 @@ export default function ScanReportPage() {
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(0);
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const { user } = useAuth();
   const isClient = user?.role === "client";
@@ -578,13 +580,31 @@ export default function ScanReportPage() {
   if ((reports as unknown[]).length === 0) {
     if (scanStatus === "running" || scanStatus === "pending" || scanStatus === "unknown") {
       return (
-        <LiveProgressView
-          scanId={scanId}
-          scanStatus={scanStatus}
-          scan={scan}
-          stopping={stopping}
-          onStop={handleStop}
-        />
+        <>
+          <LiveProgressView
+            scanId={scanId}
+            scanStatus={scanStatus}
+            scan={scan}
+            stopping={stopping}
+            onStop={() => setConfirmStop(true)}
+          />
+          <Dialog open={confirmStop} onOpenChange={setConfirmStop}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Square className="w-5 h-5 text-destructive fill-destructive" /> Stop Scan?
+                </DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground">This will immediately cancel the running scan. Partial results will be preserved but the scan cannot be resumed.</p>
+              <DialogFooter className="mt-2">
+                <Button variant="outline" onClick={() => setConfirmStop(false)} disabled={stopping}>Keep Running</Button>
+                <Button variant="destructive" onClick={async () => { setConfirmStop(false); await handleStop(); }} disabled={stopping}>
+                  {stopping ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Stopping…</> : "Stop Scan"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
       );
     }
     return (
@@ -656,12 +676,30 @@ export default function ScanReportPage() {
         </div>
         <div className="flex items-center gap-2">
           {(scanStatus === "running" || scanStatus === "pending") && (
-            <Button size="sm" variant="outline"
-              className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10"
-              onClick={handleStop} disabled={stopping}>
-              {stopping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
-              Stop Scan
-            </Button>
+            <>
+              <Button size="sm" variant="outline"
+                className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10"
+                onClick={() => setConfirmStop(true)} disabled={stopping}>
+                {stopping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
+                Stop Scan
+              </Button>
+              <Dialog open={confirmStop} onOpenChange={setConfirmStop}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Square className="w-5 h-5 text-destructive fill-destructive" /> Stop Scan?
+                    </DialogTitle>
+                  </DialogHeader>
+                  <p className="text-sm text-muted-foreground">This will immediately cancel the running scan. Partial results will be preserved but the scan cannot be resumed.</p>
+                  <DialogFooter className="mt-2">
+                    <Button variant="outline" onClick={() => setConfirmStop(false)} disabled={stopping}>Keep Running</Button>
+                    <Button variant="destructive" onClick={async () => { setConfirmStop(false); await handleStop(); }} disabled={stopping}>
+                      {stopping ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Stopping…</> : "Stop Scan"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </>
           )}
           {scanStatus === "completed" && (
             <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"

@@ -319,6 +319,16 @@ router.delete("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedReq
   res.status(204).end();
 });
 
+router.delete("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const alertId = parseInt(req.params.alertId, 10);
+  if (isNaN(alertId)) { res.status(400).json({ error: "Invalid alertId" }); return; }
+  const [deleted] = await db.delete(alertsTable)
+    .where(and(eq(alertsTable.id, alertId), eq(alertsTable.tenantId, req.user!.tenantId)))
+    .returning();
+  if (!deleted) { res.status(404).json({ error: "Alert not found" }); return; }
+  res.status(204).end();
+});
+
 router.patch("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateAlertParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }

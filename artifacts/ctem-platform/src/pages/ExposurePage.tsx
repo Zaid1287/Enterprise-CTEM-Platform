@@ -449,7 +449,7 @@ export default function ExposurePage() {
                 {filteredExposed.length > 20 && (
                   <div className="px-4 py-3 text-center text-xs text-muted-foreground">
                     +{filteredExposed.length - 20} more ·{" "}
-                    <Link href="/findings" className="text-primary hover:underline">View all findings</Link>
+                    <Link href="/findings?severity=critical" className="text-primary hover:underline">View all findings</Link>
                   </div>
                 )}
               </div>
@@ -481,7 +481,7 @@ export default function ExposurePage() {
                 {cloudFindings.length > 15 && (
                   <div className="px-4 py-3 text-center text-xs text-muted-foreground">
                     +{cloudFindings.length - 15} more ·{" "}
-                    <Link href="/findings" className="text-primary hover:underline">View all findings</Link>
+                    <Link href="/findings?severity=critical" className="text-primary hover:underline">View all findings</Link>
                   </div>
                 )}
               </div>
@@ -579,7 +579,7 @@ export default function ExposurePage() {
                 {kevFindings.length > 10 && (
                   <div className="px-4 py-3 text-center text-xs text-muted-foreground">
                     +{kevFindings.length - 10} more ·{" "}
-                    <Link href="/findings" className="text-primary hover:underline">View all findings</Link>
+                    <Link href="/findings?severity=critical" className="text-primary hover:underline">View all findings</Link>
                   </div>
                 )}
               </div>

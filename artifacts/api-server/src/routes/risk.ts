@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
-import { db, riskScoresTable, assetsTable } from "@workspace/db";
+import { db, riskScoresTable, assetsTable, findingsTable } from "@workspace/db";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
@@ -63,6 +63,66 @@ router.get("/risk/scores/:assetId", requireAuth, async (req: AuthenticatedReques
     criticalityBonus: score.criticalityBonus, exposureBonus: score.exposureBonus,
     updatedAt: score.updatedAt.toISOString(),
   });
+});
+
+router.post("/risk/recalculate", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tenantId = req.user!.tenantId;
+
+  const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  if (assets.length === 0) { res.json({ recalculated: 0 }); return; }
+
+  const assetIds = assets.map(a => a.id);
+  const allFindings = await db.select().from(findingsTable).where(
+    and(
+      inArray(findingsTable.assetId, assetIds),
+      inArray(findingsTable.status, ["open", "in_progress"]),
+    ),
+  );
+
+  const byAsset = new Map<number, typeof allFindings>();
+  for (const f of allFindings) {
+    if (!byAsset.has(f.assetId)) byAsset.set(f.assetId, []);
+    byAsset.get(f.assetId)!.push(f);
+  }
+
+  let recalculated = 0;
+  for (const asset of assets) {
+    const af = byAsset.get(asset.id) ?? [];
+
+    const maxCvss = af.reduce((m, f) => Math.max(m, f.cvss ?? 0), 0);
+    const cvssComponent = (maxCvss / 10) * 40;
+
+    const maxEpss = af.reduce((m, f) => Math.max(m, f.epss ?? 0), 0);
+    const epssComponent = maxEpss * 20;
+
+    const kevBonus = af.some(f => f.isKev) ? 15 : 0;
+
+    const critMap: Record<string, number> = { critical: 20, high: 15, medium: 10, low: 5 };
+    const criticalityBonus = critMap[asset.riskLevel ?? "low"] ?? 5;
+
+    const portCount = af.filter(f => (f.cve ?? "").startsWith("EXP-PORT-")).length;
+    const exposureBonus = Math.min(5, portCount * 1.5);
+
+    const score = Math.min(100, cvssComponent + epssComponent + kevBonus + criticalityBonus + exposureBonus);
+    const level = score >= 70 ? "critical" : score >= 40 ? "high" : score >= 20 ? "medium" : "low";
+
+    await db.insert(riskScoresTable).values({
+      assetId: asset.id,
+      score,
+      level,
+      cvssComponent,
+      epssComponent,
+      kevBonus,
+      criticalityBonus,
+      exposureBonus,
+    }).onConflictDoUpdate({
+      target: riskScoresTable.assetId,
+      set: { score, level, cvssComponent, epssComponent, kevBonus, criticalityBonus, exposureBonus },
+    });
+    recalculated++;
+  }
+
+  res.json({ recalculated });
 });
 
 export default router;

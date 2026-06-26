@@ -2,15 +2,16 @@ import { useState } from "react";
 import { useLocation, useParams } from "wouter";
 import {
   useGetAssetGroup, useUpdateAssetGroup, useGetAssetGroupMembers, useSetAssetGroupMembers,
-  useListAssets, getGetAssetGroupQueryKey, getGetAssetGroupMembersQueryKey, getListAssetGroupsQueryKey,
+  useListAssets, useCreateScan, getGetAssetGroupQueryKey, getGetAssetGroupMembersQueryKey, getListAssetGroupsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Layers, Save, Users, Plus, X, Globe, Server, Database, Code2, Wifi, Shield, FileText } from "lucide-react";
+import { ArrowLeft, Layers, Save, Users, Plus, X, Globe, Server, Database, Code2, Wifi, Shield, FileText, Play, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatDate } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 const ASSET_TYPE_ICON: Record<string, React.ElementType> = {
   domain: Globe, ip: Wifi, host: Server, cloud: Shield,
@@ -28,6 +29,9 @@ export default function AssetGroupDetailPage() {
   const [saving, setSaving] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
+  const [scanningGroup, setScanningGroup] = useState(false);
+  const createScan = useCreateScan();
+  const { toast } = useToast();
 
   const { data: group, isLoading } = useGetAssetGroup(groupId, {
     query: { queryKey: getGetAssetGroupQueryKey(groupId) },
@@ -118,7 +122,33 @@ export default function AssetGroupDetailPage() {
               </Button>
             </div>
           ) : (
-            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={startEdit}>Edit</Button>
+            <div className="flex gap-1.5">
+              <Button
+                variant="outline" size="sm" className="h-7 text-xs gap-1"
+                disabled={scanningGroup || memberList.length === 0}
+                onClick={async () => {
+                  const ids = memberList.filter((a: any) => a.verificationStatus === "verified").map((a: any) => a.id);
+                  if (ids.length === 0) {
+                    toast({ title: "No verified assets", description: "Verify ownership of at least one asset before scanning.", variant: "destructive" });
+                    return;
+                  }
+                  setScanningGroup(true);
+                  try {
+                    await createScan.mutateAsync({ data: { type: "full", assetIds: ids } } as any);
+                    toast({ title: "Scan started", description: `Scanning ${ids.length} asset(s) in this group.` });
+                    navigate("/scans");
+                  } catch {
+                    toast({ title: "Failed to start scan", variant: "destructive" });
+                  } finally {
+                    setScanningGroup(false);
+                  }
+                }}
+              >
+                {scanningGroup ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                {scanningGroup ? "Starting…" : "Scan Group"}
+              </Button>
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={startEdit}>Edit</Button>
+            </div>
           )}
         </div>
         <div className="flex gap-4 text-xs text-muted-foreground">

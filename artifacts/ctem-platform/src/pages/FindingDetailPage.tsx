@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, capitalize, formatDate, formatDateTime } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, RefreshCw } from "lucide-react";
+import { getToken } from "@/lib/auth";
 
 // ── Style maps ─────────────────────────────────────────────────────────────
 
@@ -229,11 +230,26 @@ function AiSection({ findingId, finding }: { findingId: number; finding: any }) 
 
 function CommentsSection({ findingId }: { findingId: number }) {
   const qc = useQueryClient();
+  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
   const [text, setText] = useState("");
   const { data: comments } = useListFindingComments(findingId, {
     query: { queryKey: getListFindingCommentsQueryKey(findingId) },
   });
   const addComment = useCreateFindingComment();
+  const [deletingCommentId, setDeletingCommentId] = useState<number | null>(null);
+
+  const deleteComment = async (commentId: number) => {
+    setDeletingCommentId(commentId);
+    try {
+      await fetch(`${BASE}/api/findings/${findingId}/comments/${commentId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+      });
+      qc.invalidateQueries({ queryKey: getListFindingCommentsQueryKey(findingId) });
+    } finally {
+      setDeletingCommentId(null);
+    }
+  };
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -252,7 +268,17 @@ function CommentsSection({ findingId }: { findingId: number }) {
           <div key={c.id} className="bg-muted/30 rounded-lg p-3 border border-border/40">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-semibold">{c.authorName}</span>
-              <span className="text-[10px] text-muted-foreground">{formatDateTime(c.createdAt)}</span>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-muted-foreground">{formatDateTime(c.createdAt)}</span>
+                <button
+                  onClick={() => deleteComment(c.id)}
+                  disabled={deletingCommentId === c.id}
+                  className="ml-1 p-0.5 rounded text-muted-foreground/50 hover:text-destructive transition-colors disabled:opacity-40"
+                  title="Delete comment"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">{c.content}</p>
           </div>
