@@ -12,6 +12,7 @@ import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWa
 import { and, eq, sql, lte, isNotNull } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
+import { pushSseEvent } from "../lib/sseManager";
 
 let _port = 8080;
 let _intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -384,6 +385,10 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
   }
 }
 
+function normalizeVersion(v: string): string {
+  return v.replace(/^v/i, "").trim();
+}
+
 async function dispatchToolUpdateCheck(): Promise<void> {
   const SETTING_KEY = "tool_update_last_checked";
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -399,16 +404,17 @@ async function dispatchToolUpdateCheck(): Promise<void> {
 
     const tools = await db
       .select({
-        id:                 securityToolsTable.id,
-        tenantId:           securityToolsTable.tenantId,
-        name:               securityToolsTable.name,
-        githubUrl:          securityToolsTable.githubUrl,
-        currentVersion:     securityToolsTable.currentVersion,
-        latestVersion:      securityToolsTable.latestVersion,
-        updateCommand:      securityToolsTable.updateCommand,
+        id:             securityToolsTable.id,
+        tenantId:       securityToolsTable.tenantId,
+        name:           securityToolsTable.name,
+        githubUrl:      securityToolsTable.githubUrl,
+        currentVersion: securityToolsTable.currentVersion,
+        latestVersion:  securityToolsTable.latestVersion,
+        updateCommand:  securityToolsTable.updateCommand,
       })
       .from(securityToolsTable);
 
+    // Group by GitHub URL to make one API call per repo (not per tool/tenant)
     const urlToTools = new Map<string, typeof tools>();
     for (const tool of tools) {
       if (!tool.githubUrl) continue;
@@ -426,6 +432,7 @@ async function dispatchToolUpdateCheck(): Promise<void> {
       if (error || !latestVersion) continue;
 
       const now = new Date();
+      const normalizedLatest = normalizeVersion(latestVersion);
 
       for (const tool of toolGroup) {
         await db
@@ -433,11 +440,18 @@ async function dispatchToolUpdateCheck(): Promise<void> {
           .set({ latestVersion, toolUpdateCheckedAt: now })
           .where(eq(securityToolsTable.id, tool.id));
 
-        const prevLatest = tool.latestVersion;
-        if (!latestVersion || latestVersion === prevLatest) continue;
-        if (tool.currentVersion && latestVersion === tool.currentVersion) continue;
+        // Only alert when version is genuinely newer (different after stripping 'v')
+        const normalizedCurrent = tool.currentVersion ? normalizeVersion(tool.currentVersion) : null;
+        const normalizedPrevLatest = tool.latestVersion ? normalizeVersion(tool.latestVersion) : null;
 
-        const alertTitle = `Update available: ${tool.name} ${latestVersion}`;
+        // Skip if latestVersion is the same as what we already have stored
+        if (normalizedLatest === normalizedPrevLatest) continue;
+        // Skip if current installed version already matches
+        if (normalizedCurrent && normalizedCurrent === normalizedLatest) continue;
+
+        const alertTitle = `Tool update available: ${tool.name} ${latestVersion}`;
+        const releasesUrl = `${githubUrl.replace(/\.git$/, "")}/releases/latest`;
+
         const [existing] = await db
           .select({ id: alertsTable.id })
           .from(alertsTable)
@@ -453,13 +467,21 @@ async function dispatchToolUpdateCheck(): Promise<void> {
 
         if (existing) continue;
 
-        await db.insert(alertsTable).values({
+        const [alert] = await db.insert(alertsTable).values({
           tenantId:  tool.tenantId,
           title:     alertTitle,
-          message:   `A new version of ${tool.name} is available (${latestVersion}).${tool.updateCommand ? ` Update command: ${tool.updateCommand}` : " See the tool's GitHub page for update instructions."}`,
+          message:   `A new version of ${tool.name} is available (${latestVersion}).${normalizedCurrent ? ` Installed: ${tool.currentVersion}.` : ""} View release notes and update instructions at ${releasesUrl}${tool.updateCommand ? ` — or run: ${tool.updateCommand}` : ""}.`,
           type:      "tool_update",
           severity:  "medium",
-        });
+        }).returning();
+
+        if (alert) {
+          pushSseEvent(tool.tenantId, "new-alert", {
+            id: alert.id, title: alert.title, message: alert.message,
+            type: alert.type, severity: alert.severity, isRead: false,
+            createdAt: alert.createdAt.toISOString(),
+          });
+        }
 
         logger.info({ toolName: tool.name, latestVersion, tenantId: tool.tenantId }, "Beat: tool update alert created");
       }
@@ -478,7 +500,12 @@ async function dispatchToolUpdateCheck(): Promise<void> {
 
 async function dispatchDueScans(): Promise<void> {
   try {
-    await Promise.all([dispatchDueAssets(), dispatchDueSchedules(), dispatchDueWatchlistDomains()]);
+    await Promise.all([
+      dispatchDueAssets(),
+      dispatchDueSchedules(),
+      dispatchDueWatchlistDomains(),
+      dispatchToolUpdateCheck(),
+    ]);
   } catch (err) {
     logger.error({ err }, "Beat scheduler error");
   }
@@ -496,7 +523,6 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     await dispatchDueScans();
     _intervalHandle = setInterval(dispatchDueScans, 60 * 1_000);
     logger.info("Beat scheduler polling started (60 s interval)");
-    setImmediate(() => dispatchToolUpdateCheck().catch(() => {}));
   }, 30_000);
 }
 
