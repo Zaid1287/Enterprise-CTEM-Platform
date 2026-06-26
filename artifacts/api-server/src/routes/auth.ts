@@ -11,7 +11,7 @@ import {
   requireAuth,
   type AuthenticatedRequest,
 } from "../lib/auth";
-import { logAudit } from "../lib/audit";
+import { logAudit, getClientIp } from "../lib/audit";
 import { sendEmail, otpEmailHtml } from "../lib/email";
 import crypto from "crypto";
 import multer from "multer";
@@ -116,20 +116,27 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     .set({ refreshToken, lastLoginAt: new Date() })
     .where(eq(usersTable.id, user.id));
 
-  await logAudit(payload, "login", "user", user.id, undefined, req.ip);
+  const ua = req.headers["user-agent"] ?? "";
+  const realIp = getClientIp(req);
+  const deviceStr = parseDevice(ua);
+  const browserStr = parseBrowser(ua);
+  const osStr = parseOs(ua);
+
+  await logAudit(payload, "login", "user", user.id, undefined, realIp, {
+    device: deviceStr, browser: browserStr, os: osStr, userAgent: ua,
+  });
 
   // Record session
-  const ua = req.headers["user-agent"] ?? "";
   const tokenHash = crypto.createHash("sha256").update(accessToken).digest("hex");
   await db.insert(sessionsTable).values({
     userId: user.id,
     tenantId: user.tenantId,
     tokenHash,
-    ipAddress: (req.ip ?? req.socket?.remoteAddress ?? "").replace(/^::ffff:/, ""),
+    ipAddress: realIp,
     userAgent: ua.substring(0, 500),
-    device: parseDevice(ua),
-    browser: parseBrowser(ua),
-    os: parseOs(ua),
+    device: deviceStr,
+    browser: browserStr,
+    os: osStr,
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
   }).onConflictDoNothing();
 

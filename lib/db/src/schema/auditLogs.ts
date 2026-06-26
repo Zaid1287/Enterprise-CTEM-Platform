@@ -13,6 +13,10 @@ export const auditLogsTable = pgTable("audit_logs", {
   resourceId: integer("resource_id"),
   details: text("details"),
   ipAddress: text("ip_address"),
+  device: text("device"),
+  browser: text("browser"),
+  os: text("os"),
+  userAgent: text("user_agent"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

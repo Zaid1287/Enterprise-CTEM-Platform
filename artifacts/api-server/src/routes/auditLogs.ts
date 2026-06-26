@@ -19,7 +19,9 @@ router.get("/audit-logs", requireAuth, async (req: AuthenticatedRequest, res): P
   res.json(logs.map(l => ({
     id: l.id, tenantId: l.tenantId, userId: l.userId, userEmail: l.userEmail,
     action: l.action, resource: l.resource, resourceId: l.resourceId,
-    details: l.details, ipAddress: l.ipAddress, createdAt: l.createdAt.toISOString(),
+    details: l.details, ipAddress: l.ipAddress,
+    device: l.device, browser: l.browser, os: l.os, userAgent: l.userAgent,
+    createdAt: l.createdAt.toISOString(),
   })));
 });
 
