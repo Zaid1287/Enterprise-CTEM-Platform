@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   User, Lock, Users, CreditCard, Eye, EyeOff, Loader2,
-  CheckCircle2, Mail, Copy, Sparkles, ArrowUpRight, Shield,
+  CheckCircle2, Mail, Copy, Sparkles, ArrowUpRight, Shield, ShieldCheck,
   Building2, UserPlus, X, KeyRound, Trash2, ExternalLink,
   Camera, SmartphoneNfc, Send, Clock, Check, Ticket,
   Monitor, Globe, LogOut, Bell, Hash, MessageSquare,
@@ -597,8 +597,6 @@ function TeamTab() {
   const [inviteForm, setInviteForm] = useState({ name: "", email: "", role: "employee" });
   const [sending, setSending] = useState(false);
 
-  const HIDDEN_ROLES = ["super_admin", "account_manager", "admin"];
-
   const { data: membersRaw = [], isLoading } = useQuery<any[]>({
     queryKey: ["team-members"],
     queryFn: () => apiFetch(`${BASE}/api/users`),
@@ -609,7 +607,22 @@ function TeamTab() {
     queryFn: () => apiFetch(`${BASE}/api/invitations`),
   });
 
-  const members = (membersRaw as any[]).filter((m: any) => !HIDDEN_ROLES.includes(m.role));
+  // Build a set of emails that have an accepted invitation
+  const acceptedEmails = new Set(
+    (invitations as any[])
+      .filter((inv: any) => inv.status === "accepted")
+      .map((inv: any) => (inv.email ?? "").toLowerCase()),
+  );
+
+  // Team members = only users whose email appears in an accepted invitation
+  // (excludes super_admin, admin, and account_manager — they are staff, not invitees)
+  const STAFF_ROLES = new Set(["super_admin", "admin", "account_manager"]);
+  const members = (membersRaw as any[]).filter((m: any) =>
+    !STAFF_ROLES.has(m.role) && acceptedEmails.has((m.email ?? "").toLowerCase()),
+  );
+
+  // Account managers visible in this tenant
+  const accountManagers = (membersRaw as any[]).filter((m: any) => m.role === "account_manager");
 
   const deactivateMutation = useMutation({
     mutationFn: (userId: number) =>
@@ -731,18 +744,54 @@ function TeamTab() {
         </div>
       )}
 
-      {/* Team members */}
+      {/* Assigned Account Managers */}
+      {accountManagers.length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-border flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            <p className="text-sm font-medium">Assigned Account Manager{accountManagers.length > 1 ? "s" : ""}</p>
+          </div>
+          <div className="divide-y divide-border">
+            {accountManagers.map((m: any) => (
+              <div key={m.id} className="flex items-center gap-3 px-5 py-3.5">
+                <div className="w-9 h-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden">
+                  {m.avatarUrl
+                    ? <img src={`${BASE}${m.avatarUrl}`} alt="" className="w-full h-full object-cover" />
+                    : `${m.firstName?.[0] ?? ""}${m.lastName?.[0] ?? ""}`
+                  }
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{m.firstName} {m.lastName}</p>
+                  <p className="text-xs text-muted-foreground truncate">{m.email}</p>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider border bg-primary/10 text-primary border-primary/30 shrink-0">
+                  Account Manager
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Team members — only invitation-accepted users */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-          <p className="text-sm font-medium">Team Members</p>
+          <div>
+            <p className="text-sm font-medium">Team Members</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Only members who accepted their invitation</p>
+          </div>
           <span className="text-xs text-muted-foreground">{members.filter((m: any) => m.isActive).length} active</span>
         </div>
-        {isLoading ? (
+        {isLoading || invLoading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
           </div>
         ) : members.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">No team members yet</div>
+          <div className="py-10 text-center text-sm text-muted-foreground">
+            <Users className="w-6 h-6 mx-auto mb-2 opacity-30" />
+            <p>No accepted team members yet.</p>
+            <p className="text-xs mt-1 text-muted-foreground/60">Members appear here after they accept their invitation.</p>
+          </div>
         ) : (
           <div className="divide-y divide-border">
             {members.map((m: any) => (
@@ -776,12 +825,12 @@ function TeamTab() {
         )}
       </div>
 
-      {/* Invitations tracking */}
+      {/* Invitations tracking — all statuses */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Ticket className="w-4 h-4 text-muted-foreground" />
-            <p className="text-sm font-medium">Pending Invitations</p>
+            <p className="text-sm font-medium">Invitations</p>
           </div>
           <span className="text-xs text-muted-foreground">
             {(invitations as any[]).filter((i: any) => i.status === "pending").length} pending

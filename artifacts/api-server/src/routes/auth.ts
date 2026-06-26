@@ -20,6 +20,49 @@ import fs from "fs";
 
 const router = Router();
 
+// ── Per-email brute-force tracker ─────────────────────────────────────────────
+// Tracks failed login attempts per email address so lockout is per-account,
+// not per-IP (IP-based locking would lock out all users behind the same proxy).
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MS   = 15 * 60 * 1000; // 15 minutes
+
+interface LoginAttemptEntry { count: number; firstAt: number; blockedUntil?: number }
+const loginAttempts = new Map<string, LoginAttemptEntry>();
+
+function getAttemptEntry(email: string): LoginAttemptEntry {
+  const entry = loginAttempts.get(email);
+  if (!entry) return { count: 0, firstAt: Date.now() };
+  // Reset window if the lockout has expired
+  if (entry.blockedUntil && Date.now() > entry.blockedUntil) {
+    loginAttempts.delete(email);
+    return { count: 0, firstAt: Date.now() };
+  }
+  return entry;
+}
+
+function recordFailedAttempt(email: string): LoginAttemptEntry {
+  const entry = getAttemptEntry(email);
+  entry.count += 1;
+  if (entry.count >= MAX_ATTEMPTS) {
+    entry.blockedUntil = Date.now() + LOCKOUT_MS;
+  }
+  loginAttempts.set(email, entry);
+  return entry;
+}
+
+function clearAttempts(email: string): void {
+  loginAttempts.delete(email);
+}
+
+// Periodically purge expired entries so the Map doesn't grow unbounded
+setInterval(() => {
+  const now = Date.now();
+  for (const [email, entry] of loginAttempts) {
+    if (entry.blockedUntil && now > entry.blockedUntil) loginAttempts.delete(email);
+    else if (!entry.blockedUntil && now - entry.firstAt > LOCKOUT_MS) loginAttempts.delete(email);
+  }
+}, 5 * 60 * 1000);
+
 const AVATARS_DIR = path.join(process.cwd(), "avatars");
 if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
 
@@ -96,17 +139,44 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, parsed.data.email));
+  const email = parsed.data.email.toLowerCase().trim();
+
+  // ── Per-email lockout check ──
+  const attemptEntry = getAttemptEntry(email);
+  if (attemptEntry.blockedUntil && Date.now() < attemptEntry.blockedUntil) {
+    const remainingMs  = attemptEntry.blockedUntil - Date.now();
+    const remainingMin = Math.ceil(remainingMs / 60_000);
+    res.status(429).json({
+      error: `Account temporarily locked due to too many failed login attempts. Try again in ${remainingMin} minute${remainingMin === 1 ? "" : "s"}.`,
+    });
+    return;
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
   if (!user || !user.isActive) {
+    recordFailedAttempt(email);
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
 
   const valid = await comparePassword(parsed.data.password, user.passwordHash);
   if (!valid) {
-    res.status(401).json({ error: "Invalid credentials" });
+    const updated = recordFailedAttempt(email);
+    const remaining = MAX_ATTEMPTS - updated.count;
+    if (updated.blockedUntil) {
+      res.status(429).json({
+        error: `Too many failed attempts. Your account is locked for 15 minutes.`,
+      });
+    } else {
+      res.status(401).json({
+        error: `Invalid credentials. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before account lockout.`,
+      });
+    }
     return;
   }
+
+  // Successful login — clear any failed-attempt counter
+  clearAttempts(email);
 
   const payload = { userId: user.id, tenantId: user.tenantId, email: user.email, role: user.role };
   const accessToken = signAccessToken(payload);
