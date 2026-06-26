@@ -1495,15 +1495,34 @@ paths:
           in: query
           schema:
             type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
       responses:
         "200":
           description: Audit logs
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AuditLog"
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLog"
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  limit:
+                    type: integer
+                  totalPages:
+                    type: integer
 
   # ──────────────────────────────────────────────────────────
   # AI COPILOT

@@ -84,6 +84,15 @@ const CATEGORY_META: Record<string, {
     description: "HIBP, Google Safe Browsing, WhoisXML — powers the advanced brand threat module",
     docsUrl: "https://haveibeenpwned.com/API/v3",
   },
+  billing: {
+    label: "Billing & Payments",
+    icon: Key,
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/20",
+    description: "Stripe API keys for subscription billing, checkout, and the customer portal",
+    docsUrl: "https://dashboard.stripe.com/apikeys",
+  },
   general: {
     label: "General",
     icon: Key,
@@ -94,7 +103,7 @@ const CATEGORY_META: Record<string, {
   },
 };
 
-const CATEGORY_ORDER = ["scanning", "intelligence", "osint", "brand_threat", "email", "notifications", "general"];
+const CATEGORY_ORDER = ["billing", "scanning", "intelligence", "osint", "brand_threat", "email", "notifications", "general"];
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function PlatformSettingsPage() {

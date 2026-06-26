@@ -978,6 +978,16 @@ userId?: number;
 action?: string;
 from?: string;
 to?: string;
+page?: number;
+limit?: number;
+};
+
+export type ListAuditLogs200 = {
+  data?: AuditLog[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
 };
 
 export type GetRiskTrendParams = {

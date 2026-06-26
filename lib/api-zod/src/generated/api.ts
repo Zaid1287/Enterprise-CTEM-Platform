@@ -1482,10 +1482,13 @@ export const ListAuditLogsQueryParams = zod.object({
   "userId": zod.coerce.number().optional(),
   "action": zod.coerce.string().optional(),
   "from": zod.coerce.string().optional(),
-  "to": zod.coerce.string().optional()
+  "to": zod.coerce.string().optional(),
+  "page": zod.coerce.number().optional(),
+  "limit": zod.coerce.number().optional()
 })
 
-export const ListAuditLogsResponseItem = zod.object({
+export const ListAuditLogsResponse = zod.object({
+  "data": zod.array(zod.object({
   "id": zod.number(),
   "tenantId": zod.number(),
   "userId": zod.number(),
@@ -1496,8 +1499,12 @@ export const ListAuditLogsResponseItem = zod.object({
   "details": zod.string().nullish(),
   "ipAddress": zod.string().nullish(),
   "createdAt": zod.string()
+})).optional(),
+  "total": zod.number().optional(),
+  "page": zod.number().optional(),
+  "limit": zod.number().optional(),
+  "totalPages": zod.number().optional()
 })
-export const ListAuditLogsResponse = zod.array(ListAuditLogsResponseItem)
 
 
 /**

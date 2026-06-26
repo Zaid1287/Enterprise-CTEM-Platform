@@ -42,7 +42,6 @@ import type {
   AssetScanReport,
   AssetTypeCount,
   AssetUpdate,
-  AuditLog,
   AuthResponse,
   BrandThreatScan,
   BrandThreatScanDetail,
@@ -67,6 +66,7 @@ import type {
   HealthStatus,
   ListAlertsParams,
   ListAssetsParams,
+  ListAuditLogs200,
   ListAuditLogsParams,
   ListComplianceControlsParams,
   ListFindingsParams,
@@ -5561,9 +5561,9 @@ export const getListAuditLogsUrl = (params?: ListAuditLogsParams,) => {
 /**
  * @summary List audit logs
  */
-export const listAuditLogs = async (params?: ListAuditLogsParams, options?: RequestInit): Promise<AuditLog[]> => {
+export const listAuditLogs = async (params?: ListAuditLogsParams, options?: RequestInit): Promise<ListAuditLogs200> => {
 
-  return customFetch<AuditLog[]>(getListAuditLogsUrl(params),
+  return customFetch<ListAuditLogs200>(getListAuditLogsUrl(params),
   {
     ...options,
     method: 'GET'

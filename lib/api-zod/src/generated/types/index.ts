@@ -78,6 +78,7 @@ export * from './getTopRiskyAssetsParams';
 export * from './healthStatus';
 export * from './listAlertsParams';
 export * from './listAssetsParams';
+export * from './listAuditLogs200';
 export * from './listAuditLogsParams';
 export * from './listComplianceControlsParams';
 export * from './listFindingsParams';
