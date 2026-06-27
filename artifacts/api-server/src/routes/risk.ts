@@ -2,6 +2,7 @@ import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
 import { db, riskScoresTable, assetsTable, findingsTable } from "@workspace/db";
 import { getAmClientTenantIds } from "../lib/amScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
@@ -10,8 +11,11 @@ router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): 
   const role = req.user!.role;
   let whereClause: ReturnType<typeof eq> | ReturnType<typeof inArray> | undefined;
   if (role === "super_admin" || role === "admin") {
-    // Platform operators see risk scores for ALL assets cross-tenant
-    whereClause = undefined;
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    if (privIds.length === 0) { res.json([]); return; }
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+    whereClause = inArray(assetsTable.tenantId, filtered) as any;
   } else if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
@@ -69,9 +73,14 @@ router.post("/risk/recalculate", requireAuth, async (req: AuthenticatedRequest, 
   const tenantId = req.user!.tenantId;
   const recalcRole = req.user!.role;
 
-  const assets = (recalcRole === "super_admin" || recalcRole === "admin")
-    ? await db.select().from(assetsTable)
-    : await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  let assets: (typeof assetsTable.$inferSelect)[];
+  if (recalcRole === "super_admin" || recalcRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    if (privIds.length === 0) { res.json({ recalculated: 0 }); return; }
+    assets = await db.select().from(assetsTable).where(inArray(assetsTable.tenantId, privIds));
+  } else {
+    assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  }
   if (assets.length === 0) { res.json({ recalculated: 0 }); return; }
 
   const assetIds = assets.map(a => a.id);

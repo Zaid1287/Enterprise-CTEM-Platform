@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { eq, and, ilike, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
 import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
@@ -79,17 +80,19 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     return;
   }
 
-  // super_admin and admin: cross-tenant unrestricted access
+  // super_admin and admin: cross-tenant access constrained to accessible client tenants
   if (role === "super_admin" || role === "admin") {
-    const saFilters: any[] = [];
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    if (privIds.length === 0) { res.json([]); return; }
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    const filteredTids = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+    const saFilters: any[] = [inArray(findingsTable.tenantId, filteredTids)];
     if (q.success) {
       if (q.data.status) saFilters.push(eq(findingsTable.status, q.data.status));
       if (q.data.severity) saFilters.push(eq(findingsTable.severity, q.data.severity));
       if (q.data.assetId) saFilters.push(eq(findingsTable.assetId, q.data.assetId));
       if (q.data.search) saFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
     }
-    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    if (!isNaN(qTenantId)) saFilters.push(eq(findingsTable.tenantId, qTenantId));
     const saFindings = await db.select({
       finding: findingsTable,
       assetName: assetsTable.name,
@@ -105,7 +108,7 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
       .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
       .leftJoin(tenantsTable, eq(findingsTable.tenantId, tenantsTable.id))
-      .where(saFilters.length > 0 ? and(...saFilters) : undefined);
+      .where(and(...saFilters));
     res.json(saFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName }) =>
       toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName)));
     return;

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
 import {
   db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
   complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
@@ -64,12 +65,14 @@ router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Prom
     );
     res.json(amReports.map(toReportResponse)); return;
   }
-  // admin/SA: cross-tenant — see all reports, optionally filtered by tenantId
+  // admin/SA: cross-tenant — constrained to accessible client tenants
   if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    if (privIds.length === 0) { res.json([]); return; }
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    const reportWhere = !isNaN(qTenantId) ? eq(reportsTable.tenantId, qTenantId) : undefined;
+    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
     const allReports = await db.select().from(reportsTable)
-      .where(reportWhere).orderBy(desc(reportsTable.id));
+      .where(inArray(reportsTable.tenantId, filtered)).orderBy(desc(reportsTable.id));
     res.json(allReports.map(toReportResponse)); return;
   }
   const rWhere = eq(reportsTable.tenantId, req.user!.tenantId);

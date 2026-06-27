@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable } from "@workspace/db";
 import { enqueueAndRun, type AssetToolConfigItem } from "./pipelineScans";
 import {
@@ -123,12 +124,14 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
   }
 
   if (role === "super_admin" || role === "admin") {
-    const filters: any[] = [];
-    if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    if (privIds.length === 0) { res.json([]); return; }
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    if (!isNaN(qTenantId)) filters.push(eq(scansTable.tenantId, qTenantId));
+    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+    const filters: any[] = [inArray(scansTable.tenantId, filtered)];
+    if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
     const allScans = await db.select().from(scansTable)
-      .where(filters.length > 0 ? and(...filters) : undefined)
+      .where(and(...filters))
       .orderBy(desc(scansTable.createdAt));
     res.json(allScans.map(toScanResponse)); return;
   }

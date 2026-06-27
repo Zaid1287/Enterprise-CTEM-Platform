@@ -560,6 +560,7 @@ export default function FindingsPage() {
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Asset Detail</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Asset Type</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Asset</th>
+                {isPrivileged && <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Client</th>}
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Severity</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">ASM Score</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">First Scan</th>
@@ -613,6 +614,13 @@ export default function FindingsPage() {
                     <td className="px-3 py-2.5">
                       <span className="text-xs text-muted-foreground truncate max-w-[100px] block">{f.assetName ?? "—"}</span>
                     </td>
+
+                    {/* Client Tenant (admin/SA only) */}
+                    {isPrivileged && (
+                      <td className="px-3 py-2.5">
+                        <span className="text-xs text-muted-foreground truncate max-w-[100px] block">{(f as any).tenantName ?? "—"}</span>
+                      </td>
+                    )}
 
                     {/* Severity */}
                     <td className="px-3 py-2.5">

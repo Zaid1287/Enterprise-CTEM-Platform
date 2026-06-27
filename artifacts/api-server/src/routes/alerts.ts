@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { eq, and, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
 import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
@@ -261,8 +262,11 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   const role = req.user!.role;
   let tenantFilter;
   if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    if (privIds.length === 0) { res.json([]); return; }
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    tenantFilter = !isNaN(qTenantId) ? eq(alertsTable.tenantId, qTenantId) : undefined;
+    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+    tenantFilter = inArray(alertsTable.tenantId, filtered);
   } else if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }

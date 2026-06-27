@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { eq, and, count, sql, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
 import { db, complianceFrameworksTable, complianceControlsTable } from "@workspace/db";
 import {
   GetComplianceControlParams, UpdateComplianceControlParams,
@@ -51,8 +52,11 @@ router.get("/compliance/controls", requireAuth, async (req: AuthenticatedRequest
   const q = ListComplianceControlsQueryParams.safeParse(req.query);
   let tenantFilter;
   if (req.user!.role === "super_admin" || req.user!.role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    if (privIds.length === 0) { res.json([]); return; }
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    tenantFilter = !isNaN(qTenantId) ? eq(complianceControlsTable.tenantId, qTenantId) : undefined;
+    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+    tenantFilter = inArray(complianceControlsTable.tenantId, filtered);
   } else if (req.user!.role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
@@ -211,7 +215,10 @@ router.get("/compliance/summary", requireAuth, async (req: AuthenticatedRequest,
   const frameworks = await db.select().from(complianceFrameworksTable);
   let summaryTenantFilter;
   if (req.user!.role === "super_admin" || req.user!.role === "admin") {
-    summaryTenantFilter = undefined; // cross-tenant unrestricted
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+    summaryTenantFilter = filtered.length > 0 ? inArray(complianceControlsTable.tenantId, filtered) : eq(complianceControlsTable.tenantId, -1);
   } else if (req.user!.role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     summaryTenantFilter = ids.length > 0 ? inArray(complianceControlsTable.tenantId, ids) : eq(complianceControlsTable.tenantId, -1);

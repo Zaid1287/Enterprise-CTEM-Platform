@@ -14,6 +14,8 @@ import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { TenantFilter } from "@/components/TenantFilter";
 
 const RISK_COLORS: Record<string, string> = {
   critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e",
@@ -24,7 +26,10 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 export default function RiskPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [recalculating, setRecalculating] = useState(false);
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
 
   const handleRecalculate = async () => {
     setRecalculating(true);
@@ -42,7 +47,8 @@ export default function RiskPage() {
 
   const { data: scores, isLoading } = useListRiskScores({
     query: {
-      queryKey: getListRiskScoresQueryKey(),
+      queryKey: [...getListRiskScoresQueryKey(), tenantFilter],
+      queryFn: () => apiFetch(`${BASE}/api/risk/scores${isPrivileged && tenantFilter ? `?tenantId=${tenantFilter}` : ""}`),
       staleTime: 0,
       refetchOnWindowFocus: true,
       refetchInterval: 30_000,
@@ -72,14 +78,17 @@ export default function RiskPage() {
           <h1 className="text-lg font-semibold">Risk Scoring</h1>
           <p className="text-sm text-muted-foreground">Quantified risk across all assets</p>
         </div>
-        <Button
-          variant="outline" size="sm" className="h-8 gap-1.5"
-          onClick={handleRecalculate}
-          disabled={recalculating}
-        >
-          <RefreshCw className={cn("w-3.5 h-3.5", recalculating && "animate-spin")} />
-          {recalculating ? "Recalculating…" : "Recalculate Scores"}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isPrivileged && <TenantFilter value={tenantFilter} onChange={setTenantFilter} />}
+          <Button
+            variant="outline" size="sm" className="h-8 gap-1.5"
+            onClick={handleRecalculate}
+            disabled={recalculating}
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", recalculating && "animate-spin")} />
+            {recalculating ? "Recalculating…" : "Recalculate Scores"}
+          </Button>
+        </div>
       </div>
 
       {/* Summary cards */}
