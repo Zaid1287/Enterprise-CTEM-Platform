@@ -22,7 +22,10 @@ router.use(denyExternalMembers);
  * Build a WHERE clause that restricts brand threat scan access by role.
  * - super_admin / admin: unrestricted (operator view, same as assets list)
  * - account_manager: restricted to client tenant IDs
+ * - client: own tenant + scan domain must match one of their assigned asset domains
  * - others: own tenant only
+ *
+ * Returns null when the caller has no access (caller must respond 404).
  */
 async function btScanAccessFilter(
   scanId: number,
@@ -34,6 +37,24 @@ async function btScanAccessFilter(
     const amTids = await getAmClientTenantIds(user.userId);
     if (amTids.length === 0) return null;
     return and(byId, inArray(brandThreatScansTable.tenantId, amTids));
+  }
+  if (user.role === "client") {
+    // Fetch the scan (tenant-scoped) to check its domain against the client's assigned assets
+    const [scan] = await db.select({ domain: brandThreatScansTable.domain })
+      .from(brandThreatScansTable)
+      .where(and(byId, eq(brandThreatScansTable.tenantId, user.tenantId)));
+    if (!scan) return null;
+    const scanDomain = scan.domain.toLowerCase().replace(/^www\./, "");
+    const assignedAssets = await db.select({ value: assetsTable.value })
+      .from(assetsTable)
+      .where(and(eq(assetsTable.assignedClientId, user.userId), eq(assetsTable.tenantId, user.tenantId)));
+    const assignedDomains = new Set(
+      assignedAssets.map(a =>
+        String(a.value ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!
+      ).filter(Boolean)
+    );
+    if (!assignedDomains.has(scanDomain)) return null;
+    return byId; // access verified — no further tenant filter needed (already checked above)
   }
   return and(byId, eq(brandThreatScansTable.tenantId, user.tenantId));
 }

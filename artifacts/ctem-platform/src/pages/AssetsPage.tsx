@@ -418,8 +418,25 @@ export default function AssetsPage() {
 
   const activeFilters = [typeFilter, riskFilter, statusFilter].filter(Boolean).length;
 
+  // For client users: find the assigned AM name from any asset in their list
+  const clientAmName = isClient
+    ? allAssets.find((a: any) => a.assignedAccountManagerName)?.assignedAccountManagerName ?? null
+    : null;
+
   return (
     <div className="space-y-4">
+      {/* Client: Account Manager contact banner */}
+      {isClient && (
+        <div className={`flex items-center gap-3 px-4 py-2.5 rounded-lg border text-sm ${clientAmName ? "bg-primary/8 border-primary/20" : "bg-muted/40 border-border"}`}>
+          <UserCheck className={`w-4 h-4 flex-shrink-0 ${clientAmName ? "text-primary" : "text-muted-foreground"}`} />
+          {clientAmName ? (
+            <span className="text-foreground">Your account manager: <strong>{clientAmName}</strong> — contact them to add or modify assets.</span>
+          ) : (
+            <span className="text-muted-foreground">No account manager assigned yet. Contact your administrator if you need assistance.</span>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
