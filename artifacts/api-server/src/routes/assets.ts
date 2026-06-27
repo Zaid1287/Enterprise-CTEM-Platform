@@ -334,18 +334,20 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
 
   const updateData: any = { ...parsed.data };
   if (req.body.scanFrequency) updateData.scanFrequency = req.body.scanFrequency;
-  // Clients cannot change assignment fields
-  if (req.user!.role === "client") {
+
+  // Only admin / super_admin / account_manager may set assignment fields; everyone else has them stripped
+  const canAssign = patchAssetRole === "admin" || patchAssetRole === "super_admin" || patchAssetRole === "account_manager";
+  if (!canAssign) {
     delete updateData.assignedClientId;
     delete updateData.assignedAccountManagerId;
   }
 
-  // Validate that assignedClientId refers to a real user with the 'client' role
+  // Validate assignedClientId: must be role='client' AND same tenant as the requester
   if (updateData.assignedClientId != null && typeof updateData.assignedClientId === "number") {
-    const [targetUser] = await db.select({ id: usersTable.id, role: usersTable.role })
+    const [targetUser] = await db.select({ id: usersTable.id, role: usersTable.role, tenantId: usersTable.tenantId })
       .from(usersTable).where(eq(usersTable.id, updateData.assignedClientId));
-    if (!targetUser || targetUser.role !== "client") {
-      res.status(400).json({ error: "assignedClientId must refer to a user with role 'client'" }); return;
+    if (!targetUser || targetUser.role !== "client" || targetUser.tenantId !== req.user!.tenantId) {
+      res.status(400).json({ error: "assignedClientId must refer to a client-role user within the same tenant" }); return;
     }
   }
 

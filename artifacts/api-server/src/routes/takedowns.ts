@@ -37,20 +37,25 @@ router.get("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): Pr
   const tid = req.user!.tenantId;
   const tdRole = req.user!.role;
 
-  // Client: show only takedowns matching their assigned assets' domains
+  // Client: show only takedowns (same tenant) whose targetDomain exactly matches an assigned asset domain
   if (tdRole === "client") {
     const assignedAssets = await db.select({ value: assetsTable.value })
-      .from(assetsTable).where(eq(assetsTable.assignedClientId, req.user!.userId));
+      .from(assetsTable)
+      .where(and(eq(assetsTable.assignedClientId, req.user!.userId), eq(assetsTable.tenantId, tid)));
     if (assignedAssets.length === 0) { res.json([]); return; }
-    const domains = assignedAssets.map(a =>
-      String(a.value).toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!
-    );
-    const all = await db.select().from(takedownRequestsTable).orderBy(desc(takedownRequestsTable.createdAt));
-    const filtered = all.filter(t =>
-      t.targetDomain && domains.some(d =>
-        String(t.targetDomain).toLowerCase().includes(d) || d.includes(String(t.targetDomain).toLowerCase())
+    const domains = new Set(
+      assignedAssets.map(a =>
+        String(a.value).toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!
       )
     );
+    const tenantRows = await db.select().from(takedownRequestsTable)
+      .where(eq(takedownRequestsTable.tenantId, tid))
+      .orderBy(desc(takedownRequestsTable.createdAt));
+    const filtered = tenantRows.filter(t => {
+      if (!t.targetDomain) return false;
+      const td = String(t.targetDomain).toLowerCase().replace(/^www\./, "");
+      return domains.has(td);
+    });
     res.json(filtered); return;
   }
 

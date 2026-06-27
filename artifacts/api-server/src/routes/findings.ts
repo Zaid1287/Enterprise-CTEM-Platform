@@ -428,6 +428,16 @@ router.post("/findings/:findingId/comments", requireAuth, async (req: Authentica
     res.status(403).json({ error: "External members cannot post comments" }); return;
   }
 
+  // Client: verify the finding's asset is assigned to them before allowing a comment
+  if (commentRole === "client") {
+    const [postF] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId })
+      .from(findingsTable).where(eq(findingsTable.id, params.data.findingId));
+    if (!postF) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [postAssigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.id, postF.assetId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    if (!postAssigned) { res.status(404).json({ error: "Finding not found" }); return; }
+  }
+
   const parsed = CreateFindingCommentBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const [comment] = await db.insert(findingCommentsTable).values({

@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck,
   Zap, Square, Loader2, Pencil, Copy, CheckCircle2, XCircle, AlertTriangle, Globe,
-  Shield, Server, Filter, Cloud, Lock, Smartphone, Network, Code2, Cpu, ShieldAlert,
+  Shield, Server, Filter, Cloud, Lock, Smartphone, Network, Code2, Cpu, ShieldAlert, UserCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,6 +82,7 @@ export default function AssetsPage() {
   const { toast } = useToast();
   const isClient = user?.role === "client";
   const isAdminOrSuperAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const canAssignClients = isAdminOrSuperAdmin || user?.role === "account_manager";
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -123,6 +124,12 @@ export default function AssetsPage() {
   const [preSelectedAssetIds, setPreSelectedAssetIds] = useState<number[]>([]);
   const [scanAssetId, setScanAssetId] = useState<number | null>(null);
   const [showScanConfirm, setShowScanConfirm] = useState(false);
+
+  // Bulk assign
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<number>>(new Set());
+  const [showBulkAssign, setShowBulkAssign] = useState(false);
+  const [bulkAssignClientId, setBulkAssignClientId] = useState("_none_");
+  const [bulkAssigning, setBulkAssigning] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -359,6 +366,30 @@ export default function AssetsPage() {
     }
   };
 
+  const handleBulkAssign = async () => {
+    if (bulkAssignClientId === "_none_") return;
+    setBulkAssigning(true);
+    const clientId = parseInt(bulkAssignClientId);
+    let failed = 0;
+    for (const assetId of selectedAssetIds) {
+      try {
+        await updateAsset.mutateAsync({ assetId, data: { assignedClientId: clientId } as any });
+      } catch {
+        failed++;
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    setBulkAssigning(false);
+    setShowBulkAssign(false);
+    setBulkAssignClientId("_none_");
+    setSelectedAssetIds(new Set());
+    toast({
+      title: failed === 0 ? "Clients assigned" : `${selectedAssetIds.size - failed} assigned, ${failed} failed`,
+      description: failed === 0 ? `${selectedAssetIds.size} asset(s) assigned to client.` : "Some assignments could not be saved.",
+      variant: failed > 0 ? "destructive" : "default",
+    });
+  };
+
   async function triggerScan(assetId: number) {
     const asset = allAssets.find((a: any) => a.id === assetId);
     if (!asset) return;
@@ -449,11 +480,33 @@ export default function AssetsPage() {
         )}
       </div>
 
+      {/* Bulk action bar */}
+      {canAssignClients && selectedAssetIds.size > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 bg-primary/10 border border-primary/30 rounded-lg">
+          <span className="text-xs font-medium text-primary">{selectedAssetIds.size} asset{selectedAssetIds.size !== 1 ? "s" : ""} selected</span>
+          <Button size="sm" variant="outline" className="h-7 text-[11px] px-3 border-primary/40 text-primary hover:bg-primary/10"
+            onClick={() => { setBulkAssignClientId("_none_"); setShowBulkAssign(true); }}>
+            <UserCheck className="w-3 h-3 mr-1.5" /> Assign Client
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-[11px] px-3 ml-auto" onClick={() => setSelectedAssetIds(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-card border border-border rounded-xl overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="border-b border-border bg-accent/20">
+              {canAssignClients && (
+                <th className="px-3 py-2.5 w-8">
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                    checked={allAssets.length > 0 && selectedAssetIds.size === allAssets.length}
+                    onChange={e => setSelectedAssetIds(e.target.checked ? new Set(allAssets.map((a: any) => a.id)) : new Set())}
+                  />
+                </th>
+              )}
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Asset</th>
               <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Type</th>
               {user?.role === "super_admin" && (
@@ -485,6 +538,19 @@ export default function AssetsPage() {
 
               return (
                 <tr key={asset.id} className="border-b border-border/50 hover:bg-accent/20 transition-colors">
+                  {/* Row checkbox */}
+                  {canAssignClients && (
+                    <td className="px-3 py-3 w-8">
+                      <input type="checkbox" className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                        checked={selectedAssetIds.has(asset.id)}
+                        onChange={e => setSelectedAssetIds(prev => {
+                          const next = new Set(prev);
+                          e.target.checked ? next.add(asset.id) : next.delete(asset.id);
+                          return next;
+                        })}
+                      />
+                    </td>
+                  )}
                   {/* Asset name */}
                   <td className="px-3 py-3 max-w-[160px]">
                     <Link href={`/assets/${asset.id}`}>
@@ -1041,6 +1107,37 @@ export default function AssetsPage() {
               onDone={() => { setShowVerify(false); setVerifyStep("idle"); setPendingAssetId(null); }}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk Assign Client Dialog ── */}
+      <Dialog open={showBulkAssign} onOpenChange={v => { setShowBulkAssign(v); if (!v) setBulkAssignClientId("_none_"); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Assign Client</DialogTitle>
+            <DialogDescription>
+              Assign {selectedAssetIds.size} selected asset{selectedAssetIds.size !== 1 ? "s" : ""} to a client user.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1">
+            <Label className="text-xs">Client</Label>
+            <Select value={bulkAssignClientId} onValueChange={setBulkAssignClientId}>
+              <SelectTrigger><SelectValue placeholder="Select client…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_none_">— None —</SelectItem>
+                {clients.map((u: any) => (
+                  <SelectItem key={u.id} value={String(u.id)}>{u.firstName} {u.lastName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkAssign(false)}>Cancel</Button>
+            <Button onClick={handleBulkAssign} disabled={bulkAssigning || bulkAssignClientId === "_none_"}>
+              {bulkAssigning ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <UserCheck className="w-4 h-4 mr-1.5" />}
+              Assign
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
