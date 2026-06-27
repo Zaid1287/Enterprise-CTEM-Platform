@@ -483,16 +483,23 @@ router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedReq
 
   const assetIds   = assets.map(a => a.id);
   const assetDomains = assets.map(a => a.value).filter(Boolean);
+  // Derive authorized tenant IDs from the already-scoped asset list (no re-auth needed)
+  const assetTenantIds = [...new Set(assets.map(a => a.tenantId).filter((id): id is number => id !== null))];
 
-  // Query by assetId (not tenantId) so cross-tenant multi-asset reports work correctly
+  // Query findings/risk by assetId (tenant already enforced by asset lookup above).
+  // Brand threat scans: scope by both domain AND the authorized tenant IDs to prevent
+  // cross-tenant data leakage when different tenants share the same domain value.
   const [findings, riskRows, brandScans] = await Promise.all([
     db.select().from(findingsTable)
       .where(inArray(findingsTable.assetId, assetIds))
       .orderBy(desc(findingsTable.id)),
     db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds)),
-    assetDomains.length > 0
+    assetDomains.length > 0 && assetTenantIds.length > 0
       ? db.select().from(brandThreatScansTable)
-          .where(inArray(brandThreatScansTable.domain, assetDomains))
+          .where(and(
+            inArray(brandThreatScansTable.tenantId, assetTenantIds),
+            inArray(brandThreatScansTable.domain, assetDomains),
+          ))
           .orderBy(desc(brandThreatScansTable.id))
       : Promise.resolve([]),
   ]);
