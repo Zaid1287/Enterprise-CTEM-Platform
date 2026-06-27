@@ -6,7 +6,7 @@ import {
   useListScans, useStopScan, useRunPipelineScan, useCreateScanSchedule,
   getListAssetsQueryKey, getGetToolPipelineQueryKey, getListScansQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck,
   Zap, Square, Loader2, Pencil, Copy, CheckCircle2, XCircle, AlertTriangle, Globe,
@@ -418,10 +418,17 @@ export default function AssetsPage() {
 
   const activeFilters = [typeFilter, riskFilter, statusFilter].filter(Boolean).length;
 
-  // For client users: find the assigned AM name from any asset in their list
-  const clientAmName = isClient
-    ? allAssets.find((a: any) => a.assignedAccountManagerName)?.assignedAccountManagerName ?? null
-    : null;
+  // For client users: fetch the assigned AM from the tenant-level mapping (not asset-derived)
+  const { data: myAmData } = useQuery({
+    queryKey: ["auth", "my-am"],
+    queryFn: async () => {
+      const res = await apiFetch(`${BASE}/api/auth/my-am`) as Response;
+      return res.json() as Promise<{ accountManagerName: string | null; accountManagerEmail: string | null }>;
+    },
+    enabled: isClient,
+    staleTime: 5 * 60 * 1000,
+  });
+  const clientAmName = isClient ? (myAmData?.accountManagerName ?? null) : null;
 
   return (
     <div className="space-y-4">

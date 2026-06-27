@@ -338,9 +338,9 @@ router.delete("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, r
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
 
-  // External members cannot delete scans
-  if (role === "vendor" || role === "employee" || role === "third_party") {
-    res.status(403).json({ error: "External members cannot delete scans" }); return;
+  // Clients and external members cannot delete scans
+  if (role === "client" || role === "vendor" || role === "employee" || role === "third_party") {
+    res.status(403).json({ error: "Forbidden" }); return;
   }
 
   // Authorize FIRST: verify scan exists and is accessible to this user
@@ -364,9 +364,9 @@ router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedReque
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
 
-  // External members cannot cancel scans
-  if (role === "vendor" || role === "employee" || role === "third_party") {
-    res.status(403).json({ error: "External members cannot cancel scans" }); return;
+  // Clients and external members cannot cancel scans
+  if (role === "client" || role === "vendor" || role === "employee" || role === "third_party") {
+    res.status(403).json({ error: "Forbidden" }); return;
   }
 
   let cancelWhere;

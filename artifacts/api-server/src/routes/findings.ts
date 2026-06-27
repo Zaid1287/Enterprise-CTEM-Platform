@@ -363,6 +363,18 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
 
   const parsed = UpdateFindingBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
+  // Client role: verify the finding's asset is assigned to them before mutating
+  if (patchRole === "client") {
+    const [f] = await db.select({ assetId: findingsTable.assetId })
+      .from(findingsTable)
+      .where(and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
+    if (!f) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [assigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.id, f.assetId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    if (!assigned) { res.status(404).json({ error: "Finding not found" }); return; }
+  }
+
   let patchWhere;
   if (patchRole === "super_admin" || patchRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);

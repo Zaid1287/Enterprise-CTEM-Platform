@@ -110,6 +110,13 @@ router.post("/takedowns", requireAuth, upload.array("evidenceFiles", 10), async 
 router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
   const id = parseInt(req.params.id, 10);
+  const patchRole = req.user!.role;
+
+  // Clients cannot mutate takedown requests
+  if (patchRole === "client") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
+
   const { status, resolutionNote, isSuccessful } = req.body;
 
   const updates: Record<string, unknown> = {};
@@ -119,7 +126,6 @@ router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, re
   if (status === "closed") updates.resolvedAt = new Date();
 
   let patchWhere;
-  const patchRole = req.user!.role;
   if (patchRole === "super_admin" || patchRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
     patchWhere = buildRecordFilter(eq(takedownRequestsTable.id, id), takedownRequestsTable.tenantId, privIds);
@@ -144,9 +150,14 @@ router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, re
 router.delete("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
   const id = parseInt(req.params.id, 10);
+  const delRole = req.user!.role;
+
+  // Clients cannot delete takedown requests
+  if (delRole === "client") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
 
   let delWhere;
-  const delRole = req.user!.role;
   if (delRole === "super_admin" || delRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
     delWhere = buildRecordFilter(eq(takedownRequestsTable.id, id), takedownRequestsTable.tenantId, privIds);

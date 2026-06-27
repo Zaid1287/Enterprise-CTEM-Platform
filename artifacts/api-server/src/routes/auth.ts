@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
-import { db, tenantsTable, usersTable, sessionsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
+import { db, tenantsTable, usersTable, sessionsTable, accountManagerClientsTable } from "@workspace/db";
 import { LoginBody, RegisterBody, RefreshTokenBody, ChangePasswordBody } from "@workspace/api-zod";
 import {
   hashPassword,
@@ -342,6 +342,35 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     return;
   }
   res.json(toUserResponse(user));
+});
+
+// ── My Account Manager (client role only) ─────────────────────────────────────
+// Returns the name of the AM assigned to the client's tenant, or null.
+
+router.get("/auth/my-am", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role !== "client") {
+    res.json({ accountManagerName: null, accountManagerEmail: null }); return;
+  }
+  const [assignment] = await db
+    .select({ amUserId: accountManagerClientsTable.accountManagerUserId })
+    .from(accountManagerClientsTable)
+    .where(eq(accountManagerClientsTable.clientTenantId, req.user!.tenantId))
+    .limit(1);
+  if (!assignment) {
+    res.json({ accountManagerName: null, accountManagerEmail: null }); return;
+  }
+  const [am] = await db
+    .select({ firstName: usersTable.firstName, lastName: usersTable.lastName, email: usersTable.email })
+    .from(usersTable)
+    .where(and(eq(usersTable.id, assignment.amUserId), eq(usersTable.role, "account_manager")))
+    .limit(1);
+  if (!am) {
+    res.json({ accountManagerName: null, accountManagerEmail: null }); return;
+  }
+  res.json({
+    accountManagerName: `${am.firstName} ${am.lastName}`.trim() || am.email,
+    accountManagerEmail: am.email,
+  });
 });
 
 // ── Change Password ───────────────────────────────────────────────────────────
