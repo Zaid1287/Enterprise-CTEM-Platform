@@ -2,6 +2,7 @@ import { Router } from "express";
 import { eq, and, desc } from "drizzle-orm";
 import { db, assetsTable, discoveryResultsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { getPrivilegedTenantIds, buildRecordFilter } from "../lib/tenantScoping";
 import { getPlatformSetting } from "./platformSettings";
 import { logger } from "../lib/logger";
 import { runPassiveDiscovery, type PassiveDiscoveryOptions } from "../lib/passiveDiscovery";
@@ -17,9 +18,13 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
-  const assetWhere = (discoveryRole === "super_admin" || discoveryRole === "admin")
-    ? eq(assetsTable.id, assetId)
-    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, callerTenantId));
+  let assetWhere;
+  if (discoveryRole === "super_admin" || discoveryRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    assetWhere = buildRecordFilter(eq(assetsTable.id, assetId), assetsTable.tenantId, privIds);
+  } else {
+    assetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, callerTenantId));
+  }
   const [asset] = await db.select().from(assetsTable).where(assetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
@@ -90,9 +95,13 @@ router.get("/discovery/results/:assetId", requireAuth, async (req: Authenticated
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
-  const resultsAssetWhere = (resultsRole === "super_admin" || resultsRole === "admin")
-    ? eq(assetsTable.id, assetId)
-    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+  let resultsAssetWhere;
+  if (resultsRole === "super_admin" || resultsRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    resultsAssetWhere = buildRecordFilter(eq(assetsTable.id, assetId), assetsTable.tenantId, privIds);
+  } else {
+    resultsAssetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+  }
   const [asset] = await db.select().from(assetsTable).where(resultsAssetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
@@ -134,9 +143,13 @@ router.get("/discovery/latest/:assetId", requireAuth, async (req: AuthenticatedR
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
-  const latestAssetWhere = (latestRole === "super_admin" || latestRole === "admin")
-    ? eq(assetsTable.id, assetId)
-    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+  let latestAssetWhere;
+  if (latestRole === "super_admin" || latestRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    latestAssetWhere = buildRecordFilter(eq(assetsTable.id, assetId), assetsTable.tenantId, privIds);
+  } else {
+    latestAssetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+  }
   const [asset] = await db.select().from(assetsTable).where(latestAssetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 

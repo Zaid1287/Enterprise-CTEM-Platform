@@ -165,18 +165,23 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
 
   // For AM: resolve allowed tenantIds from client assignments so we can verify
   // ownership across the client tenants they manage.
-  // For admin/super_admin: allowedTenantIds = null means unrestricted cross-tenant access.
+  // For admin/super_admin: scope to accessible client tenant IDs.
   let allowedTenantIds: number[] | null = null;
   if (role === "account_manager") {
     allowedTenantIds = await getAmClientTenantIds(req.user!.userId);
     if (allowedTenantIds.length === 0) {
       res.status(403).json({ error: "No client tenants assigned" }); return;
     }
-  } else if (role !== "super_admin" && role !== "admin") {
+  } else if (role === "super_admin" || role === "admin") {
+    // Scope to accessible client tenants (non-platform); never unrestricted
+    allowedTenantIds = await getPrivilegedTenantIds(req.user!);
+    if (allowedTenantIds.length === 0) {
+      res.status(403).json({ error: "No accessible client tenants" }); return;
+    }
+  } else {
     // Regular users: restrict to own tenant
     allowedTenantIds = [req.user!.tenantId];
   }
-  // super_admin and admin: allowedTenantIds stays null (unrestricted)
 
   let assetTenantId = req.user!.tenantId; // default for non-AM roles
   // Validated asset ID list derived from DB lookup — used for the scan record

@@ -684,9 +684,10 @@ router.get("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, 
 router.delete("/reports/:reportId", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = DeleteReportParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  // admin and super_admin can delete any tenant's report (requireRole already restricts to these two)
+  const delPrivIds = await getPrivilegedTenantIds(req.user!);
+  const delReportWhere = buildRecordFilter(eq(reportsTable.id, params.data.reportId), reportsTable.tenantId, delPrivIds);
   const [report] = await db.delete(reportsTable)
-    .where(eq(reportsTable.id, params.data.reportId))
+    .where(delReportWhere)
     .returning();
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   await logAudit(req.user!, "delete_report", "report", report.id);
