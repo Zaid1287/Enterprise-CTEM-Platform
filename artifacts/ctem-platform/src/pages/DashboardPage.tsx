@@ -1754,7 +1754,7 @@ function AdminDashboard() {
 /* ─── Role Router ────────────────────────────────────── */
 export default function DashboardPage() {
   const { user } = useAuth();
-  if (user?.role === "super_admin") return <SuperAdminDashboard />;
+  if (user?.role === "super_admin" || user?.role === "admin") return <SuperAdminDashboard />;
   if (user?.role === "account_manager") return <AccountManagerDashboard />;
   if (user?.role === "client") return <ClientDashboardPage />;
   return <AdminDashboard />;

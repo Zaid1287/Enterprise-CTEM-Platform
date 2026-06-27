@@ -78,6 +78,34 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     return;
   }
 
+  // super_admin and admin: cross-tenant unrestricted access
+  if (role === "super_admin" || role === "admin") {
+    const saFilters: any[] = [];
+    if (q.success) {
+      if (q.data.status) saFilters.push(eq(findingsTable.status, q.data.status));
+      if (q.data.severity) saFilters.push(eq(findingsTable.severity, q.data.severity));
+      if (q.data.assetId) saFilters.push(eq(findingsTable.assetId, q.data.assetId));
+      if (q.data.search) saFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
+    }
+    const saFindings = await db.select({
+      finding: findingsTable,
+      assetName: assetsTable.name,
+      assetValue: assetsTable.value,
+      assetType: assetsTable.type,
+      assetLastScannedAt: assetsTable.lastScannedAt,
+      assetIpAddress: assetsTable.ipAddress,
+      assetPort: assetsTable.port,
+      assetTags: assetsTable.tags,
+      assetRiskScore: riskScoresTable.score,
+    }).from(findingsTable)
+      .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
+      .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+      .where(saFilters.length > 0 ? and(...saFilters) : undefined);
+    res.json(saFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
+      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
+    return;
+  }
+
   let tenantFilter;
   tenantFilter = eq(findingsTable.tenantId, req.user!.tenantId);
   const filters: any[] = [tenantFilter];
@@ -120,6 +148,10 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
 router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetFindingParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const role = req.user!.role;
+  const findingWhere = (role === "super_admin" || role === "admin")
+    ? eq(findingsTable.id, params.data.findingId)
+    : and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
   const [row] = await db.select({
     finding: findingsTable,
     assetName: assetsTable.name,
@@ -133,7 +165,7 @@ router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest
   }).from(findingsTable)
     .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
     .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
-    .where(and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
+    .where(findingWhere);
   if (!row) { res.status(404).json({ error: "Finding not found" }); return; }
   res.json(toFindingResponse(row.finding, row.assetName, row.assetValue, row.assetType, row.assetLastScannedAt, row.assetIpAddress, row.assetPort, row.assetTags, row.assetRiskScore));
 });
@@ -145,16 +177,20 @@ router.get("/findings/:findingId/scan-data", requireAuth, async (req: Authentica
   const params = GetFindingParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
-  const [finding] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId })
+  const scanDataRole = req.user!.role;
+  const scanDataFindingWhere = (scanDataRole === "super_admin" || scanDataRole === "admin")
+    ? eq(findingsTable.id, params.data.findingId)
+    : and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
+  const [finding] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId, tenantId: findingsTable.tenantId })
     .from(findingsTable)
-    .where(and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
+    .where(scanDataFindingWhere);
   if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
 
   // Get the most recent scan asset results for this asset
   const scanResults = await db.select().from(scanAssetResultsTable)
     .where(and(
       eq(scanAssetResultsTable.assetId, finding.assetId),
-      eq(scanAssetResultsTable.tenantId, req.user!.tenantId),
+      eq(scanAssetResultsTable.tenantId, finding.tenantId),
     ))
     .orderBy(desc(scanAssetResultsTable.createdAt));
 
@@ -208,8 +244,12 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateFindingBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const patchRole = req.user!.role;
+  const patchWhere = (patchRole === "super_admin" || patchRole === "admin")
+    ? eq(findingsTable.id, params.data.findingId)
+    : and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
   const [finding] = await db.update(findingsTable).set(parsed.data)
-    .where(and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId)))
+    .where(patchWhere)
     .returning();
   if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
   await logAudit(req.user!, "update_finding", "finding", finding.id, `status: ${parsed.data.status ?? "unchanged"}`);

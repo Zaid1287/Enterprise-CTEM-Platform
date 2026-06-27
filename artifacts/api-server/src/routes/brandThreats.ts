@@ -235,8 +235,10 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
 router.delete("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  const [existing] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, id), eq(brandThreatScansTable.tenantId, req.user!.tenantId)));
+  // Use btScanAccessFilter so admin/SA can delete any scan
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [existing] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!existing) { res.status(404).json({ error: "Scan not found" }); return; }
   await db.delete(brandThreatScansTable).where(eq(brandThreatScansTable.id, id));
   res.json({ success: true });

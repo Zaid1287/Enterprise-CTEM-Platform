@@ -3,6 +3,8 @@ import {
   useListScans, useCreateScan, useCancelScan,
   useListAssets, useListScanJobs, getListScansQueryKey, getListAssetsQueryKey, getListScanJobsQueryKey,
 } from "@workspace/api-client-react";
+import { useAuth } from "@/hooks/useAuth";
+import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock,
@@ -100,6 +102,8 @@ export default function ScansPage() {
   const [form, setForm] = useState({ type: "full", assetIds: [] as number[] });
   const [createError, setCreateError] = useState<{ message: string; unverified?: { id: number; name: string }[] } | null>(null);
   const [page, setPage] = useState(1);
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -122,6 +126,8 @@ export default function ScansPage() {
 
   const assetsList = (assets as any[]) ?? [];
   const allScans = (scans as any[]) ?? [];
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+  const filteredScans = (isPrivileged && tenantFilter) ? allScans.filter((s: any) => s.tenantId === tenantFilter) : allScans;
 
   const autoName = useMemo(
     () => buildScanName(form.assetIds, assetsList),
@@ -129,8 +135,8 @@ export default function ScansPage() {
   );
   const effectiveName = customName.trim() || autoName;
 
-  const totalPages = Math.max(1, Math.ceil(allScans.length / PAGE_SIZE));
-  const paginated = allScans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filteredScans.length / PAGE_SIZE));
+  const paginated = filteredScans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -193,9 +199,10 @@ export default function ScansPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Scan Management</h1>
-          <p className="text-sm text-muted-foreground">{allScans.length} total scans</p>
+          <p className="text-sm text-muted-foreground">{filteredScans.length} total scans</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}
           <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: getListScansQueryKey() })}>
             <RefreshCw className="w-3.5 h-3.5" />
           </Button>

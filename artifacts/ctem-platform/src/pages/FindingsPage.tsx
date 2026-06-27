@@ -4,6 +4,8 @@ import {
   useListFindings, useUpdateFinding, getListFindingsQueryKey,
   useListFindingComments, useCreateFindingComment, getListFindingCommentsQueryKey,
 } from "@workspace/api-client-react";
+import { useAuth } from "@/hooks/useAuth";
+import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, ExternalLink, ChevronLeft, ChevronRight, X,
@@ -432,6 +434,8 @@ export default function FindingsPage() {
   });
   const [status, setStatus]   = useState("");
   const [page, setPage]       = useState(1);
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const { user } = useAuth();
 
   const [drawerFinding, setDrawerFinding] = useState<any>(null);
   const [drawerMode, setDrawerMode]       = useState<DrawerMode>(null);
@@ -467,16 +471,18 @@ export default function FindingsPage() {
   });
 
   const list = (findings as any[]) ?? [];
-  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-  const paginated  = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+  const filteredList = (isPrivileged && tenantFilter) ? list.filter((f: any) => f.tenantId === tenantFilter) : list;
+  const totalPages = Math.max(1, Math.ceil(filteredList.length / PAGE_SIZE));
+  const paginated  = filteredList.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Summary counts
   const counts = useMemo(() => ({
-    critical: list.filter(f => f.severity === "critical").length,
-    high:     list.filter(f => f.severity === "high").length,
-    open:     list.filter(f => f.status === "open").length,
-    kev:      list.filter(f => f.isKev).length,
-  }), [list]);
+    critical: filteredList.filter(f => f.severity === "critical").length,
+    high:     filteredList.filter(f => f.severity === "high").length,
+    open:     filteredList.filter(f => f.status === "open").length,
+    kev:      filteredList.filter(f => f.isKev).length,
+  }), [filteredList]);
 
   function resetPage() { setPage(1); }
 
@@ -537,9 +543,10 @@ export default function FindingsPage() {
             {STATUSES.map(s => <SelectItem key={s} value={s}>{capitalize(s.replace(/_/g, " "))}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); resetPage(); }}>
+        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); resetPage(); }}>
           Clear
         </Button>
+        {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); resetPage(); }} />}
       </div>
 
       {/* Table */}

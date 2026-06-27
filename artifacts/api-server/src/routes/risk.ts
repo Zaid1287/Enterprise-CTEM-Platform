@@ -67,8 +67,11 @@ router.get("/risk/scores/:assetId", requireAuth, async (req: AuthenticatedReques
 
 router.post("/risk/recalculate", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = req.user!.tenantId;
+  const recalcRole = req.user!.role;
 
-  const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  const assets = (recalcRole === "super_admin" || recalcRole === "admin")
+    ? await db.select().from(assetsTable)
+    : await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
   if (assets.length === 0) { res.json({ recalculated: 0 }); return; }
 
   const assetIds = assets.map(a => a.id);

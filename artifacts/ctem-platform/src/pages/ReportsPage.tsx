@@ -4,6 +4,8 @@ import {
   getListReportsQueryKey,
 } from "@workspace/api-client-react";
 import { useListAssets } from "@workspace/api-client-react";
+import { useAuth } from "@/hooks/useAuth";
+import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Download, Trash2, FileText, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -62,6 +64,8 @@ export default function ReportsPage() {
   const [assetSearch, setAssetSearch] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [page, setPage] = useState(1);
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: reports, isLoading } = useListReports({
@@ -82,8 +86,10 @@ export default function ReportsPage() {
   const deleteReport = useDeleteReport();
 
   const allReports = (reports as any[]) ?? [];
-  const totalPages = Math.max(1, Math.ceil(allReports.length / PAGE_SIZE));
-  const paginated  = allReports.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+  const filteredReports = (isPrivileged && tenantFilter) ? allReports.filter((r: any) => r.tenantId === tenantFilter) : allReports;
+  const totalPages = Math.max(1, Math.ceil(filteredReports.length / PAGE_SIZE));
+  const paginated  = filteredReports.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   function openCreate() {
     setStep(1);
@@ -176,9 +182,12 @@ export default function ReportsPage() {
           <h1 className="text-lg font-semibold">Reports</h1>
           <p className="text-sm text-muted-foreground">Generate and download security reports</p>
         </div>
-        <Button size="sm" onClick={openCreate}>
-          <Plus className="w-4 h-4 mr-1.5" /> Generate Report
-        </Button>
+        <div className="flex items-center gap-2">
+          {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}
+          <Button size="sm" onClick={openCreate}>
+            <Plus className="w-4 h-4 mr-1.5" /> Generate Report
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3">

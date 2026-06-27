@@ -33,10 +33,14 @@ const upload = multer({
 // GET /api/takedowns
 router.get("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
+  const tdRole = req.user!.role;
+  const tdWhere = (tdRole === "super_admin" || tdRole === "admin")
+    ? undefined
+    : eq(takedownRequestsTable.tenantId, tid);
   const rows = await db
     .select()
     .from(takedownRequestsTable)
-    .where(eq(takedownRequestsTable.tenantId, tid))
+    .where(tdWhere)
     .orderBy(desc(takedownRequestsTable.createdAt));
   res.json(rows);
 });

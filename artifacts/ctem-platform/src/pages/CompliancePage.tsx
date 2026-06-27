@@ -3,6 +3,8 @@ import {
   useGetComplianceSummary, useListComplianceControls, useUpdateComplianceControl,
   getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey,
 } from "@workspace/api-client-react";
+import { useAuth } from "@/hooks/useAuth";
+import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Paperclip, Upload, FileText, X, Download, Trash2, Bot, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -97,6 +99,8 @@ function EvidenceFiles({
 export default function CompliancePage() {
   const [selectedFramework, setSelectedFramework] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const { user } = useAuth();
   const [uploadingId, setUploadingId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingControlId, setPendingControlId] = useState<number | null>(null);
@@ -136,6 +140,7 @@ export default function CompliancePage() {
     query: { queryKey: getListComplianceControlsQueryKey(controlParams as any) },
   });
   const updateControl = useUpdateComplianceControl();
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
 
   const handleStatusChange = async (controlId: number, status: string) => {
     await updateControl.mutateAsync({ controlId, data: { status } });
@@ -168,9 +173,12 @@ export default function CompliancePage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-lg font-semibold">Compliance Management</h1>
-        <p className="text-sm text-muted-foreground">Track compliance across security frameworks</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">Compliance Management</h1>
+          <p className="text-sm text-muted-foreground">Track compliance across security frameworks</p>
+        </div>
+        {isPrivileged && <TenantFilter value={tenantFilter} onChange={setTenantFilter} />}
       </div>
 
       {/* Hidden file input */}
@@ -266,7 +274,7 @@ export default function CompliancePage() {
                   {[...Array(6)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
               ))}
-              {!loadingControls && (controls as any[] ?? []).map((c: any) => (
+              {!loadingControls && (isPrivileged && tenantFilter ? (controls as any[] ?? []).filter((c: any) => c.tenantId === tenantFilter) : (controls as any[] ?? [])).map((c: any) => (
                 <tr key={c.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
                   <td className="px-4 py-2.5 text-xs font-mono font-medium text-primary">{c.controlId}</td>
                   <td className="px-4 py-2.5 text-xs max-w-xs">

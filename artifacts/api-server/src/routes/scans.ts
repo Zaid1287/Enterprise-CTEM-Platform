@@ -122,6 +122,15 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
     res.json(clientScans.map(toScanResponse)); return;
   }
 
+  if (role === "super_admin" || role === "admin") {
+    const filters: any[] = [];
+    if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
+    const allScans = await db.select().from(scansTable)
+      .where(filters.length > 0 ? and(...filters) : undefined)
+      .orderBy(desc(scansTable.createdAt));
+    res.json(allScans.map(toScanResponse)); return;
+  }
+
   let tenantFilter;
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
@@ -151,13 +160,18 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
 
   // For AM: resolve allowed tenantIds from client assignments so we can verify
   // ownership across the client tenants they manage.
+  // For admin/super_admin: allowedTenantIds = null means unrestricted cross-tenant access.
   let allowedTenantIds: number[] | null = null;
   if (role === "account_manager") {
     allowedTenantIds = await getAmClientTenantIds(req.user!.userId);
     if (allowedTenantIds.length === 0) {
       res.status(403).json({ error: "No client tenants assigned" }); return;
     }
+  } else if (role !== "super_admin" && role !== "admin") {
+    // Regular users: restrict to own tenant
+    allowedTenantIds = [req.user!.tenantId];
   }
+  // super_admin and admin: allowedTenantIds stays null (unrestricted)
 
   let assetTenantId = req.user!.tenantId; // default for non-AM roles
   // Validated asset ID list derived from DB lookup — used for the scan record
@@ -168,7 +182,7 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
     const deduped = [...new Set(assetIds)];
     const tenantFilter = allowedTenantIds
       ? inArray(assetsTable.tenantId, allowedTenantIds)
-      : eq(assetsTable.tenantId, req.user!.tenantId);
+      : undefined;
     const assetRows = await db
       .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus, tenantId: assetsTable.tenantId })
       .from(assetsTable)
@@ -260,10 +274,12 @@ router.get("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res)
 router.delete("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = DeleteScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const role = req.user!.role;
   await db.delete(scanJobsTable).where(eq(scanJobsTable.scanId, params.data.scanId));
-  const [scan] = await db.delete(scansTable)
-    .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)))
-    .returning();
+  const deleteWhere = (role === "super_admin" || role === "admin")
+    ? eq(scansTable.id, params.data.scanId)
+    : and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
+  const [scan] = await db.delete(scansTable).where(deleteWhere).returning();
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   res.sendStatus(204);
 });
@@ -271,9 +287,12 @@ router.delete("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, r
 router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = CancelScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const role = req.user!.role;
+  const cancelWhere = (role === "super_admin" || role === "admin")
+    ? eq(scansTable.id, params.data.scanId)
+    : and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
   const [scan] = await db.update(scansTable).set({ status: "cancelled", completedAt: new Date() })
-    .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)))
-    .returning();
+    .where(cancelWhere).returning();
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   res.json(toScanResponse(scan));
 });

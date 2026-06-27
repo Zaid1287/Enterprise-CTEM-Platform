@@ -64,6 +64,11 @@ router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Prom
     );
     res.json(amReports.map(toReportResponse)); return;
   }
+  // admin/SA: cross-tenant — see all reports
+  if (role === "super_admin" || role === "admin") {
+    const allReports = await db.select().from(reportsTable).orderBy(desc(reportsTable.id));
+    res.json(allReports.map(toReportResponse)); return;
+  }
   const rWhere = eq(reportsTable.tenantId, req.user!.tenantId);
   const reports = await db.select().from(reportsTable).where(rWhere);
   res.json(reports.map(toReportResponse));
@@ -90,11 +95,14 @@ router.post("/reports", requireAuth, requireRole("manager", "admin", "super_admi
 router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const assetId  = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
-  const tenantId = req.user!.tenantId;
+  const pdfAssetRole = req.user!.role;
+  const pdfAssetWhere = (pdfAssetRole === "super_admin" || pdfAssetRole === "admin")
+    ? eq(assetsTable.id, assetId)
+    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId));
 
-  const [asset] = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+  const [asset] = await db.select().from(assetsTable).where(pdfAssetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+  const tenantId = asset.tenantId; // use asset's actual tenantId for data queries
 
   const [findings, technologies, riskRows] = await Promise.all([
     db.select().from(findingsTable)
@@ -168,10 +176,12 @@ router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: Authenti
 router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const scanId   = parseInt(req.params.scanId, 10);
   if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scanId" }); return; }
-  const tenantId = req.user!.tenantId;
+  const btPdfRole = req.user!.role;
+  const btPdfWhere = (btPdfRole === "super_admin" || btPdfRole === "admin")
+    ? eq(brandThreatScansTable.id, scanId)
+    : and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, req.user!.tenantId));
 
-  const [scan] = await db.select().from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, tenantId)));
+  const [scan] = await db.select().from(brandThreatScansTable).where(btPdfWhere);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
 
   const [allResults, dataLeaks, phishingDetections, brandAbuse] = await Promise.all([
@@ -298,11 +308,14 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
 router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const reportId = parseInt(req.params.reportId, 10);
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
-  const tenantId = req.user!.tenantId;
+  const pdfReportRole = req.user!.role;
+  const pdfReportWhere = (pdfReportRole === "super_admin" || pdfReportRole === "admin")
+    ? eq(reportsTable.id, reportId)
+    : and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId));
 
-  const [report] = await db.select().from(reportsTable)
-    .where(and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, tenantId)));
+  const [report] = await db.select().from(reportsTable).where(pdfReportWhere);
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
+  const tenantId = report.tenantId; // use report's actual tenantId for data queries
 
   const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
   const assetIds = assets.map(a => a.id);
@@ -417,13 +430,16 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
 
 // ── PDF data: selected assets (findings + brand threats) ─────────────────────
 router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const tenantId = req.user!.tenantId;
+  const pdfAssetsRole = req.user!.role;
   const raw = String(req.query.ids ?? "");
   const requestedIds = raw.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
   if (requestedIds.length === 0) { res.status(400).json({ error: "No asset IDs provided" }); return; }
 
-  const assets = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, requestedIds)));
+  const pdfAssetsWhere = (pdfAssetsRole === "super_admin" || pdfAssetsRole === "admin")
+    ? inArray(assetsTable.id, requestedIds)
+    : and(eq(assetsTable.tenantId, req.user!.tenantId), inArray(assetsTable.id, requestedIds));
+  const assets = await db.select().from(assetsTable).where(pdfAssetsWhere);
+  const tenantId = assets.length > 0 ? assets[0].tenantId : req.user!.tenantId;
   if (assets.length === 0) { res.status(404).json({ error: "No assets found" }); return; }
 
   const assetIds   = assets.map(a => a.id);
@@ -509,12 +525,15 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
   const reportId = parseInt(req.params.reportId, 10);
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
 
-  const [report] = await db.select().from(reportsTable)
-    .where(and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId)));
+  const dlRole = req.user!.role;
+  const dlWhere = (dlRole === "super_admin" || dlRole === "admin")
+    ? eq(reportsTable.id, reportId)
+    : and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  const [report] = await db.select().from(reportsTable).where(dlWhere);
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   if (report.status !== "ready") { res.status(409).json({ error: "Report is not ready yet" }); return; }
 
-  const tenantId = req.user!.tenantId;
+  const tenantId = report.tenantId; // use report's actual tenantId for data queries
   const fmt = report.format ?? "csv";
   const safeName = report.title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
 
@@ -606,8 +625,11 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
 router.get("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetReportParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const [report] = await db.select().from(reportsTable)
-    .where(and(eq(reportsTable.id, params.data.reportId), eq(reportsTable.tenantId, req.user!.tenantId)));
+  const getRole = req.user!.role;
+  const getWhere = (getRole === "super_admin" || getRole === "admin")
+    ? eq(reportsTable.id, params.data.reportId)
+    : and(eq(reportsTable.id, params.data.reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  const [report] = await db.select().from(reportsTable).where(getWhere);
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   res.json(toReportResponse(report));
 });
@@ -615,8 +637,9 @@ router.get("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, 
 router.delete("/reports/:reportId", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = DeleteReportParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  // admin and super_admin can delete any tenant's report (requireRole already restricts to these two)
   const [report] = await db.delete(reportsTable)
-    .where(and(eq(reportsTable.id, params.data.reportId), eq(reportsTable.tenantId, req.user!.tenantId)))
+    .where(eq(reportsTable.id, params.data.reportId))
     .returning();
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   await logAudit(req.user!, "delete_report", "report", report.id);

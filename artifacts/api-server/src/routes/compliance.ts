@@ -50,14 +50,16 @@ router.get("/compliance/frameworks", requireAuth, async (_req, res): Promise<voi
 router.get("/compliance/controls", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListComplianceControlsQueryParams.safeParse(req.query);
   let tenantFilter;
-  if (req.user!.role === "account_manager") {
+  if (req.user!.role === "super_admin" || req.user!.role === "admin") {
+    tenantFilter = undefined; // cross-tenant unrestricted
+  } else if (req.user!.role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(complianceControlsTable.tenantId, ids);
   } else {
     tenantFilter = eq(complianceControlsTable.tenantId, req.user!.tenantId);
   }
-  const filters = [tenantFilter];
+  const filters: any[] = tenantFilter ? [tenantFilter] : [];
   if (q.success) {
     if (q.data.frameworkId) filters.push(eq(complianceControlsTable.frameworkId, q.data.frameworkId));
     if (q.data.status) filters.push(eq(complianceControlsTable.status, q.data.status));
@@ -207,7 +209,9 @@ router.delete(
 router.get("/compliance/summary", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const frameworks = await db.select().from(complianceFrameworksTable);
   let summaryTenantFilter;
-  if (req.user!.role === "account_manager") {
+  if (req.user!.role === "super_admin" || req.user!.role === "admin") {
+    summaryTenantFilter = undefined; // cross-tenant unrestricted
+  } else if (req.user!.role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     summaryTenantFilter = ids.length > 0 ? inArray(complianceControlsTable.tenantId, ids) : eq(complianceControlsTable.tenantId, -1);
   } else {

@@ -198,7 +198,7 @@ router.get("/dashboard/exposure-breakdown", requireAuth, async (req: Authenticat
 });
 
 router.get("/dashboard/platform-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  if (req.user!.role !== "super_admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  if (req.user!.role !== "super_admin" && req.user!.role !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
 
   // Client tenants only — used for client-specific displays (table, rankings, AM portfolio)
   const clientTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));

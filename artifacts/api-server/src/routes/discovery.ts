@@ -13,11 +13,14 @@ const router = Router();
 // Run all passive discovery modules for an asset and persist results
 router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = req.user!.tenantId;
+  const discoveryRole = req.user!.role;
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
-  const [asset] = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+  const assetWhere = (discoveryRole === "super_admin" || discoveryRole === "admin")
+    ? eq(assetsTable.id, assetId)
+    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+  const [asset] = await db.select().from(assetsTable).where(assetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
   // Load all platform API keys in parallel
@@ -83,11 +86,14 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
 // Return historical discovery results for an asset
 router.get("/discovery/results/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = req.user!.tenantId;
+  const resultsRole = req.user!.role;
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
-  const [asset] = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+  const resultsAssetWhere = (resultsRole === "super_admin" || resultsRole === "admin")
+    ? eq(assetsTable.id, assetId)
+    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+  const [asset] = await db.select().from(assetsTable).where(resultsAssetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
   const source = req.query.source as string | undefined;
@@ -95,7 +101,7 @@ router.get("/discovery/results/:assetId", requireAuth, async (req: Authenticated
 
   let query = db.select().from(discoveryResultsTable)
     .where(and(
-      eq(discoveryResultsTable.tenantId, tenantId),
+      eq(discoveryResultsTable.tenantId, asset.tenantId),
       eq(discoveryResultsTable.assetId, assetId),
       ...(source ? [eq(discoveryResultsTable.source, source)] : []),
     ))
@@ -124,15 +130,18 @@ router.get("/discovery/results/:assetId", requireAuth, async (req: Authenticated
 // Return the most recent result per source for an asset
 router.get("/discovery/latest/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = req.user!.tenantId;
+  const latestRole = req.user!.role;
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
-  const [asset] = await db.select().from(assetsTable)
-    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+  const latestAssetWhere = (latestRole === "super_admin" || latestRole === "admin")
+    ? eq(assetsTable.id, assetId)
+    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+  const [asset] = await db.select().from(assetsTable).where(latestAssetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
   const rows = await db.select().from(discoveryResultsTable)
-    .where(and(eq(discoveryResultsTable.tenantId, tenantId), eq(discoveryResultsTable.assetId, assetId)))
+    .where(and(eq(discoveryResultsTable.tenantId, asset.tenantId), eq(discoveryResultsTable.assetId, assetId)))
     .orderBy(desc(discoveryResultsTable.createdAt))
     .limit(200);
 

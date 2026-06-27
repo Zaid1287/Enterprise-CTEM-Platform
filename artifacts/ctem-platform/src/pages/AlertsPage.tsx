@@ -5,6 +5,8 @@ import {
   useUpdateAlertRule, useDeleteAlertRule,
   getListAlertsQueryKey, getListAlertRulesQueryKey,
 } from "@workspace/api-client-react";
+import { useAuth } from "@/hooks/useAuth";
+import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -51,7 +53,9 @@ export default function AlertsPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [severityFilter, setSeverityFilter] = useState("");
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const [archivePage, setArchivePage] = useState(0);
+  const { user } = useAuth();
   const [showCreateRule, setShowCreateRule] = useState(false);
   const [ruleForm, setRuleForm] = useState({ name: "", triggerType: "new_finding", channel: "email", destination: "" });
   const [testStates, setTestStates] = useState<Record<number, TestState>>({});
@@ -146,8 +150,10 @@ export default function AlertsPage() {
   };
 
   const alertList = alerts as any[] ?? [];
-  const unreadAlerts = alertList.filter((a: any) => !a.isRead);
-  const archivedAlerts = alertList.filter((a: any) => a.isRead);
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+  const tenantFiltered = (isPrivileged && tenantFilter) ? alertList.filter((a: any) => a.tenantId === tenantFilter) : alertList;
+  const unreadAlerts = tenantFiltered.filter((a: any) => !a.isRead);
+  const archivedAlerts = tenantFiltered.filter((a: any) => a.isRead);
   const unreadCount = unreadAlerts.length;
 
   const filteredUnread = severityFilter
@@ -169,6 +175,7 @@ export default function AlertsPage() {
             {unreadCount} unread · {archivedAlerts.length} archived
           </p>
         </div>
+        {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setArchivePage(0); }} />}
       </div>
 
       <Tabs defaultValue="inbox">
