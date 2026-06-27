@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, desc } from "drizzle-orm";
 import { db, assetsTable, discoveryResultsTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { getPrivilegedTenantIds, buildRecordFilter } from "../lib/tenantScoping";
 import { getPlatformSetting } from "./platformSettings";
 import { logger } from "../lib/logger";
@@ -9,6 +9,7 @@ import { runPassiveDiscovery, type PassiveDiscoveryOptions } from "../lib/passiv
 import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 // POST /api/discovery/run/:assetId
 // Run all passive discovery modules for an asset and persist results

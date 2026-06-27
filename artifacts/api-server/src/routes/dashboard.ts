@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { eq, count, and, desc, sql, inArray, or, isNull, lte, gte } from "drizzle-orm";
 import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable, brandThreatScansTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { cacheGet, cacheSet, cacheDelete, ck } from "../lib/cache";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 router.get("/dashboard/overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;

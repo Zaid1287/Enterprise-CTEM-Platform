@@ -2,7 +2,7 @@
  * Queue monitor API — exposes BullMQ queue stats + DB-backed scan stats.
  */
 import { Router } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { getScanQueue } from "../queues/scanQueue";
 import { getAlertQueue } from "../queues/alertQueue";
 import { isRedisAvailable } from "../lib/redis";
@@ -10,6 +10,7 @@ import { db, scansTable } from "@workspace/db";
 import { count, sql, desc } from "drizzle-orm";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 async function queueStats(queue: ReturnType<typeof getScanQueue> | ReturnType<typeof getAlertQueue>) {
   if (!queue) return { active: 0, waiting: 0, completed: 0, failed: 0, delayed: 0, paused: false };

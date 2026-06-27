@@ -10,12 +10,13 @@ import {
   platformSettingsTable,
   assetsTable,
 } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { runBrandThreatScan } from "../lib/brandThreatRunner";
 import { dispatchNotifications } from "../lib/notifier";
 import { logger } from "../lib/logger";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 /**
  * Build a WHERE clause that restricts brand threat scan access by role.

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { db, takedownRequestsTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { getPrivilegedTenantIds, buildRecordFilter } from "../lib/tenantScoping";
 import { logAudit } from "../lib/audit";
 import multer from "multer";
@@ -10,6 +10,7 @@ import fs from "fs";
 import crypto from "crypto";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 const EVIDENCE_DIR = path.join(process.cwd(), "evidence");
 if (!fs.existsSync(EVIDENCE_DIR)) fs.mkdirSync(EVIDENCE_DIR, { recursive: true });

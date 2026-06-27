@@ -6,10 +6,11 @@ import {
   findingsTable,
   tenantsTable,
 } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { getAmClientTenantIds } from "../lib/amScoping";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 /**
  * GET /graph/attack-surface

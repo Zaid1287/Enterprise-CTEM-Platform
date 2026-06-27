@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db, findingsTable, complianceControlsTable, complianceFrameworksTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { llmComplete, isLLMAvailable } from "../lib/llm";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 // ── Template fallbacks (used when OPENAI_API_KEY is absent) ────────────────────
 

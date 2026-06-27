@@ -3,9 +3,10 @@ import { eq, and, inArray } from "drizzle-orm";
 import { db, riskScoresTable, assetsTable, findingsTable } from "@workspace/db";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;

@@ -82,3 +82,18 @@ export function requireRole(...roles: string[]) {
     next();
   };
 }
+
+const EXTERNAL_ROLES = new Set(["vendor", "employee", "third_party"]);
+
+/**
+ * Blocks external members (vendor/employee/third_party) from the entire router.
+ * Apply as `router.use(denyExternalMembers)` as the first middleware on any
+ * router that external members should have no access to.
+ */
+export function denyExternalMembers(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  if (req.user && EXTERNAL_ROLES.has(req.user.role)) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  next();
+}

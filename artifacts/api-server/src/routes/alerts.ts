@@ -7,7 +7,7 @@ import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
   CreateAlertRuleBody, UpdateAlertRuleBody, UpdateAlertRuleParams,
 } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest, verifyToken } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest, verifyToken } from "../lib/auth";
 import { addSseClient, removeSseClient } from "../lib/sseManager";
 import { sendChannelNotification } from "../lib/notifier";
 import type { NotificationEvent } from "../lib/notifier";
@@ -15,6 +15,7 @@ import { getPlatformSetting } from "./platformSettings";
 import { logger } from "../lib/logger";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 // Org-level notification channels are stored as alert rules with this name prefix.
 // They have triggerType="any" so they fire on every event for the tenant.

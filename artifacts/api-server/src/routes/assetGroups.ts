@@ -6,9 +6,10 @@ import {
   CreateAssetGroupBody, GetAssetGroupParams, UpdateAssetGroupParams,
   UpdateAssetGroupBody, DeleteAssetGroupParams,
 } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 function toAssetResponse(a: typeof assetsTable.$inferSelect) {
   return {

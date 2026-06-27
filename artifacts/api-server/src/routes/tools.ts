@@ -12,10 +12,11 @@ import {
   ListToolRunsQueryParams, GetToolRunParams,
   RunPipelineForAssetParams,
 } from "@workspace/api-zod";
-import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, requireRole, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 
 const router = Router();
+router.use(denyExternalMembers);
 const execAsync = promisify(exec);
 
 // ── Real tool execution (replaces all simulated output) ───────────────────────

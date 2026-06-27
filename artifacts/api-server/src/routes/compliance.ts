@@ -7,7 +7,7 @@ import {
   GetComplianceControlParams, UpdateComplianceControlParams,
   UpdateComplianceControlBody, ListComplianceControlsQueryParams,
 } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 import multer from "multer";
 import path from "path";
@@ -15,6 +15,7 @@ import fs from "fs";
 import crypto from "crypto";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 const EVIDENCE_DIR = path.join(process.cwd(), "compliance-evidence");
 if (!fs.existsSync(EVIDENCE_DIR)) fs.mkdirSync(EVIDENCE_DIR, { recursive: true });

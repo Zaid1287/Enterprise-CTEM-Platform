@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db, platformSettingsTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 interface PlatformKeyDef {
   key: string;

@@ -2,9 +2,10 @@ import { Router } from "express";
 import { eq, and, gte, lte, desc, count } from "drizzle-orm";
 import { db, auditLogsTable } from "@workspace/db";
 import { ListAuditLogsQueryParams } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 router.get("/audit-logs", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListAuditLogsQueryParams.safeParse(req.query);
