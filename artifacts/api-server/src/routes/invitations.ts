@@ -24,6 +24,15 @@ router.get("/invitations", requireAuth, async (req: AuthenticatedRequest, res): 
   res.json(invitations);
 });
 
+// Roles each inviter is allowed to grant — prevents privilege escalation
+const INVITE_AUTHORITY: Record<string, string[]> = {
+  super_admin:     ALL_ALLOWED_ROLES,
+  admin:           ALL_ALLOWED_ROLES,
+  account_manager: ["client", "vendor", "employee", "third_party"],
+  manager:         ["client", "vendor", "employee", "third_party"],
+  client:          [],
+};
+
 router.post("/invitations", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { name, email, role, assetIds } = req.body;
   if (!name || !email || !role) {
@@ -33,6 +42,14 @@ router.post("/invitations", requireAuth, async (req: AuthenticatedRequest, res):
 
   if (!ALL_ALLOWED_ROLES.includes(role)) {
     res.status(400).json({ error: `Role must be one of: ${ALL_ALLOWED_ROLES.join(", ")}` });
+    return;
+  }
+
+  // Role-hierarchy check: inviter cannot grant roles above their own authority
+  const inviterRole = req.user!.role;
+  const grantable = INVITE_AUTHORITY[inviterRole] ?? [];
+  if (!grantable.includes(role)) {
+    res.status(403).json({ error: "You do not have permission to invite a user with that role" });
     return;
   }
 
