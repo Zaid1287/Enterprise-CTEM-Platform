@@ -386,8 +386,27 @@ router.get("/scans/:scanId/jobs", requireAuth, async (req: AuthenticatedRequest,
   const params = ListScanJobsParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
-  // External members: verify scan intersects their allowed assets
   const jobsRole = req.user!.role;
+
+  // Client role: verify scan intersects their assigned assets, scope jobs accordingly
+  if (jobsRole === "client") {
+    const [scan] = await db.select({ assetIds: scansTable.assetIds })
+      .from(scansTable)
+      .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)));
+    if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+    const assignedRows = await db.select({ id: assetsTable.id })
+      .from(assetsTable)
+      .where(and(eq(assetsTable.assignedClientId, req.user!.userId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    const allowedIds = new Set(assignedRows.map(r => r.id));
+    const hasAccess = Array.isArray(scan.assetIds) && (scan.assetIds as number[]).some(id => allowedIds.has(id));
+    if (!hasAccess) { res.status(404).json({ error: "Scan not found" }); return; }
+    const allowedArr = Array.from(allowedIds);
+    const clientJobs = await db.select().from(scanJobsTable)
+      .where(and(eq(scanJobsTable.scanId, params.data.scanId), inArray(scanJobsTable.assetId, allowedArr)));
+    res.json(clientJobs.map(j => ({ id: j.id, scanId: j.scanId, assetId: j.assetId, status: j.status, result: j.result, errorMessage: j.errorMessage, startedAt: j.startedAt?.toISOString() ?? null, completedAt: j.completedAt?.toISOString() ?? null, createdAt: j.createdAt.toISOString() }))); return;
+  }
+
+  // External members: verify scan intersects their allowed assets
   if (jobsRole === "vendor" || jobsRole === "employee" || jobsRole === "third_party") {
     const [scan] = await db.select({ assetIds: scansTable.assetIds }).from(scansTable).where(eq(scansTable.id, params.data.scanId));
     if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }

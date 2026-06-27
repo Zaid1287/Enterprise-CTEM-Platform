@@ -146,6 +146,12 @@ router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: Authenti
 
   const [asset] = await db.select().from(assetsTable).where(pdfAssetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  // Client role: must be explicitly assigned to this asset
+  if (pdfAssetRole === "client" && asset.assignedClientId !== req.user!.userId) {
+    res.status(404).json({ error: "Asset not found" }); return;
+  }
+
   const tenantId = asset.tenantId; // use asset's actual tenantId for data queries
 
   const [findings, technologies, riskRows] = await Promise.all([
@@ -234,6 +240,20 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
 
   const [scan] = await db.select().from(brandThreatScansTable).where(btPdfWhere);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+
+  // Client role: verify scan domain matches one of their assigned asset domains
+  if (btPdfRole === "client") {
+    const scanDomain = scan.domain.toLowerCase().replace(/^www\./, "");
+    const assignedAssets = await db.select({ value: assetsTable.value })
+      .from(assetsTable)
+      .where(and(eq(assetsTable.assignedClientId, req.user!.userId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    const assignedDomains = new Set(
+      assignedAssets.map(a =>
+        String(a.value ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!
+      ).filter(Boolean)
+    );
+    if (!assignedDomains.has(scanDomain)) { res.status(404).json({ error: "Scan not found" }); return; }
+  }
 
   const [allResults, dataLeaks, phishingDetections, brandAbuse] = await Promise.all([
     db.select().from(brandThreatResultsTable)
