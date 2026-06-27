@@ -151,9 +151,15 @@ function ExposedServiceRow({ finding }: { finding: any }) {
         <span className={cn("text-[10px] px-2 py-0.5 rounded-md font-bold uppercase border", RISK_COLOR[risk] ?? RISK_COLOR.medium)}>
           {risk}
         </span>
-        <Link href={`/findings/${finding.id}`} onClick={(e) => e.stopPropagation()}>
-          <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground transition-colors" />
-        </Link>
+        {port ? (
+          <Link href={`/findings?search=%3A${port}`} onClick={(e) => e.stopPropagation()} title={`Filter findings for port ${port}`}>
+            <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground transition-colors" />
+          </Link>
+        ) : (
+          <Link href={`/findings/${finding.id}`} onClick={(e) => e.stopPropagation()}>
+            <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground transition-colors" />
+          </Link>
+        )}
       </div>
     </div>
   );

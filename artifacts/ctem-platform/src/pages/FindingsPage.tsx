@@ -421,8 +421,11 @@ function FindingDrawer({ finding, mode: initialMode, onClose }: { finding: any; 
 
 export default function FindingsPage() {
   const [, navigate] = useLocation();
-  const [search, setSearch]   = useState("");
   const searchStr = useSearch();
+  const [search, setSearch]   = useState(() => {
+    const p = new URLSearchParams(searchStr);
+    return p.get("search") ?? "";
+  });
   const [severity, setSeverity] = useState(() => {
     const p = new URLSearchParams(searchStr);
     return p.get("severity") ?? "";

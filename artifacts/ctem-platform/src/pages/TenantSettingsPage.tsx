@@ -21,7 +21,8 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const PLANS = ["starter", "professional", "enterprise"];
+
+interface PkgData { id: number; name: string }
 
 type ChannelKey = "email" | "slack" | "discord" | "telegram" | "webhook";
 interface ChannelConfig { enabled: boolean; destination: string; ruleId?: number }
@@ -90,6 +91,14 @@ export default function TenantSettingsPage() {
     queryFn: () => apiFetch(`${BASE}/api/tenants/${tenantId}`),
     enabled: !!tenantId,
   });
+
+  const { data: packages = [] } = useQuery<PkgData[]>({
+    queryKey: ["packages"],
+    queryFn: () => apiFetch(`${BASE}/api/packages`),
+  });
+  const planOptions = packages.length > 0
+    ? packages.map(p => p.name.toLowerCase())
+    : ["starter", "professional", "enterprise"];
 
   const updateMutation = useMutation({
     mutationFn: (body: { name: string; plan: string }) =>
@@ -168,7 +177,7 @@ export default function TenantSettingsPage() {
                     <Select value={form.plan} onValueChange={v => setForm(p => ({ ...p, plan: v }))}>
                       <SelectTrigger className="h-9 max-w-sm"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {PLANS.map(pl => (
+                        {planOptions.map(pl => (
                           <SelectItem key={pl} value={pl} className="capitalize">
                             {pl.charAt(0).toUpperCase() + pl.slice(1)}
                           </SelectItem>

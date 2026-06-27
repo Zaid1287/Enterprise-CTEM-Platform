@@ -20,25 +20,56 @@ import { useToast } from "@/hooks/use-toast";
 const SCAN_TYPES = ["passive", "active", "vulnerability", "full"];
 const PAGE_SIZE = 10;
 
+const PIPELINE_PHASES = ["Passive Recon", "Port & SSL", "Tech & Screenshots", "Nuclei & Secrets", "Scoring"];
+
 function ScanJobsProgress({ scanId }: { scanId: number }) {
   const { data: jobs } = useListScanJobs(scanId, {
     query: { queryKey: getListScanJobsQueryKey(scanId), refetchInterval: 5000 },
   });
   const list = (jobs as any[]) ?? [];
   if (list.length === 0) return null;
-  const done = list.filter((j: any) => j.status === "completed" || j.status === "failed").length;
+  const done    = list.filter((j: any) => j.status === "completed" || j.status === "failed").length;
   const running = list.filter((j: any) => j.status === "running").length;
-  const total = list.length;
-  const pct = Math.round((done / total) * 100);
+  const total   = list.length;
+  const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  // Infer current phase (1-5) from overall completion percentage
+  const currentPhase = running > 0
+    ? Math.min(5, Math.max(1, Math.ceil((pct / 100) * 5) || 1))
+    : pct === 100 ? 5 : 0;
+
   return (
-    <div className="mt-2 flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+    <div className="mt-2 space-y-1.5">
+      {/* Phase dots */}
+      <div className="flex items-center gap-1">
+        {PIPELINE_PHASES.map((label, i) => {
+          const phaseNum = i + 1;
+          const isComplete = pct === 100 || phaseNum < currentPhase;
+          const isActive   = phaseNum === currentPhase && running > 0;
+          return (
+            <div key={label} className="flex items-center gap-1" title={`Phase ${phaseNum}: ${label}`}>
+              <div className={cn(
+                "w-2 h-2 rounded-full transition-all",
+                isComplete ? "bg-green-400" : isActive ? "bg-yellow-400 animate-pulse" : "bg-muted",
+              )} />
+              {i < 4 && <div className={cn("w-4 h-px", isComplete ? "bg-green-400/40" : "bg-muted")} />}
+            </div>
+          );
+        })}
+        <span className="text-[10px] text-muted-foreground ml-1">
+          {pct === 100 ? "Complete" : running > 0 ? `Phase ${currentPhase}: ${PIPELINE_PHASES[currentPhase - 1]}` : "Pending"}
+        </span>
       </div>
-      <span className="text-[10px] text-muted-foreground shrink-0">
-        {running > 0 && <span className="text-blue-400 mr-1">{running} running ·</span>}
-        {done}/{total} assets
-      </span>
+      {/* Asset progress bar */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+          <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+        </div>
+        <span className="text-[10px] text-muted-foreground shrink-0">
+          {running > 0 && <span className="text-blue-400 mr-1">{running} running ·</span>}
+          {done}/{total} assets
+        </span>
+      </div>
     </div>
   );
 }

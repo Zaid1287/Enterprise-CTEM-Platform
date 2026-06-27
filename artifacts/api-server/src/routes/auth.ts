@@ -178,6 +178,16 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   // Successful login — clear any failed-attempt counter
   clearAttempts(email);
 
+  // If account requires a password reset, return a specific signal without issuing tokens
+  if (user.requiresPasswordReset) {
+    res.status(200).json({
+      requiresPasswordReset: true,
+      userId: user.id,
+      email: user.email,
+    });
+    return;
+  }
+
   const payload = { userId: user.id, tenantId: user.tenantId, email: user.email, role: user.role };
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
@@ -350,9 +360,41 @@ router.post("/auth/change-password", requireAuth, async (req: AuthenticatedReque
   }
 
   const passwordHash = await hashPassword(parsed.data.newPassword);
-  await db.update(usersTable).set({ passwordHash }).where(eq(usersTable.id, user.id));
+  await db.update(usersTable)
+    .set({ passwordHash, requiresPasswordReset: false })
+    .where(eq(usersTable.id, user.id));
 
   res.sendStatus(204);
+});
+
+// ── Set Initial Password (for accounts with requiresPasswordReset=true) ───────
+
+router.post("/auth/set-initial-password", async (req, res): Promise<void> => {
+  const { userId, currentPassword, newPassword } = req.body ?? {};
+  if (!userId || !currentPassword || !newPassword) {
+    res.status(400).json({ error: "userId, currentPassword and newPassword are required" }); return;
+  }
+  if (String(newPassword).length < 8) {
+    res.status(400).json({ error: "New password must be at least 8 characters" }); return;
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, Number(userId)));
+  if (!user || !user.isActive) { res.status(404).json({ error: "User not found" }); return; }
+
+  const valid = await comparePassword(String(currentPassword), user.passwordHash);
+  if (!valid) { res.status(400).json({ error: "Current password is incorrect" }); return; }
+
+  const passwordHash = await hashPassword(String(newPassword));
+  await db.update(usersTable)
+    .set({ passwordHash, requiresPasswordReset: false, lastLoginAt: new Date() })
+    .where(eq(usersTable.id, user.id));
+
+  const payload = { userId: user.id, tenantId: user.tenantId, email: user.email, role: user.role };
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken(payload);
+  await db.update(usersTable).set({ refreshToken }).where(eq(usersTable.id, user.id));
+
+  res.json({ accessToken, refreshToken, user: toUserResponse(user) });
 });
 
 // ── Forgot Password ───────────────────────────────────────────────────────────
@@ -526,7 +568,7 @@ router.get("/auth/avatar/:filename", requireAuth, (req: AuthenticatedRequest, re
 
 // ── Seed compliance frameworks + tools for new tenant (no fake assets/findings) ──
 
-async function seedNewTenantData(tenantId: number): Promise<void> {
+export async function seedNewTenantData(tenantId: number): Promise<void> {
   try {
     const { complianceFrameworksTable, securityToolsTable } = await import("@workspace/db");
 

@@ -3,10 +3,17 @@ import { eq, inArray, and, or, isNull } from "drizzle-orm";
 import {
   db, tenantsTable, usersTable, assetsTable, findingsTable, findingCommentsTable,
   accountManagerClientsTable, scanAssetResultsTable, assetGroupMembersTable,
-  riskScoresTable, discoveryResultsTable,
+  riskScoresTable, discoveryResultsTable, scansTable, scanJobsTable, scanSchedulesTable,
+  alertsTable, alertRulesTable, brandThreatScansTable, brandThreatResultsTable,
+  brandWatchlistItemsTable, takedownRequestsTable, securityToolsTable, toolPipelineStepsTable,
+  toolRunsTable, complianceControlsTable, complianceFrameworksTable, platformSettingsTable,
+  invitationsTable, sessionsTable, screenshotsTable, technologyDetectionsTable,
+  auditLogsTable, reportsTable, userAiSettingsTable,
 } from "@workspace/db";
 import { CreateTenantBody, UpdateTenantBody, GetTenantParams, UpdateTenantParams } from "@workspace/api-zod";
-import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, requireRole, hashPassword, type AuthenticatedRequest } from "../lib/auth";
+import { seedNewTenantData } from "./auth";
+import crypto from "crypto";
 
 /** Cascade-delete an asset and all child records that would violate FK constraints. */
 async function cascadeDeleteAsset(assetId: number, tenantId: number) {
@@ -31,24 +38,103 @@ async function cascadeDeleteAsset(assetId: number, tenantId: number) {
   await db.delete(assetsTable).where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
 }
 
-/** Same but for a whole tenant — called during tenant deletion. */
-async function cascadeDeleteTenantAssets(tenantId: number) {
-  const tenantAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-    .where(eq(assetsTable.tenantId, tenantId));
-  if (tenantAssets.length === 0) return;
-  const aids = tenantAssets.map(a => a.id);
-  const tenantFindings = await db.select({ id: findingsTable.id }).from(findingsTable)
-    .where(eq(findingsTable.tenantId, tenantId));
+/** Complete cascade delete for an entire tenant — deletes ALL related records in FK-safe order. */
+async function cascadeDeleteTenant(tenantId: number) {
+  // 1. Tool runs (reference scans, assets, security_tools)
+  await db.delete(toolRunsTable).where(eq(toolRunsTable.tenantId, tenantId));
+
+  // 2. Scan children — scan_jobs has no tenantId, delete via scanId
+  const tenantScans = await db.select({ id: scansTable.id })
+    .from(scansTable).where(eq(scansTable.tenantId, tenantId));
+  if (tenantScans.length > 0) {
+    const scanIds = tenantScans.map(s => s.id);
+    await db.delete(scanJobsTable).where(inArray(scanJobsTable.scanId, scanIds));
+  }
+  await db.delete(scanAssetResultsTable).where(eq(scanAssetResultsTable.tenantId, tenantId));
+  await db.delete(scanSchedulesTable).where(eq(scanSchedulesTable.tenantId, tenantId));
+
+  // 3. Finding comments, then findings
+  const tenantFindings = await db.select({ id: findingsTable.id })
+    .from(findingsTable).where(eq(findingsTable.tenantId, tenantId));
   if (tenantFindings.length > 0) {
     const fids = tenantFindings.map(f => f.id);
     await db.delete(findingCommentsTable).where(inArray(findingCommentsTable.findingId, fids));
-    await db.delete(findingsTable).where(eq(findingsTable.tenantId, tenantId));
   }
-  await db.delete(scanAssetResultsTable).where(inArray(scanAssetResultsTable.assetId, aids));
-  await db.delete(assetGroupMembersTable).where(inArray(assetGroupMembersTable.assetId, aids));
-  await db.delete(riskScoresTable).where(inArray(riskScoresTable.assetId, aids));
-  await db.delete(discoveryResultsTable).where(inArray(discoveryResultsTable.assetId, aids));
+  await db.delete(findingsTable).where(eq(findingsTable.tenantId, tenantId));
+
+  // 4. Scans
+  await db.delete(scansTable).where(eq(scansTable.tenantId, tenantId));
+
+  // 5. Takedown requests (reference brand_threat_results)
+  await db.delete(takedownRequestsTable).where(eq(takedownRequestsTable.tenantId, tenantId));
+
+  // 6. Brand threat child records, then scans and watchlist
+  const btScans = await db.select({ id: brandThreatScansTable.id })
+    .from(brandThreatScansTable).where(eq(brandThreatScansTable.tenantId, tenantId));
+  if (btScans.length > 0) {
+    const btIds = btScans.map(s => s.id);
+    await db.delete(brandThreatResultsTable).where(inArray(brandThreatResultsTable.scanId, btIds));
+  }
+  await db.delete(brandThreatScansTable).where(eq(brandThreatScansTable.tenantId, tenantId));
+  await db.delete(brandWatchlistItemsTable).where(eq(brandWatchlistItemsTable.tenantId, tenantId));
+
+  // 7. Asset-level child records
+  const tenantAssets = await db.select({ id: assetsTable.id })
+    .from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  if (tenantAssets.length > 0) {
+    const aids = tenantAssets.map(a => a.id);
+    await db.delete(screenshotsTable).where(inArray(screenshotsTable.assetId, aids));
+    await db.delete(technologyDetectionsTable).where(inArray(technologyDetectionsTable.assetId, aids));
+    await db.delete(riskScoresTable).where(inArray(riskScoresTable.assetId, aids));
+    await db.delete(discoveryResultsTable).where(inArray(discoveryResultsTable.assetId, aids));
+    await db.delete(assetGroupMembersTable).where(inArray(assetGroupMembersTable.assetId, aids));
+    await db.delete(scanAssetResultsTable).where(inArray(scanAssetResultsTable.assetId, aids));
+  }
   await db.delete(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+
+  // 8. Alerts and alert rules
+  await db.delete(alertsTable).where(eq(alertsTable.tenantId, tenantId));
+  await db.delete(alertRulesTable).where(eq(alertRulesTable.tenantId, tenantId));
+
+  // 9. Compliance controls (frameworks are shared, not tenant-scoped — skip)
+  await db.delete(complianceControlsTable).where(eq(complianceControlsTable.tenantId, tenantId));
+
+  // 10. Reports
+  await db.delete(reportsTable).where(eq(reportsTable.tenantId, tenantId));
+
+  // 11. Security tools and pipeline
+  await db.delete(toolPipelineStepsTable).where(eq(toolPipelineStepsTable.tenantId, tenantId));
+  await db.delete(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
+
+  // 12. User AI settings — keyed by userId (no tenantId column)
+  // platformSettingsTable is global (no tenantId column) — skip
+  // userAiSettings are cleaned up when users are deleted below via cascade or here:
+  const tenantUserIds = await db.select({ id: usersTable.id })
+    .from(usersTable).where(eq(usersTable.tenantId, tenantId));
+  if (tenantUserIds.length > 0) {
+    await db.delete(userAiSettingsTable)
+      .where(inArray(userAiSettingsTable.userId, tenantUserIds.map(u => u.id)));
+  }
+
+  // 13. Invitations
+  await db.delete(invitationsTable).where(eq(invitationsTable.tenantId, tenantId));
+
+  // 14. Account manager assignments (as client or as manager of this tenant's users)
+  await db.delete(accountManagerClientsTable).where(eq(accountManagerClientsTable.clientTenantId, tenantId));
+
+  // 15. Sessions and users
+  const tenantUsers = await db.select({ id: usersTable.id })
+    .from(usersTable).where(eq(usersTable.tenantId, tenantId));
+  if (tenantUsers.length > 0) {
+    const uids = tenantUsers.map(u => u.id);
+    await db.delete(sessionsTable).where(inArray(sessionsTable.userId, uids));
+    await db.delete(accountManagerClientsTable)
+      .where(inArray(accountManagerClientsTable.accountManagerUserId, uids));
+  }
+  await db.delete(usersTable).where(eq(usersTable.tenantId, tenantId));
+
+  // 16. Audit logs (last — immutability trigger only blocks UPDATE/DELETE by non-superuser at DB level)
+  await db.delete(auditLogsTable).where(eq(auditLogsTable.tenantId, tenantId));
 }
 
 const router = Router();
@@ -152,7 +238,33 @@ router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async 
   const [tenant] = await db.insert(tenantsTable)
     .values({ ...parsed.data, isPlatform: false, parentTenantId: parentTenantId ?? null })
     .returning();
-  res.status(201).json(toTenantResponse(tenant));
+
+  // Seed security tools and compliance frameworks for the new tenant
+  await seedNewTenantData(tenant.id);
+
+  // Auto-create an admin user for the new tenant with a temporary password
+  const temporaryPassword = crypto.randomBytes(10).toString("base64url").slice(0, 14);
+  const passwordHash = await hashPassword(temporaryPassword);
+  const adminEmail = `admin@${(parsed.data as any).slug ?? tenant.slug}.sentinelware.io`;
+  const [adminUser] = await db.insert(usersTable).values({
+    tenantId: tenant.id,
+    email: adminEmail,
+    passwordHash,
+    firstName: "Tenant",
+    lastName: "Admin",
+    role: "admin",
+    requiresPasswordReset: true,
+  }).returning();
+
+  res.status(201).json({
+    ...toTenantResponse(tenant),
+    adminUser: {
+      id: adminUser.id,
+      email: adminUser.email,
+      temporaryPassword,
+      note: "Share these credentials with the tenant admin. They will be required to set a new password on first login.",
+    },
+  });
 });
 
 // ── Pool: all assets across every tenant the caller manages + unassigned ones ─
@@ -374,9 +486,8 @@ router.delete("/tenants/:tenantId", requireAuth, requireRole("super_admin", "adm
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
   if (tenant.isPlatform) { res.status(403).json({ error: "Cannot delete platform tenant" }); return; }
 
-  // Cascade: delete all asset child records, then assets, users, tenant
-  await cascadeDeleteTenantAssets(tid);
-  await db.delete(usersTable).where(eq(usersTable.tenantId, tid));
+  // Full cascade: delete all related records across every table, then the tenant itself
+  await cascadeDeleteTenant(tid);
   await db.delete(tenantsTable).where(eq(tenantsTable.id, tid));
   res.sendStatus(204);
 });

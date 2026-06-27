@@ -25,13 +25,23 @@ export default function LoginPage() {
   const [twoFaLoading, setTwoFaLoading] = useState(false);
   const [pendingTokens, setPendingTokens] = useState<{ accessToken: string; refreshToken: string; user: any } | null>(null);
 
+  // Force password reset state
+  const [resetRequired, setResetRequired] = useState(false);
+  const [resetUserId, setResetUserId] = useState<number | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     try {
       const result = await loginMutation.mutateAsync({ data: { email, password } });
       const r = result as any;
-      if (r.twoFactorRequired) {
+      if (r.requiresPasswordReset) {
+        setResetUserId(r.userId);
+        setResetRequired(true);
+      } else if (r.twoFactorRequired) {
         setPendingTokens(r);
         setTwoFaRequired(true);
       } else {
@@ -40,6 +50,29 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       setError(err?.data?.error ?? "Invalid email or password");
+    }
+  };
+
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (newPassword !== confirmPassword) { setError("Passwords do not match"); return; }
+    if (newPassword.length < 8) { setError("Password must be at least 8 characters"); return; }
+    setResetLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/auth/set-initial-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: resetUserId, currentPassword: password, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw data;
+      login(data.accessToken, data.refreshToken, data.user);
+      navigate("/dashboard");
+    } catch (err: any) {
+      setError(err?.error ?? "Failed to set new password");
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -133,16 +166,50 @@ export default function LoginPage() {
 
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
-              {twoFaRequired ? "Two-factor authentication" : "Sign in"}
+              {resetRequired ? "Set new password" : twoFaRequired ? "Two-factor authentication" : "Sign in"}
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {twoFaRequired
+              {resetRequired
+                ? "Your account requires a new password before you can continue."
+                : twoFaRequired
                 ? "Enter the 6-digit code sent to your email"
                 : "Enter your work email and password to continue"}
             </p>
           </div>
 
-          {!twoFaRequired ? (
+          {resetRequired ? (
+            <form onSubmit={handlePasswordReset} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">New password</Label>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="Min. 8 characters"
+                  required
+                  autoFocus
+                  className="h-10"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Confirm new password</Label>
+                <Input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat your password"
+                  required
+                  className="h-10"
+                />
+              </div>
+              {error && (
+                <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2.5">{error}</div>
+              )}
+              <Button type="submit" className="w-full h-10" disabled={resetLoading}>
+                {resetLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Setting password…</> : "Set new password & sign in"}
+              </Button>
+            </form>
+          ) : !twoFaRequired ? (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="email" className="text-sm font-medium">Work email</Label>

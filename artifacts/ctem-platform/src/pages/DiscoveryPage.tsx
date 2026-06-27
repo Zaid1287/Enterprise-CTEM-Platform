@@ -170,16 +170,17 @@ export default function DiscoveryPage() {
   async function handleRun() {
     if (!selectedAssetId) return;
     setRunning(true);
-    try {
-      await triggerDiscovery({ assetId: selectedAssetId });
+    const assetId = selectedAssetId;
+    // Fire-and-forget: don't await so "in progress" state persists while backend works
+    triggerDiscovery({ assetId }).then(() => {
       toast({ title: "Discovery complete", description: "All passive discovery modules finished." });
-      qc.invalidateQueries({ queryKey: getListDiscoveryLatestQueryKey(selectedAssetId) });
-      qc.invalidateQueries({ queryKey: getListDiscoveryHistoryQueryKey(selectedAssetId) });
-    } catch {
+      qc.invalidateQueries({ queryKey: getListDiscoveryLatestQueryKey(assetId) });
+      qc.invalidateQueries({ queryKey: getListDiscoveryHistoryQueryKey(assetId) });
+    }).catch(() => {
       toast({ title: "Discovery failed", variant: "destructive" });
-    } finally {
+    }).finally(() => {
       setRunning(false);
-    }
+    });
   }
 
   const selectedAsset = assets.find(a => a.id === selectedAssetId);
@@ -223,6 +224,16 @@ export default function DiscoveryPage() {
           {running ? "Running…" : "Run Discovery"}
         </Button>
       </div>
+
+      {running && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-blue-500/30 bg-blue-500/10 text-sm text-blue-300">
+          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+          <div>
+            <p className="font-medium">Discovery in progress…</p>
+            <p className="text-xs text-blue-300/70 mt-0.5">Running CT logs, WHOIS, DNS, DKIM, Shodan and other passive sources. This may take 20–60 seconds.</p>
+          </div>
+        </div>
+      )}
 
       {selectedAsset && latestSources.length > 0 && (
         <div className="grid grid-cols-3 gap-3">

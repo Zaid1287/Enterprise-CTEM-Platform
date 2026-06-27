@@ -9,7 +9,7 @@ const router = Router();
 
 const ROLE_HIERARCHY: Record<string, string[]> = {
   super_admin: ["super_admin", "admin", "account_manager", "client"],
-  admin: ["admin", "client"],
+  admin: ["admin", "account_manager", "client"],
   account_manager: ["client"],
   client: [],
 };
@@ -43,14 +43,17 @@ router.get("/users", requireAuth, async (req: AuthenticatedRequest, res): Promis
   }
 
   if (role === "account_manager") {
-    const clients = await db.select({ clientId: accountManagerClientsTable.clientId })
+    const assignments = await db.select({ clientTenantId: accountManagerClientsTable.clientTenantId })
       .from(accountManagerClientsTable)
-      .where(eq(accountManagerClientsTable.managerId, userId));
-    const clientIds = clients.map(c => c.clientId);
-    if (clientIds.length === 0) { res.json([]); return; }
-    const users = await db.select().from(usersTable).where(inArray(usersTable.id, clientIds));
-    const tMap = new Map(await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable)
-      .then(rows => rows.map(r => [r.id, r.name] as [number, string])));
+      .where(eq(accountManagerClientsTable.accountManagerUserId, userId));
+    const clientTenantIds = assignments.map(a => a.clientTenantId);
+    if (clientTenantIds.length === 0) { res.json([]); return; }
+    const users = await db.select().from(usersTable)
+      .where(inArray(usersTable.tenantId, clientTenantIds))
+      .orderBy(usersTable.createdAt);
+    const tenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name })
+      .from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds));
+    const tMap = new Map(tenants.map(t => [t.id, t.name]));
     res.json(users.map(u => toUserResponse(u, tMap.get(u.tenantId))));
     return;
   }
@@ -70,9 +73,23 @@ router.post("/users", requireAuth, async (req: AuthenticatedRequest, res): Promi
     res.status(403).json({ error: `Your role cannot create users with role: ${newRole}` }); return;
   }
 
-  const targetTenantId = (role === "super_admin" || role === "account_manager") && (req.body as any).tenantId
-    ? Number((req.body as any).tenantId)
-    : tenantId;
+  let targetTenantId = tenantId;
+  const requestedTenantId = (req.body as any).tenantId ? Number((req.body as any).tenantId) : null;
+  if (requestedTenantId && requestedTenantId !== tenantId) {
+    if (role === "super_admin") {
+      targetTenantId = requestedTenantId;
+    } else if (role === "account_manager") {
+      targetTenantId = requestedTenantId;
+    } else if (role === "admin") {
+      const [childTenant] = await db.select({ id: tenantsTable.id })
+        .from(tenantsTable)
+        .where(and(eq(tenantsTable.id, requestedTenantId), eq(tenantsTable.parentTenantId, tenantId)));
+      if (!childTenant) {
+        res.status(403).json({ error: "Admins can only create users in their own child client tenants" }); return;
+      }
+      targetTenantId = requestedTenantId;
+    }
+  }
 
   const passwordHash = await hashPassword(parsed.data.password);
   const [user] = await db.insert(usersTable).values({

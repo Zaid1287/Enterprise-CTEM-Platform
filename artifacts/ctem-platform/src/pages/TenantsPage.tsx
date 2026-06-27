@@ -330,13 +330,19 @@ export default function TenantsPage() {
   const amUsers = allUsers.filter(u => u.role === "account_manager");
 
   // ── Mutations ────────────────────────────────────────────────────────────────
+  const [newTenantCredentials, setNewTenantCredentials] = useState<{ email: string; temporaryPassword: string } | null>(null);
+
   const createTenantMutation = useMutation({
     mutationFn: (body: object) =>
       apiFetch(`${BASE}/api/tenants`, { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       setShowCreate(false); setTenantForm(emptyTenantForm);
-      toast({ title: "Tenant created successfully" });
+      if (data?.adminUser) {
+        setNewTenantCredentials({ email: data.adminUser.email, temporaryPassword: data.adminUser.temporaryPassword });
+      } else {
+        toast({ title: "Tenant created successfully" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -792,6 +798,34 @@ export default function TenantsPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── New Tenant Credentials Dialog ─────────────────────────────────── */}
+      <Dialog open={!!newTenantCredentials} onOpenChange={v => { if (!v) setNewTenantCredentials(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Tenant Created — Admin Credentials</DialogTitle>
+            <DialogDescription>
+              Share these one-time credentials with the tenant admin. They will be asked to set a new password on first login.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 my-2">
+            <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-2 font-mono text-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground text-xs">Email</span>
+                <span className="font-medium">{newTenantCredentials?.email}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground text-xs">Temporary password</span>
+                <span className="font-medium tracking-wider">{newTenantCredentials?.temporaryPassword}</span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Copy these credentials now — the temporary password will not be shown again.</p>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setNewTenantCredentials(null)}>Done</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
