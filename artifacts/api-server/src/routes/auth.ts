@@ -305,6 +305,12 @@ router.post("/auth/refresh", async (req, res): Promise<void> => {
       return;
     }
 
+    // Block refresh for accounts that must change their password first
+    if (user.requiresPasswordReset) {
+      res.status(403).json({ error: "Password reset required", requiresPasswordReset: true });
+      return;
+    }
+
     const newPayload = { userId: user.id, tenantId: user.tenantId, email: user.email, role: user.role };
     const accessToken = signAccessToken(newPayload);
     const refreshToken = signRefreshToken(newPayload);
@@ -380,6 +386,11 @@ router.post("/auth/set-initial-password", async (req, res): Promise<void> => {
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, Number(userId)));
   if (!user || !user.isActive) { res.status(404).json({ error: "User not found" }); return; }
+
+  // This endpoint is exclusively for accounts with a forced password reset — reject others
+  if (!user.requiresPasswordReset) {
+    res.status(403).json({ error: "Use /auth/change-password for regular password changes" }); return;
+  }
 
   const valid = await comparePassword(String(currentPassword), user.passwordHash);
   if (!valid) { res.status(400).json({ error: "Current password is incorrect" }); return; }
@@ -560,7 +571,7 @@ router.post("/auth/avatar", requireAuth, avatarUpload.single("avatar"), async (r
 });
 
 router.get("/auth/avatar/:filename", requireAuth, (req: AuthenticatedRequest, res): void => {
-  const filename = path.basename(req.params.filename);
+  const filename = path.basename(String(req.params.filename));
   const filePath = path.join(AVATARS_DIR, filename);
   if (!fs.existsSync(filePath)) { res.status(404).json({ error: "Not found" }); return; }
   res.sendFile(filePath);

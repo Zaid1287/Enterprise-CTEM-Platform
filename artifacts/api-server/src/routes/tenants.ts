@@ -9,6 +9,7 @@ import {
   toolRunsTable, complianceControlsTable, complianceFrameworksTable, platformSettingsTable,
   invitationsTable, sessionsTable, screenshotsTable, technologyDetectionsTable,
   auditLogsTable, reportsTable, userAiSettingsTable,
+  dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable, adMonitoringResultsTable,
 } from "@workspace/db";
 import { CreateTenantBody, UpdateTenantBody, GetTenantParams, UpdateTenantParams } from "@workspace/api-zod";
 import { requireAuth, requireRole, hashPassword, type AuthenticatedRequest } from "../lib/auth";
@@ -77,6 +78,12 @@ async function cascadeDeleteTenant(tenantId: number) {
   }
   await db.delete(brandThreatScansTable).where(eq(brandThreatScansTable.tenantId, tenantId));
   await db.delete(brandWatchlistItemsTable).where(eq(brandWatchlistItemsTable.tenantId, tenantId));
+
+  // 6b. Other brand-threat derivative tables (all tenant-scoped)
+  await db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.tenantId, tenantId));
+  await db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.tenantId, tenantId));
+  await db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.tenantId, tenantId));
+  await db.delete(adMonitoringResultsTable).where(eq(adMonitoringResultsTable.tenantId, tenantId));
 
   // 7. Asset-level child records
   const tenantAssets = await db.select({ id: assetsTable.id })
