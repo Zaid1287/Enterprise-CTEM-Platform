@@ -395,7 +395,11 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   const tenantId = report.tenantId; // use report's actual tenantId for data queries
 
-  const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  // Client role: restrict to their assigned assets only
+  const allTenantAssets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
+  const assets = pdfReportRole === "client"
+    ? allTenantAssets.filter(a => a.assignedClientId === req.user!.userId)
+    : allTenantAssets;
   const assetIds = assets.map(a => a.id);
   const assetDomains = assets.map(a => a.value).filter(Boolean);
 
@@ -522,6 +526,13 @@ router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedReq
     pdfAssetsWhere = privIds.length > 0
       ? and(inArray(assetsTable.tenantId, privIds), inArray(assetsTable.id, requestedIds))
       : and(eq(assetsTable.tenantId, -1), inArray(assetsTable.id, requestedIds));
+  } else if (pdfAssetsRole === "client") {
+    // Client: tenant-scoped AND must be assigned to this client
+    pdfAssetsWhere = and(
+      eq(assetsTable.tenantId, req.user!.tenantId),
+      eq(assetsTable.assignedClientId, req.user!.userId),
+      inArray(assetsTable.id, requestedIds),
+    );
   } else {
     pdfAssetsWhere = and(eq(assetsTable.tenantId, req.user!.tenantId), inArray(assetsTable.id, requestedIds));
   }

@@ -323,10 +323,10 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
   const params = UpdateAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
-  // External members cannot modify assets
+  // Clients and external members cannot modify assets
   const patchAssetRole = req.user!.role;
-  if (patchAssetRole === "vendor" || patchAssetRole === "employee" || patchAssetRole === "third_party") {
-    res.status(403).json({ error: "External members cannot modify assets" }); return;
+  if (patchAssetRole === "client" || patchAssetRole === "vendor" || patchAssetRole === "employee" || patchAssetRole === "third_party") {
+    res.status(403).json({ error: "Forbidden" }); return;
   }
 
   const parsed = UpdateAssetBody.safeParse(req.body);

@@ -316,11 +316,12 @@ router.get("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res)
     [scan] = await db.select().from(scansTable)
       .where(buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds));
   } else if (role === "client") {
-    // Client: scan is accessible only if it covers at least one of their assigned assets
-    [scan] = await db.select().from(scansTable).where(eq(scansTable.id, params.data.scanId));
+    // Client: tenant-scoped fetch first, then verify scan covers at least one assigned asset
+    [scan] = await db.select().from(scansTable)
+      .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)));
     if (scan) {
       const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-        .where(eq(assetsTable.assignedClientId, req.user!.userId));
+        .where(and(eq(assetsTable.assignedClientId, req.user!.userId), eq(assetsTable.tenantId, req.user!.tenantId)));
       const assignedIds = new Set(assignedAssets.map(a => a.id));
       const hasAccess = Array.isArray(scan.assetIds) && (scan.assetIds as number[]).some(id => assignedIds.has(id));
       if (!hasAccess) scan = undefined as any;
