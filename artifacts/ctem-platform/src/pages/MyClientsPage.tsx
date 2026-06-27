@@ -70,21 +70,11 @@ const RISK_COLORS: Record<string, string> = {
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function ClientAssetPanel({ tenantId }: { tenantId: number }) {
-  const { data: assets = [], isLoading } = useQuery<AssetRow[]>({
-    queryKey: ["am-client-assets", tenantId],
-    queryFn: () => apiFetch(`${BASE}/api/assets?tenantOverride=${tenantId}&limit=200`),
-    retry: false,
-  });
-
-  // Fallback: load from tenant assets endpoint
-  const { data: tenantAssets = [], isLoading: tLoading } = useQuery<AssetRow[]>({
+  const { data: list = [], isLoading: loading } = useQuery<AssetRow[]>({
     queryKey: ["tenant-assets", tenantId],
     queryFn: () => apiFetch(`${BASE}/api/tenants/${tenantId}/assets`),
     staleTime: 30_000,
   });
-
-  const loading = isLoading || tLoading;
-  const list = tenantAssets.length > 0 ? tenantAssets : assets;
 
   if (loading) {
     return (
@@ -150,6 +140,7 @@ export default function MyClientsPage() {
   const { user } = useAuth();
   const [showAssign, setShowAssign] = useState(false);
   const [selectedTenantId, setSelectedTenantId] = useState<string>("");
+  const [unassignTarget, setUnassignTarget] = useState<{ id: number; name: string } | null>(null);
   const [expandedClients, setExpandedClients] = useState<Set<number>>(new Set());
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -308,7 +299,7 @@ export default function MyClientsPage() {
                       <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
                         <Button
                           variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={() => confirm(`Unassign ${c.tenantName}?`) && unassignMutation.mutate(c.tenantId)}
+                          onClick={() => setUnassignTarget({ id: c.tenantId, name: c.tenantName })}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
@@ -328,6 +319,35 @@ export default function MyClientsPage() {
           </table>
         </div>
       )}
+
+      {/* Unassign confirmation Dialog */}
+      <Dialog open={!!unassignTarget} onOpenChange={v => { if (!v) setUnassignTarget(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Unassign Client</DialogTitle>
+            <DialogDescription>
+              Remove <span className="font-semibold text-foreground">{unassignTarget?.name}</span> from your client list?
+              You can reassign them later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setUnassignTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={unassignMutation.isPending}
+              onClick={() => {
+                if (unassignTarget) {
+                  unassignMutation.mutate(unassignTarget.id, {
+                    onSettled: () => setUnassignTarget(null),
+                  });
+                }
+              }}
+            >
+              {unassignMutation.isPending ? "Removing…" : "Unassign"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Assign Client Dialog — real tenant picker */}
       <Dialog open={showAssign} onOpenChange={v => { if (!v) { setShowAssign(false); setSelectedTenantId(""); } }}>

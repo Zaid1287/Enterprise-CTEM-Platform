@@ -126,18 +126,12 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
-    const clientAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-      .where(inArray(assetsTable.tenantId, ids));
-    const clientAssetIds = clientAssets.map(a => a.id);
-    if (clientAssetIds.length === 0) { res.json([]); return; }
-    const allScansRaw = await db.select().from(scansTable).orderBy(desc(scansTable.createdAt));
-    const amScans = allScansRaw.filter(s =>
-      Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => clientAssetIds.includes(id))
-    );
-    const filtered = q.success && q.data.status
-      ? amScans.filter(s => s.status === (q.data as any).status)
-      : amScans;
-    res.json(filtered.map(toScanResponse)); return;
+    // Scope scans to client tenants — no full-table scan
+    const filters: ReturnType<typeof eq>[] = [inArray(scansTable.tenantId, ids) as any];
+    if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status) as any);
+    const amScans = await db.select().from(scansTable).where(and(...filters))
+      .orderBy(desc(scansTable.createdAt));
+    res.json(amScans.map(toScanResponse)); return;
   }
   tenantFilter = eq(scansTable.tenantId, req.user!.tenantId);
   const filters = [tenantFilter];
@@ -153,11 +147,27 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
 
   // Enforce ownership verification — no scanning unverified assets
   const assetIds = (parsed.data as any).assetIds as number[] | undefined;
+  const role = req.user!.role;
+
+  // For AM: resolve allowed tenantIds from client assignments so we can verify
+  // ownership across the client tenants they manage.
+  let allowedTenantIds: number[] | null = null;
+  if (role === "account_manager") {
+    allowedTenantIds = await getAmClientTenantIds(req.user!.userId);
+    if (allowedTenantIds.length === 0) {
+      res.status(403).json({ error: "No client tenants assigned" }); return;
+    }
+  }
+
+  let assetTenantId = req.user!.tenantId; // default for non-AM roles
   if (assetIds && assetIds.length > 0) {
+    const tenantFilter = allowedTenantIds
+      ? inArray(assetsTable.tenantId, allowedTenantIds)
+      : eq(assetsTable.tenantId, req.user!.tenantId);
     const assetRows = await db
-      .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus })
+      .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus, tenantId: assetsTable.tenantId })
       .from(assetsTable)
-      .where(and(inArray(assetsTable.id, assetIds), eq(assetsTable.tenantId, req.user!.tenantId)));
+      .where(and(inArray(assetsTable.id, assetIds), tenantFilter));
     const unverified = assetRows.filter(a => a.verificationStatus !== "verified");
     if (unverified.length > 0) {
       res.status(422).json({
@@ -166,10 +176,14 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
       });
       return;
     }
+    // For AM: use the client tenant's ID so pipeline config is fetched from the correct tenant
+    if (allowedTenantIds && assetRows.length > 0) {
+      assetTenantId = assetRows[0].tenantId ?? assetTenantId;
+    }
   }
 
   const [scan] = await db.insert(scansTable).values({
-    ...parsed.data, tenantId: req.user!.tenantId, status: "pending",
+    ...parsed.data, tenantId: assetTenantId, status: "pending",
     startedAt: new Date(),
   }).returning();
 

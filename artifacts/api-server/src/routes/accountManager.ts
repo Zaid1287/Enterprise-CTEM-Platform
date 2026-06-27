@@ -107,20 +107,13 @@ router.get("/account-manager/clients", requireAuth, async (req: AuthenticatedReq
   const allAssetIds = allAssets.map(a => a.id);
   const assetIdSet = new Set(allAssetIds);
 
-  // Step 2: fetch findings by assetId and all scans (filter scans by assetId overlap in JS)
-  // Findings may have a different tenantId than the client tenant (e.g. created by platform admin)
-  const [allFindings, allScansRaw] = await (allAssetIds.length > 0
+  // Step 2: fetch findings by assetId; scans scoped to client tenantIds (no full-table scan)
+  const [allFindings, allScans] = await (allAssetIds.length > 0
     ? Promise.all([
         db.select().from(findingsTable).where(inArray(findingsTable.assetId, allAssetIds)),
-        db.select().from(scansTable),
+        db.select().from(scansTable).where(inArray(scansTable.tenantId, clientTenantIds)),
       ])
     : Promise.resolve([[], []] as [typeof findingsTable.$inferSelect[], typeof scansTable.$inferSelect[]]));
-
-  // Filter scans to those that reference client assets (regardless of which tenant created them)
-  const allScans = allScansRaw.filter(s =>
-    clientTenantIds.includes(s.tenantId) ||
-    (Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => assetIdSet.has(id)))
-  );
 
   const result = clients.map(t => {
     const clientAssets = allAssets.filter(a => a.tenantId === t.id);

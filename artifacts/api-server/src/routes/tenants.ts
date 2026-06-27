@@ -13,6 +13,7 @@ import {
 } from "@workspace/db";
 import { CreateTenantBody, UpdateTenantBody, GetTenantParams, UpdateTenantParams } from "@workspace/api-zod";
 import { requireAuth, requireRole, hashPassword, type AuthenticatedRequest } from "../lib/auth";
+import { getAmClientTenantIds } from "../lib/amScoping";
 import { seedNewTenantData } from "./auth";
 import crypto from "crypto";
 
@@ -419,11 +420,16 @@ router.delete("/tenants/:tenantId/managers/:amUserId", requireAuth, requireRole(
 });
 
 // ── Assets for a specific tenant (cross-tenant management) ───────────────────
-router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", "admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = Number(req.params.tenantId);
   if (isNaN(tid)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
-  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tid))) {
+  const role = req.user!.role;
+  if (role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tid))) {
     res.status(403).json({ error: "Forbidden" }); return;
+  }
+  if (role === "account_manager") {
+    const clientIds = await getAmClientTenantIds(req.user!.userId);
+    if (!clientIds.includes(tid)) { res.status(403).json({ error: "Forbidden" }); return; }
   }
   const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid));
   res.json(assets.map(a => ({
