@@ -287,16 +287,19 @@ router.delete("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, r
   const params = DeleteScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
-  await db.delete(scanJobsTable).where(eq(scanJobsTable.scanId, params.data.scanId));
-  let deleteWhere;
+  // Authorize FIRST: verify scan exists and is accessible to this user
+  let authWhere;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
-    deleteWhere = buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds);
+    authWhere = buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds);
   } else {
-    deleteWhere = and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
+    authWhere = and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
   }
-  const [scan] = await db.delete(scansTable).where(deleteWhere).returning();
-  if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [existing] = await db.select({ id: scansTable.id }).from(scansTable).where(authWhere);
+  if (!existing) { res.status(404).json({ error: "Scan not found" }); return; }
+  // Now safe to delete child records and the scan
+  await db.delete(scanJobsTable).where(eq(scanJobsTable.scanId, params.data.scanId));
+  await db.delete(scansTable).where(eq(scansTable.id, params.data.scanId));
   res.sendStatus(204);
 });
 

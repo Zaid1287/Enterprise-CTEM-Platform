@@ -484,14 +484,15 @@ router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedReq
   const assetIds   = assets.map(a => a.id);
   const assetDomains = assets.map(a => a.value).filter(Boolean);
 
+  // Query by assetId (not tenantId) so cross-tenant multi-asset reports work correctly
   const [findings, riskRows, brandScans] = await Promise.all([
     db.select().from(findingsTable)
-      .where(and(eq(findingsTable.tenantId, tenantId), inArray(findingsTable.assetId, assetIds)))
+      .where(inArray(findingsTable.assetId, assetIds))
       .orderBy(desc(findingsTable.id)),
     db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds)),
     assetDomains.length > 0
       ? db.select().from(brandThreatScansTable)
-          .where(and(eq(brandThreatScansTable.tenantId, tenantId), inArray(brandThreatScansTable.domain, assetDomains)))
+          .where(inArray(brandThreatScansTable.domain, assetDomains))
           .orderBy(desc(brandThreatScansTable.id))
       : Promise.resolve([]),
   ]);
