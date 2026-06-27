@@ -580,32 +580,27 @@ router.get("/auth/avatar/:filename", requireAuth, (req: AuthenticatedRequest, re
 // ── Seed compliance frameworks + tools for new tenant (no fake assets/findings) ──
 
 export async function seedNewTenantData(tenantId: number): Promise<void> {
-  try {
-    const { complianceFrameworksTable, securityToolsTable } = await import("@workspace/db");
+  const { complianceFrameworksTable, securityToolsTable } = await import("@workspace/db");
 
-    // Ensure compliance frameworks exist (shared across all tenants)
-    let frameworks = await db.select().from(complianceFrameworksTable);
-    if (frameworks.length === 0) {
-      frameworks = await db.insert(complianceFrameworksTable).values([
-        { name: "ISO 27001", shortName: "ISO27001", version: "2022", description: "Information security management systems standard", totalControls: 93 },
-        { name: "SOC 2 Type II", shortName: "SOC2", version: "2017", description: "Service Organization Control 2 framework", totalControls: 64 },
-        { name: "PCI DSS", shortName: "PCI-DSS", version: "4.0", description: "Payment Card Industry Data Security Standard", totalControls: 281 },
-        { name: "HIPAA", shortName: "HIPAA", version: "2013", description: "Health Insurance Portability and Accountability Act", totalControls: 54 },
-        { name: "CIS Controls", shortName: "CIS", version: "v8", description: "Center for Internet Security Critical Security Controls", totalControls: 153 },
-      ]).returning();
-    }
-
-    // Default tools for every tenant
-    await db.insert(securityToolsTable).values([
-      { tenantId, name: "subfinder", description: "Subdomain enumeration using passive OSINT sources", githubUrl: "https://github.com/projectdiscovery/subfinder", category: "recon", installCommand: "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", updateCommand: "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", runCommand: "subfinder -d {target} -all -json", outputFormat: "json", isActive: true },
-      { tenantId, name: "httpx", description: "Fast and multi-purpose HTTP toolkit for probing web servers", githubUrl: "https://github.com/projectdiscovery/httpx", category: "web_recon", installCommand: "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", updateCommand: "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", runCommand: "httpx -u {target} -title -status-code -tech-detect -json", outputFormat: "json", isActive: true },
-      { tenantId, name: "naabu", description: "Fast port scanner", githubUrl: "https://github.com/projectdiscovery/naabu", category: "port_scan", installCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", updateCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", runCommand: "naabu -host {target} -top-ports 1000 -json", outputFormat: "json", isActive: true },
-      { tenantId, name: "nuclei", description: "Fast and customizable vulnerability scanner", githubUrl: "https://github.com/projectdiscovery/nuclei", category: "vuln_scan", installCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", updateCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", runCommand: "nuclei -u {target} -json", outputFormat: "json", isActive: true },
-    ]).onConflictDoNothing();
-
-  } catch (_err) {
-    // Seed failure should not block registration
+  // Ensure compliance frameworks exist (shared across all tenants — idempotent)
+  let frameworks = await db.select().from(complianceFrameworksTable);
+  if (frameworks.length === 0) {
+    frameworks = await db.insert(complianceFrameworksTable).values([
+      { name: "ISO 27001", shortName: "ISO27001", version: "2022", description: "Information security management systems standard", totalControls: 93 },
+      { name: "SOC 2 Type II", shortName: "SOC2", version: "2017", description: "Service Organization Control 2 framework", totalControls: 64 },
+      { name: "PCI DSS", shortName: "PCI-DSS", version: "4.0", description: "Payment Card Industry Data Security Standard", totalControls: 281 },
+      { name: "HIPAA", shortName: "HIPAA", version: "2013", description: "Health Insurance Portability and Accountability Act", totalControls: 54 },
+      { name: "CIS Controls", shortName: "CIS", version: "v8", description: "Center for Internet Security Critical Security Controls", totalControls: 153 },
+    ]).returning();
   }
+
+  // Default tools for every tenant — errors propagate to the caller
+  await db.insert(securityToolsTable).values([
+    { tenantId, name: "subfinder", description: "Subdomain enumeration using passive OSINT sources", githubUrl: "https://github.com/projectdiscovery/subfinder", category: "recon", installCommand: "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", updateCommand: "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", runCommand: "subfinder -d {target} -all -json", outputFormat: "json", isActive: true },
+    { tenantId, name: "httpx", description: "Fast and multi-purpose HTTP toolkit for probing web servers", githubUrl: "https://github.com/projectdiscovery/httpx", category: "web_recon", installCommand: "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", updateCommand: "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", runCommand: "httpx -u {target} -title -status-code -tech-detect -json", outputFormat: "json", isActive: true },
+    { tenantId, name: "naabu", description: "Fast port scanner", githubUrl: "https://github.com/projectdiscovery/naabu", category: "port_scan", installCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", updateCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", runCommand: "naabu -host {target} -top-ports 1000 -json", outputFormat: "json", isActive: true },
+    { tenantId, name: "nuclei", description: "Fast and customizable vulnerability scanner", githubUrl: "https://github.com/projectdiscovery/nuclei", category: "vuln_scan", installCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", updateCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", runCommand: "nuclei -u {target} -json", outputFormat: "json", isActive: true },
+  ]).onConflictDoNothing();
 }
 
 export default router;

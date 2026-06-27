@@ -245,16 +245,13 @@ router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async 
   const temporaryPassword = crypto.randomBytes(10).toString("base64url").slice(0, 14);
   const passwordHash = await hashPassword(temporaryPassword);
 
-  // Wrap creation + seeding + admin user in a single transaction so a mid-flow
-  // failure does not leave a "shell" tenant without any users or seed data.
+  // Step 1: Create the tenant + admin user atomically.
+  // Seeding is intentionally done AFTER commit so the tenant FK is visible
+  // on the global connection pool used by seedNewTenantData.
   const { tenant, adminUser } = await db.transaction(async (tx) => {
     const [t] = await tx.insert(tenantsTable)
       .values({ ...parsed.data, isPlatform: false, parentTenantId: parentTenantId ?? null })
       .returning();
-
-    // Seed security tools and compliance frameworks (uses the shared db pool but
-    // does not need to be in the same transaction — seeding is additive/idempotent)
-    await seedNewTenantData(t.id);
 
     const adminEmail = `admin@${(parsed.data as any).slug ?? t.slug}.sentinelware.io`;
     const [u] = await tx.insert(usersTable).values({
@@ -269,6 +266,10 @@ router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async 
 
     return { tenant: t, adminUser: u };
   });
+
+  // Step 2: Seed tools and frameworks now that the tenant row is committed and
+  // visible to the global connection pool. Failure here rolls up to the caller.
+  await seedNewTenantData(tenant.id);
 
   res.status(201).json({
     ...toTenantResponse(tenant),
