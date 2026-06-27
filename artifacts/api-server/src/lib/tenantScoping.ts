@@ -21,6 +21,19 @@ export async function getPrivilegedTenantIds(user: NonNullable<AuthenticatedRequ
     return rows.map(r => r.id);
   }
   if (user.role === "admin") {
+    // Platform-admin has the same cross-tenant visibility as super_admin
+    const [myTenant] = await db
+      .select({ isPlatform: tenantsTable.isPlatform })
+      .from(tenantsTable)
+      .where(eq(tenantsTable.id, user.tenantId));
+    if (myTenant?.isPlatform) {
+      const rows = await db
+        .select({ id: tenantsTable.id })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.isPlatform, false));
+      return rows.map(r => r.id);
+    }
+    // Non-platform admin: only child tenants (parentTenantId = admin's tenantId)
     const rows = await db
       .select({ id: tenantsTable.id })
       .from(tenantsTable)

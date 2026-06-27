@@ -204,11 +204,19 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   // All non-platform tenants (clients)
   const allClientTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
 
-  // Non-platform admin sees only child client tenants (parentTenantId = admin's tenantId)
-  // Super admin sees all client tenants
-  const visibleClientTenants = callerRole === "super_admin"
-    ? allClientTenants
-    : allClientTenants.filter(t => t.parentTenantId === req.user!.tenantId);
+  // Super admin and platform-admin see all client tenants.
+  // Non-platform admin sees only direct child tenants.
+  let visibleClientTenants: typeof allClientTenants;
+  if (callerRole === "super_admin") {
+    visibleClientTenants = allClientTenants;
+  } else {
+    // Check if this admin belongs to the platform tenant
+    const [myTenant] = await db.select({ isPlatform: tenantsTable.isPlatform })
+      .from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId));
+    visibleClientTenants = myTenant?.isPlatform
+      ? allClientTenants
+      : allClientTenants.filter(t => t.parentTenantId === req.user!.tenantId);
+  }
 
   const clientTenants = visibleClientTenants;
   const clientTenantIds = clientTenants.map(t => t.id);

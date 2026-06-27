@@ -1,11 +1,11 @@
 import { useState, useRef } from "react";
 import {
-  useGetComplianceSummary, useListComplianceControls, useUpdateComplianceControl,
+  useListComplianceControls, useUpdateComplianceControl,
   getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Paperclip, Upload, FileText, X, Download, Trash2, Bot, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -15,6 +15,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { cn, statusBadgeClass } from "@/lib/utils";
 import { getToken } from "@/lib/auth";
 import { apiFetch } from "@/lib/apiFetch";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const FRAMEWORK_COLORS: Record<string, string> = {
   ISO27001: "border-blue-500/40 bg-blue-500/5",
@@ -128,11 +130,13 @@ export default function CompliancePage() {
   };
   const queryClient = useQueryClient();
 
-  const { data: summary, isLoading: loadingSummary } = useGetComplianceSummary({
-    query: { queryKey: getGetComplianceSummaryQueryKey() },
-  });
-
   const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+
+  const summaryUrl = `${BASE}/api/compliance/summary${isPrivileged && tenantFilter ? `?tenantId=${tenantFilter}` : ""}`;
+  const { data: summary, isLoading: loadingSummary } = useQuery({
+    queryKey: [...getGetComplianceSummaryQueryKey(), tenantFilter],
+    queryFn: () => apiFetch(summaryUrl),
+  });
   const controlParams = {
     frameworkId: selectedFramework ?? undefined,
     status: statusFilter || undefined,
