@@ -49,9 +49,18 @@ router.get("/risk/scores/:assetId", requireAuth, async (req: AuthenticatedReques
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid asset ID" }); return; }
 
   const role = req.user!.role;
-  const assetFilter = (role === "super_admin" || role === "admin")
-    ? eq(riskScoresTable.assetId, assetId)
-    : and(eq(riskScoresTable.assetId, assetId), eq(assetsTable.tenantId, req.user!.tenantId));
+  let assetFilter;
+  if (role === "super_admin" || role === "admin") {
+    assetFilter = eq(riskScoresTable.assetId, assetId);
+  } else if (role === "client") {
+    // Client: only if the asset is explicitly assigned to them
+    assetFilter = and(
+      eq(riskScoresTable.assetId, assetId),
+      eq(assetsTable.assignedClientId, req.user!.userId),
+    );
+  } else {
+    assetFilter = and(eq(riskScoresTable.assetId, assetId), eq(assetsTable.tenantId, req.user!.tenantId));
+  }
   const [row] = await db.select({
     score: riskScoresTable,
     assetName: assetsTable.name,

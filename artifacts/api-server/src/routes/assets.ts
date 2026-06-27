@@ -342,17 +342,23 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
     delete updateData.assignedAccountManagerId;
   }
 
-  // Validate assignedClientId: must be role='client' AND same tenant as the requester
+  // Load the target asset first (scoped to roles that can access it) so we can validate against ITS tenant
+  const patchAmTids = patchAssetRole === "account_manager" ? await getAmClientTenantIds(req.user!.userId) : undefined;
+  const [existingAsset] = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
+    .from(assetsTable).where(assetAccessFilter(params.data.assetId, req.user!, patchAmTids));
+  if (!existingAsset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  // Validate assignedClientId: must be role='client' AND same tenant as the asset being updated
   if (updateData.assignedClientId != null && typeof updateData.assignedClientId === "number") {
     const [targetUser] = await db.select({ id: usersTable.id, role: usersTable.role, tenantId: usersTable.tenantId })
       .from(usersTable).where(eq(usersTable.id, updateData.assignedClientId));
-    if (!targetUser || targetUser.role !== "client" || targetUser.tenantId !== req.user!.tenantId) {
-      res.status(400).json({ error: "assignedClientId must refer to a client-role user within the same tenant" }); return;
+    if (!targetUser || targetUser.role !== "client" || targetUser.tenantId !== existingAsset.tenantId) {
+      res.status(400).json({ error: "assignedClientId must refer to a client-role user within the same tenant as the asset" }); return;
     }
   }
 
   const [asset] = await db.update(assetsTable).set(updateData)
-    .where(assetAccessFilter(params.data.assetId, req.user!))
+    .where(eq(assetsTable.id, existingAsset.id))
     .returning();
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
   await logAudit(req.user!, "update_asset", "asset", asset.id);

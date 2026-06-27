@@ -642,6 +642,41 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
     return;
   }
 
+  // Client: verify report intersects their assigned assets before download
+  if (dlRole === "client") {
+    const clientAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.assignedClientId, req.user!.userId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    const clientAssetIds = new Set(clientAssets.map(a => a.id));
+    const [clientReport] = await db.select().from(reportsTable)
+      .where(and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId)));
+    if (!clientReport) { res.status(404).json({ error: "Report not found" }); return; }
+    const hasAccess = Array.isArray(clientReport.assetIds) && (clientReport.assetIds as number[]).some(id => clientAssetIds.has(id));
+    if (!hasAccess) { res.status(404).json({ error: "Report not found" }); return; }
+    if (clientReport.status !== "ready") { res.status(409).json({ error: "Report is not ready yet" }); return; }
+    // Scope download data to intersection of report assetIds and client's assigned assets
+    const reportAssetIds = Array.isArray(clientReport.assetIds) ? (clientReport.assetIds as number[]) : [];
+    const scopedIds = reportAssetIds.filter(id => clientAssetIds.has(id));
+    const tenantId = clientReport.tenantId;
+    const fmt = clientReport.format ?? "csv";
+    const safeName = clientReport.title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
+    const findings = await db.select({ id: findingsTable.id, title: findingsTable.title, severity: findingsTable.severity, status: findingsTable.status, cve: findingsTable.cve, cvss: findingsTable.cvss, cwe: findingsTable.cwe, description: findingsTable.description, remediation: findingsTable.remediation, assetId: findingsTable.assetId, createdAt: findingsTable.createdAt }).from(findingsTable).where(and(eq(findingsTable.tenantId, tenantId), inArray(findingsTable.assetId, scopedIds.length > 0 ? scopedIds : [-1])));
+    const assets = await db.select({ id: assetsTable.id, name: assetsTable.name, value: assetsTable.value, type: assetsTable.type, riskLevel: assetsTable.riskLevel }).from(assetsTable).where(inArray(assetsTable.id, scopedIds.length > 0 ? scopedIds : [-1]));
+    const assetMap = Object.fromEntries(assets.map(a => [a.id, a]));
+    if (fmt === "json") {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.json"`);
+      res.json({ report: toReportResponse(clientReport), findings: findings.map(f => ({ ...f, asset: assetMap[f.assetId ?? 0] ?? null })), generatedAt: new Date().toISOString() });
+    } else {
+      const headers = ["ID", "Title", "Severity", "Status", "CVE", "CVSS", "CWE", "Asset Name", "Description", "Created At"];
+      const csvRows = findings.map(f => { const a = assetMap[f.assetId ?? 0]; return [f.id, f.title, f.severity, f.status, f.cve ?? "", f.cvss ?? "", f.cwe ?? "", a?.name ?? "", f.description ?? "", f.createdAt.toISOString()]; });
+      const csv = [headers.join(","), ...csvRows.map(r => r.map(v => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s; }).join(","))].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.csv"`);
+      res.send(csv);
+    }
+    return;
+  }
+
   let dlWhere;
   if (dlRole === "super_admin" || dlRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -757,6 +792,19 @@ router.get("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, 
       .from(externalMemberAssetsTable).where(eq(externalMemberAssetsTable.userId, req.user!.userId));
     const allowedIds = new Set(rows.map(r => r.assetId));
     const hasAccess = Array.isArray(report.assetIds) && (report.assetIds as number[]).some(id => allowedIds.has(id));
+    if (!hasAccess) { res.status(404).json({ error: "Report not found" }); return; }
+    res.json(toReportResponse(report)); return;
+  }
+
+  // Client: only reports that intersect assigned assets
+  if (getRole === "client") {
+    const clientAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.assignedClientId, req.user!.userId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    const clientAssetIds = new Set(clientAssets.map(a => a.id));
+    const [report] = await db.select().from(reportsTable)
+      .where(and(eq(reportsTable.id, params.data.reportId), eq(reportsTable.tenantId, req.user!.tenantId)));
+    if (!report) { res.status(404).json({ error: "Report not found" }); return; }
+    const hasAccess = Array.isArray(report.assetIds) && (report.assetIds as number[]).some(id => clientAssetIds.has(id));
     if (!hasAccess) { res.status(404).json({ error: "Report not found" }); return; }
     res.json(toReportResponse(report)); return;
   }
