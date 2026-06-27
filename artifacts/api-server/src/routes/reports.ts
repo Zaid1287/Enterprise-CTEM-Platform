@@ -64,9 +64,12 @@ router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Prom
     );
     res.json(amReports.map(toReportResponse)); return;
   }
-  // admin/SA: cross-tenant — see all reports
+  // admin/SA: cross-tenant — see all reports, optionally filtered by tenantId
   if (role === "super_admin" || role === "admin") {
-    const allReports = await db.select().from(reportsTable).orderBy(desc(reportsTable.id));
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    const reportWhere = !isNaN(qTenantId) ? eq(reportsTable.tenantId, qTenantId) : undefined;
+    const allReports = await db.select().from(reportsTable)
+      .where(reportWhere).orderBy(desc(reportsTable.id));
     res.json(allReports.map(toReportResponse)); return;
   }
   const rWhere = eq(reportsTable.tenantId, req.user!.tenantId);
@@ -77,8 +80,17 @@ router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Prom
 router.post("/reports", requireAuth, requireRole("manager", "admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateReportBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
+  // admin/SA may pass targetTenantId to create a report under a client tenant
+  const role = req.user!.role;
+  let reportTenantId = req.user!.tenantId;
+  if ((role === "super_admin" || role === "admin") && req.body.targetTenantId) {
+    const targetId = parseInt(req.body.targetTenantId, 10);
+    if (!isNaN(targetId)) reportTenantId = targetId;
+  }
+
   const [report] = await db.insert(reportsTable).values({
-    ...parsed.data, tenantId: req.user!.tenantId, status: "pending",
+    ...parsed.data, tenantId: reportTenantId, status: "pending",
   }).returning();
   setTimeout(async () => {
     await db.update(reportsTable).set({

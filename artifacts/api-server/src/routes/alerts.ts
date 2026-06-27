@@ -261,7 +261,8 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   const role = req.user!.role;
   let tenantFilter;
   if (role === "super_admin" || role === "admin") {
-    tenantFilter = undefined; // cross-tenant unrestricted
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    tenantFilter = !isNaN(qTenantId) ? eq(alertsTable.tenantId, qTenantId) : undefined;
   } else if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }

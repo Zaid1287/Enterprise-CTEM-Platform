@@ -12,7 +12,6 @@ const router = Router();
 // POST /api/discovery/run/:assetId
 // Run all passive discovery modules for an asset and persist results
 router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const tenantId = req.user!.tenantId;
   const discoveryRole = req.user!.role;
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
@@ -52,7 +51,7 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
   const savedIds: number[] = [];
   for (const result of results) {
     const [row] = await db.insert(discoveryResultsTable).values({
-      tenantId,
+      tenantId: asset.tenantId,
       assetId,
       scanId: req.body?.scanId ?? null,
       source: result.source,
@@ -74,7 +73,7 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
       .split("/")[0]!.split("?")[0]!;
     if (rawDomain && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(rawDomain)) {
       setImmediate(() => {
-        void triggerBrandThreatScan(tenantId, rawDomain).catch((err: unknown) => {
+        void triggerBrandThreatScan(asset.tenantId, rawDomain).catch((err: unknown) => {
           logger.warn({ err, domain: rawDomain }, "Auto brand-threat trigger from discovery failed");
         });
       });

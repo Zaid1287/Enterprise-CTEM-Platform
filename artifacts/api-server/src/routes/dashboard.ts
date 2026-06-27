@@ -198,18 +198,37 @@ router.get("/dashboard/exposure-breakdown", requireAuth, async (req: Authenticat
 });
 
 router.get("/dashboard/platform-overview", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  if (req.user!.role !== "super_admin" && req.user!.role !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const callerRole = req.user!.role;
+  if (callerRole !== "super_admin" && callerRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
 
-  // Client tenants only — used for client-specific displays (table, rankings, AM portfolio)
-  const clientTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+  // All non-platform tenants (clients)
+  const allClientTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+
+  // Non-platform admin sees only child client tenants (parentTenantId = admin's tenantId)
+  // Super admin sees all client tenants
+  const visibleClientTenants = callerRole === "super_admin"
+    ? allClientTenants
+    : allClientTenants.filter(t => t.parentTenantId === req.user!.tenantId);
+
+  const clientTenants = visibleClientTenants;
   const clientTenantIds = clientTenants.map(t => t.id);
+  // Aggregated platform stats use client tenant scope only (never include platform tenant)
+  const allTenantsRaw = clientTenants;
+  const allTenantIds = clientTenantIds;
 
-  // ALL tenants (platform + client) — used for aggregated platform-wide stats
-  const allTenantsRaw = await db.select().from(tenantsTable);
-  const allTenantIds = allTenantsRaw.map(t => t.id);
+  if (allTenantIds.length === 0) {
+    // Admin with no child clients yet — return empty but valid structure
+    res.json({
+      totalClients: 0, totalAssets: 0, totalFindings: 0, totalScans: 0,
+      openAlertsCount: 0, platformRiskScore: 0, amCount: 0, clientsAtCriticalRisk: 0,
+      newVulns7D: 0, resolvedVulns7D: 0, exposedPortsCount: 0,
+      severityBreakdown: [], riskTrend: [], topVulnerableAssets: [], recentAlerts: [],
+      clientRiskTable: [], amPortfolio: [], brandThreatStats: { total: 0, high: 0, medium: 0, low: 0 },
+      takedownStats: { total: 0, pending: 0, resolved: 0 },
+    });
+    return;
+  }
 
-  // Aggregate stats use allTenantIds so the SA sees real cross-platform numbers.
-  // Client-specific displays (table, rankings, AM portfolio) use clientTenantIds only.
   const [allUsers, allAssets, allFindings, allScans, allAlerts, brandThreats, allTakedowns] = await Promise.all([
     db.select({ id: usersTable.id, tenantId: usersTable.tenantId, role: usersTable.role }).from(usersTable),
     db.select().from(assetsTable).where(inArray(assetsTable.tenantId, allTenantIds)),

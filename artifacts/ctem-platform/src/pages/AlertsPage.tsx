@@ -82,7 +82,11 @@ export default function AlertsPage() {
     };
   }, []);
 
-  const alertParams = { severity: severityFilter || undefined };
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+  const alertParams = {
+    severity: severityFilter || undefined,
+    ...(isPrivileged && tenantFilter ? { tenantId: tenantFilter } : {}),
+  };
   const { data: alerts, isLoading } = useListAlerts(alertParams as any, {
     query: {
       queryKey: getListAlertsQueryKey(alertParams as any),
@@ -150,10 +154,8 @@ export default function AlertsPage() {
   };
 
   const alertList = alerts as any[] ?? [];
-  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
-  const tenantFiltered = (isPrivileged && tenantFilter) ? alertList.filter((a: any) => a.tenantId === tenantFilter) : alertList;
-  const unreadAlerts = tenantFiltered.filter((a: any) => !a.isRead);
-  const archivedAlerts = tenantFiltered.filter((a: any) => a.isRead);
+  const unreadAlerts = alertList.filter((a: any) => !a.isRead);
+  const archivedAlerts = alertList.filter((a: any) => a.isRead);
   const unreadCount = unreadAlerts.length;
 
   const filteredUnread = severityFilter

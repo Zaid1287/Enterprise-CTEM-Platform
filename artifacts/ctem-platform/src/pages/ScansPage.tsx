@@ -107,9 +107,12 @@ export default function ScansPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const { data: scans, isLoading } = useListScans({} as any, {
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+  const scanParams = isPrivileged && tenantFilter ? { tenantId: tenantFilter } : {};
+
+  const { data: scans, isLoading } = useListScans(scanParams as any, {
     query: {
-      queryKey: getListScansQueryKey({} as any),
+      queryKey: getListScansQueryKey(scanParams as any),
       refetchInterval: (q) => {
         const data = q.state.data as any[];
         if (data?.some((s: any) => s.status === "running" || s.status === "pending")) return 3000;
@@ -126,8 +129,6 @@ export default function ScansPage() {
 
   const assetsList = (assets as any[]) ?? [];
   const allScans = (scans as any[]) ?? [];
-  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
-  const filteredScans = (isPrivileged && tenantFilter) ? allScans.filter((s: any) => s.tenantId === tenantFilter) : allScans;
 
   const autoName = useMemo(
     () => buildScanName(form.assetIds, assetsList),
@@ -135,8 +136,8 @@ export default function ScansPage() {
   );
   const effectiveName = customName.trim() || autoName;
 
-  const totalPages = Math.max(1, Math.ceil(filteredScans.length / PAGE_SIZE));
-  const paginated = filteredScans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(allScans.length / PAGE_SIZE));
+  const paginated = allScans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -199,7 +200,7 @@ export default function ScansPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Scan Management</h1>
-          <p className="text-sm text-muted-foreground">{filteredScans.length} total scans</p>
+          <p className="text-sm text-muted-foreground">{allScans.length} total scans</p>
         </div>
         <div className="flex gap-2 items-center">
           {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}

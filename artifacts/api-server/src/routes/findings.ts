@@ -87,6 +87,8 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       if (q.data.assetId) saFilters.push(eq(findingsTable.assetId, q.data.assetId));
       if (q.data.search) saFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
     }
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    if (!isNaN(qTenantId)) saFilters.push(eq(findingsTable.tenantId, qTenantId));
     const saFindings = await db.select({
       finding: findingsTable,
       assetName: assetsTable.name,

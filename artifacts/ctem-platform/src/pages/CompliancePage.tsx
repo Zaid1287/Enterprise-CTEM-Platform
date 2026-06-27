@@ -132,15 +132,16 @@ export default function CompliancePage() {
     query: { queryKey: getGetComplianceSummaryQueryKey() },
   });
 
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
   const controlParams = {
     frameworkId: selectedFramework ?? undefined,
     status: statusFilter || undefined,
+    ...(isPrivileged && tenantFilter ? { tenantId: tenantFilter } : {}),
   };
   const { data: controls, isLoading: loadingControls } = useListComplianceControls(controlParams as any, {
     query: { queryKey: getListComplianceControlsQueryKey(controlParams as any) },
   });
   const updateControl = useUpdateComplianceControl();
-  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
 
   const handleStatusChange = async (controlId: number, status: string) => {
     await updateControl.mutateAsync({ controlId, data: { status } });
@@ -274,7 +275,7 @@ export default function CompliancePage() {
                   {[...Array(6)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
               ))}
-              {!loadingControls && (isPrivileged && tenantFilter ? (controls as any[] ?? []).filter((c: any) => c.tenantId === tenantFilter) : (controls as any[] ?? [])).map((c: any) => (
+              {!loadingControls && (controls as any[] ?? []).map((c: any) => (
                 <tr key={c.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
                   <td className="px-4 py-2.5 text-xs font-mono font-medium text-primary">{c.controlId}</td>
                   <td className="px-4 py-2.5 text-xs max-w-xs">

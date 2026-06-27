@@ -455,10 +455,13 @@ export default function FindingsPage() {
   }
   function closeDrawer() { setDrawerMode(null); setDrawerFinding(null); }
 
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
+
   const params = {
     search: search || undefined,
     severity: severity || undefined,
     status: status || undefined,
+    ...(isPrivileged && tenantFilter ? { tenantId: tenantFilter } : {}),
   };
 
   const { data: findings, isLoading } = useListFindings(params as any, {
@@ -471,18 +474,16 @@ export default function FindingsPage() {
   });
 
   const list = (findings as any[]) ?? [];
-  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
-  const filteredList = (isPrivileged && tenantFilter) ? list.filter((f: any) => f.tenantId === tenantFilter) : list;
-  const totalPages = Math.max(1, Math.ceil(filteredList.length / PAGE_SIZE));
-  const paginated  = filteredList.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const paginated  = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Summary counts
   const counts = useMemo(() => ({
-    critical: filteredList.filter(f => f.severity === "critical").length,
-    high:     filteredList.filter(f => f.severity === "high").length,
-    open:     filteredList.filter(f => f.status === "open").length,
-    kev:      filteredList.filter(f => f.isKev).length,
-  }), [filteredList]);
+    critical: list.filter(f => f.severity === "critical").length,
+    high:     list.filter(f => f.severity === "high").length,
+    open:     list.filter(f => f.status === "open").length,
+    kev:      list.filter(f => f.isKev).length,
+  }), [list]);
 
   function resetPage() { setPage(1); }
 

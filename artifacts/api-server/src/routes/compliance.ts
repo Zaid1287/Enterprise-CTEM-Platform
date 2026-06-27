@@ -51,7 +51,8 @@ router.get("/compliance/controls", requireAuth, async (req: AuthenticatedRequest
   const q = ListComplianceControlsQueryParams.safeParse(req.query);
   let tenantFilter;
   if (req.user!.role === "super_admin" || req.user!.role === "admin") {
-    tenantFilter = undefined; // cross-tenant unrestricted
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    tenantFilter = !isNaN(qTenantId) ? eq(complianceControlsTable.tenantId, qTenantId) : undefined;
   } else if (req.user!.role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }

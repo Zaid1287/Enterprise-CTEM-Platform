@@ -68,8 +68,19 @@ export default function ReportsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
+  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
   const { data: reports, isLoading } = useListReports({
-    query: { queryKey: getListReportsQueryKey() },
+    query: {
+      queryKey: [getListReportsQueryKey(), tenantFilter],
+      queryFn: async () => {
+        const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+        const { apiFetch } = await import("@/lib/apiFetch");
+        const url = isPrivileged && tenantFilter
+          ? `${BASE}/api/reports?tenantId=${tenantFilter}`
+          : `${BASE}/api/reports`;
+        return apiFetch<any[]>(url);
+      },
+    },
   });
   const { data: assetsData } = useListAssets();
   const assets: any[] = (assetsData as any[]) ?? [];
@@ -86,10 +97,8 @@ export default function ReportsPage() {
   const deleteReport = useDeleteReport();
 
   const allReports = (reports as any[]) ?? [];
-  const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
-  const filteredReports = (isPrivileged && tenantFilter) ? allReports.filter((r: any) => r.tenantId === tenantFilter) : allReports;
-  const totalPages = Math.max(1, Math.ceil(filteredReports.length / PAGE_SIZE));
-  const paginated  = filteredReports.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(allReports.length / PAGE_SIZE));
+  const paginated  = allReports.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   function openCreate() {
     setStep(1);

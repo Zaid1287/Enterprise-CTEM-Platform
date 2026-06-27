@@ -125,6 +125,8 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
   if (role === "super_admin" || role === "admin") {
     const filters: any[] = [];
     if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
+    const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+    if (!isNaN(qTenantId)) filters.push(eq(scansTable.tenantId, qTenantId));
     const allScans = await db.select().from(scansTable)
       .where(filters.length > 0 ? and(...filters) : undefined)
       .orderBy(desc(scansTable.createdAt));
