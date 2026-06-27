@@ -160,14 +160,33 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
   }
 
   let assetTenantId = req.user!.tenantId; // default for non-AM roles
+  // Validated asset ID list derived from DB lookup — used for the scan record
+  // so unauthorized IDs from the raw payload can never be enqueued.
+  let validatedAssetIds: number[] = assetIds ?? [];
+
   if (assetIds && assetIds.length > 0) {
+    const deduped = [...new Set(assetIds)];
     const tenantFilter = allowedTenantIds
       ? inArray(assetsTable.tenantId, allowedTenantIds)
       : eq(assetsTable.tenantId, req.user!.tenantId);
     const assetRows = await db
       .select({ id: assetsTable.id, name: assetsTable.name, verificationStatus: assetsTable.verificationStatus, tenantId: assetsTable.tenantId })
       .from(assetsTable)
-      .where(and(inArray(assetsTable.id, assetIds), tenantFilter));
+      .where(and(inArray(assetsTable.id, deduped), tenantFilter));
+
+    // 1. All requested IDs must resolve — missing means out-of-scope or non-existent
+    if (assetRows.length !== deduped.length) {
+      res.status(403).json({ error: "One or more asset IDs are not accessible in your scope." });
+      return;
+    }
+
+    // 2. Single-tenant scan semantics — reject mixed-tenant asset sets
+    const tenantIds = [...new Set(assetRows.map(a => a.tenantId))];
+    if (tenantIds.length > 1) {
+      res.status(400).json({ error: "All assets in a scan must belong to the same tenant." });
+      return;
+    }
+
     const unverified = assetRows.filter(a => a.verificationStatus !== "verified");
     if (unverified.length > 0) {
       res.status(422).json({
@@ -176,14 +195,14 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
       });
       return;
     }
-    // For AM: use the client tenant's ID so pipeline config is fetched from the correct tenant
-    if (allowedTenantIds && assetRows.length > 0) {
-      assetTenantId = assetRows[0].tenantId ?? assetTenantId;
-    }
+
+    // 3. Derive asset IDs and tenantId from validated rows only
+    validatedAssetIds = assetRows.map(a => a.id);
+    assetTenantId = (tenantIds[0] ?? assetTenantId) as number;
   }
 
   const [scan] = await db.insert(scansTable).values({
-    ...parsed.data, tenantId: assetTenantId, status: "pending",
+    ...parsed.data, assetIds: validatedAssetIds, tenantId: assetTenantId, status: "pending",
     startedAt: new Date(),
   }).returning();
 
