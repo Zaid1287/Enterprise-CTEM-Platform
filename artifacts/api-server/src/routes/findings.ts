@@ -47,16 +47,16 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
   const q = ListFindingsQueryParams.safeParse(req.query);
   const role = req.user!.role;
 
-  // External members: restrict to findings for their explicitly granted assets (read-only)
+  // External members: restrict to open findings for their explicitly granted assets (read-only)
   if (role === "vendor" || role === "employee" || role === "third_party") {
     const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
       .from(externalMemberAssetsTable)
       .where(eq(externalMemberAssetsTable.userId, req.user!.userId));
     if (rows.length === 0) { res.json([]); return; }
     const allowedIds = rows.map(r => r.assetId);
-    const extFilters: any[] = [inArray(findingsTable.assetId, allowedIds)];
+    // Always enforce status="open" for external members — no closed/resolved findings
+    const extFilters: any[] = [inArray(findingsTable.assetId, allowedIds), eq(findingsTable.status, "open")];
     if (q.success) {
-      if (q.data.status) extFilters.push(eq(findingsTable.status, q.data.status));
       if (q.data.severity) extFilters.push(eq(findingsTable.severity, q.data.severity));
       if (q.data.assetId) extFilters.push(eq(findingsTable.assetId, q.data.assetId));
       if (q.data.search) extFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));

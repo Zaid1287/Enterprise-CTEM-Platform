@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
-import { db, invitationsTable, assetsTable, tenantsTable } from "@workspace/db";
+import { db, invitationsTable, assetsTable, tenantsTable, usersTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { sendEmail } from "../lib/email";
 import crypto from "crypto";
@@ -80,9 +80,11 @@ router.post("/invitations", requireAuth, async (req: AuthenticatedRequest, res):
     assetNames = assetRows.map(a => a.name);
   }
 
-  // Fetch tenant name for the email
+  // Fetch tenant name and inviter name for the email
   const [tenant] = await db.select({ name: tenantsTable.name }).from(tenantsTable)
     .where(eq(tenantsTable.id, req.user!.tenantId));
+  const [inviter] = await db.select({ firstName: usersTable.firstName, lastName: usersTable.lastName, email: usersTable.email })
+    .from(usersTable).where(eq(usersTable.id, req.user!.userId));
 
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
@@ -102,6 +104,9 @@ router.post("/invitations", requireAuth, async (req: AuthenticatedRequest, res):
   const baseUrl = getPlatformBaseUrl(req as any);
   const acceptLink = `${baseUrl}/accept-invitation?token=${token}`;
   const tenantName = tenant?.name ?? "Sentinelware";
+  const inviterName = inviter
+    ? [inviter.firstName, inviter.lastName].filter(Boolean).join(" ") || inviter.email
+    : "A team member";
 
   await sendEmail({
     to: email,
@@ -126,7 +131,7 @@ router.post("/invitations", requireAuth, async (req: AuthenticatedRequest, res):
     <div class="brand">Sentinelware</div>
     <h1>You've been invited</h1>
     <p>Hi ${name},</p>
-    <p>You have been invited to join <strong style="color:#e5e5e5;">${tenantName}</strong> on Sentinelware as a <strong style="color:#e5e5e5;">${role.replace(/_/g, " ")}</strong>.</p>
+    <p><strong style="color:#e5e5e5;">${inviterName}</strong> has invited you to join <strong style="color:#e5e5e5;">${tenantName}</strong> on Sentinelware as a <strong style="color:#e5e5e5;">${role.replace(/_/g, " ")}</strong>.</p>
     ${assetNames.length > 0 ? `<p style="margin-bottom:4px;">You will have access to:</p>
     <ul class="asset-list">${assetNames.map(n => `<li>• ${n}</li>`).join("")}</ul>` : ""}
     <p>Click the button below to create your account and get started:</p>

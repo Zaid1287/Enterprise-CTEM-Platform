@@ -614,13 +614,15 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
     const hasAccess = Array.isArray(report.assetIds) && (report.assetIds as number[]).some(id => allowedIds.has(id));
     if (!hasAccess) { res.status(404).json({ error: "Report not found" }); return; }
     if (report.status !== "ready") { res.status(409).json({ error: "Report is not ready yet" }); return; }
-    // Fall through to report generation with scoped data
+    // Scope to intersection: report's assetIds ∩ user's allowed assets (open findings only)
+    const reportAssetIds = Array.isArray(report.assetIds) ? (report.assetIds as number[]) : [];
+    const scopedIds = reportAssetIds.filter(id => allowedIds.has(id));
+    if (scopedIds.length === 0) { res.status(404).json({ error: "Report not found" }); return; }
     const tenantId = report.tenantId;
     const fmt = report.format ?? "csv";
     const safeName = report.title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
-    const allowedArr = Array.from(allowedIds);
-    const findings = await db.select({ id: findingsTable.id, title: findingsTable.title, severity: findingsTable.severity, status: findingsTable.status, cve: findingsTable.cve, cvss: findingsTable.cvss, cwe: findingsTable.cwe, description: findingsTable.description, remediation: findingsTable.remediation, assetId: findingsTable.assetId, createdAt: findingsTable.createdAt }).from(findingsTable).where(and(eq(findingsTable.tenantId, tenantId), inArray(findingsTable.assetId, allowedArr)));
-    const assets = await db.select({ id: assetsTable.id, name: assetsTable.name, value: assetsTable.value, type: assetsTable.type, riskLevel: assetsTable.riskLevel }).from(assetsTable).where(inArray(assetsTable.id, allowedArr));
+    const findings = await db.select({ id: findingsTable.id, title: findingsTable.title, severity: findingsTable.severity, status: findingsTable.status, cve: findingsTable.cve, cvss: findingsTable.cvss, cwe: findingsTable.cwe, description: findingsTable.description, remediation: findingsTable.remediation, assetId: findingsTable.assetId, createdAt: findingsTable.createdAt }).from(findingsTable).where(and(eq(findingsTable.tenantId, tenantId), inArray(findingsTable.assetId, scopedIds), eq(findingsTable.status, "open")));
+    const assets = await db.select({ id: assetsTable.id, name: assetsTable.name, value: assetsTable.value, type: assetsTable.type, riskLevel: assetsTable.riskLevel }).from(assetsTable).where(inArray(assetsTable.id, scopedIds));
     const assetMap = Object.fromEntries(assets.map(a => [a.id, a]));
     let extJsonData: object = {};
     let extCsvContent = "";
