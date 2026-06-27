@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
-import { db, takedownRequestsTable } from "@workspace/db";
+import { db, takedownRequestsTable, assetsTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { getPrivilegedTenantIds, buildRecordFilter } from "../lib/tenantScoping";
 import { logAudit } from "../lib/audit";
@@ -36,6 +36,24 @@ const upload = multer({
 router.get("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
   const tdRole = req.user!.role;
+
+  // Client: show only takedowns matching their assigned assets' domains
+  if (tdRole === "client") {
+    const assignedAssets = await db.select({ value: assetsTable.value })
+      .from(assetsTable).where(eq(assetsTable.assignedClientId, req.user!.userId));
+    if (assignedAssets.length === 0) { res.json([]); return; }
+    const domains = assignedAssets.map(a =>
+      String(a.value).toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!
+    );
+    const all = await db.select().from(takedownRequestsTable).orderBy(desc(takedownRequestsTable.createdAt));
+    const filtered = all.filter(t =>
+      t.targetDomain && domains.some(d =>
+        String(t.targetDomain).toLowerCase().includes(d) || d.includes(String(t.targetDomain).toLowerCase())
+      )
+    );
+    res.json(filtered); return;
+  }
+
   let tdWhere;
   if (tdRole === "super_admin" || tdRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);

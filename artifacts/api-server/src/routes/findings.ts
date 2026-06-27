@@ -209,6 +209,28 @@ router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest
     return;
   }
 
+  // Client: verify the finding's asset is assigned to them
+  if (role === "client") {
+    const [f] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId })
+      .from(findingsTable).where(eq(findingsTable.id, params.data.findingId));
+    if (!f) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [assigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.id, f.assetId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    if (!assigned) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [row] = await db.select({
+      finding: findingsTable, assetName: assetsTable.name, assetValue: assetsTable.value,
+      assetType: assetsTable.type, assetLastScannedAt: assetsTable.lastScannedAt,
+      assetIpAddress: assetsTable.ipAddress, assetPort: assetsTable.port,
+      assetTags: assetsTable.tags, assetRiskScore: riskScoresTable.score,
+    }).from(findingsTable)
+      .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
+      .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+      .where(eq(findingsTable.id, params.data.findingId));
+    if (!row) { res.status(404).json({ error: "Finding not found" }); return; }
+    res.json(toFindingResponse(row.finding, row.assetName, row.assetValue, row.assetType, row.assetLastScannedAt, row.assetIpAddress, row.assetPort, row.assetTags, row.assetRiskScore));
+    return;
+  }
+
   let findingWhere;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -252,6 +274,16 @@ router.get("/findings/:findingId/scan-data", requireAuth, async (req: Authentica
       .from(externalMemberAssetsTable)
       .where(and(eq(externalMemberAssetsTable.userId, req.user!.userId), eq(externalMemberAssetsTable.assetId, f.assetId)));
     if (!granted) { res.status(404).json({ error: "Finding not found" }); return; }
+  }
+
+  // Client: verify finding's asset is assigned to them
+  if (scanDataRole === "client") {
+    const [f] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId })
+      .from(findingsTable).where(eq(findingsTable.id, params.data.findingId));
+    if (!f) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [assigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.id, f.assetId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    if (!assigned) { res.status(404).json({ error: "Finding not found" }); return; }
   }
 
   let scanDataFindingWhere;
@@ -360,6 +392,16 @@ router.get("/findings/:findingId/comments", requireAuth, async (req: Authenticat
       .from(externalMemberAssetsTable)
       .where(and(eq(externalMemberAssetsTable.userId, req.user!.userId), eq(externalMemberAssetsTable.assetId, f.assetId)));
     if (!granted) { res.status(404).json({ error: "Finding not found" }); return; }
+  }
+
+  // Client: verify finding's asset is assigned to them
+  if (commentsRole === "client") {
+    const [f] = await db.select({ assetId: findingsTable.assetId })
+      .from(findingsTable).where(eq(findingsTable.id, params.data.findingId));
+    if (!f) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [assigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.id, f.assetId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    if (!assigned) { res.status(404).json({ error: "Finding not found" }); return; }
   }
 
   const comments = await db.select({

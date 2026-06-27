@@ -340,6 +340,15 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
     delete updateData.assignedAccountManagerId;
   }
 
+  // Validate that assignedClientId refers to a real user with the 'client' role
+  if (updateData.assignedClientId != null && typeof updateData.assignedClientId === "number") {
+    const [targetUser] = await db.select({ id: usersTable.id, role: usersTable.role })
+      .from(usersTable).where(eq(usersTable.id, updateData.assignedClientId));
+    if (!targetUser || targetUser.role !== "client") {
+      res.status(400).json({ error: "assignedClientId must refer to a user with role 'client'" }); return;
+    }
+  }
+
   const [asset] = await db.update(assetsTable).set(updateData)
     .where(assetAccessFilter(params.data.assetId, req.user!))
     .returning();

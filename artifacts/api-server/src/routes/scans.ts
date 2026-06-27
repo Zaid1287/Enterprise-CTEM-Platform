@@ -179,6 +179,10 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
   if (role === "vendor" || role === "employee" || role === "third_party") {
     res.status(403).json({ error: "External members cannot create scans" }); return;
   }
+  // Client users are read-only and cannot initiate scans
+  if (role === "client") {
+    res.status(403).json({ error: "Client users cannot create scans" }); return;
+  }
 
   const parsed = CreateScanBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
@@ -311,6 +315,16 @@ router.get("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res)
     const privIds = await getPrivilegedTenantIds(req.user!);
     [scan] = await db.select().from(scansTable)
       .where(buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds));
+  } else if (role === "client") {
+    // Client: scan is accessible only if it covers at least one of their assigned assets
+    [scan] = await db.select().from(scansTable).where(eq(scansTable.id, params.data.scanId));
+    if (scan) {
+      const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+        .where(eq(assetsTable.assignedClientId, req.user!.userId));
+      const assignedIds = new Set(assignedAssets.map(a => a.id));
+      const hasAccess = Array.isArray(scan.assetIds) && (scan.assetIds as number[]).some(id => assignedIds.has(id));
+      if (!hasAccess) scan = undefined as any;
+    }
   } else {
     [scan] = await db.select().from(scansTable)
       .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)));

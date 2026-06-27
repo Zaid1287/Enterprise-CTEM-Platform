@@ -3,20 +3,23 @@ import { useParams, useLocation } from "wouter";
 import {
   useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
   useListAssetTechnologies, useRunTechScan, useListAssetScreenshots, useRunScreenshotScan,
-  useUpdateAsset, useListBrandThreats,
+  useUpdateAsset, useListBrandThreats, useListUsers,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
   getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey, getListBrandThreatsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw, Camera, AlertTriangle, X,
-  ChevronLeft, ChevronRight, Download, ShieldAlert, Fish, DatabaseZap, Siren,
+  ChevronLeft, ChevronRight, Download, ShieldAlert, Fish, DatabaseZap, Siren, UserCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Link } from "wouter";
 import { cn, severityBgColor, statusBadgeClass, riskLevelBg, capitalize, formatDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { downloadAssetPdf } from "@/lib/pdfReport";
 import { getToken } from "@/lib/auth";
 
@@ -66,6 +69,7 @@ export default function AssetDetailPage() {
   const id = parseInt(params.id ?? "0", 10);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [verifying, setVerifying]             = useState(false);
   const [scanning, setScanning]               = useState(false);
   const [screenshotting, setScreenshotting]   = useState(false);
@@ -74,8 +78,14 @@ export default function AssetDetailPage() {
   const [findingsPage, setFindingsPage]       = useState(0);
   const [businessImpact, setBusinessImpact]   = useState<number>(5);
   const [savingImpact, setSavingImpact]       = useState(false);
+  const [assignedClientId, setAssignedClientId]       = useState<string>("_none_");
+  const [assignedAmId, setAssignedAmId]               = useState<string>("_none_");
+  const [savingAssignment, setSavingAssignment]       = useState(false);
+
+  const canEditAssignment = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
 
   const updateAsset = useUpdateAsset();
+  const { data: usersData } = useListUsers();
 
   const { data: asset, isLoading } = useGetAsset(id, {
     query: { enabled: !!id, queryKey: getGetAssetQueryKey(id) },
@@ -154,10 +164,39 @@ export default function AssetDetailPage() {
       )
     : null;
 
+  const users = (usersData as any[]) ?? [];
+  const clientUsers = users.filter((u: any) => u.role === "client");
+  const amUsers = users.filter((u: any) => u.role === "account_manager");
+
+  // Sync assignment state when asset loads
+  useEffect(() => {
+    setAssignedClientId(a?.assignedClientId != null ? String(a.assignedClientId) : "_none_");
+    setAssignedAmId(a?.assignedAccountManagerId != null ? String(a.assignedAccountManagerId) : "_none_");
+  }, [a?.assignedClientId, a?.assignedAccountManagerId]);
+
   // Sync local businessImpact state when asset loads
   useEffect(() => {
     if (a?.businessImpact != null) setBusinessImpact(a.businessImpact);
   }, [a?.businessImpact]);
+
+  const handleSaveAssignment = async () => {
+    setSavingAssignment(true);
+    try {
+      await updateAsset.mutateAsync({
+        assetId: id,
+        data: {
+          assignedClientId: assignedClientId === "_none_" ? null : parseInt(assignedClientId),
+          assignedAccountManagerId: assignedAmId === "_none_" ? null : parseInt(assignedAmId),
+        } as any,
+      });
+      queryClient.invalidateQueries({ queryKey: getGetAssetQueryKey(id) });
+      toast({ title: "Assignment saved", description: "Asset assignment has been updated." });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to save assignment", variant: "destructive" });
+    } finally {
+      setSavingAssignment(false);
+    }
+  };
 
   const handleSaveBusinessImpact = async (val: number) => {
     setSavingImpact(true);
@@ -298,7 +337,54 @@ export default function AssetDetailPage() {
           </div>
         </div>
 
-        {(a.assignedClientName || a.assignedAccountManagerName) && (
+        {/* Assignment — editable for admin/SA/AM, read-only for others */}
+        {canEditAssignment ? (
+          <div className="bg-accent/40 rounded-lg p-3 mt-3 space-y-3">
+            <div className="flex items-center gap-2 mb-1">
+              <UserCheck className="w-3.5 h-3.5 text-muted-foreground" />
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Assignment</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Client</Label>
+                <Select value={assignedClientId} onValueChange={setAssignedClientId}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none_">None</SelectItem>
+                    {clientUsers.map((u: any) => (
+                      <SelectItem key={u.id} value={String(u.id)}>{u.firstName} {u.lastName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Account Manager</Label>
+                <Select value={assignedAmId} onValueChange={setAssignedAmId}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none_">None</SelectItem>
+                    {amUsers.map((u: any) => (
+                      <SelectItem key={u.id} value={String(u.id)}>{u.firstName} {u.lastName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] px-3 w-full"
+              disabled={savingAssignment || (
+                assignedClientId === (a.assignedClientId != null ? String(a.assignedClientId) : "_none_") &&
+                assignedAmId === (a.assignedAccountManagerId != null ? String(a.assignedAccountManagerId) : "_none_")
+              )}
+              onClick={handleSaveAssignment}
+            >
+              {savingAssignment ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+              Save Assignment
+            </Button>
+          </div>
+        ) : (a.assignedClientName || a.assignedAccountManagerName) ? (
           <div className="grid grid-cols-2 gap-3 mt-3">
             {a.assignedClientName && (
               <div className="bg-accent/40 rounded-lg p-3">
@@ -313,7 +399,7 @@ export default function AssetDetailPage() {
               </div>
             )}
           </div>
-        )}
+        ) : null}
 
         {a.tags?.length > 0 && (
           <div className="flex gap-1.5 flex-wrap mt-3">

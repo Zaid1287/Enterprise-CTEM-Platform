@@ -23,6 +23,8 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
   if (discoveryRole === "super_admin" || discoveryRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
     assetWhere = buildRecordFilter(eq(assetsTable.id, assetId), assetsTable.tenantId, privIds);
+  } else if (discoveryRole === "client") {
+    assetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.assignedClientId, req.user!.userId));
   } else {
     assetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, callerTenantId));
   }
@@ -100,6 +102,8 @@ router.get("/discovery/results/:assetId", requireAuth, async (req: Authenticated
   if (resultsRole === "super_admin" || resultsRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
     resultsAssetWhere = buildRecordFilter(eq(assetsTable.id, assetId), assetsTable.tenantId, privIds);
+  } else if (resultsRole === "client") {
+    resultsAssetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.assignedClientId, req.user!.userId));
   } else {
     resultsAssetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
   }
@@ -148,6 +152,8 @@ router.get("/discovery/latest/:assetId", requireAuth, async (req: AuthenticatedR
   if (latestRole === "super_admin" || latestRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
     latestAssetWhere = buildRecordFilter(eq(assetsTable.id, assetId), assetsTable.tenantId, privIds);
+  } else if (latestRole === "client") {
+    latestAssetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.assignedClientId, req.user!.userId));
   } else {
     latestAssetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
   }

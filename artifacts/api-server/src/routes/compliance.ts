@@ -93,6 +93,9 @@ router.get("/compliance/controls/:controlId", requireAuth, async (req: Authentic
 });
 
 router.patch("/compliance/controls/:controlId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role === "client") {
+    res.status(403).json({ error: "Client users cannot modify compliance controls" }); return;
+  }
   const params = UpdateComplianceControlParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateComplianceControlBody.safeParse(req.body);
@@ -111,6 +114,9 @@ router.post(
   requireAuth,
   upload.array("files", 10),
   async (req: AuthenticatedRequest, res): Promise<void> => {
+    if (req.user!.role === "client") {
+      res.status(403).json({ error: "Client users cannot upload compliance evidence" }); return;
+    }
     const controlId = parseInt(req.params.controlId, 10);
     if (isNaN(controlId)) { res.status(400).json({ error: "Invalid controlId" }); return; }
 
@@ -180,6 +186,9 @@ router.delete(
   "/compliance/controls/:controlId/evidence/:filename",
   requireAuth,
   async (req: AuthenticatedRequest, res): Promise<void> => {
+    if (req.user!.role === "client") {
+      res.status(403).json({ error: "Client users cannot delete compliance evidence" }); return;
+    }
     const controlId = parseInt(req.params.controlId, 10);
     const filename = req.params.filename;
     if (isNaN(controlId) || !filename || filename.includes("..") || filename.includes("/")) {

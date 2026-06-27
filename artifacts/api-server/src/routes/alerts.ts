@@ -303,6 +303,12 @@ router.get("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, re
   if (alertRole === "super_admin" || alertRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
     alertWhere = buildRecordFilter(eq(alertsTable.id, params.data.alertId), alertsTable.tenantId, privIds);
+  } else if (alertRole === "client") {
+    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(eq(assetsTable.assignedClientId, req.user!.userId));
+    const assignedIds = assignedAssets.map(a => a.id);
+    if (assignedIds.length === 0) { res.status(404).json({ error: "Alert not found" }); return; }
+    alertWhere = and(eq(alertsTable.id, params.data.alertId), inArray(alertsTable.relatedAssetId, assignedIds));
   } else {
     alertWhere = and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId));
   }
