@@ -14,7 +14,9 @@ export function TenantFilter({ value, onChange }: TenantFilterProps) {
 
   if (!isPrivileged) return null;
 
-  const tenantList = (tenants as any[]) ?? [];
+  const tenantList = ((tenants as any[]) ?? []).filter(
+    (t: any) => !t.isPlatform && t.id !== user?.tenantId
+  );
 
   return (
     <Select

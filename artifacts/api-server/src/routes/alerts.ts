@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { eq, and, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
 import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
@@ -298,9 +298,13 @@ router.get("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, re
   const params = GetAlertParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const alertRole = req.user!.role;
-  const alertWhere = (alertRole === "super_admin" || alertRole === "admin")
-    ? eq(alertsTable.id, params.data.alertId)
-    : and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId));
+  let alertWhere;
+  if (alertRole === "super_admin" || alertRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    alertWhere = buildRecordFilter(eq(alertsTable.id, params.data.alertId), alertsTable.tenantId, privIds);
+  } else {
+    alertWhere = and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId));
+  }
   const [alert] = await db.select().from(alertsTable).where(alertWhere);
   if (!alert) { res.status(404).json({ error: "Alert not found" }); return; }
   res.json(toAlertResponse(alert));
@@ -333,9 +337,13 @@ router.delete("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest,
   const alertId = parseInt(req.params.alertId, 10);
   if (isNaN(alertId)) { res.status(400).json({ error: "Invalid alertId" }); return; }
   const delRole = req.user!.role;
-  const delWhere = (delRole === "super_admin" || delRole === "admin")
-    ? eq(alertsTable.id, alertId)
-    : and(eq(alertsTable.id, alertId), eq(alertsTable.tenantId, req.user!.tenantId));
+  let delWhere;
+  if (delRole === "super_admin" || delRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    delWhere = buildRecordFilter(eq(alertsTable.id, alertId), alertsTable.tenantId, privIds);
+  } else {
+    delWhere = and(eq(alertsTable.id, alertId), eq(alertsTable.tenantId, req.user!.tenantId));
+  }
   const [deleted] = await db.delete(alertsTable).where(delWhere).returning();
   if (!deleted) { res.status(404).json({ error: "Alert not found" }); return; }
   res.status(204).end();
@@ -347,9 +355,13 @@ router.patch("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, 
   const parsed = UpdateAlertBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const patchAlertRole = req.user!.role;
-  const patchAlertWhere = (patchAlertRole === "super_admin" || patchAlertRole === "admin")
-    ? eq(alertsTable.id, params.data.alertId)
-    : and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId));
+  let patchAlertWhere;
+  if (patchAlertRole === "super_admin" || patchAlertRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    patchAlertWhere = buildRecordFilter(eq(alertsTable.id, params.data.alertId), alertsTable.tenantId, privIds);
+  } else {
+    patchAlertWhere = and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId));
+  }
   const [alert] = await db.update(alertsTable).set(parsed.data)
     .where(patchAlertWhere)
     .returning();

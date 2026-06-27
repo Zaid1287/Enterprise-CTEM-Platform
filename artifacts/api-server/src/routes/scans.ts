@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable } from "@workspace/db";
 import { enqueueAndRun, type AssetToolConfigItem } from "./pipelineScans";
 import {
@@ -266,8 +266,10 @@ router.get("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res)
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
   let scan: typeof scansTable.$inferSelect | undefined;
-  if (role === "super_admin" || role === "admin" || role === "manager") {
-    [scan] = await db.select().from(scansTable).where(eq(scansTable.id, params.data.scanId));
+  if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    [scan] = await db.select().from(scansTable)
+      .where(buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds));
   } else {
     [scan] = await db.select().from(scansTable)
       .where(and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId)));
@@ -281,9 +283,13 @@ router.delete("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, r
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
   await db.delete(scanJobsTable).where(eq(scanJobsTable.scanId, params.data.scanId));
-  const deleteWhere = (role === "super_admin" || role === "admin")
-    ? eq(scansTable.id, params.data.scanId)
-    : and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
+  let deleteWhere;
+  if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    deleteWhere = buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds);
+  } else {
+    deleteWhere = and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
+  }
   const [scan] = await db.delete(scansTable).where(deleteWhere).returning();
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   res.sendStatus(204);
@@ -293,9 +299,13 @@ router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedReque
   const params = CancelScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
-  const cancelWhere = (role === "super_admin" || role === "admin")
-    ? eq(scansTable.id, params.data.scanId)
-    : and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
+  let cancelWhere;
+  if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    cancelWhere = buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds);
+  } else {
+    cancelWhere = and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
+  }
   const [scan] = await db.update(scansTable).set({ status: "cancelled", completedAt: new Date() })
     .where(cancelWhere).returning();
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }

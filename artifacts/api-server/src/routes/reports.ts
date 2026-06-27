@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
 import {
   db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
   complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
@@ -89,7 +89,13 @@ router.post("/reports", requireAuth, requireRole("manager", "admin", "super_admi
   let reportTenantId = req.user!.tenantId;
   if ((role === "super_admin" || role === "admin") && req.body.targetTenantId) {
     const targetId = parseInt(req.body.targetTenantId, 10);
-    if (!isNaN(targetId)) reportTenantId = targetId;
+    if (!isNaN(targetId)) {
+      const privIds = await getPrivilegedTenantIds(req.user!);
+      if (!privIds.includes(targetId)) {
+        res.status(403).json({ error: "Not authorized to create a report for this tenant" }); return;
+      }
+      reportTenantId = targetId;
+    }
   }
 
   const [report] = await db.insert(reportsTable).values({
@@ -111,9 +117,13 @@ router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: Authenti
   const assetId  = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
   const pdfAssetRole = req.user!.role;
-  const pdfAssetWhere = (pdfAssetRole === "super_admin" || pdfAssetRole === "admin")
-    ? eq(assetsTable.id, assetId)
-    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId));
+  let pdfAssetWhere;
+  if (pdfAssetRole === "super_admin" || pdfAssetRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    pdfAssetWhere = buildRecordFilter(eq(assetsTable.id, assetId), assetsTable.tenantId, privIds);
+  } else {
+    pdfAssetWhere = and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId));
+  }
 
   const [asset] = await db.select().from(assetsTable).where(pdfAssetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
@@ -192,9 +202,13 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
   const scanId   = parseInt(req.params.scanId, 10);
   if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scanId" }); return; }
   const btPdfRole = req.user!.role;
-  const btPdfWhere = (btPdfRole === "super_admin" || btPdfRole === "admin")
-    ? eq(brandThreatScansTable.id, scanId)
-    : and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, req.user!.tenantId));
+  let btPdfWhere;
+  if (btPdfRole === "super_admin" || btPdfRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    btPdfWhere = buildRecordFilter(eq(brandThreatScansTable.id, scanId), brandThreatScansTable.tenantId, privIds);
+  } else {
+    btPdfWhere = and(eq(brandThreatScansTable.id, scanId), eq(brandThreatScansTable.tenantId, req.user!.tenantId));
+  }
 
   const [scan] = await db.select().from(brandThreatScansTable).where(btPdfWhere);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
@@ -324,9 +338,13 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
   const reportId = parseInt(req.params.reportId, 10);
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
   const pdfReportRole = req.user!.role;
-  const pdfReportWhere = (pdfReportRole === "super_admin" || pdfReportRole === "admin")
-    ? eq(reportsTable.id, reportId)
-    : and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  let pdfReportWhere;
+  if (pdfReportRole === "super_admin" || pdfReportRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    pdfReportWhere = buildRecordFilter(eq(reportsTable.id, reportId), reportsTable.tenantId, privIds);
+  } else {
+    pdfReportWhere = and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  }
 
   const [report] = await db.select().from(reportsTable).where(pdfReportWhere);
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
@@ -450,9 +468,15 @@ router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedReq
   const requestedIds = raw.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
   if (requestedIds.length === 0) { res.status(400).json({ error: "No asset IDs provided" }); return; }
 
-  const pdfAssetsWhere = (pdfAssetsRole === "super_admin" || pdfAssetsRole === "admin")
-    ? inArray(assetsTable.id, requestedIds)
-    : and(eq(assetsTable.tenantId, req.user!.tenantId), inArray(assetsTable.id, requestedIds));
+  let pdfAssetsWhere;
+  if (pdfAssetsRole === "super_admin" || pdfAssetsRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    pdfAssetsWhere = privIds.length > 0
+      ? and(inArray(assetsTable.tenantId, privIds), inArray(assetsTable.id, requestedIds))
+      : and(eq(assetsTable.tenantId, -1), inArray(assetsTable.id, requestedIds));
+  } else {
+    pdfAssetsWhere = and(eq(assetsTable.tenantId, req.user!.tenantId), inArray(assetsTable.id, requestedIds));
+  }
   const assets = await db.select().from(assetsTable).where(pdfAssetsWhere);
   const tenantId = assets.length > 0 ? assets[0].tenantId : req.user!.tenantId;
   if (assets.length === 0) { res.status(404).json({ error: "No assets found" }); return; }
@@ -541,9 +565,13 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
 
   const dlRole = req.user!.role;
-  const dlWhere = (dlRole === "super_admin" || dlRole === "admin")
-    ? eq(reportsTable.id, reportId)
-    : and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  let dlWhere;
+  if (dlRole === "super_admin" || dlRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    dlWhere = buildRecordFilter(eq(reportsTable.id, reportId), reportsTable.tenantId, privIds);
+  } else {
+    dlWhere = and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  }
   const [report] = await db.select().from(reportsTable).where(dlWhere);
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   if (report.status !== "ready") { res.status(409).json({ error: "Report is not ready yet" }); return; }
@@ -641,9 +669,13 @@ router.get("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, 
   const params = GetReportParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const getRole = req.user!.role;
-  const getWhere = (getRole === "super_admin" || getRole === "admin")
-    ? eq(reportsTable.id, params.data.reportId)
-    : and(eq(reportsTable.id, params.data.reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  let getWhere;
+  if (getRole === "super_admin" || getRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    getWhere = buildRecordFilter(eq(reportsTable.id, params.data.reportId), reportsTable.tenantId, privIds);
+  } else {
+    getWhere = and(eq(reportsTable.id, params.data.reportId), eq(reportsTable.tenantId, req.user!.tenantId));
+  }
   const [report] = await db.select().from(reportsTable).where(getWhere);
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   res.json(toReportResponse(report));

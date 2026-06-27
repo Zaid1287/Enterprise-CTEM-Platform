@@ -1,4 +1,4 @@
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, inArray as drizzleInArray } from "drizzle-orm";
 import { db, tenantsTable } from "@workspace/db";
 import type { AuthenticatedRequest } from "./auth";
 
@@ -38,11 +38,33 @@ export async function getPrivilegedTenantIds(user: NonNullable<AuthenticatedRequ
  * returns the effective tenant IDs to filter by.
  *
  * If a specific tenantId is requested and it's within the privileged set, returns [tenantId].
- * Otherwise returns the full privileged set.
+ * If a specific tenantId is requested but NOT in the privileged set, returns [] (no access).
+ * If no specific tenantId is requested, returns the full privileged set.
  */
 export function resolvePrivilegedTenantFilter(ids: number[], qTenantId: number | null): number[] {
-  if (qTenantId !== null && ids.includes(qTenantId)) {
-    return [qTenantId];
+  if (qTenantId !== null) {
+    return ids.includes(qTenantId) ? [qTenantId] : [];
   }
   return ids;
+}
+
+/**
+ * Builds a WHERE clause for a single-record lookup that constrains admin/SA access
+ * to accessible client tenant IDs.
+ *
+ * Usage (for admin/SA detail routes):
+ *   const privIds = await getPrivilegedTenantIds(req.user!);
+ *   const where = buildRecordFilter(eq(table.id, id), table.tenantId, privIds);
+ *   const [row] = await db.select().from(table).where(where);
+ *
+ * Returns a filter that will yield no results (tenantId = -1) when privIds is empty,
+ * ensuring a 404 for admin/SA with no accessible tenants.
+ */
+export function buildRecordFilter(
+  idExpr: ReturnType<typeof eq>,
+  tenantIdCol: any,
+  privIds: number[],
+): ReturnType<typeof and> {
+  if (privIds.length === 0) return and(idExpr, eq(tenantIdCol, -1)) as any;
+  return and(idExpr, drizzleInArray(tenantIdCol, privIds)) as any;
 }

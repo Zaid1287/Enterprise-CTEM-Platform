@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, ilike, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
 import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
@@ -157,9 +157,13 @@ router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest
   const params = GetFindingParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
-  const findingWhere = (role === "super_admin" || role === "admin")
-    ? eq(findingsTable.id, params.data.findingId)
-    : and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
+  let findingWhere;
+  if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    findingWhere = buildRecordFilter(eq(findingsTable.id, params.data.findingId), findingsTable.tenantId, privIds);
+  } else {
+    findingWhere = and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
+  }
   const [row] = await db.select({
     finding: findingsTable,
     assetName: assetsTable.name,
@@ -186,9 +190,13 @@ router.get("/findings/:findingId/scan-data", requireAuth, async (req: Authentica
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
   const scanDataRole = req.user!.role;
-  const scanDataFindingWhere = (scanDataRole === "super_admin" || scanDataRole === "admin")
-    ? eq(findingsTable.id, params.data.findingId)
-    : and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
+  let scanDataFindingWhere;
+  if (scanDataRole === "super_admin" || scanDataRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    scanDataFindingWhere = buildRecordFilter(eq(findingsTable.id, params.data.findingId), findingsTable.tenantId, privIds);
+  } else {
+    scanDataFindingWhere = and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
+  }
   const [finding] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId, tenantId: findingsTable.tenantId })
     .from(findingsTable)
     .where(scanDataFindingWhere);
@@ -253,9 +261,13 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
   const parsed = UpdateFindingBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const patchRole = req.user!.role;
-  const patchWhere = (patchRole === "super_admin" || patchRole === "admin")
-    ? eq(findingsTable.id, params.data.findingId)
-    : and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
+  let patchWhere;
+  if (patchRole === "super_admin" || patchRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    patchWhere = buildRecordFilter(eq(findingsTable.id, params.data.findingId), findingsTable.tenantId, privIds);
+  } else {
+    patchWhere = and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
+  }
   const [finding] = await db.update(findingsTable).set(parsed.data)
     .where(patchWhere)
     .returning();

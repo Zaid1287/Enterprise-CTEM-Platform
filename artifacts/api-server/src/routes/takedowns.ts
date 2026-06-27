@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { db, takedownRequestsTable } from "@workspace/db";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { getPrivilegedTenantIds, buildRecordFilter } from "../lib/tenantScoping";
 import { logAudit } from "../lib/audit";
 import multer from "multer";
 import path from "path";
@@ -34,9 +35,13 @@ const upload = multer({
 router.get("/takedowns", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
   const tdRole = req.user!.role;
-  const tdWhere = (tdRole === "super_admin" || tdRole === "admin")
-    ? undefined
-    : eq(takedownRequestsTable.tenantId, tid);
+  let tdWhere;
+  if (tdRole === "super_admin" || tdRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    tdWhere = privIds.length > 0 ? inArray(takedownRequestsTable.tenantId, privIds) : eq(takedownRequestsTable.tenantId, -1);
+  } else {
+    tdWhere = eq(takedownRequestsTable.tenantId, tid);
+  }
   const rows = await db
     .select()
     .from(takedownRequestsTable)
@@ -89,10 +94,18 @@ router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, re
   if (isSuccessful !== undefined) updates.isSuccessful = isSuccessful;
   if (status === "closed") updates.resolvedAt = new Date();
 
+  let patchWhere;
+  const patchRole = req.user!.role;
+  if (patchRole === "super_admin" || patchRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    patchWhere = buildRecordFilter(eq(takedownRequestsTable.id, id), takedownRequestsTable.tenantId, privIds);
+  } else {
+    patchWhere = and(eq(takedownRequestsTable.id, id), eq(takedownRequestsTable.tenantId, tid));
+  }
   const [row] = await db
     .update(takedownRequestsTable)
     .set(updates)
-    .where(and(eq(takedownRequestsTable.id, id), eq(takedownRequestsTable.tenantId, tid)))
+    .where(patchWhere)
     .returning();
 
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
@@ -108,9 +121,17 @@ router.delete("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, r
   const tid = req.user!.tenantId;
   const id = parseInt(req.params.id, 10);
 
+  let delWhere;
+  const delRole = req.user!.role;
+  if (delRole === "super_admin" || delRole === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    delWhere = buildRecordFilter(eq(takedownRequestsTable.id, id), takedownRequestsTable.tenantId, privIds);
+  } else {
+    delWhere = and(eq(takedownRequestsTable.id, id), eq(takedownRequestsTable.tenantId, tid));
+  }
   const [row] = await db
     .delete(takedownRequestsTable)
-    .where(and(eq(takedownRequestsTable.id, id), eq(takedownRequestsTable.tenantId, tid)))
+    .where(delWhere)
     .returning();
 
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
