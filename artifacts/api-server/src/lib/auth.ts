@@ -1,6 +1,8 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import type { Request, Response, NextFunction } from "express";
+import { db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const JWT_SECRET = process.env.SESSION_SECRET ?? "ctem-dev-secret-change-in-production";
 const ACCESS_TOKEN_EXPIRY = "8h";
@@ -37,7 +39,7 @@ export interface AuthenticatedRequest extends Request {
   user?: JwtPayload;
 }
 
-export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     res.status(401).json({ error: "Unauthorized" });
@@ -46,6 +48,24 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
   const token = authHeader.slice(7);
   try {
     const payload = verifyToken(token);
+
+    // Enforce requiresPasswordReset: look up the live flag from the DB so
+    // already-issued access tokens cannot be used to bypass a forced reset.
+    const [user] = await db
+      .select({ requiresPasswordReset: usersTable.requiresPasswordReset, isActive: usersTable.isActive })
+      .from(usersTable)
+      .where(eq(usersTable.id, payload.userId));
+
+    if (!user || !user.isActive) {
+      res.status(401).json({ error: "Account not found or deactivated" });
+      return;
+    }
+
+    if (user.requiresPasswordReset) {
+      res.status(403).json({ error: "Password reset required", requiresPasswordReset: true });
+      return;
+    }
+
     req.user = payload;
     next();
   } catch {

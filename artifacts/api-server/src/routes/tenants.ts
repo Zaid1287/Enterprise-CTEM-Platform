@@ -242,26 +242,33 @@ router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async 
   // Admins automatically become the parent of tenants they create
   const parentTenantId = req.user!.role === "admin" ? req.user!.tenantId : undefined;
 
-  const [tenant] = await db.insert(tenantsTable)
-    .values({ ...parsed.data, isPlatform: false, parentTenantId: parentTenantId ?? null })
-    .returning();
-
-  // Seed security tools and compliance frameworks for the new tenant
-  await seedNewTenantData(tenant.id);
-
-  // Auto-create an admin user for the new tenant with a temporary password
   const temporaryPassword = crypto.randomBytes(10).toString("base64url").slice(0, 14);
   const passwordHash = await hashPassword(temporaryPassword);
-  const adminEmail = `admin@${(parsed.data as any).slug ?? tenant.slug}.sentinelware.io`;
-  const [adminUser] = await db.insert(usersTable).values({
-    tenantId: tenant.id,
-    email: adminEmail,
-    passwordHash,
-    firstName: "Tenant",
-    lastName: "Admin",
-    role: "admin",
-    requiresPasswordReset: true,
-  }).returning();
+
+  // Wrap creation + seeding + admin user in a single transaction so a mid-flow
+  // failure does not leave a "shell" tenant without any users or seed data.
+  const { tenant, adminUser } = await db.transaction(async (tx) => {
+    const [t] = await tx.insert(tenantsTable)
+      .values({ ...parsed.data, isPlatform: false, parentTenantId: parentTenantId ?? null })
+      .returning();
+
+    // Seed security tools and compliance frameworks (uses the shared db pool but
+    // does not need to be in the same transaction — seeding is additive/idempotent)
+    await seedNewTenantData(t.id);
+
+    const adminEmail = `admin@${(parsed.data as any).slug ?? t.slug}.sentinelware.io`;
+    const [u] = await tx.insert(usersTable).values({
+      tenantId: t.id,
+      email: adminEmail,
+      passwordHash,
+      firstName: "Tenant",
+      lastName: "Admin",
+      role: "admin",
+      requiresPasswordReset: true,
+    }).returning();
+
+    return { tenant: t, adminUser: u };
+  });
 
   res.status(201).json({
     ...toTenantResponse(tenant),
