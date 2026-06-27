@@ -99,6 +99,11 @@ export default function UsersPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteForm, setInviteForm] = useState({ name: "", email: "", role: "vendor" });
+  const [inviteAssetIds, setInviteAssetIds] = useState<number[]>([]);
+  const [availableAssets, setAvailableAssets] = useState<{ id: number; name: string }[]>([]);
+
+  const EXTERNAL_ROLES = ["vendor", "employee", "third_party"];
+  const isExternalInviteRole = EXTERNAL_ROLES.includes(inviteForm.role);
 
   const { data: users, isLoading } = useListUsers({
     query: { queryKey: getListUsersQueryKey() },
@@ -183,17 +188,30 @@ export default function UsersPage() {
 
   useEffect(() => { fetchInvitations(); }, []);
 
+  // Fetch assets for the invite asset picker
+  useEffect(() => {
+    if (!showInvite) return;
+    apiFetch(`${BASE}/api/assets`)
+      .then((data: any) => setAvailableAssets(Array.isArray(data) ? data.map((a: any) => ({ id: a.id, name: a.name })) : []))
+      .catch(() => setAvailableAssets([]));
+  }, [showInvite]);
+
   const handleSendInvite = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (EXTERNAL_ROLES.includes(inviteForm.role) && inviteAssetIds.length === 0) {
+      toast({ title: "Assets required", description: "Select at least one asset for external member roles.", variant: "destructive" });
+      return;
+    }
     setInviteSending(true);
     try {
       await apiFetch(`${BASE}/api/invitations`, {
         method: "POST",
-        body: JSON.stringify(inviteForm),
+        body: JSON.stringify({ ...inviteForm, assetIds: inviteAssetIds }),
       });
       await fetchInvitations();
       setShowInvite(false);
       setInviteForm({ name: "", email: "", role: "vendor" });
+      setInviteAssetIds([]);
       toast({ title: "Invitation sent", description: `${inviteForm.email} has been invited.` });
     } catch (err: any) {
       toast({ title: "Failed to send invitation", description: err?.error ?? err?.message ?? "Unknown error", variant: "destructive" });
@@ -469,7 +487,10 @@ export default function UsersPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Role</Label>
-              <Select value={inviteForm.role} onValueChange={v => setInviteForm(p => ({ ...p, role: v }))}>
+              <Select value={inviteForm.role} onValueChange={v => {
+                setInviteForm(p => ({ ...p, role: v }));
+                setInviteAssetIds([]);
+              }}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="vendor">Vendor</SelectItem>
@@ -478,8 +499,37 @@ export default function UsersPage() {
                 </SelectContent>
               </Select>
             </div>
+            {isExternalInviteRole && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Asset Access <span className="text-destructive">*</span></Label>
+                <p className="text-[11px] text-muted-foreground">Select the assets this member can view.</p>
+                <div className="max-h-36 overflow-y-auto rounded-md border border-border bg-background p-2 space-y-1">
+                  {availableAssets.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-2">No assets available</p>
+                  ) : availableAssets.map(asset => {
+                    const checked = inviteAssetIds.includes(asset.id);
+                    return (
+                      <label key={asset.id} className="flex items-center gap-2 text-xs px-1 py-0.5 rounded cursor-pointer hover:bg-muted/50">
+                        <input
+                          type="checkbox"
+                          className="accent-primary"
+                          checked={checked}
+                          onChange={() => setInviteAssetIds(prev =>
+                            checked ? prev.filter(id => id !== asset.id) : [...prev, asset.id]
+                          )}
+                        />
+                        <span className="truncate">{asset.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {inviteAssetIds.length > 0 && (
+                  <p className="text-[11px] text-primary">{inviteAssetIds.length} asset{inviteAssetIds.length > 1 ? "s" : ""} selected</p>
+                )}
+              </div>
+            )}
             <DialogFooter className="mt-4">
-              <Button variant="outline" type="button" onClick={() => setShowInvite(false)}>Cancel</Button>
+              <Button variant="outline" type="button" onClick={() => { setShowInvite(false); setInviteAssetIds([]); }}>Cancel</Button>
               <Button type="submit" disabled={inviteSending}>
                 {inviteSending ? "Sending…" : "Send Invitation"}
               </Button>

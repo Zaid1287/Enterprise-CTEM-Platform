@@ -130,13 +130,29 @@ export function Sidebar() {
     setCollapsed(!collapsed);
   };
 
-  const visibleGroups = navGroups
-    .filter(g => !g.onlyFor || g.onlyFor.includes(role))
-    .map(g => ({
-      ...g,
-      items: g.items.filter(item => !item.onlyFor || item.onlyFor.includes(role)),
-    }))
-    .filter(g => g.items.length > 0);
+  const isExternalMember = ["vendor", "employee", "third_party"].includes(role);
+
+  // External members (vendor/employee/third_party) see only "My Assets"
+  const externalGroups: NavGroup[] = isExternalMember ? [
+    {
+      title: "Assets",
+      items: [{ label: "My Assets", href: "/assets", icon: Server }],
+    },
+    {
+      title: "Account",
+      items: [{ label: "Settings", href: "/settings/account", icon: Settings }],
+    },
+  ] : [];
+
+  const visibleGroups = isExternalMember
+    ? externalGroups
+    : navGroups
+      .filter(g => !g.onlyFor || g.onlyFor.includes(role))
+      .map(g => ({
+        ...g,
+        items: g.items.filter(item => !item.onlyFor || item.onlyFor.includes(role)),
+      }))
+      .filter(g => g.items.length > 0);
 
   return (
     <aside

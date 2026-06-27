@@ -22,3 +22,4 @@ export * from "./platformSettings";
 export * from "./brandThreats";
 export * from "./sessions";
 export * from "./discoveryResults";
+export * from "./externalMemberAssets";

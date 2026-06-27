@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
-import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable } from "@workspace/db";
+import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable, externalMemberAssetsTable } from "@workspace/db";
 import { enqueueAndRun, type AssetToolConfigItem } from "./pipelineScans";
 import {
   CreateScanBody, GetScanParams, DeleteScanParams, CancelScanParams,
@@ -106,6 +106,23 @@ async function finalizeScannedAssets(assetIds: number[]) {
 router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListScansQueryParams.safeParse(req.query);
   const role = req.user!.role;
+
+  // External members: show scans that include at least one of their allowed assets (read-only)
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    if (rows.length === 0) { res.json([]); return; }
+    const allowedIds = new Set(rows.map(r => r.assetId));
+    const filters: any[] = [eq(scansTable.tenantId, req.user!.tenantId)];
+    if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
+    const allScans = await db.select().from(scansTable).where(and(...filters))
+      .orderBy(desc(scansTable.createdAt));
+    const extScans = allScans.filter(s =>
+      Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => allowedIds.has(id))
+    );
+    res.json(extScans.map(toScanResponse)); return;
+  }
 
   // Client: only show scans that include at least one asset assigned to them
   if (role === "client") {

@@ -4,7 +4,7 @@ import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db, assetsTable, usersTable, findingsTable, findingCommentsTable, riskScoresTable,
   technologyDetectionsTable, scanAssetResultsTable, assetGroupMembersTable, discoveryResultsTable,
-  tenantsTable, brandThreatScansTable,
+  tenantsTable, brandThreatScansTable, externalMemberAssetsTable,
 } from "@workspace/db";
 import {
   CreateAssetBody, GetAssetParams, UpdateAssetParams, UpdateAssetBody,
@@ -216,6 +216,19 @@ function toAssetResponse(
 router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const query = ListAssetsQueryParams.safeParse(req.query);
   const role = req.user!.role;
+
+  // External members see only assets explicitly granted to them via external_member_assets
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    if (rows.length === 0) { res.json([]); return; }
+    const allowedIds = rows.map(r => r.assetId);
+    const assets = await db.select().from(assetsTable).where(inArray(assetsTable.id, allowedIds));
+    res.json(await enrichAssets(assets));
+    return;
+  }
+
   let tenantFilter;
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
@@ -272,9 +285,27 @@ router.post("/assets", requireAuth, async (req: AuthenticatedRequest, res): Prom
 router.get("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const amTids = req.user!.role === "account_manager" ? await getAmClientTenantIds(req.user!.userId) : undefined;
+  const role = req.user!.role;
+
+  // External members: verify asset is in their allowed list
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    const [granted] = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(and(
+        eq(externalMemberAssetsTable.userId, req.user!.userId),
+        eq(externalMemberAssetsTable.assetId, params.data.assetId),
+      ));
+    if (!granted) { res.status(404).json({ error: "Asset not found" }); return; }
+    const [asset] = await db.select().from(assetsTable).where(eq(assetsTable.id, params.data.assetId));
+    if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+    const [enriched] = await enrichAssets([asset]);
+    res.json(enriched);
+    return;
+  }
+
+  const amTids = role === "account_manager" ? await getAmClientTenantIds(req.user!.userId) : undefined;
   const filters: ReturnType<typeof eq>[] = [assetAccessFilter(params.data.assetId, req.user!, amTids) as any];
-  if (req.user!.role === "client") {
+  if (role === "client") {
     filters.push(eq(assetsTable.assignedClientId, req.user!.userId) as any);
   }
   const [asset] = await db.select().from(assetsTable).where(and(...filters));

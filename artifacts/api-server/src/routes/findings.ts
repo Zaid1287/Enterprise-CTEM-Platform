@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, and, ilike, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
-import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable } from "@workspace/db";
+import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
   ListFindingsQueryParams, ListFindingCommentsParams,
@@ -46,6 +46,40 @@ function toFindingResponse(
 router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = ListFindingsQueryParams.safeParse(req.query);
   const role = req.user!.role;
+
+  // External members: restrict to findings for their explicitly granted assets (read-only)
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    if (rows.length === 0) { res.json([]); return; }
+    const allowedIds = rows.map(r => r.assetId);
+    const extFilters: any[] = [inArray(findingsTable.assetId, allowedIds)];
+    if (q.success) {
+      if (q.data.status) extFilters.push(eq(findingsTable.status, q.data.status));
+      if (q.data.severity) extFilters.push(eq(findingsTable.severity, q.data.severity));
+      if (q.data.assetId) extFilters.push(eq(findingsTable.assetId, q.data.assetId));
+      if (q.data.search) extFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
+    }
+    const extFindings = await db.select({
+      finding: findingsTable,
+      assetName: assetsTable.name,
+      assetValue: assetsTable.value,
+      assetType: assetsTable.type,
+      assetLastScannedAt: assetsTable.lastScannedAt,
+      assetIpAddress: assetsTable.ipAddress,
+      assetPort: assetsTable.port,
+      assetTags: assetsTable.tags,
+      assetRiskScore: riskScoresTable.score,
+    }).from(findingsTable)
+      .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
+      .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+      .where(and(...extFilters));
+    res.json(extFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
+      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
+    return;
+  }
+
   // Account Manager: filter by assets from client tenants (data spans tenants via asset IDs)
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);

@@ -43,6 +43,7 @@ const AssetTopologyPage = lazy(() => import("@/pages/AssetTopologyPage"));
 const QueueMonitorPage = lazy(() => import("@/pages/QueueMonitorPage"));
 const DiscoveryPage = lazy(() => import("@/pages/DiscoveryPage"));
 const ExposurePage = lazy(() => import("@/pages/ExposurePage"));
+const AcceptInvitationPage = lazy(() => import("@/pages/AcceptInvitationPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -112,6 +113,11 @@ function Router() {
       <Route path="/login" component={() => <PublicRoute component={LoginPage} />} />
       <Route path="/register" component={() => <PublicRoute component={RegisterPage} />} />
       <Route path="/forgot-password" component={() => <PublicRoute component={ForgotPasswordPage} />} />
+      <Route path="/accept-invitation" component={() => (
+        <Suspense fallback={<PageLoader />}>
+          <AcceptInvitationPage />
+        </Suspense>
+      )} />
 
       {/* Protected routes */}
       <Route path="/dashboard" component={() => <ProtectedRoute component={DashboardPage} />} />

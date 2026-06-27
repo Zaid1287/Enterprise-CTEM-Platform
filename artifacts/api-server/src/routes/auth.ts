@@ -577,6 +577,122 @@ router.get("/auth/avatar/:filename", requireAuth, (req: AuthenticatedRequest, re
   res.sendFile(filePath);
 });
 
+// ── Invitation Info (public) ──────────────────────────────────────────────────
+// Returns non-sensitive info for a pending invitation token so the frontend
+// can pre-fill the accept-invitation form without authentication.
+
+router.get("/auth/invitation-info", async (req, res): Promise<void> => {
+  const { invitationsTable, assetsTable, tenantsTable } = await import("@workspace/db");
+  const { inArray } = await import("drizzle-orm");
+  const token = String(req.query.token ?? "").trim();
+  if (!token) { res.status(400).json({ error: "token is required" }); return; }
+
+  const [inv] = await db.select().from(invitationsTable).where(eq(invitationsTable.token, token));
+  if (!inv) { res.status(404).json({ error: "Invitation not found" }); return; }
+  if (inv.status !== "pending") { res.status(410).json({ error: "Invitation has already been used" }); return; }
+  if (inv.expiresAt && inv.expiresAt < new Date()) { res.status(410).json({ error: "Invitation has expired" }); return; }
+
+  const [tenant] = await db.select({ name: tenantsTable.name }).from(tenantsTable).where(eq(tenantsTable.id, inv.tenantId));
+  let assetNames: string[] = [];
+  if (Array.isArray(inv.assetIds) && inv.assetIds.length > 0) {
+    const assetRows = await db.select({ name: assetsTable.name }).from(assetsTable)
+      .where(inArray(assetsTable.id, inv.assetIds as number[]));
+    assetNames = assetRows.map(a => a.name);
+  }
+
+  res.json({
+    email: inv.email,
+    name: inv.name,
+    role: inv.role,
+    tenantName: tenant?.name ?? "Sentinelware",
+    assetNames,
+  });
+});
+
+// ── Accept Invitation (public) ────────────────────────────────────────────────
+// Creates user account from invitation token, populates external_member_assets,
+// marks invitation accepted, and issues auth tokens so user is logged in immediately.
+
+router.post("/auth/accept-invitation", async (req, res): Promise<void> => {
+  const { invitationsTable, assetsTable, tenantsTable, externalMemberAssetsTable } = await import("@workspace/db");
+  const { inArray } = await import("drizzle-orm");
+  const { token, firstName, lastName, password } = req.body ?? {};
+  if (!token || !firstName || !lastName || !password) {
+    res.status(400).json({ error: "token, firstName, lastName, and password are required" }); return;
+  }
+  if (String(password).length < 8) {
+    res.status(400).json({ error: "Password must be at least 8 characters" }); return;
+  }
+
+  const [inv] = await db.select().from(invitationsTable).where(eq(invitationsTable.token, String(token)));
+  if (!inv) { res.status(404).json({ error: "Invitation not found" }); return; }
+  if (inv.status !== "pending") { res.status(410).json({ error: "Invitation has already been used" }); return; }
+  if (inv.expiresAt && inv.expiresAt < new Date()) { res.status(410).json({ error: "Invitation has expired" }); return; }
+
+  // Check email not already in use
+  const [existing] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, inv.email));
+  if (existing) { res.status(409).json({ error: "An account with this email already exists. Please log in instead." }); return; }
+
+  const passwordHash = await hashPassword(String(password));
+  const [user] = await db.insert(usersTable).values({
+    tenantId: inv.tenantId,
+    email: inv.email,
+    passwordHash,
+    firstName: String(firstName).trim(),
+    lastName: String(lastName).trim(),
+    role: inv.role,
+    isActive: true,
+  }).returning();
+
+  // Populate external_member_assets for vendor/employee/third_party roles
+  const EXTERNAL_ROLES = ["vendor", "employee", "third_party"];
+  if (EXTERNAL_ROLES.includes(inv.role) && Array.isArray(inv.assetIds) && inv.assetIds.length > 0) {
+    const assetIds = inv.assetIds as number[];
+    // Validate assets still exist
+    const validAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(inArray(assetsTable.id, assetIds));
+    const validIds = validAssets.map(a => a.id);
+    if (validIds.length > 0) {
+      await db.insert(externalMemberAssetsTable).values(
+        validIds.map(assetId => ({
+          userId: user.id,
+          assetId,
+          tenantId: inv.tenantId,
+          invitedBy: inv.invitedByUserId ?? null,
+        }))
+      ).onConflictDoNothing();
+    }
+  }
+
+  // Mark invitation as accepted
+  await db.update(invitationsTable)
+    .set({ status: "accepted", respondedAt: new Date() })
+    .where(eq(invitationsTable.id, inv.id));
+
+  const ua = req.headers["user-agent"] ?? "";
+  const realIp = getClientIp(req);
+
+  const payload = { userId: user.id, tenantId: user.tenantId, email: user.email, role: user.role };
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken(payload);
+  await db.update(usersTable).set({ refreshToken, lastLoginAt: new Date() }).where(eq(usersTable.id, user.id));
+
+  // Record session
+  const tokenHash = crypto.createHash("sha256").update(accessToken).digest("hex");
+  await db.insert(sessionsTable).values({
+    userId: user.id,
+    tenantId: user.tenantId,
+    tokenHash,
+    ipAddress: realIp,
+    userAgent: ua.substring(0, 500),
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  }).onConflictDoNothing();
+
+  await logAudit(payload as any, "accept_invitation", "user", user.id, `role: ${inv.role}`, realIp);
+
+  res.status(201).json({ accessToken, refreshToken, user: toUserResponse(user) });
+});
+
 // ── Seed compliance frameworks + tools for new tenant (no fake assets/findings) ──
 
 export async function seedNewTenantData(tenantId: number): Promise<void> {
