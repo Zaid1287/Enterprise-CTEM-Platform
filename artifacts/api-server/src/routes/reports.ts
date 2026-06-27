@@ -404,9 +404,12 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
   const assetDomains = assets.map(a => a.value).filter(Boolean);
 
   const [allFindings, riskRows, brandScans] = await Promise.all([
-    db.select().from(findingsTable)
-      .where(eq(findingsTable.tenantId, tenantId))
-      .orderBy(desc(findingsTable.id)),
+    // Scope findings to assigned asset IDs (covers both client and non-client paths correctly)
+    assetIds.length > 0
+      ? db.select().from(findingsTable)
+          .where(inArray(findingsTable.assetId, assetIds))
+          .orderBy(desc(findingsTable.id))
+      : Promise.resolve([]),
     assetIds.length > 0
       ? db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
       : Promise.resolve([]),

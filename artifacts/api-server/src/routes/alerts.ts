@@ -344,6 +344,12 @@ router.delete("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest,
   const alertId = parseInt(req.params.alertId, 10);
   if (isNaN(alertId)) { res.status(400).json({ error: "Invalid alertId" }); return; }
   const delRole = req.user!.role;
+
+  // Clients cannot delete alerts
+  if (delRole === "client") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
+
   let delWhere;
   if (delRole === "super_admin" || delRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -362,6 +368,20 @@ router.patch("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, 
   const parsed = UpdateAlertBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const patchAlertRole = req.user!.role;
+
+  // Client role: verify the alert's relatedAssetId is one of their assigned assets
+  if (patchAlertRole === "client") {
+    const [alertRow] = await db.select({ relatedAssetId: alertsTable.relatedAssetId })
+      .from(alertsTable)
+      .where(and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId)));
+    if (!alertRow) { res.status(404).json({ error: "Alert not found" }); return; }
+    if (alertRow.relatedAssetId != null) {
+      const [assigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
+        .where(and(eq(assetsTable.id, alertRow.relatedAssetId), eq(assetsTable.assignedClientId, req.user!.userId)));
+      if (!assigned) { res.status(404).json({ error: "Alert not found" }); return; }
+    }
+  }
+
   let patchAlertWhere;
   if (patchAlertRole === "super_admin" || patchAlertRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
