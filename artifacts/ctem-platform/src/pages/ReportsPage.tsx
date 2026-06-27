@@ -126,7 +126,9 @@ export default function ReportsPage() {
   };
 
   const handleCreateNonPdf = async () => {
-    await createReport.mutateAsync({ data: form } as any);
+    const body: any = { ...form };
+    if (isPrivileged && tenantFilter) body.targetTenantId = tenantFilter;
+    await createReport.mutateAsync({ data: body } as any);
     queryClient.invalidateQueries({ queryKey: getListReportsQueryKey() });
     closeCreate();
     setTimeout(() => queryClient.invalidateQueries({ queryKey: getListReportsQueryKey() }), 4000);

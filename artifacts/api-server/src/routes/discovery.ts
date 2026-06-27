@@ -13,12 +13,13 @@ const router = Router();
 // Run all passive discovery modules for an asset and persist results
 router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const discoveryRole = req.user!.role;
+  const callerTenantId = req.user!.tenantId;
   const assetId = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
   const assetWhere = (discoveryRole === "super_admin" || discoveryRole === "admin")
     ? eq(assetsTable.id, assetId)
-    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId));
+    : and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, callerTenantId));
   const [asset] = await db.select().from(assetsTable).where(assetWhere);
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 

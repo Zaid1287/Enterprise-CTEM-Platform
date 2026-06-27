@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, ilike, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable } from "@workspace/db";
+import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
   ListFindingsQueryParams, ListFindingCommentsParams,
@@ -22,11 +22,12 @@ function toFindingResponse(
   assetPort?: number | null,
   assetTags?: string[] | null,
   assetRiskScore?: number | null,
+  tenantName?: string | null,
 ) {
   const SEV_RISK: Record<string, number> = { critical: 90, high: 70, medium: 45, low: 20, info: 10 };
   const riskScore = assetRiskScore ?? f.riskScore ?? SEV_RISK[f.severity ?? "medium"] ?? 45;
   return {
-    id: f.id, tenantId: f.tenantId, assetId: f.assetId,
+    id: f.id, tenantId: f.tenantId, tenantName: tenantName ?? null, assetId: f.assetId,
     assetName: assetName ?? null,
     assetValue: assetValue ?? null,
     assetType: assetType ?? null,
@@ -99,12 +100,14 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       assetPort: assetsTable.port,
       assetTags: assetsTable.tags,
       assetRiskScore: riskScoresTable.score,
+      tenantName: tenantsTable.name,
     }).from(findingsTable)
       .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
       .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+      .leftJoin(tenantsTable, eq(findingsTable.tenantId, tenantsTable.id))
       .where(saFilters.length > 0 ? and(...saFilters) : undefined);
-    res.json(saFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
-      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
+    res.json(saFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName }) =>
+      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName)));
     return;
   }
 
