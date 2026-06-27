@@ -375,11 +375,11 @@ router.patch("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, 
       .from(alertsTable)
       .where(and(eq(alertsTable.id, params.data.alertId), eq(alertsTable.tenantId, req.user!.tenantId)));
     if (!alertRow) { res.status(404).json({ error: "Alert not found" }); return; }
-    if (alertRow.relatedAssetId != null) {
-      const [assigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
-        .where(and(eq(assetsTable.id, alertRow.relatedAssetId), eq(assetsTable.assignedClientId, req.user!.userId)));
-      if (!assigned) { res.status(404).json({ error: "Alert not found" }); return; }
-    }
+    // Alerts without a relatedAssetId are not scoped to this client
+    if (alertRow.relatedAssetId == null) { res.status(404).json({ error: "Alert not found" }); return; }
+    const [assigned] = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(and(eq(assetsTable.id, alertRow.relatedAssetId), eq(assetsTable.assignedClientId, req.user!.userId)));
+    if (!assigned) { res.status(404).json({ error: "Alert not found" }); return; }
   }
 
   let patchAlertWhere;

@@ -395,11 +395,16 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
   const tenantId = report.tenantId; // use report's actual tenantId for data queries
 
-  // Client role: restrict to their assigned assets only
+  // Client role: restrict to assigned assets intersected with report.assetIds
   const allTenantAssets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tenantId));
-  const assets = pdfReportRole === "client"
-    ? allTenantAssets.filter(a => a.assignedClientId === req.user!.userId)
-    : allTenantAssets;
+  let assets = allTenantAssets;
+  if (pdfReportRole === "client") {
+    const reportAssetIdSet = new Set(Array.isArray(report.assetIds) ? (report.assetIds as number[]) : []);
+    assets = allTenantAssets.filter(a =>
+      a.assignedClientId === req.user!.userId &&
+      (reportAssetIdSet.size === 0 || reportAssetIdSet.has(a.id))
+    );
+  }
   const assetIds = assets.map(a => a.id);
   const assetDomains = assets.map(a => a.value).filter(Boolean);
 
