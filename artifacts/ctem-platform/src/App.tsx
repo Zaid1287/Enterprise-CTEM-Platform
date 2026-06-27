@@ -95,9 +95,17 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   );
 }
 
+const EXTERNAL_ROLES = ["vendor", "employee", "third_party"];
+
+function useDefaultPath() {
+  const { user } = useAuth();
+  return EXTERNAL_ROLES.includes(user?.role ?? "") ? "/assets" : "/dashboard";
+}
+
 function PublicRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated } = useAuth();
-  if (isAuthenticated) return <Redirect to="/dashboard" />;
+  const defaultPath = useDefaultPath();
+  if (isAuthenticated) return <Redirect to={defaultPath} />;
   return (
     <Suspense fallback={<PageLoader />}>
       <Component />
@@ -106,10 +114,11 @@ function PublicRoute({ component: Component }: { component: React.ComponentType 
 }
 
 function Router() {
+  const defaultPath = useDefaultPath();
   return (
     <Switch>
       {/* Public routes */}
-      <Route path="/" component={() => <Redirect to="/dashboard" />} />
+      <Route path="/" component={() => <Redirect to={defaultPath} />} />
       <Route path="/login" component={() => <PublicRoute component={LoginPage} />} />
       <Route path="/register" component={() => <PublicRoute component={RegisterPage} />} />
       <Route path="/forgot-password" component={() => <PublicRoute component={ForgotPasswordPage} />} />
@@ -154,7 +163,7 @@ function Router() {
       <Route path="/exposure" component={() => <ProtectedRoute component={ExposurePage} />} />
 
       {/* Fallback */}
-      <Route component={() => <Redirect to="/dashboard" />} />
+      <Route component={() => <Redirect to={defaultPath} />} />
     </Switch>
   );
 }
