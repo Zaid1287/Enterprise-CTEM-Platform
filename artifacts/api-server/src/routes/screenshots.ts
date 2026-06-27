@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { eq, and, desc } from "drizzle-orm";
 import { db, screenshotsTable, assetsTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { captureScreenshots } from "../lib/screenshotEngine";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 // GET /assets/:assetId/screenshots
 router.get("/assets/:assetId/screenshots", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

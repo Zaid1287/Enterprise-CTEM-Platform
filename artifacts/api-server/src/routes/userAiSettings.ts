@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { eq, and } from "drizzle-orm";
 import { db, userAiSettingsTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 const ALLOWED_PROVIDERS = ["openai", "gemini", "anthropic", "openrouter", "ollama"] as const;
 

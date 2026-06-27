@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
 import { db, invitationsTable, assetsTable, tenantsTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { sendEmail } from "../lib/email";
 import crypto from "crypto";
 
@@ -15,6 +15,7 @@ function getPlatformBaseUrl(req: { get: (h: string) => string | undefined }): st
 }
 
 const router = Router();
+router.use(denyExternalMembers);
 
 router.get("/invitations", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const invitations = await db.select()

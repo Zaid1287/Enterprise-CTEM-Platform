@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { eq, inArray, and } from "drizzle-orm";
 import { db, accountManagerClientsTable, tenantsTable, assetsTable, findingsTable, scansTable, usersTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 // Returns the account manager(s) assigned to the caller's tenant.
 // Merges two sources:

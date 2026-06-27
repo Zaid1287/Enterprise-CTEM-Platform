@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { eq, and, desc } from "drizzle-orm";
 import { db, sessionsTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 // ── List active sessions ───────────────────────────────────────────────────────
 

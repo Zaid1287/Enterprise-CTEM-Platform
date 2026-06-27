@@ -6,10 +6,11 @@
 import { Router } from "express";
 import { sql, and, eq } from "drizzle-orm";
 import { db, assetsTable, findingsTable, scansTable } from "@workspace/db";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { cacheGet, cacheSet, ck } from "../lib/cache";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 router.get("/search", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const q = (req.query.q as string ?? "").trim();

@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db, packagesTable, tenantPackagesTable } from "@workspace/db";
-import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, requireRole, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 function toPackageResponse(pkg: typeof packagesTable.$inferSelect) {
   return {

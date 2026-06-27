@@ -2,10 +2,11 @@ import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
 import { db, usersTable, tenantsTable, accountManagerClientsTable } from "@workspace/db";
 import { CreateUserBody, GetUserParams, UpdateUserParams, DeleteUserParams } from "@workspace/api-zod";
-import { requireAuth, hashPassword, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, hashPassword, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 
 const router = Router();
+router.use(denyExternalMembers);
 
 const ROLE_HIERARCHY: Record<string, string[]> = {
   super_admin: ["super_admin", "admin", "account_manager", "client"],
