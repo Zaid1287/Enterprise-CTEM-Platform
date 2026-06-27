@@ -38,9 +38,20 @@ function toCsv(headers: string[], rows: unknown[][]): string {
 router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;
 
-  // External members have no access to reports
+  // External members see only reports that include at least one of their granted assets
   if (role === "vendor" || role === "employee" || role === "third_party") {
-    res.json([]); return;
+    const { externalMemberAssetsTable } = await import("@workspace/db");
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    if (rows.length === 0) { res.json([]); return; }
+    const allowedIds = new Set(rows.map(r => r.assetId));
+    const allReports = await db.select().from(reportsTable)
+      .where(eq(reportsTable.tenantId, req.user!.tenantId));
+    const extReports = allReports.filter(r =>
+      Array.isArray(r.assetIds) && (r.assetIds as number[]).some(id => allowedIds.has(id))
+    );
+    res.json(extReports.map(toReportResponse)); return;
   }
 
   // Client: only show reports that include at least one asset assigned to them
@@ -578,6 +589,45 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
 
   const dlRole = req.user!.role;
+
+  // External members: only download if report intersects their allowed assets
+  if (dlRole === "vendor" || dlRole === "employee" || dlRole === "third_party") {
+    const { externalMemberAssetsTable } = await import("@workspace/db");
+    const [report] = await db.select().from(reportsTable)
+      .where(and(eq(reportsTable.id, reportId), eq(reportsTable.tenantId, req.user!.tenantId)));
+    if (!report) { res.status(404).json({ error: "Report not found" }); return; }
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable).where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    const allowedIds = new Set(rows.map(r => r.assetId));
+    const hasAccess = Array.isArray(report.assetIds) && (report.assetIds as number[]).some(id => allowedIds.has(id));
+    if (!hasAccess) { res.status(404).json({ error: "Report not found" }); return; }
+    if (report.status !== "ready") { res.status(409).json({ error: "Report is not ready yet" }); return; }
+    // Fall through to report generation with scoped data
+    const tenantId = report.tenantId;
+    const fmt = report.format ?? "csv";
+    const safeName = report.title.replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
+    const allowedArr = Array.from(allowedIds);
+    const findings = await db.select({ id: findingsTable.id, title: findingsTable.title, severity: findingsTable.severity, status: findingsTable.status, cve: findingsTable.cve, cvss: findingsTable.cvss, cwe: findingsTable.cwe, description: findingsTable.description, remediation: findingsTable.remediation, assetId: findingsTable.assetId, createdAt: findingsTable.createdAt }).from(findingsTable).where(and(eq(findingsTable.tenantId, tenantId), inArray(findingsTable.assetId, allowedArr)));
+    const assets = await db.select({ id: assetsTable.id, name: assetsTable.name, value: assetsTable.value, type: assetsTable.type, riskLevel: assetsTable.riskLevel }).from(assetsTable).where(inArray(assetsTable.id, allowedArr));
+    const assetMap = Object.fromEntries(assets.map(a => [a.id, a]));
+    let extJsonData: object = {};
+    let extCsvContent = "";
+    if (fmt === "json") {
+      extJsonData = { report: toReportResponse(report), findings: findings.map(f => ({ ...f, asset: assetMap[f.assetId ?? 0] ?? null })), generatedAt: new Date().toISOString() };
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.json"`);
+      res.json(extJsonData);
+    } else {
+      const headers = ["ID", "Title", "Severity", "Status", "CVE", "CVSS", "CWE", "Asset Name", "Description", "Created At"];
+      const csvRows = findings.map(f => { const a = assetMap[f.assetId ?? 0]; return [f.id, f.title, f.severity, f.status, f.cve ?? "", f.cvss ?? "", f.cwe ?? "", a?.name ?? "", f.description ?? "", f.createdAt.toISOString()]; });
+      extCsvContent = [headers.join(","), ...csvRows.map(r => r.map(v => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s; }).join(","))].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.csv"`);
+      res.send(extCsvContent);
+    }
+    return;
+  }
+
   let dlWhere;
   if (dlRole === "super_admin" || dlRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -682,6 +732,21 @@ router.get("/reports/:reportId", requireAuth, async (req: AuthenticatedRequest, 
   const params = GetReportParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const getRole = req.user!.role;
+
+  // External members: verify report intersects their allowed assets
+  if (getRole === "vendor" || getRole === "employee" || getRole === "third_party") {
+    const { externalMemberAssetsTable } = await import("@workspace/db");
+    const [report] = await db.select().from(reportsTable)
+      .where(and(eq(reportsTable.id, params.data.reportId), eq(reportsTable.tenantId, req.user!.tenantId)));
+    if (!report) { res.status(404).json({ error: "Report not found" }); return; }
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable).where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    const allowedIds = new Set(rows.map(r => r.assetId));
+    const hasAccess = Array.isArray(report.assetIds) && (report.assetIds as number[]).some(id => allowedIds.has(id));
+    if (!hasAccess) { res.status(404).json({ error: "Report not found" }); return; }
+    res.json(toReportResponse(report)); return;
+  }
+
   let getWhere;
   if (getRole === "super_admin" || getRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);

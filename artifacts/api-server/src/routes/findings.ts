@@ -242,6 +242,18 @@ router.get("/findings/:findingId/scan-data", requireAuth, async (req: Authentica
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
   const scanDataRole = req.user!.role;
+
+  // External members: verify finding belongs to one of their granted assets
+  if (scanDataRole === "vendor" || scanDataRole === "employee" || scanDataRole === "third_party") {
+    const [f] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId })
+      .from(findingsTable).where(eq(findingsTable.id, params.data.findingId));
+    if (!f) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [granted] = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(and(eq(externalMemberAssetsTable.userId, req.user!.userId), eq(externalMemberAssetsTable.assetId, f.assetId)));
+    if (!granted) { res.status(404).json({ error: "Finding not found" }); return; }
+  }
+
   let scanDataFindingWhere;
   if (scanDataRole === "super_admin" || scanDataRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -337,6 +349,19 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
 router.get("/findings/:findingId/comments", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = ListFindingCommentsParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  // External members: verify finding belongs to one of their granted assets (read-only allowed)
+  const commentsRole = req.user!.role;
+  if (commentsRole === "vendor" || commentsRole === "employee" || commentsRole === "third_party") {
+    const [f] = await db.select({ assetId: findingsTable.assetId })
+      .from(findingsTable).where(eq(findingsTable.id, params.data.findingId));
+    if (!f) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [granted] = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(and(eq(externalMemberAssetsTable.userId, req.user!.userId), eq(externalMemberAssetsTable.assetId, f.assetId)));
+    if (!granted) { res.status(404).json({ error: "Finding not found" }); return; }
+  }
+
   const comments = await db.select({
     comment: findingCommentsTable,
     authorName: usersTable.firstName,

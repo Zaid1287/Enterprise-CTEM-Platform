@@ -371,6 +371,24 @@ router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedReque
 router.get("/scans/:scanId/jobs", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = ListScanJobsParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  // External members: verify scan intersects their allowed assets
+  const jobsRole = req.user!.role;
+  if (jobsRole === "vendor" || jobsRole === "employee" || jobsRole === "third_party") {
+    const [scan] = await db.select({ assetIds: scansTable.assetIds }).from(scansTable).where(eq(scansTable.id, params.data.scanId));
+    if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable).where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    const allowedIds = new Set(rows.map(r => r.assetId));
+    const hasAccess = Array.isArray(scan.assetIds) && (scan.assetIds as number[]).some(id => allowedIds.has(id));
+    if (!hasAccess) { res.status(404).json({ error: "Scan not found" }); return; }
+    // Scope jobs to only their allowed assets within the scan
+    const allowedArr = Array.from(allowedIds);
+    const extJobs = await db.select().from(scanJobsTable)
+      .where(and(eq(scanJobsTable.scanId, params.data.scanId), inArray(scanJobsTable.assetId, allowedArr)));
+    res.json(extJobs.map(j => ({ id: j.id, scanId: j.scanId, assetId: j.assetId, status: j.status, result: j.result, errorMessage: j.errorMessage, startedAt: j.startedAt?.toISOString() ?? null, completedAt: j.completedAt?.toISOString() ?? null, createdAt: j.createdAt.toISOString() }))); return;
+  }
+
   const jobs = await db.select().from(scanJobsTable).where(eq(scanJobsTable.scanId, params.data.scanId));
   res.json(jobs.map(j => ({
     id: j.id, scanId: j.scanId, assetId: j.assetId, status: j.status,
