@@ -89,11 +89,35 @@ const EXTERNAL_ROLES = new Set(["vendor", "employee", "third_party"]);
  * Blocks external members (vendor/employee/third_party) from the entire router.
  * Apply as `router.use(denyExternalMembers)` as the first middleware on any
  * router that external members should have no access to.
+ *
+ * This middleware runs BEFORE requireAuth on the same router, so it must
+ * decode the Bearer token itself rather than relying on req.user being set.
+ * It only blocks authenticated external-role requests; unauthenticated
+ * requests fall through to requireAuth which will return 401 as normal.
  */
 export function denyExternalMembers(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
-  if (req.user && EXTERNAL_ROLES.has(req.user.role)) {
-    res.status(403).json({ error: "Forbidden" });
+  // If requireAuth already ran (e.g. combined use), use the cached payload
+  if (req.user) {
+    if (EXTERNAL_ROLES.has(req.user.role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    next();
     return;
+  }
+
+  // Decode the token without a DB round-trip (signature still verified)
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    try {
+      const payload = verifyToken(authHeader.slice(7));
+      if (EXTERNAL_ROLES.has(payload.role)) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
+    } catch {
+      // Invalid/expired token — let requireAuth handle the 401
+    }
   }
   next();
 }
