@@ -191,6 +191,24 @@ router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest
   const params = GetFindingParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
+
+  // External members: only if the finding belongs to one of their granted assets
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    const [finding] = await db.select({ id: findingsTable.id, assetId: findingsTable.assetId })
+      .from(findingsTable).where(eq(findingsTable.id, params.data.findingId));
+    if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [granted] = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable)
+      .where(and(eq(externalMemberAssetsTable.userId, req.user!.userId), eq(externalMemberAssetsTable.assetId, finding.assetId)));
+    if (!granted) { res.status(404).json({ error: "Finding not found" }); return; }
+    const [row] = await db.select({ finding: findingsTable, assetName: assetsTable.name, assetValue: assetsTable.value, assetType: assetsTable.type, assetLastScannedAt: assetsTable.lastScannedAt, assetIpAddress: assetsTable.ipAddress, assetPort: assetsTable.port, assetTags: assetsTable.tags, assetRiskScore: riskScoresTable.score })
+      .from(findingsTable).leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id)).leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+      .where(eq(findingsTable.id, params.data.findingId));
+    if (!row) { res.status(404).json({ error: "Finding not found" }); return; }
+    res.json(toFindingResponse(row.finding, row.assetName, row.assetValue, row.assetType, row.assetLastScannedAt, row.assetIpAddress, row.assetPort, row.assetTags, row.assetRiskScore));
+    return;
+  }
+
   let findingWhere;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -292,9 +310,15 @@ router.get("/findings/:findingId/scan-data", requireAuth, async (req: Authentica
 router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateFindingParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const patchRole = req.user!.role;
+
+  // External members cannot mutate findings
+  if (patchRole === "vendor" || patchRole === "employee" || patchRole === "third_party") {
+    res.status(403).json({ error: "External members cannot modify findings" }); return;
+  }
+
   const parsed = UpdateFindingBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const patchRole = req.user!.role;
   let patchWhere;
   if (patchRole === "super_admin" || patchRole === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -330,6 +354,13 @@ router.get("/findings/:findingId/comments", requireAuth, async (req: Authenticat
 router.post("/findings/:findingId/comments", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = CreateFindingCommentParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  // External members cannot post comments
+  const commentRole = req.user!.role;
+  if (commentRole === "vendor" || commentRole === "employee" || commentRole === "third_party") {
+    res.status(403).json({ error: "External members cannot post comments" }); return;
+  }
+
   const parsed = CreateFindingCommentBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const [comment] = await db.insert(findingCommentsTable).values({

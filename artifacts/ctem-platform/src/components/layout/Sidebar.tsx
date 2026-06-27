@@ -138,10 +138,6 @@ export function Sidebar() {
       title: "Assets",
       items: [{ label: "My Assets", href: "/assets", icon: Server }],
     },
-    {
-      title: "Account",
-      items: [{ label: "Settings", href: "/settings/account", icon: Settings }],
-    },
   ] : [];
 
   const visibleGroups = isExternalMember

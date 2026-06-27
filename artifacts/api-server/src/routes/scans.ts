@@ -173,12 +173,18 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
 });
 
 router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+
+  // External members cannot initiate scans
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    res.status(403).json({ error: "External members cannot create scans" }); return;
+  }
+
   const parsed = CreateScanBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
   // Enforce ownership verification — no scanning unverified assets
   const assetIds = (parsed.data as any).assetIds as number[] | undefined;
-  const role = req.user!.role;
 
   // For AM: resolve allowed tenantIds from client assignments so we can verify
   // ownership across the client tenants they manage.
@@ -287,6 +293,19 @@ router.get("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res)
   const params = GetScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
+
+  // External members: verify scan covers at least one of their granted assets
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    const [scan] = await db.select().from(scansTable).where(eq(scansTable.id, params.data.scanId));
+    if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+    const rows = await db.select({ assetId: externalMemberAssetsTable.assetId })
+      .from(externalMemberAssetsTable).where(eq(externalMemberAssetsTable.userId, req.user!.userId));
+    const allowedIds = new Set(rows.map(r => r.assetId));
+    const hasAccess = Array.isArray(scan.assetIds) && (scan.assetIds as number[]).some(id => allowedIds.has(id));
+    if (!hasAccess) { res.status(404).json({ error: "Scan not found" }); return; }
+    res.json(toScanResponse(scan)); return;
+  }
+
   let scan: typeof scansTable.$inferSelect | undefined;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
@@ -304,6 +323,12 @@ router.delete("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, r
   const params = DeleteScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
+
+  // External members cannot delete scans
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    res.status(403).json({ error: "External members cannot delete scans" }); return;
+  }
+
   // Authorize FIRST: verify scan exists and is accessible to this user
   let authWhere;
   if (role === "super_admin" || role === "admin") {
@@ -324,6 +349,12 @@ router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedReque
   const params = CancelScanParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const role = req.user!.role;
+
+  // External members cannot cancel scans
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    res.status(403).json({ error: "External members cannot cancel scans" }); return;
+  }
+
   let cancelWhere;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);

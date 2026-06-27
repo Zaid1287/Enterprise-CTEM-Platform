@@ -38,7 +38,7 @@ export default function AcceptInvitationPage() {
 
   useEffect(() => {
     if (!token) { setLoadError("No invitation token found in the URL."); setLoading(false); return; }
-    apiFetch(`/auth/invitation-info?token=${encodeURIComponent(token)}`)
+    apiFetch(`/api/auth/invitation-info?token=${encodeURIComponent(token)}`)
       .then((data: InvitationInfo) => {
         setInfo(data);
         // Pre-fill name parts from the invitation name if possible
@@ -61,11 +61,11 @@ export default function AcceptInvitationPage() {
     if (password.length < 8) { setSubmitError("Password must be at least 8 characters"); return; }
     setSubmitting(true);
     try {
-      const data = await apiFetch("/auth/accept-invitation", {
+      const data = await apiFetch("/api/auth/accept-invitation", {
         method: "POST",
         body: JSON.stringify({ token, firstName, lastName, password }),
       }) as { accessToken: string; refreshToken: string; user: any };
-      login(data.accessToken, data.user);
+      login(data.accessToken, data.refreshToken, data.user);
       sessionStorage.setItem("ctem_token", data.accessToken);
       setDone(true);
       setTimeout(() => navigate("/assets"), 1200);

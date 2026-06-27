@@ -262,6 +262,11 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
 });
 
 router.post("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  // External members cannot create assets
+  const createRole = req.user!.role;
+  if (createRole === "vendor" || createRole === "employee" || createRole === "third_party") {
+    res.status(403).json({ error: "External members cannot create assets" }); return;
+  }
   const parsed = CreateAssetBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
   const { assignedClientId, assignedAccountManagerId, ...rest } = parsed.data as any;
@@ -317,6 +322,13 @@ router.get("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, re
 router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  // External members cannot modify assets
+  const patchAssetRole = req.user!.role;
+  if (patchAssetRole === "vendor" || patchAssetRole === "employee" || patchAssetRole === "third_party") {
+    res.status(403).json({ error: "External members cannot modify assets" }); return;
+  }
+
   const parsed = UpdateAssetBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
 
@@ -340,6 +352,13 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
 router.delete("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = DeleteAssetParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  // External members cannot delete assets
+  const deleteAssetRole = req.user!.role;
+  if (deleteAssetRole === "vendor" || deleteAssetRole === "employee" || deleteAssetRole === "third_party") {
+    res.status(403).json({ error: "External members cannot delete assets" }); return;
+  }
+
   const { assetId } = params.data;
   const tenantId = req.user!.tenantId;
 

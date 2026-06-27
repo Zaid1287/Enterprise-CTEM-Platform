@@ -38,6 +38,11 @@ function toCsv(headers: string[], rows: unknown[][]): string {
 router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;
 
+  // External members have no access to reports
+  if (role === "vendor" || role === "employee" || role === "third_party") {
+    res.json([]); return;
+  }
+
   // Client: only show reports that include at least one asset assigned to them
   if (role === "client") {
     const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
