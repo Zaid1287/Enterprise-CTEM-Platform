@@ -24,7 +24,7 @@ import { runNucleiScan, type VulnScanResult } from "../lib/nucleiScanner";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
@@ -39,6 +39,7 @@ import { dispatchMultiTenantNotifications } from "../lib/notifier";
 
 const execAsync = promisify(exec);
 const router = Router();
+router.use(denyExternalMembers);
 
 // ── Active nmap killers ────────────────────────────────────────────────────────
 const activeScanKillers = new Map<number, () => void>();

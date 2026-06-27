@@ -130,6 +130,9 @@ router.post("/reports", requireAuth, requireRole("manager", "admin", "super_admi
 
 // ── PDF data: asset ──────────────────────────────────────────────────────────
 router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role === "vendor" || req.user!.role === "employee" || req.user!.role === "third_party") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   const assetId  = parseInt(req.params.assetId, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
   const pdfAssetRole = req.user!.role;
@@ -215,6 +218,9 @@ router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: Authenti
 
 // ── PDF data: brand threat ────────────────────────────────────────────────────
 router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role === "vendor" || req.user!.role === "employee" || req.user!.role === "third_party") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   const scanId   = parseInt(req.params.scanId, 10);
   if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scanId" }); return; }
   const btPdfRole = req.user!.role;
@@ -351,6 +357,9 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
 
 // ── PDF data: report (all assets + findings) ─────────────────────────────────
 router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role === "vendor" || req.user!.role === "employee" || req.user!.role === "third_party") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   const reportId = parseInt(req.params.reportId, 10);
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
   const pdfReportRole = req.user!.role;
@@ -479,6 +488,9 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
 
 // ── PDF data: selected assets (findings + brand threats) ─────────────────────
 router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.user!.role === "vendor" || req.user!.role === "employee" || req.user!.role === "third_party") {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   const pdfAssetsRole = req.user!.role;
   const raw = String(req.query.ids ?? "");
   const requestedIds = raw.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));

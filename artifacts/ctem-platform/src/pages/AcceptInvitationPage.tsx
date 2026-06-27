@@ -68,7 +68,7 @@ export default function AcceptInvitationPage() {
       login(data.accessToken, data.refreshToken, data.user);
       sessionStorage.setItem("ctem_token", data.accessToken);
       setDone(true);
-      setTimeout(() => navigate("/assets"), 1200);
+      setTimeout(() => navigate("/dashboard"), 1200);
     } catch (err: any) {
       setSubmitError(err?.message ?? "Failed to create account. Please try again.");
     } finally {
