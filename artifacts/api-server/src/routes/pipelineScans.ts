@@ -225,14 +225,26 @@ setImmediate(async () => {
 
 // Tool → pentesting phase mapping
 const TOOL_PHASE: Record<string, number> = {
+  // Phase 1 — Reconnaissance
   subfinder: 1, dnsx: 1, shuffledns: 1, amass: 1, mapcidr: 1, tldfinder: 1,
   gau: 1, asnmap: 1, cdncheck: 1, uncover: 1, cloud_enum: 1, s3scanner: 1,
   theHarvester: 1, aix: 1, maltego: 1, dnstwist: 1,
+  // Previously unmapped recon tools — now wired
+  dnsrecon: 1, findomain: 1, alterx: 1, waybackurls: 1,
+  GrayhatWarfare: 1, "cloud-enum": 1, "firebase-recon": 1,
+  // Phase 2 — Port Scanning
   naabu: 2, masscan: 2, rustscan: 2,
+  // Phase 3 — Web Recon
   httpx: 3, katana: 3, feroxbuster: 3, gobuster: 3, ffuf: 3,
   whatweb: 3, wafw00f: 3, useragent: 3, wappalyzer: 3, webcheck: 3,
   gowitness: 3, eyewitness: 3, snapback: 3,
-  nuclei: 4, nikto: 4, wpscan: 4, trufflehog: 4, wapiti: 4, vulnx: 4, goleak: 4,
+  // Previously unmapped web recon tools — now wired
+  arjun: 3, hakrawler: 3, linkfinder: 3, paramspider: 3, uro: 3,
+  // Phase 4 — Vuln & Secrets
+  nuclei: 4, nikto: 4, wpscan: 4, trufflehog: 4, wapiti: 4, vulnx: 4,
+  // Previously unmapped vuln tools — now wired (goleak removed — Go memory tool, not security scanner)
+  dalfox: 4, secretfinder: 4, gitdumper: 4,
+  // Phase 5 — SSL/TLS
   testssl: 5, sslscan: 5,
 };
 const PHASE_NAMES: Record<number, string> = {
@@ -1740,6 +1752,29 @@ async function executePipeline(
     // Screenshots + tech detection always run for web asset types regardless of tool pipeline
     const isWebAsset = ["domain", "subdomain", "url", "ip"].includes(asset.type ?? "");
     const shouldScreenshot = isWebAsset; // always capture for web assets
+    // ── Live-host pre-check (reduces false positives for unreachable hosts) ────
+    let isHostLive = false;
+    let hostLiveStatus = 0;
+    if (needsHttp || isWebAsset) {
+      const hostToCheck = target.replace(/^https?:\/\//, "").split("/")[0];
+      for (const scheme of ["https", "http"]) {
+        try {
+          const ctrl = new AbortController();
+          const t2 = setTimeout(() => ctrl.abort(), 12000);
+          const r = await fetch(`${scheme}://${hostToCheck}`, { signal: ctrl.signal, redirect: "follow" });
+          clearTimeout(t2);
+          isHostLive = true;
+          hostLiveStatus = r.status;
+          break;
+        } catch {}
+      }
+      if (!isHostLive) {
+        logger.warn({ target, domain }, "Host not reachable — HTTP-based scans will produce limited findings");
+      } else {
+        logger.info({ target, status: hostLiveStatus }, "Host live — proceeding with web recon");
+      }
+    }
+
     if (needsHttp || toolsForAsset.some(t => t.category === "web_recon") || hasScreenshotTools || isWebAsset) {
       const p3Start = Date.now();
       for (const t of p3) startTool(t.name, t.category === "screenshot"
@@ -1935,6 +1970,8 @@ async function executePipeline(
     let secretFindings: VulnFinding[] = [];
     let cveFindings: VulnFinding[] = [];
     let headerVulnFindings: VulnFinding[] = [];
+    let niktoFindings: VulnFinding[] = [];
+    let dalfoxFindings: VulnFinding[] = [];
 
     if (needsVulns || needsSecrets) {
       const p4Start = Date.now();
@@ -1948,12 +1985,86 @@ async function executePipeline(
           cveFindings = await lookupRealCves(realPorts, shodanCveIds);
           headerVulnFindings = analyzeSecurityHeaders(httpInfo);
         })(),
+        // ── Nikto web scanner (real binary) ───────────────────────────────────
+        isHostLive && (async () => {
+          try {
+            const { exec: execFn } = await import("child_process");
+            const { promisify: prom } = await import("util");
+            const ex = prom(execFn);
+            const safeHost = domain.replace(/[^a-zA-Z0-9.\-]/g, "");
+            const scheme = target.startsWith("http://") ? "http" : "https";
+            const { stdout } = await ex(
+              `nikto -h "${scheme}://${safeHost}" -Format csv -maxtime 60 -nointeractive -nossl -nolookup 2>/dev/null`,
+              { timeout: 90000 }
+            );
+            for (const line of stdout.split("\n")) {
+              if (!line.trim() || line.startsWith("#") || line.startsWith("host,")) continue;
+              const parts = line.split(",");
+              if (parts.length < 7) continue;
+              const desc = (parts[6] ?? "").replace(/^"+|"+$/g, "").trim();
+              if (!desc || desc.length < 10) continue;
+              const cveRef = parts[4]?.trim() ?? "";
+              const severity = cveRef ? "high" : "medium";
+              niktoFindings.push({
+                title: `Nikto: ${desc.slice(0, 100)}`,
+                severity,
+                remediation: "Review the identified configuration and apply security hardening.",
+                cvss: cveRef ? 7.0 : 5.0,
+                cve: cveRef || `NIKTO-${Buffer.from(desc.slice(0, 30)).toString("hex").slice(0, 12)}`,
+                cwe: "CWE-16",
+                source: parts[3]?.trim() ?? target,
+              } as VulnFinding);
+            }
+            logger.info({ domain, count: niktoFindings.length }, "Nikto scan complete");
+          } catch (err) {
+            logger.warn({ err, domain }, "Nikto scan failed or unavailable");
+          }
+        })(),
+        // ── Dalfox XSS scanner (real binary) ──────────────────────────────────
+        isHostLive && (async () => {
+          try {
+            const { exec: execFn } = await import("child_process");
+            const { promisify: prom } = await import("util");
+            const ex = prom(execFn);
+            const safeTarget2 = target.replace(/["`]/g, "").slice(0, 300);
+            const { stdout } = await ex(
+              `dalfox url "${safeTarget2}" --timeout 15 --no-color --silence --only-poc r 2>/dev/null`,
+              { timeout: 45000 }
+            );
+            if (stdout.trim()) {
+              for (const line of stdout.trim().split("\n")) {
+                if (!line.includes("[V]") && !line.includes("PoC")) continue;
+                dalfoxFindings.push({
+                  title: "Cross-Site Scripting (XSS) — Dalfox",
+                  severity: "high",
+                  remediation: "Encode all user-controlled input in output. Use Content-Security-Policy headers. Validate inputs server-side.",
+                  cvss: 7.2,
+                  cve: `DALFOX-XSS-${Date.now().toString(36).slice(-6).toUpperCase()}`,
+                  cwe: "CWE-79",
+                  source: target,
+                } as VulnFinding);
+              }
+              logger.info({ domain, count: dalfoxFindings.length }, "Dalfox XSS scan complete");
+            }
+          } catch (err) {
+            logger.warn({ err, domain }, "Dalfox scan failed or unavailable");
+          }
+        })(),
       ].filter(Boolean));
 
       for (const t of p4) {
         const isSecrets = t.name === "trufflehog";
-        const count = isSecrets ? secretFindings.length : cveFindings.length + headerVulnFindings.length;
-        doneTool(t.name, count, isSecrets ? `${secretFindings.length} secrets/credentials found` : `${cveFindings.length} CVEs (Shodan+NVD), ${headerVulnFindings.length} header issues`, p4Start);
+        const isNikto   = t.name === "nikto";
+        const isDalfox  = t.name === "dalfox";
+        const count = isSecrets ? secretFindings.length
+          : isNikto  ? niktoFindings.length
+          : isDalfox ? dalfoxFindings.length
+          : cveFindings.length + headerVulnFindings.length;
+        const detail = isSecrets ? `${secretFindings.length} secrets/credentials found`
+          : isNikto  ? `${niktoFindings.length} web issues found`
+          : isDalfox ? `${dalfoxFindings.length} XSS vulnerabilities found`
+          : `${cveFindings.length} CVEs (Shodan+NVD), ${headerVulnFindings.length} header issues`;
+        doneTool(t.name, count, detail, p4Start);
       }
     }
 
@@ -2037,7 +2148,7 @@ async function executePipeline(
 
     // ── Compile all data and store per-tool results ────────────────────────────
     const allIntel    = [...sslIntel, ...geoIntel, ...whoisIntel, ...cloudIntel];
-    const allVulns    = [...cveFindings, ...sslVulns, ...headerVulnFindings, ...secretFindings];
+    const allVulns    = [...cveFindings, ...sslVulns, ...headerVulnFindings, ...secretFindings, ...niktoFindings, ...dalfoxFindings];
     const allSubdomains = dnsResult.subdomains;
     const allDns      = dnsResult.dnsRecords;
 
@@ -2148,6 +2259,30 @@ async function executePipeline(
           remediation: v.remediation,
         });
       }
+    }
+
+    // Nikto findings
+    for (const v of niktoFindings) {
+      findingInserts.push({
+        tenantId, assetId: asset.id, scanId,
+        title: v.title, cve: v.cve,
+        severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
+        cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+        description: `${v.title}. Web server misconfiguration detected by Nikto. Scanned host: ${asset.value}.`,
+        remediation: v.remediation,
+      });
+    }
+
+    // Dalfox XSS findings
+    for (const v of dalfoxFindings) {
+      findingInserts.push({
+        tenantId, assetId: asset.id, scanId,
+        title: v.title, cve: v.cve,
+        severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
+        cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+        description: `Dalfox detected a Cross-Site Scripting (XSS) vulnerability on ${asset.value}. XSS allows attackers to inject client-side scripts and steal sessions, credentials, or perform actions on behalf of users.`,
+        remediation: v.remediation,
+      });
     }
 
     for (const tool of toolsForAsset) {

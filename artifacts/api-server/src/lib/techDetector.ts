@@ -1,3 +1,9 @@
+import { exec, execSync } from "child_process";
+import { promisify } from "util";
+
+const execAsync  = promisify(exec);
+const WHATWEB_BIN = (() => { try { return execSync("which whatweb 2>/dev/null", { timeout: 3000 }).toString().trim(); } catch { return ""; } })();
+
 export interface DetectedTechnology {
   slug: string;
   name: string;
@@ -546,16 +552,61 @@ export async function detectTechnologies(rawUrl: string, timeoutMs = 12000): Pro
     }
   }
 
+  // Run signature detection (Node.js) + whatweb binary in parallel
+  async function runWhatweb(): Promise<DetectedTechnology[]> {
+    if (!WHATWEB_BIN) return [];
+    try {
+      const host = url.replace(/^https?:\/\//, "").split("/")[0];
+      const { stdout } = await execAsync(
+        `${WHATWEB_BIN} --log-json=- --no-errors -q ${url} 2>/dev/null`,
+        { timeout: 30000 }
+      );
+      const results: DetectedTechnology[] = [];
+      for (const line of stdout.trim().split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          const plugins: Record<string, any> = parsed.plugins ?? {};
+          for (const [name, data] of Object.entries(plugins)) {
+            if (!name || name === "IP-Address" || name === "Country" || name === "HTTPServer") continue;
+            const slug    = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+            const version = Array.isArray(data?.version) ? data.version[0] : undefined;
+            results.push({
+              slug, name, version,
+              category: "web-technology",
+              confidence: 75,
+              hosts: [host],
+            });
+          }
+        } catch {}
+      }
+      return results;
+    } catch { return []; }
+  }
+
   try {
     let page = await tryFetch(url);
-
     // Fall back to HTTP if HTTPS failed
     if (!page && url.startsWith("https://")) {
       page = await tryFetch(url.replace("https://", "http://"));
     }
 
-    if (!page) return [];
-    return runDetection(page);
+    const [sigResults, whatwebResults] = await Promise.all([
+      page ? Promise.resolve(runDetection(page)) : Promise.resolve([] as DetectedTechnology[]),
+      runWhatweb(),
+    ]);
+
+    // Merge whatweb results — skip slugs already detected by signatures (higher confidence)
+    const seenSlugs = new Set(sigResults.map(t => t.slug));
+    for (const t of whatwebResults) {
+      if (!seenSlugs.has(t.slug)) {
+        seenSlugs.add(t.slug);
+        sigResults.push(t);
+      }
+    }
+
+    if (!page && sigResults.length === 0) return [];
+    return sigResults;
   } finally {
     clearTimeout(timer);
   }

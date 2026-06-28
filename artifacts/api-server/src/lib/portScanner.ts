@@ -6,13 +6,20 @@ import path from "path";
 import zlib from "zlib";
 
 const execAsync = promisify(exec);
-const NAABU_BIN   = "/tmp/naabu";
+let NAABU_BIN     = "/tmp/naabu";   // may be overridden to system binary
 const MASSCAN_BIN = "/tmp/masscan-tool";
 const NAABU_ZIP   = path.resolve(__dirname, "../binaries/naabu.zip");
 
-// ── Auto-extract naabu from bundled zip ───────────────────────────────────────
+// ── Auto-extract naabu from bundled zip (prefers system binary via Nix) ───────
 
 function ensureNaabu(): boolean {
+  // 1. System-installed naabu (Nix PATH — preferred, no extraction needed)
+  try {
+    const sys = execSync("which naabu 2>/dev/null", { timeout: 3000 }).toString().trim();
+    if (sys) { NAABU_BIN = sys; return true; }
+  } catch {}
+
+  // 2. Already cached at /tmp/naabu
   if (fs.existsSync(NAABU_BIN)) {
     try { fs.accessSync(NAABU_BIN, fs.constants.X_OK); return true; } catch { /* fall through */ }
   }
@@ -337,6 +344,33 @@ async function runNmapDetailed(target: string, ports: number[]): Promise<{ portD
   return { portDetails: parseNmapOutput(stdout), raw: stdout };
 }
 
+// ── Rustscan: ultra-fast async port scanner ───────────────────────────────────
+
+async function runRustscan(target: string): Promise<{ ports: number[]; raw: string }> {
+  try {
+    const sys = execSync("which rustscan 2>/dev/null", { timeout: 3000 }).toString().trim();
+    if (!sys) return { ports: [], raw: "(rustscan not found in PATH)" };
+
+    const host = extractTarget(target);
+    const cmd  = `rustscan -a ${host} --range 1-65535 --ulimit 5000 --no-nmap --timeout 3000 2>/dev/null`;
+    let stdout = "";
+    try {
+      const r = await execAsync(cmd, { timeout: 120000 });
+      stdout = r.stdout;
+    } catch (err: any) { stdout = err?.stdout?.trim() ?? ""; }
+
+    const ports: number[] = [];
+    for (const line of stdout.split("\n")) {
+      const m = line.match(/Open\s+[^:]+:(\d+)/i) ?? line.match(/:(\d+)$/);
+      if (m) {
+        const n = parseInt(m[1]);
+        if (!isNaN(n) && n > 0 && n <= 65535) ports.push(n);
+      }
+    }
+    return { ports: [...new Set(ports)].sort((a, b) => a - b), raw: stdout };
+  } catch { return { ports: [], raw: "(rustscan error)" }; }
+}
+
 // ── Shodan InternetDB (free, no API key) ──────────────────────────────────────
 
 export async function queryShodanInternetDB(ip: string): Promise<ShodanHostData | null> {
@@ -380,10 +414,11 @@ export async function scanPorts(target: string, shodanApiKey?: string | null): P
   const scannedAt = new Date().toISOString();
   const targetIp  = await resolveToIp(target);
 
-  // Run naabu, masscan, and shodan in parallel
-  const [naabuResult, masscanResult, shodanData] = await Promise.all([
+  // Run naabu, masscan, rustscan, and shodan in parallel
+  const [naabuResult, masscanResult, rustscanResult, shodanData] = await Promise.all([
     runNaabu(target),
     runMasscan(target, targetIp),
+    runRustscan(target),
     targetIp
       ? (shodanApiKey
           ? queryShodanFullApi(targetIp, shodanApiKey)
@@ -391,12 +426,13 @@ export async function scanPorts(target: string, shodanApiKey?: string | null): P
       : Promise.resolve(null),
   ]);
 
-  const naabuPorts   = naabuResult.ports;
-  const masscanPorts = masscanResult.ports;
-  const shodanPorts  = shodanData?.ports ?? [];
+  const naabuPorts     = naabuResult.ports;
+  const masscanPorts   = masscanResult.ports;
+  const rustscanPorts  = rustscanResult.ports;
+  const shodanPorts    = shodanData?.ports ?? [];
 
   // Union of all discovered ports
-  const allDiscoveredPorts = [...new Set([...naabuPorts, ...masscanPorts, ...shodanPorts])].sort((a, b) => a - b);
+  const allDiscoveredPorts = [...new Set([...naabuPorts, ...masscanPorts, ...rustscanPorts, ...shodanPorts])].sort((a, b) => a - b);
 
   // Deep service scan on union
   const nmapResult = await runNmapDetailed(target, allDiscoveredPorts);
@@ -424,13 +460,14 @@ export async function scanPorts(target: string, shodanApiKey?: string | null): P
   ].sort((a, b) => a.port - b.port);
 
   // Determine scan method
-  const hasNaabu   = naabuPorts.length > 0;
-  const hasMasscan = masscanPorts.length > 0;
+  const hasNaabu    = naabuPorts.length > 0;
+  const hasMasscan  = masscanPorts.length > 0;
+  const hasRustscan = rustscanPorts.length > 0;
   let scanMethod: PortScanReport["scanMethod"];
-  if (hasNaabu && hasMasscan) scanMethod = "naabu+masscan+nmap";
-  else if (hasNaabu)          scanMethod = "naabu+nmap";
-  else if (hasMasscan)        scanMethod = "masscan+nmap";
-  else                        scanMethod = "nmap-only";
+  if (hasNaabu && hasMasscan)       scanMethod = "naabu+masscan+nmap";
+  else if (hasNaabu || hasRustscan) scanMethod = "naabu+nmap";
+  else if (hasMasscan)              scanMethod = "masscan+nmap";
+  else                              scanMethod = "nmap-only";
 
   return {
     ports: mergedPorts,

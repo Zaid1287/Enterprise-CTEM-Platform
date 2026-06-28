@@ -58,6 +58,13 @@ export interface SubdomainScanReport {
 // ── Binary auto-install ────────────────────────────────────────────────────────
 
 async function ensureBinary(name: string): Promise<string | null> {
+  // 0. System-installed binary via Nix PATH — fastest, most reliable
+  try {
+    const r = await execAsync(`which ${name} 2>/dev/null`, { timeout: 3000 });
+    const sys = r.stdout.trim();
+    if (sys) return sys;
+  } catch {}
+
   const bin = binPath(name);
   if (fs.existsSync(bin)) {
     try { fs.chmodSync(bin, 0o755); } catch {}

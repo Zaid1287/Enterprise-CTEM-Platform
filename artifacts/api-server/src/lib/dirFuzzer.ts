@@ -1,4 +1,14 @@
+import { exec, execSync } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { logger } from "./logger";
+
+const execAsync = promisify(exec);
+
+const FFUF_WORDLIST = "/home/runner/workspace/wordlists/common.txt";
+const FFUF_BIN     = (() => { try { return execSync("which ffuf 2>/dev/null", { timeout: 3000 }).toString().trim(); } catch { return ""; } })();
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -397,6 +407,51 @@ const MAX_DEPTH    = 3;
 const MAX_ENDPOINTS = 2000;
 const SEM_SIZE     = 25;
 
+// ── ffuf binary integration ───────────────────────────────────────────────────
+
+interface FfufResult { url: string; status: number; length: number; redirectlocation?: string }
+
+async function runFfuf(baseUrl: string, host: string): Promise<FuzzedEndpoint[]> {
+  if (!FFUF_BIN || !fs.existsSync(FFUF_WORDLIST)) return [];
+  const outFile = path.join(os.tmpdir(), `ffuf-${host.replace(/\W/g, "_")}-${Date.now()}.json`);
+  try {
+    const cmd = [
+      FFUF_BIN,
+      "-u", `${baseUrl}/FUZZ`,
+      "-w", FFUF_WORDLIST,
+      "-mc", "200,201,204,301,302,307,401,403",
+      "-t", "40",
+      "-timeout", "10",
+      "-of", "json",
+      "-o", outFile,
+      "-s",   // silent — no progress output
+    ].join(" ");
+    await execAsync(cmd, { timeout: 90000 }).catch(() => null);
+    if (!fs.existsSync(outFile)) return [];
+    const raw = fs.readFileSync(outFile, "utf8");
+    fs.unlinkSync(outFile);
+    const data = JSON.parse(raw) as { results?: FfufResult[] };
+    const results = data.results ?? [];
+    logger.info({ host, count: results.length }, "ffuf scan complete");
+    return results.map(r => ({
+      url:           r.url,
+      path:          (() => { try { return new URL(r.url).pathname; } catch { return r.url; } })(),
+      host,
+      statusCode:    r.status,
+      contentLength: r.length,
+      redirectTo:    r.redirectlocation ?? undefined,
+      source:        "fuzz" as const,
+      isInteresting: INTERESTING_KEYWORDS.some(kw => r.url.includes(kw)),
+      depth:         0,
+      parentPath:    "",
+    }));
+  } catch (err) {
+    logger.warn({ err, host }, "ffuf scan failed");
+    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+    return [];
+  }
+}
+
 async function fuzzHost(baseUrl: string, isFull: boolean): Promise<HostFuzzResult> {
   let host: string;
   try { host = new URL(baseUrl).hostname; } catch { return emptyHost(baseUrl, "unknown", false, 0); }
@@ -459,11 +514,21 @@ async function fuzzLiveHost(baseUrl: string, host: string, liveStatus: number, i
     }
   }
 
-  // 3. Root-level active fuzz (depth 0)
+  // 3. Root-level active fuzz (depth 0) — Node.js probe + ffuf binary in parallel
   const rootWordlist = isFull ? WORDLIST : WORDLIST_MINI;
-  const depth0Dirs = await probeWordlist(
-    baseUrl, host, rootWordlist, visited, sem, 0, "", "fuzz", MAX_ENDPOINTS, all
-  );
+  const [depth0Dirs, ffufHits] = await Promise.all([
+    probeWordlist(baseUrl, host, rootWordlist, visited, sem, 0, "", "fuzz", MAX_ENDPOINTS, all),
+    runFfuf(baseUrl, host),
+  ]);
+  // Merge ffuf results — deduplicate by URL
+  const seenUrls = new Set(all.map(e => e.url));
+  for (const r of ffufHits) {
+    if (!seenUrls.has(r.url) && all.length < MAX_ENDPOINTS) {
+      seenUrls.add(r.url);
+      visited.add(r.url);
+      all.push(r);
+    }
+  }
 
   // 4. Recursive BFS — fuzz inside discovered directories
   let maxDepthReached = 0;

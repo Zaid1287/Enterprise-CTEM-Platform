@@ -1,5 +1,9 @@
+import { exec } from "child_process";
+import { promisify } from "util";
 import { logger } from "./logger.js";
 import puppeteer from "puppeteer";
+
+const execAsync = promisify(exec);
 
 export type UrlCategory = "api" | "admin" | "sensitive" | "graphql" | "parameterized" | "auth" | "page" | "asset" | "other";
 export type UrlSource   = "wayback" | "commoncrawl" | "urlscan" | "otx" | "crawl" | "js-crawl" | "probe";
@@ -512,14 +516,31 @@ async function probeCommonPaths(target: string): Promise<string[]> {
 
 const CATEGORY_ORDER: UrlCategory[] = ["sensitive", "admin", "graphql", "api", "auth", "parameterized", "page", "asset", "other"];
 
+// ── Katana web crawler ─────────────────────────────────────────────────────────
+
+async function runKatana(target: string): Promise<string[]> {
+  try {
+    const safeTarget = target.replace(/"/g, "").replace(/`/g, "").slice(0, 500);
+    const { stdout } = await execAsync(
+      `katana -u "${safeTarget}" -d 2 -jc -silent -no-color -timeout 20 -rate-limit 50 2>/dev/null`,
+      { timeout: 90000 }
+    );
+    return stdout.trim().split("\n")
+      .map(l => l.trim())
+      .filter(l => l.startsWith("http") && !l.includes(" "));
+  } catch {
+    return [];
+  }
+}
+
 export async function runEndpointDiscovery(target: string): Promise<DiscoveredUrl[]> {
   const base = new URL(target.startsWith("http") ? target : `https://${target}`);
   const domain = base.hostname.replace(/^www\./, "");
 
   logger.info({ domain, target }, "Starting endpoint discovery");
 
-  // Run all 7 sources in parallel
-  const [wayback, commoncrawl, urlscan, otx, crawled, jsCrawled, probed] = await Promise.allSettled([
+  // Run all 8 sources in parallel (added katana)
+  const [wayback, commoncrawl, urlscan, otx, crawled, jsCrawled, probed, katana] = await Promise.allSettled([
     fetchWaybackUrls(domain),
     fetchCommonCrawlUrls(domain),
     fetchUrlScanUrls(domain),
@@ -527,6 +548,7 @@ export async function runEndpointDiscovery(target: string): Promise<DiscoveredUr
     crawlLinks(base.href),
     crawlJsAware(base.href),
     probeCommonPaths(base.href),   // wordlist brute-force (feroxbuster equivalent)
+    runKatana(base.href),          // katana JS-aware crawler
   ]);
 
   // Merge, preserving first-seen source per URL
@@ -545,6 +567,7 @@ export async function runEndpointDiscovery(target: string): Promise<DiscoveredUr
   addAll(crawled,      "crawl");
   addAll(jsCrawled,    "js-crawl");
   addAll(probed,       "probe");
+  addAll(katana,       "crawl");   // katana JS-aware crawl (same source tag)
 
   // URO-style deduplication
   const rawUrls = [...urlSourceMap.keys()];
@@ -570,6 +593,7 @@ export async function runEndpointDiscovery(target: string): Promise<DiscoveredUr
     crawled:     crawled.status     === "fulfilled" ? crawled.value.length     : 0,
     jsCrawled:   jsCrawled.status   === "fulfilled" ? jsCrawled.value.length   : 0,
     probed:      probed.status      === "fulfilled" ? probed.value.length      : 0,
+    katana:      katana.status      === "fulfilled" ? katana.value.length      : 0,
   }, "Endpoint discovery complete");
 
   return results.slice(0, 5000); // cap at 5000 to keep JSON payload reasonable

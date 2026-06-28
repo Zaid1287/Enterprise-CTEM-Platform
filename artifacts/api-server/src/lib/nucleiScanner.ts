@@ -1,4 +1,8 @@
+import { exec } from "child_process";
+import { promisify } from "util";
 import { logger } from "./logger";
+
+const execAsync = promisify(exec);
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -408,6 +412,48 @@ async function analyzeHeaders(baseUrl: string, host: string): Promise<HeaderAnal
   };
 }
 
+// ── Nuclei binary integration ──────────────────────────────────────────────────
+
+function mapNucleiTag(tags: string[]): VulnCategory {
+  const t = tags.join(",").toLowerCase();
+  if (t.includes("cve"))     return "cve";
+  if (t.includes("panel") || t.includes("login") || t.includes("dashboard")) return "exposed-panel";
+  if (t.includes("cors"))    return "cors";
+  if (t.includes("secret") || t.includes("exposure") || t.includes("file")) return "sensitive-file";
+  return "misconfiguration";
+}
+
+async function runNucleiBinary(target: string): Promise<NucleiVuln[]> {
+  try {
+    const safeTarget = target.replace(/"/g, "").replace(/`/g, "").slice(0, 500);
+    const { stdout } = await execAsync(
+      `nuclei -u "${safeTarget}" -severity critical,high,medium -json -timeout 15 -rate-limit 100 -no-interactsh -silent -no-update-check 2>/dev/null`,
+      { timeout: 120000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+    return stdout.trim().split("\n")
+      .filter(Boolean)
+      .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } })
+      .map((r: any) => ({
+        templateId: r["template-id"] ?? r.templateID ?? "",
+        name:       r.info?.name ?? r["template-id"] ?? "Unknown",
+        severity:   (r.info?.severity ?? "info") as VulnSeverity,
+        category:   mapNucleiTag(r.info?.tags ?? []),
+        host:       r.host ?? safeTarget,
+        url:        r["matched-at"] ?? r.matched ?? r.host ?? safeTarget,
+        evidence:   (r["extracted-results"] ?? [r["matched-at"] ?? ""]).join(", ").slice(0, 500),
+        description: r.info?.description ?? "",
+        remediation: r.info?.remediation ?? "Review and remediate the detected vulnerability.",
+        cvss:       r.info?.classification?.["cvss-score"] ?? undefined,
+        cve:        r.info?.classification?.["cve-id"]?.[0] ?? undefined,
+        cwe:        r.info?.classification?.["cwe-id"]?.[0] ?? undefined,
+        tags:       r.info?.tags ?? [],
+      }));
+  } catch (err) {
+    logger.warn({ target, err }, "Nuclei binary unavailable or timed out — using built-in templates");
+    return [];
+  }
+}
+
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
 export async function runNucleiScan(target: string, subdomainNames: string[] = []): Promise<VulnScanResult> {
@@ -421,6 +467,10 @@ export async function runNucleiScan(target: string, subdomainNames: string[] = [
     const u = new URL(target.startsWith("http") ? target : `https://${target}`);
     primaryBase = `${u.protocol}//${u.hostname}`;
   } catch { return empty; }
+
+  // ── Real nuclei binary (runs first, parallel with built-in templates) ──────
+  const binaryFindingsPromise = runNucleiBinary(primaryBase);
+  logger.info({ target }, "Nuclei binary scan started (parallel with built-in templates)");
 
   const domain = new URL(primaryBase).hostname.replace(/^www\./, "");
 
@@ -452,23 +502,30 @@ export async function runNucleiScan(target: string, subdomainNames: string[] = [
     new Promise<[NucleiVuln[], HeaderAnalysis[], CorsResult[]]>(r => setTimeout(() => r([[], [], []]), TIMEOUT)),
   ]);
 
+  // ── Merge binary findings (deduplicate by templateId+host) ───────────────
+  const binaryFindings = await binaryFindingsPromise;
+  const seen = new Set(findings.map(f => `${f.templateId}::${f.host}`));
+  const newBinaryFindings = binaryFindings.filter(f => !seen.has(`${f.templateId}::${f.host}`));
+  const allFindings = [...findings, ...newBinaryFindings];
+  logger.info({ target, builtIn: findings.length, binary: binaryFindings.length, merged: allFindings.length }, "Nuclei merged results");
+
   const corsVulns = cors.filter(c => c.isVulnerable);
   const headerIssues = headers.reduce((sum, h) => sum + h.checks.filter(c => c.issue).length, 0);
   const avgHeaderScore = headers.length > 0 ? Math.round(headers.reduce((s, h) => s + h.score, 0) / headers.length) : 0;
 
   const stats = {
     hostsScanned:    allBases.length,
-    totalFindings:   findings.length,
-    critical:        findings.filter(f => f.severity === "critical").length,
-    high:            findings.filter(f => f.severity === "high").length,
-    medium:          findings.filter(f => f.severity === "medium").length,
-    low:             findings.filter(f => f.severity === "low").length,
-    info:            findings.filter(f => f.severity === "info").length,
+    totalFindings:   allFindings.length,
+    critical:        allFindings.filter(f => f.severity === "critical").length,
+    high:            allFindings.filter(f => f.severity === "high").length,
+    medium:          allFindings.filter(f => f.severity === "medium").length,
+    low:             allFindings.filter(f => f.severity === "low").length,
+    info:            allFindings.filter(f => f.severity === "info").length,
     corsVulnerable:  corsVulns.length,
     headerIssues,
     avgHeaderScore,
   };
 
   logger.info({ target, ...stats }, "Nuclei scan complete");
-  return { findings, headers, cors: corsVulns, stats };
+  return { findings: allFindings, headers, cors: corsVulns, stats };
 }
