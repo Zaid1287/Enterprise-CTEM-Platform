@@ -416,7 +416,7 @@ function WatchlistItem({
 }) {
   const [editingFreq, setEditingFreq] = useState(false);
   const [pendingFreq, setPendingFreq] = useState<string>(item.frequency ?? "none");
-  const isDomain = item.type === "domain";
+  const isSchedulable = ["domain", "keyword", "email", "social_handle", "mobile_app"].includes(item.type);
 
   function saveFreq() {
     onFrequencyChange(item.id, pendingFreq);
@@ -435,7 +435,7 @@ function WatchlistItem({
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted border border-border text-muted-foreground capitalize shrink-0">
               {item.type?.replace(/_/g, " ")}
             </span>
-            {isDomain && item.frequency && item.frequency !== "none" && (
+            {isSchedulable && item.frequency && item.frequency !== "none" && (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center gap-1 shrink-0">
                 <RotateCw className="w-2.5 h-2.5" />
                 {FREQ_LABELS[item.frequency]}
@@ -447,7 +447,7 @@ function WatchlistItem({
           )}
         </div>
         <span className="text-[10px] text-muted-foreground/50 shrink-0 hidden sm:block">{formatDate(item.createdAt)}</span>
-        {isDomain && (
+        {isSchedulable && (
           <Button
             variant="ghost" size="sm"
             onClick={() => { setEditingFreq(v => !v); setPendingFreq(item.frequency ?? "none"); }}
@@ -467,8 +467,8 @@ function WatchlistItem({
         </Button>
       </div>
 
-      {/* Scheduling meta row — only domains */}
-      {isDomain && (item.lastScanAt || item.nextScanAt || editingFreq) && (
+      {/* Scheduling meta row — all schedulable types */}
+      {isSchedulable && (item.lastScanAt || item.nextScanAt || editingFreq) && (
         <div className="flex items-center gap-4 pl-7 flex-wrap">
           {item.lastScanAt && (
             <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
@@ -644,7 +644,7 @@ function WatchlistSection() {
                 </select>
               </div>
             </div>
-            {form.type === "domain" && (
+            {!["logo_url", "ip"].includes(form.type) && (
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">
                   <span className="flex items-center gap-1"><CalendarClock className="w-3 h-3" /> Auto-scan Schedule</span>
@@ -660,7 +660,9 @@ function WatchlistSection() {
                 </select>
                 {form.frequency !== "none" && (
                   <p className="text-[10px] text-blue-400/70 mt-1.5">
-                    Brand threat scan will run automatically at 03:00 UTC every {form.frequency === "daily" ? "day" : "week"}.
+                    {form.type === "domain"
+                      ? "Brand threat scan will run automatically at 03:00 UTC."
+                      : "Monitoring check will run automatically at 03:00 UTC via IntelX / brand abuse scanner."}
                   </p>
                 )}
               </div>
@@ -732,12 +734,11 @@ function SchedulesSection() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: "",
-    brandName: "",
+    domain: "",
     frequency: "weekly",
-    scanTime: "03:00",
+    runTime: "03:00",
     dayOfWeek: 1,
     dayOfMonth: 1,
-    isActive: true,
   });
 
   async function load() {
@@ -755,7 +756,7 @@ function SchedulesSection() {
   useEffect(() => { load(); }, []);
 
   function resetForm() {
-    setForm({ name: "", brandName: "", frequency: "weekly", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, isActive: true });
+    setForm({ name: "", domain: "", frequency: "weekly", runTime: "03:00", dayOfWeek: 1, dayOfMonth: 1 });
     setEditId(null);
     setShowForm(false);
   }
@@ -763,12 +764,11 @@ function SchedulesSection() {
   function startEdit(s: any) {
     setForm({
       name: s.name ?? "",
-      brandName: s.brandName ?? "",
+      domain: s.domain ?? "",
       frequency: s.frequency ?? "weekly",
-      scanTime: s.scanTime ?? "03:00",
+      runTime: s.runTime ?? "03:00",
       dayOfWeek: s.dayOfWeek ?? 1,
       dayOfMonth: s.dayOfMonth ?? 1,
-      isActive: s.isActive ?? true,
     });
     setEditId(s.id);
     setShowForm(true);
@@ -776,7 +776,7 @@ function SchedulesSection() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim() || !form.brandName.trim()) return;
+    if (!form.name.trim() || !form.domain.trim()) return;
     setSubmitting(true);
     try {
       const url = editId ? `/api/brand-threat-schedules/${editId}` : "/api/brand-threat-schedules";
@@ -820,7 +820,7 @@ function SchedulesSection() {
       const res = await fetch(`/api/brand-threat-schedules/${s.id}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: !s.isActive }),
+        body: JSON.stringify({ status: s.status === "active" ? "paused" : "active" }),
       });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
@@ -863,11 +863,11 @@ function SchedulesSection() {
                 />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground block mb-1">Brand Name *</label>
+                <label className="text-xs text-muted-foreground block mb-1">Domain *</label>
                 <input
-                  value={form.brandName}
-                  onChange={e => setForm(v => ({ ...v, brandName: e.target.value }))}
-                  placeholder="e.g. acme"
+                  value={form.domain}
+                  onChange={e => setForm(v => ({ ...v, domain: e.target.value }))}
+                  placeholder="e.g. acme.com"
                   className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
@@ -887,8 +887,8 @@ function SchedulesSection() {
                 <label className="text-xs text-muted-foreground block mb-1">Scan Time (UTC)</label>
                 <input
                   type="time"
-                  value={form.scanTime}
-                  onChange={e => setForm(v => ({ ...v, scanTime: e.target.value }))}
+                  value={form.runTime}
+                  onChange={e => setForm(v => ({ ...v, runTime: e.target.value }))}
                   className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
                 />
               </div>
@@ -921,7 +921,7 @@ function SchedulesSection() {
             </div>
             <div className="flex gap-2 justify-end">
               <Button type="button" variant="outline" size="sm" onClick={resetForm}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={submitting || !form.name.trim() || !form.brandName.trim()}>
+              <Button type="submit" size="sm" disabled={submitting || !form.name.trim() || !form.domain.trim()}>
                 {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
                 {editId ? "Save Changes" : "Create Schedule"}
               </Button>
@@ -950,7 +950,7 @@ function SchedulesSection() {
                 key={s.id}
                 className={cn(
                   "rounded-xl border p-4 transition-colors",
-                  s.isActive ? "bg-card border-border" : "bg-muted/10 border-border/50 opacity-60"
+                  s.status === "active" ? "bg-card border-border" : "bg-muted/10 border-border/50 opacity-60"
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -959,13 +959,13 @@ function SchedulesSection() {
                       <span className="text-sm font-medium truncate">{s.name}</span>
                       <span className={cn(
                         "text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0",
-                        s.isActive ? "text-green-400 bg-green-500/10" : "text-muted-foreground bg-muted"
+                        s.status === "active" ? "text-green-400 bg-green-500/10" : "text-muted-foreground bg-muted"
                       )}>
-                        {s.isActive ? "Active" : "Paused"}
+                        {s.status === "active" ? "Active" : "Paused"}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Brand: <span className="text-foreground font-mono">{s.brandName}</span>
+                      Domain: <span className="text-foreground font-mono">{s.domain}</span>
                     </p>
                     <div className="flex items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
                       <span className="flex items-center gap-1">
@@ -973,7 +973,7 @@ function SchedulesSection() {
                         {SCHEDULE_FREQ_LABELS[s.frequency] ?? s.frequency}
                         {s.frequency === "weekly" && s.dayOfWeek != null && ` · ${dayNames[s.dayOfWeek]}`}
                         {s.frequency === "monthly" && s.dayOfMonth != null && ` · day ${s.dayOfMonth}`}
-                        {s.scanTime && ` @ ${s.scanTime} UTC`}
+                        {s.runTime && ` @ ${s.runTime} UTC`}
                       </span>
                       {s.nextRunAt && (
                         <span className="flex items-center gap-1 text-blue-400/70">
@@ -987,9 +987,9 @@ function SchedulesSection() {
                     <button
                       onClick={() => handleToggle(s)}
                       className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                      title={s.isActive ? "Pause schedule" : "Enable schedule"}
+                      title={s.status === "active" ? "Pause schedule" : "Enable schedule"}
                     >
-                      {s.isActive ? <XCircle className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+                      {s.status === "active" ? <XCircle className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
                     </button>
                     <button
                       onClick={() => startEdit(s)}

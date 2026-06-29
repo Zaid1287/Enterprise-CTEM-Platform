@@ -79,7 +79,8 @@ export async function intelxSearch(
 
       const resultData = (await resultRes.json()) as IntelXResultsResponse;
 
-      if (resultData.status === 0 || resultData.status === 1) {
+      if (resultData.status === 1) {
+        // status 1 = search complete — return all available records
         const records = resultData.records ?? [];
         return records.map(r => ({
           bucket: r.bucket,
@@ -90,6 +91,7 @@ export async function intelxSearch(
           systemid: r.systemid,
         }));
       }
+      // status 0 = still running — keep polling
     }
 
     return [];

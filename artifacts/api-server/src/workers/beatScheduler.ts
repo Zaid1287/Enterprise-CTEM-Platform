@@ -541,10 +541,11 @@ async function dispatchDueWatchlistNonDomainItems(): Promise<void> {
         }
       }
 
-      // Social handle: also run brand abuse scanner
-      if (item.type === "social_handle") {
+      // Social handle + mobile app: run brand abuse scanner
+      if (item.type === "social_handle" || item.type === "mobile_app") {
         const brandName = item.value.replace(/^@/, "");
-        const abuseResults = await scanBrandAbuse(brandName, "", [item.value], youtubeKey ?? undefined).catch(() => []);
+        const handles = item.type === "social_handle" ? [item.value] : [];
+        const abuseResults = await scanBrandAbuse(brandName, "", handles, youtubeKey ?? undefined).catch(() => []);
         if (abuseResults.length) {
           await db.insert(brandAbuseResultsTable).values(
             abuseResults.map(a => ({

@@ -7,7 +7,7 @@ Outputs JSON to stdout. Takes a domain or full URL as argv[1].
 """
 import sys
 import json
-from base64 import b64encode, encodebytes
+from base64 import b64encode, encodebytes, b64decode
 from hashlib import md5, sha256
 from urllib.parse import urlparse
 from pathlib import Path
@@ -72,12 +72,43 @@ def resolve_favicon_url(url: str):
 
     try:
         favs = get_favicons(url=url, headers=HEADERS, timeout=8)
+        # Prefer non-data-URI .ico favicons
         for f in favs:
-            if f.url.lower().endswith(".ico"):
+            if not f.url.startswith("data:") and f.url.lower().endswith(".ico"):
                 return f.url
-        return favs[0].url if favs else None
+        # Fall back to any non-data-URI favicon
+        for f in favs:
+            if not f.url.startswith("data:"):
+                return f.url
+        # Fall back to a data URI only if it has actual content (>50 chars after comma)
+        for f in favs:
+            if f.url.startswith("data:") and "," in f.url:
+                payload = f.url.split(",", 1)[1]
+                if len(payload) > 50:
+                    return f.url
     except Exception:
+        pass
+
+    return None
+
+
+def fetch_favicon_bytes(fav_url: str):
+    """Download favicon bytes. Handles both http(s):// and data: URIs."""
+    if fav_url.startswith("data:"):
+        # data:[<mediatype>][;base64],<data>
+        try:
+            header, encoded = fav_url.split(",", 1)
+            if "base64" in header:
+                return b64decode(encoded + "==")  # padding-safe
+            else:
+                return encoded.encode("utf-8")
+        except Exception as e:
+            return None, f"Failed to decode data URI: {e}"
+
+    resp = http_get(fav_url, headers=HEADERS, timeout=15)
+    if not resp.ok:
         return None
+    return resp.content if resp.content else None
 
 
 def build_search_urls(hashes: dict) -> dict:
@@ -118,16 +149,11 @@ def main():
         sys.exit(0)
 
     try:
-        resp = http_get(fav_url, headers=HEADERS, timeout=15)
-        if not resp.ok:
-            sys.stdout.write(json.dumps({
-                "error": f"Failed to download favicon from {fav_url}: HTTP {resp.status_code}"
-            }))
-            sys.exit(0)
-
-        content = resp.content
+        content = fetch_favicon_bytes(fav_url)
         if not content:
-            sys.stdout.write(json.dumps({"error": "Empty favicon response"}))
+            sys.stdout.write(json.dumps({
+                "error": f"Failed to download favicon from {fav_url}"
+            }))
             sys.exit(0)
 
         mmh3_val = calculate_mmh3(content)
@@ -144,11 +170,12 @@ def main():
 
         search_urls = build_search_urls(hashes)
 
+        # NOTE: hash keys use camelCase to match the TypeScript FaviHunterResult interface
         sys.stdout.write(json.dumps({
             "favicon_url": fav_url,
             "hashes": {
                 "mmh3": mmh3_val,
-                "mmh3_hex": mmh3_hex,
+                "mmh3Hex": mmh3_hex,
                 "md5": md5_val,
                 "sha256": sha256_val,
             },

@@ -17,7 +17,7 @@ export interface MetaAd {
   risk: "low" | "medium" | "high" | "critical";
 }
 
-const META_ADS_API = "https://graph.facebook.com/v19.0/ads_archive";
+const META_ADS_API = "https://graph.facebook.com/v21.0/ads_archive";
 
 function assessAdRisk(ad: Partial<MetaAd>, brandName: string): "low" | "medium" | "high" | "critical" {
   const text = `${ad.title ?? ""} ${ad.body ?? ""} ${ad.advertiserName ?? ""}`.toLowerCase();
@@ -37,7 +37,8 @@ export async function scanMetaAds(brandName: string, domain: string, accessToken
       const params = new URLSearchParams({
         search_terms: term,
         ad_type: "ALL",
-        ad_reached_countries: "['US']",
+        ad_reached_countries: '["US","GB","CA","AU","IN","DE","FR","SG"]',
+        ad_active_status: "ALL",
         fields: [
           "id",
           "ad_snapshot_url",
@@ -50,7 +51,6 @@ export async function scanMetaAds(brandName: string, domain: string, accessToken
           "currency",
           "ad_delivery_start_time",
           "ad_delivery_stop_time",
-          "delivery_by_region",
         ].join(","),
         limit: "30",
         access_token: accessToken,
