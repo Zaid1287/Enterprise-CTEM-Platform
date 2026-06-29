@@ -16,14 +16,15 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   error:             text("error"),
   pipelineScanId:    integer("pipeline_scan_id"),
 
-  favihunterStatus:  text("favihunter_status"),
-  favihunterError:   text("favihunter_error"),
-  faviconUrl:        text("favicon_url"),
-  faviconMmh3:       integer("favicon_mmh3"),
-  faviconMmh3Hex:    text("favicon_mmh3_hex"),
-  faviconMd5:        text("favicon_md5"),
-  faviconSha256:     text("favicon_sha256"),
-  faviconSearchUrls: jsonb("favicon_search_urls"),
+  favihunterStatus:       text("favihunter_status"),
+  favihunterError:        text("favihunter_error"),
+  faviconUrl:             text("favicon_url"),
+  faviconMmh3:            integer("favicon_mmh3"),
+  faviconMmh3Hex:         text("favicon_mmh3_hex"),
+  faviconMd5:             text("favicon_md5"),
+  faviconSha256:          text("favicon_sha256"),
+  faviconSearchUrls:      jsonb("favicon_search_urls"),
+  faviconShodanMatches:   jsonb("favicon_shodan_matches"),
 
   dataLeakCount:     integer("data_leak_count").notNull().default(0),
   phishingCount:     integer("phishing_count").notNull().default(0),
@@ -64,6 +65,7 @@ export const brandThreatResultsTable = pgTable("brand_threat_results", {
   registrationStatus: text("registration_status"),
   riskScore:       integer("risk_score").notNull().default(0),
   isSuspicious:    boolean("is_suspicious").notNull().default(false),
+  screenshot:      text("screenshot"),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -74,11 +76,30 @@ export const brandWatchlistItemsTable = pgTable("brand_watchlist_items", {
   value:           text("value").notNull(),
   notes:           text("notes"),
   frequency:       text("frequency").notNull().default("none"),
+  scanTime:        text("scan_time").default("03:00"),
+  dayOfWeek:       integer("day_of_week"),
+  dayOfMonth:      integer("day_of_month"),
   nextScanAt:      timestamp("next_scan_at", { withTimezone: true }),
   lastScanAt:      timestamp("last_scan_at", { withTimezone: true }),
   lastScanId:      integer("last_scan_id").references(() => brandThreatScansTable.id, { onDelete: "set null" }),
   prevScanSummary: jsonb("prev_scan_summary"),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const brandThreatSchedulesTable = pgTable("brand_threat_schedules", {
+  id:          serial("id").primaryKey(),
+  tenantId:    integer("tenant_id").notNull().references(() => tenantsTable.id),
+  name:        text("name").notNull(),
+  domain:      text("domain").notNull(),
+  frequency:   text("frequency").notNull().default("weekly"),
+  runTime:     text("run_time").notNull().default("09:00"),
+  dayOfWeek:   integer("day_of_week"),
+  dayOfMonth:  integer("day_of_month"),
+  status:      text("status").notNull().default("active"),
+  nextRunAt:   timestamp("next_run_at", { withTimezone: true }),
+  lastRunAt:   timestamp("last_run_at", { withTimezone: true }),
+  lastScanId:  integer("last_scan_id").references(() => brandThreatScansTable.id, { onDelete: "set null" }),
+  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const dataLeakResultsTable = pgTable("data_leak_results", {
@@ -140,6 +161,11 @@ export const insertBrandWatchlistItemSchema = createInsertSchema(brandWatchlistI
   .omit({ id: true, createdAt: true });
 export type InsertBrandWatchlistItem = z.infer<typeof insertBrandWatchlistItemSchema>;
 export type BrandWatchlistItem = typeof brandWatchlistItemsTable.$inferSelect;
+
+export const insertBrandThreatScheduleSchema = createInsertSchema(brandThreatSchedulesTable)
+  .omit({ id: true, createdAt: true });
+export type InsertBrandThreatSchedule = z.infer<typeof insertBrandThreatScheduleSchema>;
+export type BrandThreatSchedule = typeof brandThreatSchedulesTable.$inferSelect;
 
 export const insertDataLeakResultSchema = createInsertSchema(dataLeakResultsTable)
   .omit({ id: true, createdAt: true });

@@ -9,6 +9,7 @@ import {
   adMonitoringResultsTable,
   platformSettingsTable,
   assetsTable,
+  brandThreatSchedulesTable,
 } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { runBrandThreatScan } from "../lib/brandThreatRunner";
@@ -343,18 +344,40 @@ router.get("/brand-threats/:id/brand-abuse", requireAuth, async (req: Authentica
   res.json(results.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })));
 });
 
-function computeWatchlistNextScanAt(frequency: string): Date | null {
-  const now = new Date();
+function computeWatchlistNextScanAt(
+  frequency: string,
+  from?: Date,
+  scanTime?: string | null,
+  dayOfWeek?: number | null,
+  dayOfMonth?: number | null,
+): Date | null {
+  if (!frequency || frequency === "none") return null;
+  const now = from ?? new Date();
+  const [h, m] = (scanTime ?? "03:00").split(":").map(Number);
+  const next = new Date(now);
+
   if (frequency === "daily") {
-    const next = new Date(now);
     next.setDate(next.getDate() + 1);
-    next.setHours(3, 0, 0, 0);
+    next.setHours(h ?? 3, m ?? 0, 0, 0);
     return next;
   }
   if (frequency === "weekly") {
-    const next = new Date(now);
-    next.setDate(next.getDate() + 7);
-    next.setHours(3, 0, 0, 0);
+    const dow = dayOfWeek ?? 1; // default Monday
+    let diff = (dow - now.getDay() + 7) % 7;
+    if (diff === 0) diff = 7;
+    next.setDate(now.getDate() + diff);
+    next.setHours(h ?? 3, m ?? 0, 0, 0);
+    return next;
+  }
+  if (frequency === "monthly") {
+    const dom = dayOfMonth ?? 1;
+    next.setDate(dom);
+    next.setHours(h ?? 3, m ?? 0, 0, 0);
+    if (next <= now) {
+      next.setMonth(next.getMonth() + 1);
+      next.setDate(dom);
+      next.setHours(h ?? 3, m ?? 0, 0, 0);
+    }
     return next;
   }
   return null;
@@ -384,6 +407,9 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
   const value = String(req.body?.value ?? "").trim();
   const notes = String(req.body?.notes ?? "").trim() || null;
   const frequency = String(req.body?.frequency ?? "none").trim();
+  const scanTime = req.body?.scanTime ? String(req.body.scanTime).trim() : null;
+  const dayOfWeek = req.body?.dayOfWeek != null ? parseInt(String(req.body.dayOfWeek), 10) : null;
+  const dayOfMonth = req.body?.dayOfMonth != null ? parseInt(String(req.body.dayOfMonth), 10) : null;
 
   if (!type || !value) {
     res.status(400).json({ error: "type and value are required" }); return;
@@ -392,12 +418,15 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
   if (!validTypes.includes(type)) {
     res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` }); return;
   }
-  const validFrequencies = ["none", "daily", "weekly"];
+  const validFrequencies = ["none", "daily", "weekly", "monthly"];
   if (!validFrequencies.includes(frequency)) {
     res.status(400).json({ error: `frequency must be one of: ${validFrequencies.join(", ")}` }); return;
   }
 
-  const nextScanAt = type === "domain" ? computeWatchlistNextScanAt(frequency) : null;
+  // All types support automatic monitoring (not just domain)
+  const nextScanAt = frequency !== "none"
+    ? computeWatchlistNextScanAt(frequency, undefined, scanTime, dayOfWeek, dayOfMonth)
+    : null;
 
   const [item] = await db.insert(brandWatchlistItemsTable).values({
     tenantId: req.user!.tenantId,
@@ -405,6 +434,9 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
     value,
     notes,
     frequency,
+    scanTime,
+    dayOfWeek: !isNaN(dayOfWeek!) ? dayOfWeek : null,
+    dayOfMonth: !isNaN(dayOfMonth!) ? dayOfMonth : null,
     nextScanAt,
   }).returning();
 
@@ -421,16 +453,21 @@ router.patch("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedReque
 
   const updates: Partial<typeof brandWatchlistItemsTable.$inferInsert> = {};
   if (req.body?.notes !== undefined) updates.notes = String(req.body.notes).trim() || null;
+  if (req.body?.scanTime !== undefined) updates.scanTime = req.body.scanTime ? String(req.body.scanTime) : null;
+  if (req.body?.dayOfWeek !== undefined) updates.dayOfWeek = req.body.dayOfWeek != null ? parseInt(String(req.body.dayOfWeek), 10) : null;
+  if (req.body?.dayOfMonth !== undefined) updates.dayOfMonth = req.body.dayOfMonth != null ? parseInt(String(req.body.dayOfMonth), 10) : null;
+
   if (req.body?.frequency !== undefined) {
     const freq = String(req.body.frequency).trim();
-    const validFrequencies = ["none", "daily", "weekly"];
+    const validFrequencies = ["none", "daily", "weekly", "monthly"];
     if (!validFrequencies.includes(freq)) {
       res.status(400).json({ error: `frequency must be one of: ${validFrequencies.join(", ")}` }); return;
     }
     updates.frequency = freq;
-    if (existing.type === "domain") {
-      updates.nextScanAt = computeWatchlistNextScanAt(freq);
-    }
+    const newScanTime = updates.scanTime !== undefined ? updates.scanTime : existing.scanTime;
+    const newDow = updates.dayOfWeek !== undefined ? updates.dayOfWeek : existing.dayOfWeek;
+    const newDom = updates.dayOfMonth !== undefined ? updates.dayOfMonth : existing.dayOfMonth;
+    updates.nextScanAt = computeWatchlistNextScanAt(freq, undefined, newScanTime, newDow, newDom);
   }
 
   const [updated] = await db.update(brandWatchlistItemsTable)
@@ -448,6 +485,129 @@ router.delete("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedRequ
     .where(and(eq(brandWatchlistItemsTable.id, id), eq(brandWatchlistItemsTable.tenantId, req.user!.tenantId)));
   if (!existing) { res.status(404).json({ error: "Watchlist item not found" }); return; }
   await db.delete(brandWatchlistItemsTable).where(eq(brandWatchlistItemsTable.id, id));
+  res.json({ success: true });
+});
+
+// ── POST /brand-threats/:id/rescan ───────────────────────────────────────────
+router.post("/brand-threats/:id/rescan", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+
+  const [existing] = await db.select({ domain: brandThreatScansTable.domain, tenantId: brandThreatScansTable.tenantId, status: brandThreatScansTable.status })
+    .from(brandThreatScansTable).where(filter);
+  if (!existing) { res.status(404).json({ error: "Scan not found" }); return; }
+  if (existing.status === "running" || existing.status === "pending") {
+    res.status(409).json({ error: "A scan is already running for this domain" }); return;
+  }
+
+  const { triggerBrandThreatScan } = await import("../lib/brandThreatRunner");
+  const newScan = await triggerBrandThreatScan(existing.tenantId, existing.domain);
+  res.status(201).json(toScanResponse(newScan));
+});
+
+// ── GET /brand-threat-schedules ───────────────────────────────────────────────
+router.get("/brand-threat-schedules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const schedules = await db
+    .select()
+    .from(brandThreatSchedulesTable)
+    .where(eq(brandThreatSchedulesTable.tenantId, req.user!.tenantId))
+    .orderBy(desc(brandThreatSchedulesTable.createdAt));
+  res.json(schedules.map(s => ({
+    ...s,
+    createdAt: s.createdAt.toISOString(),
+    nextRunAt: s.nextRunAt ? s.nextRunAt.toISOString() : null,
+    lastRunAt: s.lastRunAt ? s.lastRunAt.toISOString() : null,
+  })));
+});
+
+// ── POST /brand-threat-schedules ──────────────────────────────────────────────
+router.post("/brand-threat-schedules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const domain = String(req.body?.domain ?? "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!;
+  const frequency = String(req.body?.frequency ?? "weekly").trim();
+  const runTime = String(req.body?.runTime ?? "09:00").trim();
+  const dayOfWeek = req.body?.dayOfWeek != null ? parseInt(String(req.body.dayOfWeek), 10) : null;
+  const dayOfMonth = req.body?.dayOfMonth != null ? parseInt(String(req.body.dayOfMonth), 10) : null;
+  const label = req.body?.label ? String(req.body.label).trim() : null;
+
+  if (!domain) { res.status(400).json({ error: "domain is required" }); return; }
+  const validFreqs = ["daily", "weekly", "monthly"];
+  if (!validFreqs.includes(frequency)) {
+    res.status(400).json({ error: `frequency must be one of: ${validFreqs.join(", ")}` }); return;
+  }
+
+  const { computeNextRunAt } = await import("../workers/beatScheduler");
+  const nextRunAt = computeNextRunAt(frequency, runTime, dayOfWeek, dayOfMonth);
+
+  const [schedule] = await db.insert(brandThreatSchedulesTable).values({
+    tenantId: req.user!.tenantId,
+    domain,
+    frequency,
+    runTime,
+    dayOfWeek: !isNaN(dayOfWeek!) ? dayOfWeek : null,
+    dayOfMonth: !isNaN(dayOfMonth!) ? dayOfMonth : null,
+    label,
+    status: "active",
+    nextRunAt,
+  }).returning();
+
+  res.status(201).json({
+    ...schedule!,
+    createdAt: schedule!.createdAt.toISOString(),
+    nextRunAt: schedule!.nextRunAt ? schedule!.nextRunAt.toISOString() : null,
+    lastRunAt: null,
+  });
+});
+
+// ── PATCH /brand-threat-schedules/:id ─────────────────────────────────────────
+router.patch("/brand-threat-schedules/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const [existing] = await db.select().from(brandThreatSchedulesTable)
+    .where(and(eq(brandThreatSchedulesTable.id, id), eq(brandThreatSchedulesTable.tenantId, req.user!.tenantId)));
+  if (!existing) { res.status(404).json({ error: "Schedule not found" }); return; }
+
+  const updates: Partial<typeof brandThreatSchedulesTable.$inferInsert> = {};
+  if (req.body?.status !== undefined) updates.status = req.body.status === "paused" ? "paused" : "active";
+  if (req.body?.label !== undefined) updates.label = req.body.label ? String(req.body.label) : null;
+  if (req.body?.runTime !== undefined) updates.runTime = String(req.body.runTime);
+  if (req.body?.dayOfWeek !== undefined) updates.dayOfWeek = req.body.dayOfWeek != null ? parseInt(String(req.body.dayOfWeek), 10) : null;
+  if (req.body?.dayOfMonth !== undefined) updates.dayOfMonth = req.body.dayOfMonth != null ? parseInt(String(req.body.dayOfMonth), 10) : null;
+  if (req.body?.frequency !== undefined) {
+    const freq = String(req.body.frequency).trim();
+    const validFreqs = ["daily", "weekly", "monthly"];
+    if (!validFreqs.includes(freq)) {
+      res.status(400).json({ error: `frequency must be one of: ${validFreqs.join(", ")}` }); return;
+    }
+    updates.frequency = freq;
+    const { computeNextRunAt } = await import("../workers/beatScheduler");
+    const rt = updates.runTime ?? existing.runTime ?? "09:00";
+    const dow = updates.dayOfWeek !== undefined ? updates.dayOfWeek : existing.dayOfWeek;
+    const dom = updates.dayOfMonth !== undefined ? updates.dayOfMonth : existing.dayOfMonth;
+    updates.nextRunAt = computeNextRunAt(freq, rt, dow, dom);
+  }
+
+  const [updated] = await db.update(brandThreatSchedulesTable)
+    .set(updates)
+    .where(eq(brandThreatSchedulesTable.id, id))
+    .returning();
+  res.json({
+    ...updated!,
+    createdAt: updated!.createdAt.toISOString(),
+    nextRunAt: updated!.nextRunAt ? updated!.nextRunAt.toISOString() : null,
+    lastRunAt: updated!.lastRunAt ? updated!.lastRunAt.toISOString() : null,
+  });
+});
+
+// ── DELETE /brand-threat-schedules/:id ────────────────────────────────────────
+router.delete("/brand-threat-schedules/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const [existing] = await db.select({ id: brandThreatSchedulesTable.id }).from(brandThreatSchedulesTable)
+    .where(and(eq(brandThreatSchedulesTable.id, id), eq(brandThreatSchedulesTable.tenantId, req.user!.tenantId)));
+  if (!existing) { res.status(404).json({ error: "Schedule not found" }); return; }
+  await db.delete(brandThreatSchedulesTable).where(eq(brandThreatSchedulesTable.id, id));
   res.json({ success: true });
 });
 

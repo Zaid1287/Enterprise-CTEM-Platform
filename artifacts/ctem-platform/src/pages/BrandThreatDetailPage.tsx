@@ -190,6 +190,47 @@ function FaviconIntelPanel({ scan }: { scan: any }) {
   );
 }
 
+function ShodanFaviconPanel({ matches }: { matches: any[] }) {
+  const [collapsed, setCollapsed] = useState(true);
+  if (!matches || matches.length === 0) return null;
+  return (
+    <div className="border border-red-500/20 rounded-xl overflow-hidden bg-red-500/3 mt-3">
+      <button className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-red-500/5 transition-colors" onClick={() => setCollapsed(c => !c)}>
+        <Search className="w-4 h-4 text-red-400 shrink-0" />
+        <span className="text-sm font-semibold text-red-300">Shodan Favicon Clone Hosts</span>
+        <span className="ml-1 text-[10px] font-bold bg-red-500/10 border border-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
+          {matches.length} host{matches.length !== 1 ? "s" : ""} detected
+        </span>
+        <div className="flex-1" />
+        <span className="text-[10px] text-muted-foreground mr-1">Hosts sharing the same favicon fingerprint</span>
+        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {!collapsed && (
+        <div className="border-t border-red-500/15 px-5 py-4 space-y-2">
+          <p className="text-[10px] text-muted-foreground/60 mb-3">
+            These IPs/hostnames were found by Shodan using the same favicon hash as your domain. They may be phishing infrastructure or brand clones.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {matches.map((m: any, i: number) => (
+              <div key={i} className="flex items-center gap-2 bg-background/60 border border-red-500/20 rounded-lg px-3 py-2">
+                <Server className="w-3 h-3 text-red-400 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-mono truncate">{m.ip_str ?? m.ip ?? m.hostname ?? "unknown"}</p>
+                  {m.hostnames?.length > 0 && <p className="text-[10px] text-muted-foreground truncate">{m.hostnames[0]}</p>}
+                  {(m.org || m.isp) && <p className="text-[10px] text-muted-foreground/60 truncate">{m.org ?? m.isp}</p>}
+                </div>
+                {m.country_code && (
+                  <span className="text-[10px] font-bold text-muted-foreground bg-muted px-1.5 py-0.5 rounded-sm shrink-0">{m.country_code}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhishingTab({ phishing }: { phishing: any[] }) {
   if (!phishing.length) {
     return (
@@ -1039,6 +1080,23 @@ export default function BrandThreatDetailPage() {
           </Button>
           <Button
             variant="outline" size="sm"
+            className="h-8 shrink-0 gap-1.5"
+            disabled={s.status === "running" || s.status === "pending"}
+            onClick={async () => {
+              try {
+                await fetch(`/api/brand-threats/${id}/rescan`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+                });
+                void refetch();
+              } catch { /* ignore */ }
+            }}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Re-scan
+          </Button>
+          <Button
+            variant="outline" size="sm"
             className="h-8 shrink-0 gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
             onClick={() => setConfirmDeleteScan(true)}
           >
@@ -1259,6 +1317,15 @@ export default function BrandThreatDetailPage() {
           <div className="flex h-full overflow-hidden mt-0">
             {/* Left sidebar */}
             <div className="w-64 shrink-0 border-r border-border overflow-y-auto p-4 space-y-4 bg-card/50">
+              {/* Favicon intel + Shodan matches */}
+              {(s.faviconMd5 || s.favihunterStatus === "running" || s.favihunterStatus === "pending") && (
+                <div>
+                  <FaviconIntelPanel scan={s} />
+                  {s.faviconShodanMatches?.length > 0 && (
+                    <ShodanFaviconPanel matches={s.faviconShodanMatches} />
+                  )}
+                </div>
+              )}
               {chartData.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Permutation Types</p>
@@ -1498,6 +1565,26 @@ export default function BrandThreatDetailPage() {
                                 </div>
                               </div>
                             </div>
+                            {/* Screenshot (captured for score ≥ 70) */}
+                            {r.screenshot && (
+                              <div className="mt-4 pt-4 border-t border-border/50">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                  <Eye className="w-3 h-3" /> Live Screenshot
+                                  <span className="text-[9px] text-orange-400/70">(captured at scan time)</span>
+                                </p>
+                                <div className="rounded-lg overflow-hidden border border-border max-w-md">
+                                  <img
+                                    src={`data:image/png;base64,${r.screenshot}`}
+                                    alt={`Screenshot of ${r.permutation}`}
+                                    className="w-full object-cover"
+                                    loading="lazy"
+                                  />
+                                </div>
+                                <p className="text-[10px] text-muted-foreground/50 mt-1.5">
+                                  {r.permutation}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1517,33 +1604,83 @@ export default function BrandThreatDetailPage() {
                     </div>
                   );
 
+                  const activeThreats = registered.filter((r: any) => r.riskScore >= 70);
+                  const underWatch = registered.filter((r: any) => r.riskScore >= 40 && r.riskScore < 70);
+                  const lowRisk = registered.filter((r: any) => r.riskScore < 40);
+
                   return (
                     <div className="divide-y divide-border">
-                      {/* ── Registered Domains ── */}
+                      {/* ── Active Threats (score ≥ 70) ── */}
                       <div>
                         <div className="px-5 py-2.5 bg-red-500/5 border-b border-red-500/20 flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
                           <span className="text-xs font-semibold text-red-400 uppercase tracking-wider">
-                            Registered / Active Domains
+                            Active Threats
                           </span>
                           <span className="text-[10px] text-red-400/60 bg-red-500/10 px-1.5 py-0.5 rounded-full font-bold">
-                            {registered.length}
+                            {activeThreats.length}
                           </span>
-                          <span className="text-[10px] text-muted-foreground ml-1">— domains confirmed registered; treat as potential threats</span>
+                          <span className="text-[10px] text-muted-foreground ml-1">— risk score ≥ 70, likely active abuse or phishing</span>
                         </div>
-                        {registered.length > 0 ? (
+                        {activeThreats.length > 0 ? (
                           <>
                             {REG_HEADER}
                             <div className="divide-y divide-border">
-                              {registered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((r: any) => <PermRow key={r.id} r={r} />)}
+                              {activeThreats.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((r: any) => <PermRow key={r.id} r={r} />)}
                             </div>
                           </>
                         ) : (
                           <div className="flex items-center gap-2 px-5 py-4 text-sm text-green-400/70">
-                            <CheckCircle2 className="w-4 h-4 shrink-0" /> No registered permutations found — good signal
+                            <CheckCircle2 className="w-4 h-4 shrink-0" /> No active threats found — good signal
                           </div>
                         )}
                       </div>
+
+                      {/* ── Under Watch (score 40-69) ── */}
+                      {underWatch.length > 0 && (
+                        <div>
+                          <div className="px-5 py-2.5 bg-orange-500/5 border-b border-orange-500/20 flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
+                            <span className="text-xs font-semibold text-orange-400 uppercase tracking-wider">
+                              Under Watch
+                            </span>
+                            <span className="text-[10px] text-orange-400/60 bg-orange-500/10 px-1.5 py-0.5 rounded-full font-bold">
+                              {underWatch.length}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground ml-1">— risk score 40-69, suspicious but not confirmed</span>
+                          </div>
+                          {REG_HEADER}
+                          <div className="divide-y divide-border">
+                            {underWatch.map((r: any) => <PermRow key={r.id} r={r} />)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Registered / Low Risk ── */}
+                      {lowRisk.length > 0 && (
+                        <div>
+                          <div className="px-5 py-2.5 bg-muted/20 border-b border-border flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-muted-foreground/40 shrink-0" />
+                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                              Registered / Low Risk
+                            </span>
+                            <span className="text-[10px] text-muted-foreground/60 bg-muted px-1.5 py-0.5 rounded-full font-bold">
+                              {lowRisk.length}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground ml-1">— registered but below suspicion threshold</span>
+                          </div>
+                          {REG_HEADER}
+                          <div className="divide-y divide-border">
+                            {lowRisk.map((r: any) => <PermRow key={r.id} r={r} />)}
+                          </div>
+                        </div>
+                      )}
+
+                      {registered.length === 0 && (
+                        <div className="flex items-center gap-2 px-5 py-4 text-sm text-green-400/70">
+                          <CheckCircle2 className="w-4 h-4 shrink-0" /> No registered permutations found — good signal
+                        </div>
+                      )}
 
                       {/* ── Unregistered Domains ── */}
                       <div>

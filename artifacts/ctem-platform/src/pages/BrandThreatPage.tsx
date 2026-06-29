@@ -716,6 +716,307 @@ function WatchlistSection() {
   );
 }
 
+const SCHEDULE_FREQ_LABELS: Record<string, string> = {
+  daily:   "Daily",
+  weekly:  "Weekly",
+  monthly: "Monthly",
+};
+
+function SchedulesSection() {
+  const { toast } = useToast();
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    brandName: "",
+    frequency: "weekly",
+    scanTime: "03:00",
+    dayOfWeek: 1,
+    dayOfMonth: 1,
+    isActive: true,
+  });
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/brand-threat-schedules", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (res.ok) setSchedules(await res.json());
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  function resetForm() {
+    setForm({ name: "", brandName: "", frequency: "weekly", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, isActive: true });
+    setEditId(null);
+    setShowForm(false);
+  }
+
+  function startEdit(s: any) {
+    setForm({
+      name: s.name ?? "",
+      brandName: s.brandName ?? "",
+      frequency: s.frequency ?? "weekly",
+      scanTime: s.scanTime ?? "03:00",
+      dayOfWeek: s.dayOfWeek ?? 1,
+      dayOfMonth: s.dayOfMonth ?? 1,
+      isActive: s.isActive ?? true,
+    });
+    setEditId(s.id);
+    setShowForm(true);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.brandName.trim()) return;
+    setSubmitting(true);
+    try {
+      const url = editId ? `/api/brand-threat-schedules/${editId}` : "/api/brand-threat-schedules";
+      const method = editId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast({ title: editId ? "Schedule updated" : "Schedule created" });
+      resetForm();
+      load();
+    } catch {
+      toast({ title: "Failed to save schedule", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm("Delete this schedule?")) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/brand-threat-schedules/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error("Failed");
+      setSchedules(prev => prev.filter(s => s.id !== id));
+      toast({ title: "Schedule deleted" });
+    } catch {
+      toast({ title: "Failed to delete schedule", variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleToggle(s: any) {
+    try {
+      const res = await fetch(`/api/brand-threat-schedules/${s.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !s.isActive }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      setSchedules(prev => prev.map(x => x.id === s.id ? updated : x));
+    } catch {
+      toast({ title: "Failed to update schedule", variant: "destructive" });
+    }
+  }
+
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  return (
+    <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="max-w-3xl">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h2 className="text-sm font-semibold">Brand Threat Schedules</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Automated brand threat scans that run on a fixed schedule, independent of the watchlist.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => { resetForm(); setShowForm(v => !v); }} className="h-8 gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> New Schedule
+          </Button>
+        </div>
+
+        {showForm && (
+          <form onSubmit={handleSubmit} className="bg-muted/20 border border-border rounded-xl p-4 space-y-3 mb-5">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              {editId ? "Edit Schedule" : "New Schedule"}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Schedule Name *</label>
+                <input
+                  value={form.name}
+                  onChange={e => setForm(v => ({ ...v, name: e.target.value }))}
+                  placeholder="e.g. Weekly ACME Brand Check"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Brand Name *</label>
+                <input
+                  value={form.brandName}
+                  onChange={e => setForm(v => ({ ...v, brandName: e.target.value }))}
+                  placeholder="e.g. acme"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Frequency</label>
+                <select
+                  value={form.frequency}
+                  onChange={e => setForm(v => ({ ...v, frequency: e.target.value }))}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                >
+                  {Object.entries(SCHEDULE_FREQ_LABELS).map(([val, label]) => (
+                    <option key={val} value={val}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Scan Time (UTC)</label>
+                <input
+                  type="time"
+                  value={form.scanTime}
+                  onChange={e => setForm(v => ({ ...v, scanTime: e.target.value }))}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                />
+              </div>
+              {form.frequency === "weekly" && (
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Day of Week</label>
+                  <select
+                    value={form.dayOfWeek}
+                    onChange={e => setForm(v => ({ ...v, dayOfWeek: parseInt(e.target.value) }))}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                  >
+                    {dayNames.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                </div>
+              )}
+              {form.frequency === "monthly" && (
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Day of Month</label>
+                  <select
+                    value={form.dayOfMonth}
+                    onChange={e => setForm(v => ({ ...v, dayOfMonth: parseInt(e.target.value) }))}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                  >
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={resetForm}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={submitting || !form.name.trim() || !form.brandName.trim()}>
+                {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                {editId ? "Save Changes" : "Create Schedule"}
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center h-24">
+            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : schedules.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-primary/5 border border-primary/10 flex items-center justify-center mb-4">
+              <CalendarClock className="w-6 h-6 text-primary/30" />
+            </div>
+            <p className="text-sm font-medium text-muted-foreground">No schedules yet</p>
+            <p className="text-xs text-muted-foreground/60 mt-1 max-w-xs">
+              Create a schedule to run brand threat scans automatically on a daily, weekly, or monthly basis.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {schedules.map((s: any) => (
+              <div
+                key={s.id}
+                className={cn(
+                  "rounded-xl border p-4 transition-colors",
+                  s.isActive ? "bg-card border-border" : "bg-muted/10 border-border/50 opacity-60"
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-medium truncate">{s.name}</span>
+                      <span className={cn(
+                        "text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0",
+                        s.isActive ? "text-green-400 bg-green-500/10" : "text-muted-foreground bg-muted"
+                      )}>
+                        {s.isActive ? "Active" : "Paused"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Brand: <span className="text-foreground font-mono">{s.brandName}</span>
+                    </p>
+                    <div className="flex items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <CalendarClock className="w-3 h-3" />
+                        {SCHEDULE_FREQ_LABELS[s.frequency] ?? s.frequency}
+                        {s.frequency === "weekly" && s.dayOfWeek != null && ` · ${dayNames[s.dayOfWeek]}`}
+                        {s.frequency === "monthly" && s.dayOfMonth != null && ` · day ${s.dayOfMonth}`}
+                        {s.scanTime && ` @ ${s.scanTime} UTC`}
+                      </span>
+                      {s.nextRunAt && (
+                        <span className="flex items-center gap-1 text-blue-400/70">
+                          <Clock className="w-3 h-3" />
+                          Next: {new Date(s.nextRunAt).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => handleToggle(s)}
+                      className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                      title={s.isActive ? "Pause schedule" : "Enable schedule"}
+                    >
+                      {s.isActive ? <XCircle className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => startEdit(s)}
+                      className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                      title="Edit schedule"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(s.id)}
+                      disabled={deletingId === s.id}
+                      className="p-1.5 rounded-md hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-400"
+                      title="Delete schedule"
+                    >
+                      {deletingId === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function BrandThreatPage() {
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
@@ -723,7 +1024,7 @@ export default function BrandThreatPage() {
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"scans" | "watchlist">("scans");
+  const [activeTab, setActiveTab] = useState<"scans" | "watchlist" | "schedules">("scans");
 
   const { data: scans, isLoading, refetch } = useListBrandThreats({
     query: { queryKey: getListBrandThreatsQueryKey(), staleTime: 0, refetchInterval: (query: any) => {
@@ -794,6 +1095,15 @@ export default function BrandThreatPage() {
               >
                 <BookmarkCheck className="w-3.5 h-3.5" /> Watchlist
               </button>
+              <button
+                onClick={() => setActiveTab("schedules")}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                  activeTab === "schedules" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <CalendarClock className="w-3.5 h-3.5" /> Schedules
+              </button>
             </div>
             <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8">
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
@@ -851,6 +1161,9 @@ export default function BrandThreatPage() {
 
       {/* ── Watchlist tab content ──────────────────────────────────────── */}
       {activeTab === "watchlist" && <WatchlistSection />}
+
+      {/* ── Schedules tab content ──────────────────────────────────────── */}
+      {activeTab === "schedules" && <SchedulesSection />}
 
       {/* ── Scans tab content ──────────────────────────────────────────── */}
       {activeTab === "scans" && (

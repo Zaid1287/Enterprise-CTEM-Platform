@@ -1,9 +1,8 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { fileURLToPath } from "url";
 import path from "path";
 import dns from "node:dns/promises";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, isNotNull } from "drizzle-orm";
 import {
   db,
   brandThreatScansTable, brandThreatResultsTable,
@@ -16,21 +15,21 @@ import { queryAbuseChFeeds } from "./abuseChFeeds";
 import { logger } from "./logger";
 import { rdapLookup } from "./rdapClient";
 import { geoIpBatch } from "./geoIpClient";
-import { checkPhishingFeed } from "./phishFeedClient";
+import { checkPhishingFeed, setPhishTankKey } from "./phishFeedClient";
 import { checkGoogleSafeBrowsing } from "./googleSafeBrowsing";
 import { hibpDomainLookup, severityFromBreach } from "./hibpClient";
 import { vtDomainLookup, vtUrlScan } from "./vtDomainClient";
 import { scanBrandAbuse } from "./brandAbuseScanner";
 import { intelxSearch, intelxTypeToBucket } from "./intelxClient";
+import { searchShodanByFaviconHash } from "./shodanFaviconClient";
 import { getPlatformSetting } from "../routes/platformSettings";
 import { dispatchNotifications } from "./notifier";
 
 const execFileAsync = promisify(execFile);
 
-const WRAPPER_SCRIPT = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../scripts/favihunter_wrapper.py",
-);
+// Works in both tsx (dev) and esbuild dist (prod) because process.cwd()
+// is always the artifact root (/home/runner/workspace/artifacts/api-server).
+const WRAPPER_SCRIPT = path.join(process.cwd(), "scripts/favihunter_wrapper.py");
 
 // ── Favihunter integration ─────────────────────────────────────────────────────
 
@@ -263,11 +262,49 @@ async function scanPermutations(domain: string): Promise<PermResult[]> {
 
 // ── Risk scoring ───────────────────────────────────────────────────────────────
 
-// High-risk GeoIP country codes (known phishing hosting hotspots)
+// High-risk GeoIP country codes (known phishing/cybercrime hotspots).
+// Deliberately excludes legitimate large-internet nations like IN, BR, TR, PL.
 const HIGH_RISK_COUNTRIES = new Set([
-  "RU", "CN", "KP", "IR", "NG", "UA", "PK", "BD", "VN", "IN",
-  "BR", "ID", "TH", "TR", "PL", "CZ", "RO", "HU", "BG", "BY",
+  "RU", "CN", "KP", "IR", "NG", "UA", "PK", "BD", "VN", "ID", "TH", "BY",
 ]);
+
+// ── CDN / parking IP detection ────────────────────────────────────────────────
+
+function ip2int(ip: string): number {
+  const parts = ip.split(".").map(Number);
+  return ((parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!) >>> 0;
+}
+
+// Known CDN and domain-parking IP ranges.  If the A record resolves to one of
+// these ranges, the domain is almost certainly parked on a CDN and is not
+// actively abusing the brand — apply a -20 score deduction.
+const CDN_PARKING_RANGES: Array<{ start: number; end: number; label: string }> = [
+  // Cloudflare
+  { start: ip2int("104.16.0.0"),   end: ip2int("104.31.255.255"), label: "Cloudflare" },
+  { start: ip2int("172.64.0.0"),   end: ip2int("172.71.255.255"), label: "Cloudflare" },
+  { start: ip2int("162.158.0.0"),  end: ip2int("162.159.255.255"), label: "Cloudflare" },
+  { start: ip2int("190.93.240.0"), end: ip2int("190.93.255.255"), label: "Cloudflare" },
+  // GoDaddy parking
+  { start: ip2int("184.168.0.0"),  end: ip2int("184.168.255.255"), label: "GoDaddy" },
+  // Namecheap / Enom parking
+  { start: ip2int("198.54.117.0"), end: ip2int("198.54.117.255"), label: "Namecheap" },
+  { start: ip2int("199.102.0.0"),  end: ip2int("199.102.127.255"), label: "Namecheap" },
+  // Sedo parking
+  { start: ip2int("185.53.178.0"), end: ip2int("185.53.178.255"), label: "Sedo" },
+  // Bodis parking
+  { start: ip2int("50.63.202.0"),  end: ip2int("50.63.202.255"), label: "Bodis" },
+  // Dan.com parking
+  { start: ip2int("80.244.75.0"),  end: ip2int("80.244.75.255"), label: "Dan" },
+];
+
+function isInCdnOrParkingRange(ip: string): boolean {
+  try {
+    const n = ip2int(ip);
+    return CDN_PARKING_RANGES.some(r => n >= r.start && n <= r.end);
+  } catch {
+    return false;
+  }
+}
 
 function computeRisk(
   dnsA: string[],
@@ -315,7 +352,12 @@ function computeRisk(
   // GeoIP high-risk country (match against ISO country code, not full name)
   if (geoCountryCode && HIGH_RISK_COUNTRIES.has(geoCountryCode)) score += 10;
 
-  return Math.min(100, score);
+  // CDN / domain-parking deduction — these domains are typically not actively
+  // abusing the brand; reduce risk to avoid alert fatigue.
+  const inCdn = dnsA.length > 0 && dnsA.some(ip => isInCdnOrParkingRange(ip));
+  if (inCdn) score -= 20;
+
+  return Math.min(100, Math.max(0, score));
 }
 
 // ── Phase helpers ─────────────────────────────────────────────────────────────
@@ -397,6 +439,38 @@ async function runPhishingChecks(
 
 // ── Core scan executor ────────────────────────────────────────────────────────
 
+async function captureHighRiskScreenshots(
+  scanId: number,
+  targets: Array<{ id: number; permutation: string }>,
+): Promise<void> {
+  if (targets.length === 0) return;
+  const { captureScreenshots } = await import("./screenshotEngine");
+  const CONCURRENCY = 3;
+  const TIMEOUT_MS = 20_000;
+  const queue = [...targets.slice(0, 10)]; // cap at 10 screenshots per scan
+
+  async function worker() {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
+      try {
+        const shots = await captureScreenshots(`https://${item.permutation}`, TIMEOUT_MS);
+        const shot = shots[0];
+        if (shot?.screenshotData) {
+          await db.update(brandThreatResultsTable)
+            .set({ screenshot: shot.screenshotData })
+            .where(eq(brandThreatResultsTable.id, item.id));
+        }
+      } catch (err) {
+        logger.warn({ err, domain: item.permutation }, "brand threat screenshot failed");
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  logger.info({ scanId, count: targets.length }, "brand threat screenshots captured");
+}
+
 export async function runBrandThreatScan(scanId: number, domain: string): Promise<void> {
   try {
     await db.update(brandThreatScansTable)
@@ -405,11 +479,16 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
 
     logger.info({ scanId, domain }, "Starting advanced brand threat scan");
 
-    const [vtApiKey, gsbKey, hibpKey] = await Promise.all([
+    const [vtApiKey, gsbKey, hibpKey, phishTankKey, shodanKey] = await Promise.all([
       getPlatformSetting("virustotal_api_key"),
       getPlatformSetting("google_safe_browsing_key"),
       getPlatformSetting("hibp_api_key"),
+      getPlatformSetting("phishtank_api_key"),
+      getPlatformSetting("shodan_api_key"),
     ]);
+
+    // Propagate PhishTank API key to feed client (invalidates cache if key changed)
+    setPhishTankKey(phishTankKey ?? null);
 
     // ── Phase 1: Permutations + favihunter in parallel ────────────────────────
     const [permResults, faviResult] = await Promise.all([
@@ -439,6 +518,21 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         return null;
       }),
     ]);
+
+    // ── Phase 1b: Shodan favicon clone detection ──────────────────────────────
+    if (faviResult && shodanKey && faviResult.hashes.mmh3) {
+      try {
+        const shodanMatches = await searchShodanByFaviconHash(faviResult.hashes.mmh3, shodanKey, 20);
+        if (shodanMatches.length > 0) {
+          await db.update(brandThreatScansTable)
+            .set({ faviconShodanMatches: shodanMatches as unknown as Record<string, unknown>[] })
+            .where(eq(brandThreatScansTable.id, scanId));
+          logger.info({ scanId, domain, shodanCount: shodanMatches.length }, "Shodan favicon clone hosts found");
+        }
+      } catch (err) {
+        logger.warn({ err, scanId }, "Shodan favicon search failed (non-fatal)");
+      }
+    }
 
     await db.update(brandThreatScansTable)
       .set({ totalPermutations: permResults.length })
@@ -496,7 +590,7 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         geo?.country ?? null,
         geo?.countryCode ?? null,
       );
-      const isSuspicious = riskScore >= 40;
+      const isSuspicious = riskScore >= 60;
 
       if (r.dnsA.length > 0) liveCount++;
       if (r.dnsA.length > 0 || r.dnsMx.length > 0) registeredCount++;
@@ -542,6 +636,23 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       if (pendingInserts.length >= 50) await flushBatch();
     }
     await flushBatch();
+
+    // ── Phase 3b: Screenshots for high-risk domains (score ≥ 70) ─────────────
+    try {
+      const highRiskRows = await db
+        .select({ id: brandThreatResultsTable.id, permutation: brandThreatResultsTable.permutation })
+        .from(brandThreatResultsTable)
+        .where(and(
+          eq(brandThreatResultsTable.scanId, scanId),
+          gte(brandThreatResultsTable.riskScore, 70),
+          isNotNull(brandThreatResultsTable.dnsA),
+        ));
+      if (highRiskRows.length > 0) {
+        await captureHighRiskScreenshots(scanId, highRiskRows);
+      }
+    } catch (err) {
+      logger.warn({ err, scanId }, "Screenshot phase failed (non-fatal)");
+    }
 
     // ── Phase 4 pre-fetch: abuse.ch feeds (URLhaus + ThreatFox) ──────────────
     // Query each live permutation domain — no API key required

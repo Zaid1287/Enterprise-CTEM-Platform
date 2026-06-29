@@ -8,8 +8,8 @@
  */
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
-import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable } from "@workspace/db";
-import { and, eq, sql, lte, isNotNull } from "drizzle-orm";
+import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable } from "@workspace/db";
+import { and, eq, sql, lte, isNotNull, ne, desc } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
 import { pushSseEvent } from "../lib/sseManager";
@@ -32,7 +32,7 @@ function isDue(asset: { scanFrequency: string; lastScannedAt: Date | null }): bo
   return !!interval && elapsed >= interval;
 }
 
-function computeNextRunAt(
+export function computeNextRunAt(
   frequency: string,
   runTime: string,
   dayOfWeek?: number | null,
@@ -258,17 +258,39 @@ async function dispatchDueSchedules(): Promise<void> {
   }
 }
 
-function computeWatchlistNextScanAt(frequency: string, from: Date): Date | null {
+function computeWatchlistNextScanAt(
+  frequency: string,
+  from: Date,
+  scanTime?: string | null,
+  dayOfWeek?: number | null,
+  dayOfMonth?: number | null,
+): Date | null {
+  if (!frequency || frequency === "none") return null;
+  const [h, m] = (scanTime ?? "03:00").split(":").map(Number);
+  const next = new Date(from);
+
   if (frequency === "daily") {
-    const next = new Date(from);
     next.setDate(next.getDate() + 1);
-    next.setUTCHours(3, 0, 0, 0);
+    next.setUTCHours(h ?? 3, m ?? 0, 0, 0);
     return next;
   }
   if (frequency === "weekly") {
-    const next = new Date(from);
-    next.setDate(next.getDate() + 7);
-    next.setUTCHours(3, 0, 0, 0);
+    const dow = dayOfWeek ?? 1; // default Monday
+    let diff = (dow - from.getDay() + 7) % 7;
+    if (diff === 0) diff = 7;
+    next.setDate(from.getDate() + diff);
+    next.setUTCHours(h ?? 3, m ?? 0, 0, 0);
+    return next;
+  }
+  if (frequency === "monthly") {
+    const dom = dayOfMonth ?? 1;
+    next.setDate(dom);
+    next.setUTCHours(h ?? 3, m ?? 0, 0, 0);
+    if (next <= from) {
+      next.setMonth(next.getMonth() + 1);
+      next.setDate(dom);
+      next.setUTCHours(h ?? 3, m ?? 0, 0, 0);
+    }
     return next;
   }
   return null;
@@ -360,7 +382,13 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
         scanId = created!.id;
       }
 
-      const nextScanAt = computeWatchlistNextScanAt(item.frequency ?? "none", now);
+      const nextScanAt = computeWatchlistNextScanAt(
+        item.frequency ?? "none",
+        now,
+        item.scanTime,
+        item.dayOfWeek,
+        item.dayOfMonth,
+      );
 
       await db.update(brandWatchlistItemsTable)
         .set({
@@ -383,6 +411,172 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
       logger.info({ itemId: item.id, domain, scanId, nextScanAt }, "Beat: watchlist domain scan dispatched");
     } catch (err) {
       logger.error({ err, itemId: item.id }, "Beat: failed to dispatch watchlist item");
+    }
+  }
+}
+
+async function dispatchDueBrandThreatSchedules(): Promise<void> {
+  const now = new Date();
+  const dueSchedules = await db
+    .select()
+    .from(brandThreatSchedulesTable)
+    .where(
+      and(
+        eq(brandThreatSchedulesTable.status, "active"),
+        isNotNull(brandThreatSchedulesTable.nextRunAt),
+        lte(brandThreatSchedulesTable.nextRunAt, now),
+      ),
+    );
+
+  if (dueSchedules.length === 0) return;
+
+  const { triggerBrandThreatScan } = await import("../lib/brandThreatRunner");
+
+  for (const schedule of dueSchedules) {
+    try {
+      await triggerBrandThreatScan(schedule.tenantId, schedule.domain);
+      const nextRunAt = computeNextRunAt(
+        schedule.frequency ?? "weekly",
+        schedule.runTime ?? "09:00",
+        schedule.dayOfWeek,
+        schedule.dayOfMonth,
+      );
+      await db
+        .update(brandThreatSchedulesTable)
+        .set({ lastRunAt: now, nextRunAt })
+        .where(eq(brandThreatSchedulesTable.id, schedule.id));
+      logger.info({ scheduleId: schedule.id, domain: schedule.domain, nextRunAt }, "Beat: brand threat schedule dispatched");
+    } catch (err) {
+      logger.error({ err, scheduleId: schedule.id }, "Beat: brand threat schedule dispatch failed");
+    }
+  }
+}
+
+async function dispatchDueWatchlistNonDomainItems(): Promise<void> {
+  const now = new Date();
+  const dueItems = await db
+    .select()
+    .from(brandWatchlistItemsTable)
+    .where(
+      and(
+        ne(brandWatchlistItemsTable.type, "domain"),
+        isNotNull(brandWatchlistItemsTable.nextScanAt),
+        lte(brandWatchlistItemsTable.nextScanAt, now),
+      ),
+    );
+
+  if (dueItems.length === 0) return;
+
+  const { getPlatformSetting } = await import("../routes/platformSettings");
+  const { intelxSearch, intelxTypeToBucket } = await import("../lib/intelxClient");
+  const { scanBrandAbuse } = await import("../lib/brandAbuseScanner");
+  const { dataLeakResultsTable, brandAbuseResultsTable } = await import("@workspace/db");
+
+  const intelxKey = await getPlatformSetting("intelx_api_key").catch(() => null);
+  const youtubeKey = await getPlatformSetting("youtube_api_key").catch(() => null);
+
+  for (const item of dueItems) {
+    try {
+      // Find most recent completed brand threat scan for this tenant to attach results to
+      const [recentScan] = await db
+        .select({ id: brandThreatScansTable.id })
+        .from(brandThreatScansTable)
+        .where(
+          and(
+            eq(brandThreatScansTable.tenantId, item.tenantId),
+            eq(brandThreatScansTable.status, "done"),
+          ),
+        )
+        .orderBy(desc(brandThreatScansTable.createdAt))
+        .limit(1);
+
+      const scanId = recentScan?.id ?? null;
+
+      // IntelX search for keyword / email / social_handle
+      if (intelxKey && ["keyword", "email", "social_handle"].includes(item.type)) {
+        const results = await intelxSearch(item.value, intelxKey, 10).catch(() => null);
+        if (results?.length) {
+          const leakInserts: typeof dataLeakResultsTable.$inferInsert[] = [];
+          const abuseInserts: typeof brandAbuseResultsTable.$inferInsert[] = [];
+          for (const r of results) {
+            const bucket = intelxTypeToBucket(r.type);
+            const url = r.storageid ? `https://intelx.io/?did=${encodeURIComponent(r.storageid)}` : "https://intelx.io";
+            const isBrandAbuse = ["forum", "reddit", "twitter", "linkedin", "documents"].includes(bucket);
+            if (isBrandAbuse) {
+              abuseInserts.push({
+                tenantId: item.tenantId,
+                scanId,
+                type: "fake_social",
+                platform: bucket.charAt(0).toUpperCase() + bucket.slice(1),
+                url,
+                title: r.name || `IntelX ${bucket} mention`,
+                description: r.preview ?? `Watchlist "${item.value}" mention found in ${bucket} via IntelX`,
+                evidenceSnippet: r.preview ?? undefined,
+                risk: "medium",
+              });
+            } else {
+              leakInserts.push({
+                tenantId: item.tenantId,
+                scanId,
+                source: bucket === "darkweb" ? "IntelX-DarkWeb" : bucket === "pastes" ? "IntelX-Paste" : "IntelX",
+                title: r.name || "IntelX match",
+                breachDate: r.date ? r.date.slice(0, 10) : null,
+                description: r.preview ?? `Watchlist item "${item.value}" found in dark/deep web via IntelX`,
+                domainMatch: item.value,
+                severity: bucket === "darkweb" ? "critical" : bucket === "credential" ? "high" : "medium",
+                url,
+              });
+            }
+          }
+          if (leakInserts.length) {
+            for (let i = 0; i < leakInserts.length; i += 50) {
+              await db.insert(dataLeakResultsTable).values(leakInserts.slice(i, i + 50));
+            }
+          }
+          if (abuseInserts.length) {
+            for (let i = 0; i < abuseInserts.length; i += 50) {
+              await db.insert(brandAbuseResultsTable).values(abuseInserts.slice(i, i + 50));
+            }
+          }
+        }
+      }
+
+      // Social handle: also run brand abuse scanner
+      if (item.type === "social_handle") {
+        const brandName = item.value.replace(/^@/, "");
+        const abuseResults = await scanBrandAbuse(brandName, "", [item.value], youtubeKey ?? undefined).catch(() => []);
+        if (abuseResults.length) {
+          await db.insert(brandAbuseResultsTable).values(
+            abuseResults.map(a => ({
+              tenantId: item.tenantId,
+              scanId,
+              type: a.type,
+              platform: a.platform ?? undefined,
+              url: a.url ?? undefined,
+              title: a.title ?? undefined,
+              description: a.description ?? undefined,
+              evidenceSnippet: a.evidenceSnippet ?? undefined,
+              risk: a.risk,
+            })),
+          );
+        }
+      }
+
+      const nextScanAt = computeWatchlistNextScanAt(
+        item.frequency ?? "none",
+        now,
+        item.scanTime,
+        item.dayOfWeek,
+        item.dayOfMonth,
+      );
+      await db
+        .update(brandWatchlistItemsTable)
+        .set({ lastScanAt: now, nextScanAt })
+        .where(eq(brandWatchlistItemsTable.id, item.id));
+
+      logger.info({ itemId: item.id, type: item.type, value: item.value }, "Beat: non-domain watchlist intel scan done");
+    } catch (err) {
+      logger.error({ err, itemId: item.id }, "Beat: non-domain watchlist item intel scan failed");
     }
   }
 }
@@ -517,6 +711,8 @@ async function dispatchDueScans(): Promise<void> {
       dispatchDueAssets(),
       dispatchDueSchedules(),
       dispatchDueWatchlistDomains(),
+      dispatchDueBrandThreatSchedules(),
+      dispatchDueWatchlistNonDomainItems(),
       dispatchToolUpdateCheck(),
     ]);
   } catch (err) {
