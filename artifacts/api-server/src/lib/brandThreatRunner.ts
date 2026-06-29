@@ -9,6 +9,7 @@ import {
   dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable,
   adMonitoringResultsTable,
   brandWatchlistItemsTable,
+  cdnWhitelistTable,
 } from "@workspace/db";
 import { scanMetaAds } from "./metaAdsClient";
 import { queryAbuseChFeeds } from "./abuseChFeeds";
@@ -275,46 +276,57 @@ function ip2int(ip: string): number {
   return ((parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!) >>> 0;
 }
 
-// Known CDN and domain-parking IP ranges.  If the A record resolves to one of
-// these ranges, the domain is almost certainly parked on a CDN and is not
-// actively abusing the brand — apply a -20 score deduction.
-const CDN_PARKING_RANGES: Array<{ start: number; end: number; label: string }> = [
+// Built-in CDN / domain-parking IP ranges used as a seed and fallback.
+// The canonical source of truth is the cdn_whitelist_entries DB table,
+// loaded fresh at the start of each scan via loadCdnRangesFromDb().
+const BUILTIN_CDN_RANGES: Array<{ start: number; end: number; label: string }> = [
   // Cloudflare
-  { start: ip2int("104.16.0.0"),   end: ip2int("104.31.255.255"), label: "Cloudflare" },
-  { start: ip2int("172.64.0.0"),   end: ip2int("172.71.255.255"), label: "Cloudflare" },
+  { start: ip2int("104.16.0.0"),   end: ip2int("104.31.255.255"),  label: "Cloudflare" },
+  { start: ip2int("172.64.0.0"),   end: ip2int("172.71.255.255"),  label: "Cloudflare" },
   { start: ip2int("162.158.0.0"),  end: ip2int("162.159.255.255"), label: "Cloudflare" },
-  { start: ip2int("190.93.240.0"), end: ip2int("190.93.255.255"), label: "Cloudflare" },
-  // Akamai Technologies (major CDN — parking pages frequently hosted here)
-  { start: ip2int("23.32.0.0"),    end: ip2int("23.63.255.255"),  label: "Akamai" },
-  { start: ip2int("23.192.0.0"),   end: ip2int("23.223.255.255"), label: "Akamai" },
-  { start: ip2int("72.246.0.0"),   end: ip2int("72.247.255.255"), label: "Akamai" },
-  { start: ip2int("96.6.0.0"),     end: ip2int("96.7.255.255"),   label: "Akamai" },
-  // AWS CloudFront (confirmed ranges from aws.amazon.com/ranges.json)
-  { start: ip2int("13.32.0.0"),    end: ip2int("13.35.255.255"),  label: "CloudFront" },
-  { start: ip2int("13.224.0.0"),   end: ip2int("13.227.255.255"), label: "CloudFront" },
-  { start: ip2int("52.84.0.0"),    end: ip2int("52.87.255.255"),  label: "CloudFront" },
-  { start: ip2int("54.182.0.0"),   end: ip2int("54.185.255.255"), label: "CloudFront" },
-  { start: ip2int("99.84.0.0"),    end: ip2int("99.87.255.255"),  label: "CloudFront" },
-  { start: ip2int("130.176.0.0"),  end: ip2int("130.176.255.255"),label: "CloudFront" },
-  { start: ip2int("143.204.0.0"),  end: ip2int("143.204.255.255"),label: "CloudFront" },
-  { start: ip2int("205.251.192.0"),end: ip2int("205.251.255.255"),label: "CloudFront" },
-  // GoDaddy parking
+  { start: ip2int("190.93.240.0"), end: ip2int("190.93.255.255"),  label: "Cloudflare" },
+  // Akamai Technologies
+  { start: ip2int("23.32.0.0"),    end: ip2int("23.63.255.255"),   label: "Akamai" },
+  { start: ip2int("23.192.0.0"),   end: ip2int("23.223.255.255"),  label: "Akamai" },
+  { start: ip2int("72.246.0.0"),   end: ip2int("72.247.255.255"),  label: "Akamai" },
+  { start: ip2int("96.6.0.0"),     end: ip2int("96.7.255.255"),    label: "Akamai" },
+  // AWS CloudFront
+  { start: ip2int("13.32.0.0"),    end: ip2int("13.35.255.255"),   label: "CloudFront" },
+  { start: ip2int("13.224.0.0"),   end: ip2int("13.227.255.255"),  label: "CloudFront" },
+  { start: ip2int("52.84.0.0"),    end: ip2int("52.87.255.255"),   label: "CloudFront" },
+  { start: ip2int("54.182.0.0"),   end: ip2int("54.185.255.255"),  label: "CloudFront" },
+  { start: ip2int("99.84.0.0"),    end: ip2int("99.87.255.255"),   label: "CloudFront" },
+  { start: ip2int("130.176.0.0"),  end: ip2int("130.176.255.255"), label: "CloudFront" },
+  { start: ip2int("143.204.0.0"),  end: ip2int("143.204.255.255"), label: "CloudFront" },
+  { start: ip2int("205.251.192.0"),end: ip2int("205.251.255.255"), label: "CloudFront" },
+  // Domain parking providers
   { start: ip2int("184.168.0.0"),  end: ip2int("184.168.255.255"), label: "GoDaddy" },
-  // Namecheap / Enom parking
-  { start: ip2int("198.54.117.0"), end: ip2int("198.54.117.255"), label: "Namecheap" },
+  { start: ip2int("198.54.117.0"), end: ip2int("198.54.117.255"),  label: "Namecheap" },
   { start: ip2int("199.102.0.0"),  end: ip2int("199.102.127.255"), label: "Namecheap" },
-  // Sedo parking
-  { start: ip2int("185.53.178.0"), end: ip2int("185.53.178.255"), label: "Sedo" },
-  // Bodis parking
-  { start: ip2int("50.63.202.0"),  end: ip2int("50.63.202.255"), label: "Bodis" },
-  // Dan.com parking
-  { start: ip2int("80.244.75.0"),  end: ip2int("80.244.75.255"), label: "Dan" },
+  { start: ip2int("185.53.178.0"), end: ip2int("185.53.178.255"),  label: "Sedo" },
+  { start: ip2int("50.63.202.0"),  end: ip2int("50.63.202.255"),   label: "Bodis" },
+  { start: ip2int("80.244.75.0"),  end: ip2int("80.244.75.255"),   label: "Dan.com" },
 ];
 
-function isInCdnOrParkingRange(ip: string): boolean {
+/** Load active CDN ranges from the DB; falls back to hardcoded list if empty or on error. */
+async function loadCdnRangesFromDb(): Promise<Array<{ start: number; end: number; label: string }>> {
+  try {
+    const rows = await db.select({
+      ipStart: cdnWhitelistTable.ipStart,
+      ipEnd:   cdnWhitelistTable.ipEnd,
+      label:   cdnWhitelistTable.label,
+    }).from(cdnWhitelistTable).where(eq(cdnWhitelistTable.isActive, true));
+    if (rows.length === 0) return BUILTIN_CDN_RANGES;
+    return rows.map(r => ({ start: ip2int(r.ipStart), end: ip2int(r.ipEnd), label: r.label }));
+  } catch {
+    return BUILTIN_CDN_RANGES;
+  }
+}
+
+function isInCdnOrParkingRange(ip: string, ranges: Array<{ start: number; end: number }>): boolean {
   try {
     const n = ip2int(ip);
-    return CDN_PARKING_RANGES.some(r => n >= r.start && n <= r.end);
+    return ranges.some(r => n >= r.start && n <= r.end);
   } catch {
     return false;
   }
@@ -332,6 +344,7 @@ function computeRisk(
   whoisAgeDays: number | null,
   geoCountry: string | null,
   geoCountryCode: string | null,
+  cdnRanges: Array<{ start: number; end: number }>,
 ): number {
   let score = 0;
 
@@ -368,7 +381,7 @@ function computeRisk(
 
   // CDN / domain-parking deduction — these domains are typically not actively
   // abusing the brand; reduce risk to avoid alert fatigue.
-  const inCdn = dnsA.length > 0 && dnsA.some(ip => isInCdnOrParkingRange(ip));
+  const inCdn = dnsA.length > 0 && dnsA.some(ip => isInCdnOrParkingRange(ip, cdnRanges));
   if (inCdn) score -= 20;
 
   return Math.min(100, Math.max(0, score));
@@ -493,12 +506,13 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
 
     logger.info({ scanId, domain }, "Starting advanced brand threat scan");
 
-    const [vtApiKey, gsbKey, hibpKey, phishTankKey, shodanKey] = await Promise.all([
+    const [vtApiKey, gsbKey, hibpKey, phishTankKey, shodanKey, cdnRanges] = await Promise.all([
       getPlatformSetting("virustotal_api_key"),
       getPlatformSetting("google_safe_browsing_key"),
       getPlatformSetting("hibp_api_key"),
       getPlatformSetting("phishtank_api_key"),
       getPlatformSetting("shodan_api_key"),
+      loadCdnRangesFromDb(),
     ]);
 
     // Propagate PhishTank API key to feed client (invalidates cache if key changed)
@@ -603,6 +617,7 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
         rdap?.ageDays ?? null,
         geo?.country ?? null,
         geo?.countryCode ?? null,
+        cdnRanges,
       );
       const isSuspicious = riskScore >= 60;
 

@@ -6,7 +6,7 @@ import {
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
-  ShieldAlert, Network, Activity,
+  ShieldAlert, Network, Activity, Shield,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -39,6 +39,7 @@ const navGroups: NavGroup[] = [
       { label: "All Tenants", href: "/tenants", icon: Building2 },
       { label: "Packages", href: "/packages", icon: Package },
       { label: "Platform Settings", href: "/settings/platform", icon: Settings, onlyFor: ["super_admin"] },
+      { label: "CDN Whitelist", href: "/settings/cdn-whitelist", icon: Shield, onlyFor: ["super_admin"] },
     ],
   },
   {

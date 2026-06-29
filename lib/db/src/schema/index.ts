@@ -23,3 +23,4 @@ export * from "./brandThreats";
 export * from "./sessions";
 export * from "./discoveryResults";
 export * from "./externalMemberAssets";
+export * from "./cdnWhitelist";

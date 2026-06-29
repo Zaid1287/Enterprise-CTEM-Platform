@@ -30,6 +30,7 @@ import sessionsRouter from "./sessions";
 import stripeRouter from "./stripe";
 import discoveryRouter from "./discovery";
 import graphRouter from "./graph";
+import cdnWhitelistRouter from "./cdnWhitelist";
 
 const router: IRouter = Router();
 
@@ -64,5 +65,6 @@ router.use(sessionsRouter);
 router.use(stripeRouter);
 router.use(discoveryRouter);
 router.use(graphRouter);
+router.use(cdnWhitelistRouter);
 
 export default router;

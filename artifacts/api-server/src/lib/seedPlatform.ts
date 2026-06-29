@@ -1,5 +1,5 @@
 import { eq, and } from "drizzle-orm";
-import { db, tenantsTable, usersTable, securityToolsTable } from "@workspace/db";
+import { db, tenantsTable, usersTable, securityToolsTable, cdnWhitelistTable } from "@workspace/db";
 import { hashPassword } from "./auth";
 import { logger } from "./logger";
 
@@ -85,6 +85,44 @@ async function seedBuiltinToolsForAllTenants(): Promise<void> {
   if (inserted > 0) logger.info({ inserted }, "Built-in tools seeded for all tenants");
 }
 
+// ── CDN whitelist seed ────────────────────────────────────────────────────────
+// Runs once on startup when the table is empty, seeding the 22 known CDN and
+// domain-parking IP ranges.  Super-admins can add/edit/delete from the UI.
+
+const BUILTIN_CDN_SEED = [
+  { label: "Cloudflare",   cidr: "104.16.0.0/12",   ipStart: "104.16.0.0",   ipEnd: "104.31.255.255",   description: "Cloudflare CDN range 1" },
+  { label: "Cloudflare",   cidr: "172.64.0.0/13",   ipStart: "172.64.0.0",   ipEnd: "172.71.255.255",   description: "Cloudflare CDN range 2" },
+  { label: "Cloudflare",   cidr: "162.158.0.0/15",  ipStart: "162.158.0.0",  ipEnd: "162.159.255.255",  description: "Cloudflare CDN range 3" },
+  { label: "Cloudflare",   cidr: "190.93.240.0/20", ipStart: "190.93.240.0", ipEnd: "190.93.255.255",   description: "Cloudflare CDN range 4" },
+  { label: "Akamai",       cidr: "23.32.0.0/11",    ipStart: "23.32.0.0",    ipEnd: "23.63.255.255",    description: "Akamai Technologies CDN range 1" },
+  { label: "Akamai",       cidr: "23.192.0.0/11",   ipStart: "23.192.0.0",   ipEnd: "23.223.255.255",   description: "Akamai Technologies CDN range 2" },
+  { label: "Akamai",       cidr: "72.246.0.0/15",   ipStart: "72.246.0.0",   ipEnd: "72.247.255.255",   description: "Akamai Technologies CDN range 3" },
+  { label: "Akamai",       cidr: "96.6.0.0/15",     ipStart: "96.6.0.0",     ipEnd: "96.7.255.255",     description: "Akamai Technologies CDN range 4" },
+  { label: "CloudFront",   cidr: "13.32.0.0/14",    ipStart: "13.32.0.0",    ipEnd: "13.35.255.255",    description: "AWS CloudFront CDN range 1" },
+  { label: "CloudFront",   cidr: "13.224.0.0/14",   ipStart: "13.224.0.0",   ipEnd: "13.227.255.255",   description: "AWS CloudFront CDN range 2" },
+  { label: "CloudFront",   cidr: "52.84.0.0/14",    ipStart: "52.84.0.0",    ipEnd: "52.87.255.255",    description: "AWS CloudFront CDN range 3" },
+  { label: "CloudFront",   cidr: "54.182.0.0/14",   ipStart: "54.182.0.0",   ipEnd: "54.185.255.255",   description: "AWS CloudFront CDN range 4" },
+  { label: "CloudFront",   cidr: "99.84.0.0/14",    ipStart: "99.84.0.0",    ipEnd: "99.87.255.255",    description: "AWS CloudFront CDN range 5" },
+  { label: "CloudFront",   cidr: "130.176.0.0/16",  ipStart: "130.176.0.0",  ipEnd: "130.176.255.255",  description: "AWS CloudFront CDN range 6" },
+  { label: "CloudFront",   cidr: "143.204.0.0/16",  ipStart: "143.204.0.0",  ipEnd: "143.204.255.255",  description: "AWS CloudFront CDN range 7" },
+  { label: "CloudFront",   cidr: "205.251.192.0/18",ipStart: "205.251.192.0",ipEnd: "205.251.255.255",  description: "AWS CloudFront CDN range 8" },
+  { label: "GoDaddy",      cidr: "184.168.0.0/16",  ipStart: "184.168.0.0",  ipEnd: "184.168.255.255",  description: "GoDaddy domain parking" },
+  { label: "Namecheap",    cidr: "198.54.117.0/24", ipStart: "198.54.117.0", ipEnd: "198.54.117.255",   description: "Namecheap/Enom parking range 1" },
+  { label: "Namecheap",    cidr: "199.102.0.0/17",  ipStart: "199.102.0.0",  ipEnd: "199.102.127.255",  description: "Namecheap/Enom parking range 2" },
+  { label: "Sedo",         cidr: "185.53.178.0/24", ipStart: "185.53.178.0", ipEnd: "185.53.178.255",   description: "Sedo domain parking" },
+  { label: "Bodis",        cidr: "50.63.202.0/24",  ipStart: "50.63.202.0",  ipEnd: "50.63.202.255",    description: "Bodis domain parking" },
+  { label: "Dan.com",      cidr: "80.244.75.0/24",  ipStart: "80.244.75.0",  ipEnd: "80.244.75.255",    description: "Dan.com domain parking / aftermarket" },
+] as const;
+
+async function seedCdnWhitelist(): Promise<void> {
+  const existing = await db.select({ id: cdnWhitelistTable.id }).from(cdnWhitelistTable).limit(1);
+  if (existing.length > 0) return; // already seeded
+  await db.insert(cdnWhitelistTable).values(
+    BUILTIN_CDN_SEED.map(e => ({ ...e, isActive: true, isBuiltIn: true }))
+  );
+  logger.info({ count: BUILTIN_CDN_SEED.length }, "CDN whitelist seeded with built-in ranges");
+}
+
 // ── Main startup seed ─────────────────────────────────────────────────────────
 
 export async function seedPlatformOnStartup(): Promise<void> {
@@ -117,6 +155,8 @@ export async function seedPlatformOnStartup(): Promise<void> {
 
     // Always ensure built-in tools exist for every tenant (idempotent)
     await seedBuiltinToolsForAllTenants();
+    // Seed CDN whitelist once if table is empty
+    await seedCdnWhitelist();
   } catch (err) {
     logger.error({ err }, "Platform seed failed");
   }
