@@ -28,9 +28,9 @@ interface IntelXResultsResponse {
 }
 
 const BASE_URL = "https://2.intelx.io";
-const DEFAULT_MAX_RESULTS = 20;
+const DEFAULT_MAX_RESULTS = 100;
 const POLL_DELAY_MS = 2000;
-const MAX_POLLS = 5;
+const MAX_POLLS = 10; // up to ~20s of polling for large result sets
 
 export async function intelxSearch(
   query: string,

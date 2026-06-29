@@ -57,7 +57,7 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
 };
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns" | "favicon_clones";
 
 function RiskScoreBar({ score }: { score: number }) {
   return (
@@ -1008,12 +1008,17 @@ export default function BrandThreatDetailPage() {
       color: FUZZER_META[fuzzer]?.chartColor ?? "#94a3b8",
     }));
 
+  const shodanCloneCount = (s?.faviconShodanMatches as any[] | null)?.length ?? 0;
+  const faviconPivotCount = s?.faviconSearchUrls ? Object.keys(s.faviconSearchUrls as object).filter(k => k !== "_error").length : 0;
+  const hasFaviconData = !!(s?.faviconMd5 || s?.favihunterStatus === "done");
+
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
     { id: "typosquatting", label: "Typosquatting", icon: <Globe className="w-3.5 h-3.5" />, count: results.length },
     { id: "phishing",      label: "Phishing",      icon: <Fish className="w-3.5 h-3.5" />,  count: phishingDetections.length, color: phishingDetections.length > 0 ? "text-red-400" : undefined },
     { id: "data_leaks",    label: "Data Leaks",    icon: <Database className="w-3.5 h-3.5" />, count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
     { id: "brand_abuse",   label: "Brand Abuse",   icon: <Target className="w-3.5 h-3.5" />,   count: brandAbuse.length, color: brandAbuse.length > 0 ? "text-yellow-400" : undefined },
     { id: "malicious_ads", label: "Malicious Ads", icon: <Megaphone className="w-3.5 h-3.5" />, count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
+    ...(hasFaviconData ? [{ id: "favicon_clones" as TabMode, label: "Favicon Clones", icon: <Fingerprint className="w-3.5 h-3.5" />, count: shodanCloneCount, color: shodanCloneCount > 0 ? "text-violet-400" : undefined }] : []),
     { id: "takedowns",     label: "Takedowns",     icon: <Shield className="w-3.5 h-3.5" /> },
   ];
 
@@ -1309,6 +1314,121 @@ export default function BrandThreatDetailPage() {
         {activeTab === "takedowns" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
             <TakedownsTab scanId={Number(id)} scanDomain={s.domain} results={results} />
+          </div>
+        )}
+
+        {/* ── FAVICON CLONES tab ── */}
+        {activeTab === "favicon_clones" && (
+          <div className="h-full overflow-y-auto p-6 space-y-6">
+            {/* Favicon identity card */}
+            {s.faviconMd5 ? (
+              <>
+                <div className="flex items-start gap-6 p-5 bg-violet-500/5 border border-violet-500/20 rounded-xl">
+                  <div className="shrink-0 flex flex-col items-center gap-2">
+                    <div className="w-16 h-16 rounded-xl border border-border bg-background flex items-center justify-center overflow-hidden">
+                      {s.faviconUrl
+                        ? <img src={s.faviconUrl} alt="favicon" className="w-14 h-14 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                        : <Fingerprint className="w-8 h-8 text-violet-400/40" />
+                      }
+                    </div>
+                    <span className="text-[9px] text-muted-foreground font-mono">favicon.ico</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Fingerprint className="w-4 h-4 text-violet-400 shrink-0" />
+                      <span className="text-sm font-semibold text-violet-300">Favicon Fingerprint</span>
+                      <span className="text-[10px] text-violet-400/60 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full font-mono">powered by favihunter</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {s.faviconMmh3 && <HashChip label="MMH3 (Shodan / FOFA)" value={String(s.faviconMmh3)} />}
+                      {s.faviconMmh3Hex && <HashChip label="MMH3-HEX (Criminal IP)" value={s.faviconMmh3Hex} />}
+                      {s.faviconMd5 && <HashChip label="MD5 (Censys / Hunter-How / ODIN)" value={s.faviconMd5} />}
+                      {s.faviconSha256 && <HashChip label="SHA256 (Netlas)" value={s.faviconSha256} />}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Search engine pivot links */}
+                {s.faviconSearchUrls && Object.keys(s.faviconSearchUrls as object).filter(k => k !== "_error").length > 0 && (
+                  <div className="border border-border rounded-xl p-5">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Search className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-semibold">Search Engine Pivots</span>
+                      <span className="text-xs text-muted-foreground ml-1">— find hosts using the same favicon fingerprint</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(s.faviconSearchUrls as Record<string, { url: string; hash_type: string }>)
+                        .filter(([k]) => k !== "_error")
+                        .map(([name, { url, hash_type }]) => {
+                          const meta = ENGINE_META[name] ?? { color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" };
+                          return (
+                            <a key={name} href={url} target="_blank" rel="noopener noreferrer"
+                              className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-all hover:scale-105 hover:shadow-sm", meta.color, meta.bg, meta.border)}
+                              title={`Search ${name} using ${hash_type} hash`}
+                            >
+                              {name} <ExternalLink className="w-3.5 h-3.5 opacity-60" />
+                            </a>
+                          );
+                        })}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/50 mt-3">
+                      These links search each engine for infrastructure sharing the same favicon — a reliable indicator of phishing clones and related threat actors.
+                    </p>
+                  </div>
+                )}
+
+                {/* Shodan detected clone hosts */}
+                {(s.faviconShodanMatches as any[] | null)?.length ? (
+                  <div className="border border-red-500/20 rounded-xl p-5 bg-red-500/3">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Server className="w-4 h-4 text-red-400" />
+                      <span className="text-sm font-semibold text-red-300">Shodan-Detected Clone Hosts</span>
+                      <span className="ml-1 text-xs font-bold bg-red-500/10 border border-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
+                        {(s.faviconShodanMatches as any[]).length} host{(s.faviconShodanMatches as any[]).length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground/70 mb-4">
+                      These IPs were found by Shodan using the same favicon hash as <strong className="text-foreground">{s.domain}</strong>. They may be phishing infrastructure, CDN mirror origins, or brand clones.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {(s.faviconShodanMatches as any[]).map((m: any, i: number) => (
+                        <div key={i} className="flex items-start gap-3 bg-background/60 border border-red-500/20 rounded-lg p-3 hover:border-red-500/40 transition-colors">
+                          <Server className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <p className="text-xs font-mono font-semibold truncate">{m.ip_str ?? m.ip ?? m.hostname ?? "unknown"}</p>
+                            {m.hostnames?.length > 0 && <p className="text-[11px] text-muted-foreground truncate">{m.hostnames[0]}</p>}
+                            {(m.org || m.isp) && <p className="text-[11px] text-muted-foreground/60 truncate">{m.org ?? m.isp}</p>}
+                            {m.port && <p className="text-[11px] text-muted-foreground/50">Port {m.port}</p>}
+                          </div>
+                          {m.country_code && (
+                            <span className="text-[10px] font-bold text-muted-foreground bg-muted px-1.5 py-0.5 rounded-sm shrink-0">{m.country_code}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border border-border rounded-xl p-6 text-center">
+                    <Server className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">No Shodan clone hosts detected</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">
+                      Either no hosts share this favicon hash, or a Shodan API key has not been configured.
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-64 gap-3">
+                <Fingerprint className="w-12 h-12 text-muted-foreground/20" />
+                <p className="text-muted-foreground">
+                  {s.favihunterStatus === "error"
+                    ? `Favicon intelligence unavailable: ${s.favihunterError ?? "unknown error"}`
+                    : s.favihunterStatus === "running" || s.favihunterStatus === "pending"
+                    ? "Favicon analysis in progress…"
+                    : "No favicon found for this domain."}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

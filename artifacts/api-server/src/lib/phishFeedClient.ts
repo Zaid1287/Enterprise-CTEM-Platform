@@ -7,7 +7,10 @@ interface PhishFeedState {
   lastPhishTankKey: string | null;
 }
 
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+// Keyed requests (with PhishTank API key): refresh every 5 minutes.
+// Anonymous requests: refresh every 60 minutes (PhishTank rate-limits anonymous to ~1/hr).
+const CACHE_TTL_KEYED_MS = 5 * 60 * 1000;
+const CACHE_TTL_ANON_MS  = 60 * 60 * 1000;
 const state: PhishFeedState = {
   phishtank: new Set(),
   openphish: new Set(),
@@ -26,7 +29,8 @@ export function setPhishTankKey(key: string | null): void {
 }
 
 async function refreshFeeds(): Promise<void> {
-  if (Date.now() - state.lastFetched < CACHE_TTL_MS) return;
+  const ttl = _phishTankKey ? CACHE_TTL_KEYED_MS : CACHE_TTL_ANON_MS;
+  if (Date.now() - state.lastFetched < ttl) return;
 
   const [ptResult, opResult] = await Promise.allSettled([
     fetchPhishTank(_phishTankKey),

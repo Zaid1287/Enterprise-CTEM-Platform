@@ -284,6 +284,20 @@ const CDN_PARKING_RANGES: Array<{ start: number; end: number; label: string }> =
   { start: ip2int("172.64.0.0"),   end: ip2int("172.71.255.255"), label: "Cloudflare" },
   { start: ip2int("162.158.0.0"),  end: ip2int("162.159.255.255"), label: "Cloudflare" },
   { start: ip2int("190.93.240.0"), end: ip2int("190.93.255.255"), label: "Cloudflare" },
+  // Akamai Technologies (major CDN — parking pages frequently hosted here)
+  { start: ip2int("23.32.0.0"),    end: ip2int("23.63.255.255"),  label: "Akamai" },
+  { start: ip2int("23.192.0.0"),   end: ip2int("23.223.255.255"), label: "Akamai" },
+  { start: ip2int("72.246.0.0"),   end: ip2int("72.247.255.255"), label: "Akamai" },
+  { start: ip2int("96.6.0.0"),     end: ip2int("96.7.255.255"),   label: "Akamai" },
+  // AWS CloudFront (confirmed ranges from aws.amazon.com/ranges.json)
+  { start: ip2int("13.32.0.0"),    end: ip2int("13.35.255.255"),  label: "CloudFront" },
+  { start: ip2int("13.224.0.0"),   end: ip2int("13.227.255.255"), label: "CloudFront" },
+  { start: ip2int("52.84.0.0"),    end: ip2int("52.87.255.255"),  label: "CloudFront" },
+  { start: ip2int("54.182.0.0"),   end: ip2int("54.185.255.255"), label: "CloudFront" },
+  { start: ip2int("99.84.0.0"),    end: ip2int("99.87.255.255"),  label: "CloudFront" },
+  { start: ip2int("130.176.0.0"),  end: ip2int("130.176.255.255"),label: "CloudFront" },
+  { start: ip2int("143.204.0.0"),  end: ip2int("143.204.255.255"),label: "CloudFront" },
+  { start: ip2int("205.251.192.0"),end: ip2int("205.251.255.255"),label: "CloudFront" },
   // GoDaddy parking
   { start: ip2int("184.168.0.0"),  end: ip2int("184.168.255.255"), label: "GoDaddy" },
   // Namecheap / Enom parking
