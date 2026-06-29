@@ -604,12 +604,12 @@ function WatchlistSection() {
           <div>
             <h2 className="text-sm font-semibold">Brand Asset Watchlist</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Monitor keywords, domains, IPs, emails, and social handles. Domain items can be auto-scanned on a schedule.
+              Monitor keywords, domains, emails, social handles, and mobile apps. All items can be auto-scanned on a schedule.
             </p>
             {scheduledCount > 0 && (
               <p className="text-[11px] text-blue-400 mt-1 flex items-center gap-1">
                 <RotateCw className="w-3 h-3" />
-                {scheduledCount} domain{scheduledCount !== 1 ? "s" : ""} scheduled for automatic re-scanning
+                {scheduledCount} item{scheduledCount !== 1 ? "s" : ""} scheduled for automatic monitoring
               </p>
             )}
           </div>
