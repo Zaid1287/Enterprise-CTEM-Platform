@@ -47,7 +47,7 @@ const TYPE_CONFIG: Record<string, { label: string; valueLabel: string; valuePlac
   cidr:         { label: "CIDR / IP Range",   valueLabel: "CIDR Range",         valuePlaceholder: "10.0.0.0/8",                 needsVerify: false },
   api:          { label: "API Endpoint",      valueLabel: "Base URL",           valuePlaceholder: "https://api.example.com/v1", needsVerify: true  },
   ssl_cert:     { label: "SSL Certificate",   valueLabel: "Hostname",           valuePlaceholder: "example.com",                needsVerify: false },
-  cloud_asset:  { label: "Cloud Asset",       valueLabel: "Resource ID / ARN",  valuePlaceholder: "arn:aws:ec2:us-east-1:…",    needsVerify: true  },
+  cloud_asset:  { label: "Cloud Asset",       valueLabel: "Endpoint Hostname",  valuePlaceholder: "my-bucket.s3.amazonaws.com", needsVerify: true  },
   host:         { label: "Host",              valueLabel: "Hostname / IP",      valuePlaceholder: "server01.internal",          needsVerify: false },
   mobile_app:   { label: "Mobile App",        valueLabel: "Bundle ID / App ID", valuePlaceholder: "com.example.app",            needsVerify: false },
   sentinelware: { label: "Sentinelware",      valueLabel: "Value",              valuePlaceholder: "",                           needsVerify: false },
@@ -130,6 +130,11 @@ export default function AssetsPage() {
   const [showBulkAssign, setShowBulkAssign] = useState(false);
   const [bulkAssignClientId, setBulkAssignClientId] = useState("_none_");
   const [bulkAssigning, setBulkAssigning] = useState(false);
+
+  // Bulk set Business Impact
+  const [showBulkBI, setShowBulkBI] = useState(false);
+  const [bulkBIValue, setBulkBIValue] = useState(5);
+  const [bulkBILoading, setBulkBILoading] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -390,6 +395,25 @@ export default function AssetsPage() {
     });
   };
 
+  const handleBulkSetBusinessImpact = async () => {
+    setBulkBILoading(true);
+    let successCount = 0;
+    for (const assetId of selectedAssetIds) {
+      try {
+        await updateAsset.mutateAsync({ assetId, data: { businessImpact: bulkBIValue } as any });
+        successCount++;
+      } catch {}
+    }
+    await queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    setBulkBILoading(false);
+    setShowBulkBI(false);
+    setSelectedAssetIds(new Set());
+    toast({
+      title: "Business Impact updated",
+      description: `Set to ${bulkBIValue} on ${successCount} asset${successCount !== 1 ? "s" : ""}.`,
+    });
+  };
+
   async function triggerScan(assetId: number) {
     const asset = allAssets.find((a: any) => a.id === assetId);
     if (!asset) return;
@@ -511,6 +535,10 @@ export default function AssetsPage() {
           <Button size="sm" variant="outline" className="h-7 text-[11px] px-3 border-primary/40 text-primary hover:bg-primary/10"
             onClick={() => { setBulkAssignClientId("_none_"); setShowBulkAssign(true); }}>
             <UserCheck className="w-3 h-3 mr-1.5" /> Assign Client
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px] px-3 border-primary/40 text-primary hover:bg-primary/10"
+            onClick={() => { setBulkBIValue(5); setShowBulkBI(true); }}>
+            <Zap className="w-3 h-3 mr-1.5" /> Set Business Impact
           </Button>
           <Button size="sm" variant="ghost" className="h-7 text-[11px] px-3 ml-auto" onClick={() => setSelectedAssetIds(new Set())}>
             Clear
@@ -849,6 +877,26 @@ export default function AssetsPage() {
                     placeholder={typeValuePlaceholder(newAsset.type)}
                     required className="h-9 font-mono text-sm"
                   />
+                  {newAsset.type === "cidr" && (() => {
+                    const m = /\/(\d+)$/.exec(newAsset.value);
+                    const prefix = m ? parseInt(m[1]!, 10) : null;
+                    if (prefix !== null && prefix < 24) {
+                      const ipCount = Math.round(Math.pow(2, 32 - prefix));
+                      return (
+                        <p className="text-[11px] text-amber-400 flex items-start gap-1.5 mt-1">
+                          <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                          Large range: /{prefix} = ~{ipCount.toLocaleString()} IPs. Scanning may take hours — consider setting Scan Frequency to "manual".
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
+                  {newAsset.type === "ssl_cert" && newAsset.value && /^([0-9a-f]{2}:){7,}|^[0-9a-f]{32,}$/i.test(newAsset.value.trim()) && (
+                    <p className="text-[11px] text-amber-400 flex items-start gap-1.5 mt-1">
+                      <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                      Value looks like a fingerprint. Use the hostname (e.g. api.example.com) as the value instead.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1131,6 +1179,56 @@ export default function AssetsPage() {
               onDone={() => { setShowVerify(false); setVerifyStep("idle"); setPendingAssetId(null); }}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk Set Business Impact Dialog ── */}
+      <Dialog open={showBulkBI} onOpenChange={setShowBulkBI}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Set Business Impact</DialogTitle>
+            <DialogDescription>
+              Apply a Business Impact score to {selectedAssetIds.size} selected asset{selectedAssetIds.size !== 1 ? "s" : ""}. Higher values increase the asset's risk score (adds up to +20 pts).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Business Impact</Label>
+                <span className={cn(
+                  "text-sm font-bold px-1.5 py-0.5 rounded",
+                  bulkBIValue >= 8 ? "bg-red-500/15 text-red-400" :
+                  bulkBIValue >= 5 ? "bg-amber-500/15 text-amber-400" :
+                  "bg-blue-500/15 text-blue-400",
+                )}>{bulkBIValue}/10</span>
+              </div>
+              <input
+                type="range" min={1} max={10} step={1}
+                value={bulkBIValue}
+                onChange={e => setBulkBIValue(Number(e.target.value))}
+                className="w-full accent-primary"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>1 — Low</span><span>5 — Medium</span><span>10 — Critical</span>
+              </div>
+            </div>
+            <div className={cn(
+              "text-xs px-3 py-2 rounded-lg border",
+              bulkBIValue >= 8 ? "bg-red-500/10 border-red-500/30 text-red-400" :
+              bulkBIValue >= 6 ? "bg-amber-500/10 border-amber-500/30 text-amber-400" :
+              "bg-muted/30 border-border text-muted-foreground",
+            )}>
+              +{Math.round((bulkBIValue / 10) * 20)} pts added to risk score per asset
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkBI(false)}>Cancel</Button>
+            <Button onClick={handleBulkSetBusinessImpact} disabled={bulkBILoading}>
+              {bulkBILoading
+                ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Updating…</>
+                : `Apply to ${selectedAssetIds.size} Asset${selectedAssetIds.size !== 1 ? "s" : ""}`}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

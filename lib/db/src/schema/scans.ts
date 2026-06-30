@@ -66,6 +66,7 @@ export const scanSchedulesTable = pgTable("scan_schedules", {
   runTime: text("run_time").notNull().default("09:00"),
   dayOfWeek: integer("day_of_week"),
   dayOfMonth: integer("day_of_month"),
+  timezone: text("timezone").notNull().default("+00:00"),
   status: text("status").notNull().default("active"),
   lastRunAt: timestamp("last_run_at", { withTimezone: true }),
   nextRunAt: timestamp("next_run_at", { withTimezone: true }),

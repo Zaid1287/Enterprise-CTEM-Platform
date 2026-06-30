@@ -9,7 +9,7 @@
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
 import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable } from "@workspace/db";
-import { and, eq, sql, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
+import { and, eq, sql, lt, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
 import { pushSseEvent } from "../lib/sseManager";
@@ -32,39 +32,59 @@ function isDue(asset: { scanFrequency: string; lastScannedAt: Date | null }): bo
   return !!interval && elapsed >= interval;
 }
 
+/**
+ * Parse a UTC offset string like "+05:30" or "-08:00" into milliseconds.
+ * Returns 0 for invalid or missing values (= UTC).
+ */
+function parseUtcOffsetMs(timezone: string | null | undefined): number {
+  const tz = (timezone ?? "+00:00").trim();
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(tz);
+  if (!m) return 0;
+  const sign = m[1] === "+" ? 1 : -1;
+  return sign * (parseInt(m[2]!, 10) * 60 + parseInt(m[3]!, 10)) * 60_000;
+}
+
 export function computeNextRunAt(
   frequency: string,
   runTime: string,
   dayOfWeek?: number | null,
   dayOfMonth?: number | null,
+  timezone?: string | null,
 ): Date {
+  const offsetMs = parseUtcOffsetMs(timezone);
   const [h, m] = (runTime ?? "09:00").split(":").map(Number);
-  const now = new Date();
-  const next = new Date();
-  next.setSeconds(0, 0);
-  next.setHours(h ?? 9, m ?? 0, 0, 0);
+
+  // Shift "now" into the user's timezone for correct date arithmetic, then
+  // shift the result back to UTC for storage. This handles day-boundary rollovers.
+  const nowUtcMs = Date.now();
+  const nowLocal = new Date(nowUtcMs + offsetMs);
+
+  const next = new Date(nowLocal);
+  next.setUTCSeconds(0, 0);
+  next.setUTCHours(h ?? 9, m ?? 0, 0, 0);
 
   if (frequency === "hourly") {
-    if (next <= now) next.setHours(next.getHours() + 1);
+    if (next <= nowLocal) next.setUTCHours(next.getUTCHours() + 1);
   } else if (frequency === "daily") {
-    if (next <= now) next.setDate(next.getDate() + 1);
+    if (next <= nowLocal) next.setUTCDate(next.getUTCDate() + 1);
   } else if (frequency === "weekly") {
     const dow = dayOfWeek ?? 1;
-    let diff = (dow - now.getDay() + 7) % 7;
-    if (diff === 0 && next <= now) diff = 7;
-    next.setDate(now.getDate() + diff);
-    next.setHours(h ?? 9, m ?? 0, 0, 0);
+    let diff = (dow - nowLocal.getUTCDay() + 7) % 7;
+    if (diff === 0 && next <= nowLocal) diff = 7;
+    next.setUTCDate(nowLocal.getUTCDate() + diff);
+    next.setUTCHours(h ?? 9, m ?? 0, 0, 0);
   } else if (frequency === "monthly") {
     const dom = dayOfMonth ?? 1;
-    next.setDate(dom);
-    if (next <= now) {
-      next.setMonth(next.getMonth() + 1);
-      next.setDate(dom);
+    next.setUTCDate(dom);
+    if (next <= nowLocal) {
+      next.setUTCMonth(next.getUTCMonth() + 1);
+      next.setUTCDate(dom);
     }
   } else {
-    next.setDate(next.getDate() + 1);
+    next.setUTCDate(next.getUTCDate() + 1);
   }
-  return next;
+  // Convert back to true UTC by reversing the timezone shift
+  return new Date(next.getTime() - offsetMs);
 }
 
 async function runWithRetry(
@@ -160,7 +180,31 @@ async function dispatchDueAssets(): Promise<void> {
   }
 
   for (const [tenantId, tenantAssets] of byTenant) {
-    const assetIds = tenantAssets.map((a) => a.id);
+    const allDueIds = tenantAssets.map((a) => a.id);
+
+    // Double-fire guard: skip assets already covered by an active named Scan Schedule.
+    // Combining scanFrequency + a named schedule on the same asset would launch two scans.
+    const scheduleRows = await db
+      .select({ assetToolConfig: scanSchedulesTable.assetToolConfig })
+      .from(scanSchedulesTable)
+      .where(and(eq(scanSchedulesTable.tenantId, tenantId), eq(scanSchedulesTable.status, "active")));
+    const scheduledAssetIds = new Set<number>(
+      scheduleRows.flatMap(r => {
+        const cfg = r.assetToolConfig as { assetId: number }[] | null;
+        return Array.isArray(cfg) ? cfg.map(c => c.assetId) : [];
+      }),
+    );
+    const assetIds = allDueIds.filter(id => !scheduledAssetIds.has(id));
+    if (assetIds.length < allDueIds.length) {
+      logger.info(
+        { tenantId, skipped: allDueIds.length - assetIds.length },
+        "Beat: asset-frequency — skipping assets already covered by named Scan Schedules",
+      );
+    }
+    if (assetIds.length === 0) {
+      logger.info({ tenantId }, "Beat: asset-frequency scan skipped — all due assets covered by named Schedules");
+      continue;
+    }
 
     // Duplicate-run guard: filter out any assets already covered by a running/pending scan
     const activeScans = await db
@@ -270,6 +314,7 @@ async function dispatchDueSchedules(): Promise<void> {
         schedule.runTime ?? "09:00",
         schedule.dayOfWeek,
         schedule.dayOfMonth,
+        (schedule as any).timezone,
       );
 
       await db
@@ -770,6 +815,74 @@ async function dispatchDueScans(): Promise<void> {
   }
 }
 
+/**
+ * On startup, find scans that got stuck in "pending" or "running" status during a
+ * previous server crash or restart.  Re-enqueue them so they aren't silently lost.
+ * Scans stuck for >10 min that are in "pending" status are safe to re-enqueue.
+ * Scans stuck in "running" for >60 min are marked failed (they were mid-execution
+ * when the process died and cannot be safely resumed).
+ */
+async function recoverStalePendingScans(): Promise<void> {
+  try {
+    const cutoffPending = new Date(Date.now() - 10 * 60 * 1000);
+    const cutoffRunning = new Date(Date.now() - 60 * 60 * 1000);
+
+    // Mark stale "running" scans as failed (cannot safely resume mid-execution)
+    const staleRunning = await db
+      .select({ id: scansTable.id, tenantId: scansTable.tenantId })
+      .from(scansTable)
+      .where(and(
+        eq(scansTable.status, "running"),
+        lt(scansTable.startedAt, cutoffRunning),
+      ));
+
+    for (const scan of staleRunning) {
+      await db.update(scansTable)
+        .set({ status: "failed" })
+        .where(eq(scansTable.id, scan.id))
+        .catch(() => {});
+      logger.warn({ scanId: scan.id, tenantId: scan.tenantId }, "Beat: marked stale running scan as failed (server restart recovery)");
+    }
+
+    // Re-enqueue stale "pending" scans (server crashed before they could start)
+    const stalePending = await db
+      .select({
+        id:       scansTable.id,
+        tenantId: scansTable.tenantId,
+        assetIds: scansTable.assetIds,
+      })
+      .from(scansTable)
+      .where(and(
+        eq(scansTable.status, "pending"),
+        lt(scansTable.createdAt, cutoffPending),
+      ));
+
+    if (stalePending.length === 0) {
+      logger.info("Beat: no stale pending scans to recover");
+      return;
+    }
+
+    logger.info({ count: stalePending.length }, "Beat: recovering stale pending scans");
+
+    for (const scan of stalePending) {
+      try {
+        const assetIds = Array.isArray(scan.assetIds) ? (scan.assetIds as number[]) : [];
+        if (assetIds.length === 0) {
+          await db.update(scansTable).set({ status: "failed" }).where(eq(scansTable.id, scan.id)).catch(() => {});
+          logger.warn({ scanId: scan.id }, "Beat: stale pending scan has no assetIds — marking failed");
+          continue;
+        }
+        await enqueueOrRun(scan.id, scan.tenantId, assetIds);
+        logger.info({ scanId: scan.id, tenantId: scan.tenantId, assetCount: assetIds.length }, "Beat: stale pending scan re-enqueued");
+      } catch (err) {
+        logger.error({ err, scanId: scan.id }, "Beat: failed to recover stale pending scan");
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, "Beat: stale scan recovery error (non-fatal)");
+  }
+}
+
 export async function startBeatScheduler(port = 8080): Promise<void> {
   _port = port;
   logger.info(
@@ -777,6 +890,9 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
       ? "Beat scheduler active (BullMQ mode)"
       : "Beat scheduler active (inline-execution mode with retry)",
   );
+
+  // Run once after a 15-second grace period so the DB is ready
+  setTimeout(() => recoverStalePendingScans().catch(() => {}), 15_000);
 
   setTimeout(async () => {
     await dispatchDueScans();

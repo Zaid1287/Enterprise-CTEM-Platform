@@ -121,9 +121,15 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
             .where(inArray(assetsTable.id, assetIds));
           const uniqueDomains = [...new Set(
             domainAssets
-              .filter(a => a.type === "domain" || a.type === "subdomain")
-              .map(a => extractDomain(a.value))
-              .filter(d => d.length > 0 && !isIp(d) && isValidHostname(d)),
+              .filter(a => ["domain", "subdomain", "url", "api", "cloud_asset"].includes(a.type ?? ""))
+              .map(a => {
+                const hostname = extractDomain(a.value);
+                if (!hostname || isIp(hostname)) return "";
+                // For domain/subdomain use the full hostname; for url/api/cloud extract root domain
+                if (a.type === "domain" || a.type === "subdomain") return hostname;
+                return extractRootDomain(hostname);
+              })
+              .filter(d => d.length > 0 && isValidHostname(d)),
           )];
           for (const domain of uniqueDomains) {
             await triggerBrandThreatScan(entry.tenantId, domain, entry.scanId);
@@ -366,6 +372,24 @@ function extractDomain(target: string): string {
 
 function isIp(s: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(s);
+}
+
+/** Extract TLD+1 root domain from a hostname (handles common 2-part TLDs). */
+function extractRootDomain(hostname: string): string {
+  const parts = hostname.split(".");
+  if (parts.length <= 2) return hostname;
+  const twoPartTlds = ["co.uk","co.in","co.jp","co.nz","co.za","com.au","com.br","com.cn","com.mx","org.uk","net.uk","me.uk","ac.uk","gov.uk"];
+  const lastTwo = parts.slice(-2).join(".");
+  if (twoPartTlds.includes(lastTwo)) return parts.slice(-3).join(".");
+  return parts.slice(-2).join(".");
+}
+
+/** Returns the CIDR prefix length (0–32) from a value like "10.0.0.0/24", or null. */
+function parseCidrPrefix(value: string): number | null {
+  const m = /\/(\d+)$/.exec(value);
+  if (!m) return null;
+  const n = parseInt(m[1]!, 10);
+  return n >= 0 && n <= 32 ? n : null;
 }
 
 /** Strict hostname validation — only allow RFC-1123 labels; no shell metacharacters. */
@@ -1499,17 +1523,140 @@ async function executePipeline(
     const now = () => new Date().toISOString();
     const ms = (start: number) => Date.now() - start;
 
-    // ── Auto-trigger brand threat scan for Domain/Subdomain assets immediately ─
-    // This fires per-asset (not post-scan), so brand intel runs in parallel
-    // with the main pipeline rather than waiting for all assets to complete.
-    if ((asset.type === "domain" || asset.type === "subdomain") && domain && !isIp(domain) && isValidHostname(domain)) {
-      setImmediate(async () => {
+    // ── Mobile App: skip all network phases, use App Store / Play Store APIs ──
+    if (asset.type === "mobile_app") {
+      const mobileIntel: IntelItem[] = [];
+      const bundleId = target.replace(/^https?:\/\//, "");
+      let appFound = false;
+
+      // Try iTunes / App Store API (by bundle ID, then by numeric ID)
+      for (const lookupUrl of [
+        `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}&limit=1`,
+        `https://itunes.apple.com/lookup?id=${encodeURIComponent(bundleId)}&limit=1`,
+      ]) {
         try {
-          await triggerBrandThreatScan(tenantId, domain, scanId);
-        } catch (err) {
-          logger.warn({ err, assetId: asset.id, domain }, "Per-asset brand threat trigger failed (non-fatal)");
-        }
-      });
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 10_000);
+          const resp = await fetch(lookupUrl, { signal: ctrl.signal });
+          clearTimeout(t);
+          if (resp.ok) {
+            const data = (await resp.json()) as any;
+            const app = data?.results?.[0];
+            if (app?.trackName) {
+              appFound = true;
+              mobileIntel.push({ type: "Mobile App", key: "Name",            value: app.trackName });
+              mobileIntel.push({ type: "Mobile App", key: "Developer",       value: app.sellerName ?? "N/A" });
+              mobileIntel.push({ type: "Mobile App", key: "Platform",        value: "iOS / App Store" });
+              mobileIntel.push({ type: "Mobile App", key: "Category",        value: app.primaryGenreName ?? "N/A" });
+              mobileIntel.push({ type: "Mobile App", key: "Version",         value: app.version ?? "N/A" });
+              mobileIntel.push({ type: "Mobile App", key: "Rating",          value: `${(app.averageUserRating ?? 0).toFixed(1)}/5 (${app.userRatingCount ?? 0} ratings)` });
+              mobileIntel.push({ type: "Mobile App", key: "Min iOS",         value: app.minimumOsVersion ?? "N/A" });
+              if (app.sellerUrl)        mobileIntel.push({ type: "Mobile App", key: "Developer URL",  value: app.sellerUrl });
+              if (app.privacyPolicyUrl) mobileIntel.push({ type: "Mobile App", key: "Privacy Policy", value: app.privacyPolicyUrl });
+              const descText = `${app.description ?? ""} ${app.sellerUrl ?? ""}`;
+              const domPat = /https?:\/\/([a-z0-9][a-z0-9-]{0,61}[a-z0-9](?:\.[a-z]{2,})+)/gi;
+              const foundDoms = [...new Set([...descText.matchAll(domPat)].map((mm: any) => mm[1]))]
+                .filter(d => !d.includes("apple.com") && !d.includes("itunes.com"));
+              if (foundDoms.length > 0)
+                mobileIntel.push({ type: "Mobile App", key: "Backend Domains", value: foundDoms.slice(0, 8).join(", ") });
+              break;
+            }
+          }
+        } catch {}
+      }
+
+      // Fallback: Google Play Store
+      if (!appFound) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 15_000);
+          const resp = await fetch(
+            `https://play.google.com/store/apps/details?id=${encodeURIComponent(bundleId)}&hl=en`,
+            { signal: ctrl.signal, headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" } },
+          );
+          clearTimeout(t);
+          if (resp.ok) {
+            appFound = true;
+            const html = await resp.text();
+            mobileIntel.push({ type: "Mobile App", key: "Platform", value: "Android / Google Play" });
+            const nameM = /<title>([^<]+) - Apps on Google Play<\/title>/.exec(html);
+            if (nameM) mobileIntel.push({ type: "Mobile App", key: "Name", value: nameM[1]! });
+            const domPat = /https?:\/\/([a-z0-9][a-z0-9-]{0,61}[a-z0-9](?:\.[a-z]{2,})+)/gi;
+            const foundDoms = [...new Set([...html.matchAll(domPat)].map((mm: any) => mm[1]))]
+              .filter(d => !["google", "gstatic", "googleapis", "android", "gvt1"].some(kw => d.includes(kw)));
+            if (foundDoms.length > 0)
+              mobileIntel.push({ type: "Mobile App", key: "Backend Domains", value: foundDoms.slice(0, 8).join(", ") });
+          }
+        } catch {}
+      }
+
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id, toolName: "mobile_app_scanner",
+        toolCategory: "mobile", rawOutput: JSON.stringify(mobileIntel), intelligence: mobileIntel as any,
+      } as any);
+      await db.insert(findingsTable).values({
+        tenantId, assetId: asset.id, scanId,
+        title: "Mobile App: Network Scanning Not Applicable",
+        severity: "low", status: "open", cveId: "INFO-MOBILE-SCAN", cvss: 0,
+        description: `Mobile application asset (${asset.value}) was identified. Network-layer scanning (port scan, HTTP probe, SSL analysis) does not apply to mobile apps. App store metadata was ${appFound ? "retrieved successfully" : "not found — ensure the value is a valid bundle ID (com.example.app) or App/Play Store URL"}.`,
+        remediation: `Add the backend API hostname (e.g. api.${extractRootDomain(domain || bundleId)}) as a separate Domain or URL asset for full vulnerability scanning. Use Brand Threat monitoring to detect mobile app impersonation.`,
+      } as any);
+      logger.info({ assetId: asset.id, bundleId, appFound }, "Mobile app scan complete (app store metadata mode)");
+      return;
+    }
+
+    // ── CIDR Range Budget Warning ─────────────────────────────────────────────
+    if (asset.type === "cidr") {
+      const prefix = parseCidrPrefix(target);
+      if (prefix !== null && prefix < 24) {
+        const ipCount = Math.round(Math.pow(2, 32 - prefix));
+        await db.insert(findingsTable).values({
+          tenantId, assetId: asset.id, scanId,
+          title: `Large CIDR Range — Scan May Take Hours (/${prefix}, ~${ipCount.toLocaleString()} IPs)`,
+          severity: "medium", status: "open", cveId: "INFO-CIDR-BUDGET", cvss: 0,
+          description: `The CIDR range ${target} covers approximately ${ipCount.toLocaleString()} IP addresses (/${prefix}). Scanning this entire range can take hours, consume significant server resources, and may trigger rate-limiting or blocking on the target network.`,
+          remediation: `Set this asset's Scan Frequency to "manual" and schedule scans during maintenance windows. Break large CIDR ranges into individual /24 subnets (256 IPs each) or individual IP assets for regular automated scanning.`,
+        } as any);
+        logger.warn({ assetId: asset.id, target, prefix, ipCount }, "CIDR asset is large — budget warning added as finding");
+      }
+    }
+
+    // ── SSL Certificate: warn if value looks like a fingerprint, not a hostname
+    if (asset.type === "ssl_cert") {
+      const looksLikeFingerprint =
+        /^([0-9a-f]{2}:){15,}[0-9a-f]{2}$/i.test(target.trim()) ||
+        /^[0-9a-f]{40,}$/i.test(target.trim());
+      if (looksLikeFingerprint) {
+        await db.insert(findingsTable).values({
+          tenantId, assetId: asset.id, scanId,
+          title: "SSL Certificate Asset: Value Should Be Hostname, Not Fingerprint",
+          severity: "low", status: "open", cveId: "CONF-SSL-VALUE", cvss: 0,
+          description: `The asset value "${target.slice(0, 60)}${target.length > 60 ? "…" : ""}" appears to be a certificate fingerprint or serial number rather than a hostname. The scanner uses the value as a network target — a fingerprint cannot be probed.`,
+          remediation: `Update the asset value to the hostname the certificate protects (e.g. "api.example.com"). Store the fingerprint in the asset Description or Tags field instead.`,
+        } as any);
+        logger.warn({ assetId: asset.id, target }, "SSL cert asset value looks like fingerprint — limited scan output expected");
+      }
+    }
+
+    // ── Auto-trigger brand threat scan for domain-type assets immediately ─────
+    // Extended to URL / API / cloud_asset by extracting root domain.
+    {
+      const btHostname = extractDomain(asset.value);
+      const btDomain = (asset.type === "domain" || asset.type === "subdomain")
+        ? btHostname
+        : extractRootDomain(btHostname);
+      if (
+        ["domain", "subdomain", "url", "api", "cloud_asset"].includes(asset.type ?? "") &&
+        btDomain && !isIp(btDomain) && isValidHostname(btDomain)
+      ) {
+        setImmediate(async () => {
+          try {
+            await triggerBrandThreatScan(tenantId, btDomain, scanId);
+          } catch (err) {
+            logger.warn({ err, assetId: asset.id, btDomain }, "Per-asset brand threat trigger failed (non-fatal)");
+          }
+        });
+      }
     }
 
     // ── Start subdomain scan early (runs in parallel with all phases) ────────
@@ -2999,7 +3146,9 @@ function toScheduleResponse(s: typeof scanSchedulesTable.$inferSelect) {
   return {
     id: s.id, name: s.name, assetToolConfig: s.assetToolConfig,
     frequency: s.frequency, runTime: s.runTime,
-    dayOfWeek: s.dayOfWeek, dayOfMonth: s.dayOfMonth, status: s.status,
+    dayOfWeek: s.dayOfWeek, dayOfMonth: s.dayOfMonth,
+    timezone: (s as any).timezone ?? "+00:00",
+    status: s.status,
     lastRunAt: s.lastRunAt?.toISOString() ?? null, nextRunAt: s.nextRunAt?.toISOString() ?? null,
     lastScanId: s.lastScanId, createdAt: s.createdAt.toISOString(),
   };
@@ -3277,11 +3426,12 @@ router.post("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, r
   const tenantId = req.user!.tenantId;
   const userId   = req.user!.userId;
   const { name, assetToolConfig, frequency, runTime, dayOfWeek, dayOfMonth } = parsed.data as any;
-  const nextRunAt = computeNextRunAt(frequency ?? "once", runTime ?? "09:00", dayOfWeek, dayOfMonth);
+  const timezone = typeof req.body.timezone === "string" ? req.body.timezone : "+00:00";
+  const nextRunAt = computeNextRunAt(frequency ?? "once", runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone);
   const [schedule] = await db.insert(scanSchedulesTable).values({
     tenantId, name, assetToolConfig, frequency: frequency ?? "once",
-    runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, status: "active", nextRunAt, createdBy: userId as any,
-  }).returning();
+    runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone, status: "active", nextRunAt, createdBy: userId as any,
+  } as any).returning();
   await logAudit(tenantId, userId as any, "schedule.create", "scan_schedule", schedule.id, { name });
   res.status(201).json(toScheduleResponse(schedule));
 });
@@ -3306,11 +3456,14 @@ router.patch("/scans/schedules/:scheduleId", requireAuth, async (req: Authentica
     .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
   if (!existing) { res.status(404).json({ error: "Schedule not found" }); return; }
   const updates: Record<string, unknown> = { ...bodyP.data };
+  if (typeof req.body.timezone === "string") updates.timezone = req.body.timezone;
+  const tz = (updates.timezone as string | undefined) ?? (existing as any).timezone ?? "+00:00";
   updates.nextRunAt = computeNextRunAt(
     (updates.frequency as string) ?? existing.frequency,
     (updates.runTime as string) ?? existing.runTime,
     (updates.dayOfWeek as number | undefined) ?? existing.dayOfWeek,
     (updates.dayOfMonth as number | undefined) ?? existing.dayOfMonth,
+    tz,
   );
   const [updated] = await db.update(scanSchedulesTable).set(updates as any)
     .where(eq(scanSchedulesTable.id, scheduleId)).returning();

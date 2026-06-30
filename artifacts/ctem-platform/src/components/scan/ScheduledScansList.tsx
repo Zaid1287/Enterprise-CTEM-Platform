@@ -20,12 +20,37 @@ import { cn } from "@/lib/utils";
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-function frequencyLabel(s: { frequency: string; runTime: string; dayOfWeek?: number | null; dayOfMonth?: number | null }) {
+const TIMEZONES = [
+  { label: "UTC ±00:00",             value: "+00:00" },
+  { label: "US/Eastern  UTC-05:00",  value: "-05:00" },
+  { label: "US/Central  UTC-06:00",  value: "-06:00" },
+  { label: "US/Mountain UTC-07:00",  value: "-07:00" },
+  { label: "US/Pacific  UTC-08:00",  value: "-08:00" },
+  { label: "US/Alaska   UTC-09:00",  value: "-09:00" },
+  { label: "US/Hawaii   UTC-10:00",  value: "-10:00" },
+  { label: "Europe/London UTC+00:00",value: "+00:00" },
+  { label: "Europe/Paris UTC+01:00", value: "+01:00" },
+  { label: "Europe/Berlin UTC+01:00",value: "+01:00" },
+  { label: "Europe/Athens UTC+02:00",value: "+02:00" },
+  { label: "Europe/Moscow UTC+03:00",value: "+03:00" },
+  { label: "Asia/Dubai  UTC+04:00",  value: "+04:00" },
+  { label: "Asia/Karachi UTC+05:00", value: "+05:00" },
+  { label: "Asia/Kolkata UTC+05:30", value: "+05:30" },
+  { label: "Asia/Dhaka  UTC+06:00",  value: "+06:00" },
+  { label: "Asia/Bangkok UTC+07:00", value: "+07:00" },
+  { label: "Asia/Shanghai UTC+08:00",value: "+08:00" },
+  { label: "Asia/Tokyo  UTC+09:00",  value: "+09:00" },
+  { label: "Australia/Sydney UTC+10:00", value: "+10:00" },
+  { label: "Pacific/Auckland UTC+12:00", value: "+12:00" },
+];
+
+function frequencyLabel(s: { frequency: string; runTime: string; dayOfWeek?: number | null; dayOfMonth?: number | null; timezone?: string | null }) {
   const t = s.runTime;
-  if (s.frequency === "daily") return `Daily at ${t}`;
-  if (s.frequency === "weekly") return `Weekly on ${DAYS_FULL[s.dayOfWeek ?? 1]} at ${t}`;
-  if (s.frequency === "monthly") return `Monthly on day ${s.dayOfMonth ?? 1} at ${t}`;
-  return `Once at ${t}`;
+  const tz = s.timezone && s.timezone !== "+00:00" ? ` (UTC${s.timezone})` : " UTC";
+  if (s.frequency === "daily") return `Daily at ${t}${tz}`;
+  if (s.frequency === "weekly") return `Weekly on ${DAYS_FULL[s.dayOfWeek ?? 1]} at ${t}${tz}`;
+  if (s.frequency === "monthly") return `Monthly on day ${s.dayOfMonth ?? 1} at ${t}${tz}`;
+  return `Once at ${t}${tz}`;
 }
 
 function nextRunLabel(nextRunAt: string | null) {
@@ -44,7 +69,7 @@ export default function ScheduledScansList({ onRefetchNeeded }: { onRefetchNeede
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const [editSchedule, setEditSchedule] = useState<any | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", frequency: "daily", runTime: "09:00", dayOfWeek: 1, dayOfMonth: 1 });
+  const [editForm, setEditForm] = useState({ name: "", frequency: "daily", runTime: "09:00", dayOfWeek: 1, dayOfMonth: 1, timezone: "+00:00" });
   const [runningId, setRunningId] = useState<number | null>(null);
 
   const { data: schedulesData, isLoading } = useListScanSchedules({
@@ -87,6 +112,7 @@ export default function ScheduledScansList({ onRefetchNeeded }: { onRefetchNeede
       runTime: schedule.runTime,
       dayOfWeek: schedule.dayOfWeek ?? 1,
       dayOfMonth: schedule.dayOfMonth ?? 1,
+      timezone: schedule.timezone ?? "+00:00",
     });
   }
 
@@ -96,6 +122,7 @@ export default function ScheduledScansList({ onRefetchNeeded }: { onRefetchNeede
       name: editForm.name,
       frequency: editForm.frequency,
       runTime: editForm.runTime,
+      timezone: editForm.timezone,
     };
     if (editForm.frequency === "weekly") payload.dayOfWeek = editForm.dayOfWeek;
     if (editForm.frequency === "monthly") payload.dayOfMonth = editForm.dayOfMonth;
@@ -251,6 +278,19 @@ export default function ScheduledScansList({ onRefetchNeeded }: { onRefetchNeede
                 </Select>
               </div>
             )}
+
+            <div>
+              <Label className="text-xs mb-1.5 block">Timezone</Label>
+              <Select value={editForm.timezone} onValueChange={v => setEditForm(p => ({ ...p, timezone: v }))}>
+                <SelectTrigger className="text-sm h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[...new Map(TIMEZONES.map(tz => [tz.value, tz])).values()].map(tz => (
+                    <SelectItem key={tz.value} value={tz.value}>{tz.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground mt-1">Run time is interpreted in this timezone</p>
+            </div>
 
             {editSchedule && (
               <div className="bg-accent/30 rounded-lg px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
