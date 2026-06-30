@@ -249,6 +249,7 @@ export default function AssetTopologyPage() {
     const nodeG   = root.append("g");
     const nodeEls = nodeG.selectAll<SVGGElement, GraphNode>("g")
       .data(nodes).join("g")
+      .attr("data-label", d => d.labels[0]?.toLowerCase() ?? "other")
       .style("cursor", "grab")
       .call(drag as any)
       .on("mouseover", (ev, d) => {
@@ -311,6 +312,21 @@ export default function AssetTopologyPage() {
 
     return () => { sim.stop(); };
   }, [data]);
+
+  // ── Filter highlight — reacts to highlightType without re-running D3 ────────
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const svg = d3.select(svgRef.current);
+    if (!highlightType) {
+      svg.selectAll<SVGGElement, unknown>("g[data-label]").attr("opacity", 1);
+      svg.selectAll<SVGLineElement, unknown>("line").attr("opacity", 0.4);
+    } else {
+      svg.selectAll<SVGGElement, unknown>("g[data-label]").attr("opacity", function() {
+        return (this as Element).getAttribute("data-label") === highlightType ? 1 : 0.1;
+      });
+      svg.selectAll<SVGLineElement, unknown>("line").attr("opacity", 0.1);
+    }
+  }, [highlightType]);
 
   // ── Zoom helpers ──────────────────────────────────────────────────────────────
   const zoomBy = (factor: number) => {

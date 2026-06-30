@@ -1,0 +1,24 @@
+Nuance 1 — Instant response, deferred execution
+The API returns 201 Created with the scan record (status: "pending") before any work starts. setImmediate() defers the pipeline to the next Node.js event loop tick — the response and the scan start are not atomic.
+
+Nuance 2 — Queue delay under load
+If 5 scans are already running, your scan waits in an in-memory FIFO queue indefinitely. There is no timeout, no ETA, no position indicator shown in the UI.
+
+Nuance 3 — Asset scans are live, brand threat scans are polled
+
+Asset pipeline scans: real-time SSE updates per tool (Phase 1 complete, Phase 2 running, etc.) visible in the scan detail page
+Brand threat scans: no SSE — the UI polls the scan record. You see "running" until it flips to "done"
+Nuance 4 — No Redis = no durability
+Without REDIS_URL, everything runs inside the main Express process. If the server crashes or restarts mid-scan:
+
+Running scans get stuck in "running" state
+On next startup, pipelineScans.ts runs a recovery block that marks all "running" scans as "failed"
+With Redis + BullMQ workers: scans survive server restarts and retry automatically
+Nuance 5 — Beat scheduler has a 60-second window
+"Automatic" scanning isn't instant. The beat scheduler polls every 60 seconds. If your daily asset becomes due at 14:00:01, it gets dispatched at the next tick — anywhere between 14:00:01 and 14:01:00.
+
+Nuance 6 — Brand threat auto-trigger happens after pipeline, not alongside it
+When an asset scan completes, triggerBrandThreatScan() fires inside a setImmediate(). So the brand threat scan for example.com starts AFTER the asset pipeline fully finishes — not concurrently. If the asset pipeline takes 30 minutes, the brand threat scan begins at minute 30.
+
+Nuance 7 — Watchlist rescans delete history
+When dispatchDueWatchlistDomains() rescans a domain, it deletes ALL prior brandThreatResultsTable rows for that scan, then runs fresh. prevScanSummary captures the counts before deletion for a before/after diff, but the old individual domain records are gone.

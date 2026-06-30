@@ -3,9 +3,10 @@ import { useParams, useLocation } from "wouter";
 import {
   useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
   useListAssetTechnologies, useRunTechScan, useListAssetScreenshots, useRunScreenshotScan,
-  useUpdateAsset, useListBrandThreats, useListUsers,
+  useUpdateAsset, useListBrandThreats, useListUsers, useListScans, useCancelScan,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
   getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey, getListBrandThreatsQueryKey,
+  getListScansQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -81,6 +82,7 @@ export default function AssetDetailPage() {
   const [assignedClientId, setAssignedClientId]       = useState<string>("_none_");
   const [assignedAmId, setAssignedAmId]               = useState<string>("_none_");
   const [savingAssignment, setSavingAssignment]       = useState(false);
+  const [cancellingId, setCancellingId]               = useState<number | null>(null);
 
   const canEditAssignment = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
 
@@ -105,6 +107,36 @@ export default function AssetDetailPage() {
   const { data: brandThreats } = useListBrandThreats({
     query: { enabled: !!id, queryKey: getListBrandThreatsQueryKey() },
   });
+
+  const { data: scansData } = useListScans(
+    { assetId: id } as any,
+    {
+      query: {
+        enabled: !!id,
+        queryKey: getListScansQueryKey({ assetId: id } as any),
+        refetchInterval: (query) => {
+          const scans: any[] = (query as any).state?.data ?? [];
+          return scans.some((s: any) => s.status === "running" || s.status === "pending") ? 4000 : false;
+        },
+      },
+    },
+  );
+  const runningScan = ((scansData as any[]) ?? []).find(s => s.status === "running" || s.status === "pending") ?? null;
+
+  const cancelScan = useCancelScan();
+
+  const handleCancelScan = async (scanId: number) => {
+    setCancellingId(scanId);
+    try {
+      await cancelScan.mutateAsync({ scanId });
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey({ assetId: id } as any) });
+      toast({ title: "Scan cancelled" });
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to cancel scan", variant: "destructive" });
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const verifyAsset  = useCheckAssetVerification();
   const runTechScan  = useRunTechScan();
@@ -252,6 +284,31 @@ export default function AssetDetailPage() {
           {downloading ? "Generating…" : "Download PDF"}
         </Button>
       </div>
+
+      {/* Running scan banner */}
+      {runningScan && (
+        <div className="bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            <span className="text-sm font-medium">Scan in progress</span>
+            <span className="text-[11px] text-muted-foreground capitalize">
+              · {runningScan.type} scan · status: {runningScan.status}
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs border-red-500/40 text-red-400 hover:bg-red-500/10 shrink-0"
+            disabled={cancellingId === runningScan.id}
+            onClick={() => handleCancelScan(runningScan.id)}
+          >
+            {cancellingId === runningScan.id
+              ? <Loader2 className="w-3 h-3 animate-spin mr-1" />
+              : <X className="w-3 h-3 mr-1" />}
+            Cancel Scan
+          </Button>
+        </div>
+      )}
 
       {/* Header */}
       <div className="bg-card border border-border rounded-xl p-5">

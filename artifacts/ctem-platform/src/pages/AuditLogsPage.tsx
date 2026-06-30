@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/utils";
 import {
   Lock, Monitor, Globe, Smartphone, Laptop, Server,
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
+import { getToken } from "@/lib/auth";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const PAGE_SIZE = 50;
@@ -84,17 +85,68 @@ function ActionBadge({ action }: { action: string }) {
 
 export default function AuditLogsPage() {
   const [actionFilter, setActionFilter] = useState("");
+  const [dateFrom, setDateFrom]         = useState("");
+  const [dateTo, setDateTo]             = useState("");
+  const [exporting, setExporting]       = useState(false);
   const [page, setPage] = useState(1);
 
   const { data: resp, isLoading } = useQuery<AuditLogsResponse>({
-    queryKey: ["audit-logs", actionFilter, page],
+    queryKey: ["audit-logs", actionFilter, dateFrom, dateTo, page],
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
       if (actionFilter) params.set("action", actionFilter);
+      if (dateFrom) params.set("from", new Date(dateFrom).toISOString());
+      if (dateTo) {
+        const to = new Date(dateTo);
+        to.setHours(23, 59, 59, 999);
+        params.set("to", to.toISOString());
+      }
       return apiFetch<AuditLogsResponse>(`${BASE}/api/audit-logs?${params}`);
     },
     placeholderData: (prev) => prev,
   });
+
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ page: "1", limit: "9999" });
+      if (actionFilter) params.set("action", actionFilter);
+      if (dateFrom) params.set("from", new Date(dateFrom).toISOString());
+      if (dateTo) {
+        const to = new Date(dateTo);
+        to.setHours(23, 59, 59, 999);
+        params.set("to", to.toISOString());
+      }
+      const token = getToken();
+      const res = await fetch(`${BASE}/api/audit-logs?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const json: AuditLogsResponse = await res.json();
+      const rows = json.data;
+      const headers = ["ID","Timestamp","User","Action","Resource","Resource ID","IP Address","Device","Browser","OS","Details"];
+      const escape = (v: unknown) => {
+        const s = v == null ? "" : String(v);
+        return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const csv = [
+        headers.join(","),
+        ...rows.map(r => [
+          r.id, r.createdAt, r.userEmail ?? r.userId ?? "", r.action,
+          r.resource, r.resourceId ?? "", r.ipAddress ?? "",
+          r.device ?? "", r.browser ?? "", r.os ?? "", r.details ?? "",
+        ].map(escape).join(",")),
+      ].join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const logs = resp?.data ?? [];
   const total = resp?.total ?? 0;
@@ -105,7 +157,7 @@ export default function AuditLogsPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
             <Lock className="w-4 h-4 text-primary" />
@@ -118,12 +170,48 @@ export default function AuditLogsPage() {
             </p>
           </div>
         </div>
-        <Input
-          value={actionFilter}
-          onChange={e => { setActionFilter(e.target.value); setPage(1); }}
-          placeholder="Filter by action (e.g. login, create)…"
-          className="w-56 h-8 text-xs"
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-muted/30 border border-border rounded-lg px-2 py-1">
+            <Calendar className="w-3 h-3 text-muted-foreground shrink-0" />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+              className="h-6 text-xs bg-transparent text-foreground outline-none w-[120px]"
+              placeholder="From"
+            />
+            <span className="text-muted-foreground/50 text-xs">→</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => { setDateTo(e.target.value); setPage(1); }}
+              className="h-6 text-xs bg-transparent text-foreground outline-none w-[120px]"
+              placeholder="To"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
+                className="text-muted-foreground/60 hover:text-foreground text-xs ml-1"
+              >✕</button>
+            )}
+          </div>
+          <Input
+            value={actionFilter}
+            onChange={e => { setActionFilter(e.target.value); setPage(1); }}
+            placeholder="Filter by action…"
+            className="w-44 h-8 text-xs"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            disabled={exporting || total === 0}
+            onClick={handleExportCsv}
+          >
+            <Download className="w-3.5 h-3.5" />
+            {exporting ? "Exporting…" : "Export CSV"}
+          </Button>
+        </div>
       </div>
 
       {/* Table */}

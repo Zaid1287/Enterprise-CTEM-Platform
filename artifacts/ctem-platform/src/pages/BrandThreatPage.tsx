@@ -434,12 +434,14 @@ function scheduleLabel(item: any): string {
 }
 
 function WatchlistItem({
-  item, onDelete, onScheduleChange, deleting,
+  item, onDelete, onScheduleChange, deleting, latestScan, onViewScan,
 }: {
   item: any;
   onDelete: (id: number) => void;
   onScheduleChange: (id: number, schedule: WatchlistSchedule) => void;
   deleting: boolean;
+  latestScan?: any;
+  onViewScan?: (id: number) => void;
 }) {
   const [editingFreq, setEditingFreq] = useState(false);
   const [pendingFreq, setPendingFreq] = useState<string>(item.frequency ?? "none");
@@ -492,6 +494,16 @@ function WatchlistItem({
           )}
         </div>
         <span className="text-[10px] text-muted-foreground/50 shrink-0 hidden sm:block">{formatDate(item.createdAt)}</span>
+        {latestScan && onViewScan && (
+          <Button
+            variant="ghost" size="sm"
+            onClick={() => onViewScan(latestScan.id)}
+            className="h-7 text-[11px] px-2 text-blue-400 hover:text-blue-300 shrink-0 gap-1"
+            title={`View intel from ${latestScan.status === 'done' ? 'last scan' : latestScan.status + ' scan'}`}
+          >
+            Intel <ChevronRight className="w-3 h-3" />
+          </Button>
+        )}
         {isSchedulable && (
           <Button
             variant="ghost" size="sm"
@@ -614,8 +626,20 @@ function WatchlistItem({
 
 function WatchlistSection() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const { data: allScans } = useListBrandThreats({});
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  function latestScanForItem(item: any) {
+    const scans = (allScans as any[]) ?? [];
+    const val = (item.value ?? "").toLowerCase().trim();
+    const matches = scans.filter((s: any) =>
+      (s.domain ?? "").toLowerCase() === val ||
+      (s.brandName ?? "").toLowerCase() === val
+    );
+    return matches[0] ?? null;
+  }
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1 });
@@ -850,6 +874,8 @@ function WatchlistSection() {
                 onDelete={handleDelete}
                 onScheduleChange={handleScheduleChange}
                 deleting={deletingId === item.id}
+                latestScan={latestScanForItem(item)}
+                onViewScan={id => navigate(`/brand-threats/${id}`)}
               />
             ))}
           </div>
