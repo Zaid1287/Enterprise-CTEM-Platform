@@ -80,6 +80,66 @@ const DEFAULT_CHANNELS: ChannelMap = {
   webhook:  { enabled: false, destination: "" },
 };
 
+function AiMapperModuleCard({ tenantId, userRole }: { tenantId: number; userRole: string }) {
+  const { toast } = useToast();
+  const { aiMapperEnabled, setAiMapperEnabled } = useAuth();
+  const qc = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ isEnabled: boolean }>({
+    queryKey: ["ai-mapper-module", tenantId],
+    queryFn: () => apiFetch(`${BASE}/api/ai-mapper/module`),
+    enabled: !!tenantId,
+  });
+
+  const toggle = useMutation({
+    mutationFn: (enable: boolean) =>
+      apiFetch(`${BASE}/api/ai-mapper/module`, {
+        method: "POST",
+        body: JSON.stringify({ enable }),
+      }),
+    onSuccess: (_data, enable) => {
+      setAiMapperEnabled(enable);
+      qc.invalidateQueries({ queryKey: ["ai-mapper-module", tenantId] });
+      toast({ title: enable ? "AI Mapper enabled" : "AI Mapper disabled" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const canToggle = userRole === "super_admin" || userRole === "admin";
+  const enabled = data?.isEnabled ?? aiMapperEnabled;
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold">AI Mapper Module</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Discover and assess exposed AI infrastructure — Ollama, MCP servers, vLLM, Gradio, and more.
+          </p>
+          {enabled && (
+            <Badge className="mt-2 text-xs bg-green-500/20 text-green-400 border-green-500/30">Active</Badge>
+          )}
+        </div>
+        {canToggle && (
+          <Button
+            variant={enabled ? "outline" : "default"}
+            size="sm"
+            onClick={() => toggle.mutate(!enabled)}
+            disabled={toggle.isPending || isLoading}
+            className="shrink-0"
+          >
+            {toggle.isPending
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : enabled ? <ToggleRight className="w-3.5 h-3.5 mr-1.5 text-green-400" /> : <ToggleLeft className="w-3.5 h-3.5 mr-1.5" />
+            }
+            {enabled ? "Disable" : "Enable"}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function TenantSettingsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -216,6 +276,9 @@ export default function TenantSettingsPage() {
               ))}
             </div>
           </div>
+
+          {/* AI Mapper Module */}
+          <AiMapperModuleCard tenantId={tenantId} userRole={user?.role ?? ""} />
 
           {/* Notification Channels — all roles */}
           <NotificationChannelsSection />

@@ -6,7 +6,7 @@ import {
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
-  ShieldAlert, Network, Activity, Shield, MapPin,
+  ShieldAlert, Network, Activity, Shield, MapPin, Globe2, Crosshair,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -99,7 +99,6 @@ const navGroups: NavGroup[] = [
     title: "Intelligence",
     items: [
       { label: "AI Copilot", href: "/ai-copilot", icon: Brain },
-      { label: "AI Mapper", href: "/ai-mapper", icon: MapPin },
     ],
   },
   {
@@ -123,7 +122,7 @@ let _collapsed = false;
 
 export function Sidebar() {
   const [location] = useLocation();
-  const { user } = useAuth();
+  const { user, aiMapperEnabled } = useAuth();
   const role = user?.role ?? "client";
   const [collapsed, setCollapsed] = useState(_collapsed);
 
@@ -142,15 +141,28 @@ export function Sidebar() {
     },
   ] : [];
 
+  const aiMapperGroup: NavGroup | null = aiMapperEnabled ? {
+    title: "AI Mapper",
+    items: [
+      { label: "Overview",   href: "/ai-mapper",            icon: Globe2      },
+      { label: "Endpoints",  href: "/ai-mapper/endpoints",  icon: Crosshair   },
+      { label: "Scans",      href: "/ai-mapper/scans",      icon: Radar       },
+      { label: "AI BOM",     href: "/ai-mapper/bom",        icon: ClipboardList },
+    ],
+  } : null;
+
   const visibleGroups = isExternalMember
     ? externalGroups
-    : navGroups
-      .filter(g => !g.onlyFor || g.onlyFor.includes(role))
-      .map(g => ({
-        ...g,
-        items: g.items.filter(item => !item.onlyFor || item.onlyFor.includes(role)),
-      }))
-      .filter(g => g.items.length > 0);
+    : [
+        ...navGroups
+          .filter(g => !g.onlyFor || g.onlyFor.includes(role))
+          .map(g => ({
+            ...g,
+            items: g.items.filter(item => !item.onlyFor || item.onlyFor.includes(role)),
+          }))
+          .filter(g => g.items.length > 0),
+        ...(aiMapperGroup ? [aiMapperGroup] : []),
+      ];
 
   return (
     <aside

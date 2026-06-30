@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and } from "drizzle-orm";
-import { db, tenantsTable, usersTable, sessionsTable, accountManagerClientsTable } from "@workspace/db";
+import { db, tenantsTable, usersTable, sessionsTable, accountManagerClientsTable, aiMapperModuleAssignmentsTable } from "@workspace/db";
 import { LoginBody, RegisterBody, RefreshTokenBody, ChangePasswordBody } from "@workspace/api-zod";
 import {
   hashPassword,
@@ -341,7 +341,12 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     res.status(404).json({ error: "User not found" });
     return;
   }
-  res.json(toUserResponse(user));
+  const [moduleRow] = await db
+    .select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
+    .from(aiMapperModuleAssignmentsTable)
+    .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
+    .limit(1);
+  res.json({ ...toUserResponse(user), aiMapperEnabled: moduleRow?.isEnabled ?? false });
 });
 
 // ── My Account Manager (client role only) ─────────────────────────────────────

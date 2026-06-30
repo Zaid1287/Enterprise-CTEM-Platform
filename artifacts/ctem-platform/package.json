@@ -76,7 +76,10 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.61.3",
     "d3": "^7.9.0",
+    "globe.gl": "^2.46.1",
+    "three": "^0.185.0",
     "zustand": "^5.0.14"
   }
 }

@@ -4,8 +4,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { attemptTokenRefresh } from "@/lib/auth";
+import { apiFetch } from "@/lib/apiFetch";
 
 // Lazy-load pages for faster initial bundle
 const LoginPage = lazy(() => import("@/pages/LoginPage"));
@@ -45,7 +46,12 @@ const CdnWhitelistPage = lazy(() => import("@/pages/CdnWhitelistPage"));
 const DiscoveryPage = lazy(() => import("@/pages/DiscoveryPage"));
 const ExposurePage = lazy(() => import("@/pages/ExposurePage"));
 const AcceptInvitationPage = lazy(() => import("@/pages/AcceptInvitationPage"));
-const AiMapperPage = lazy(() => import("@/pages/AiMapperPage"));
+const AiMapperPage             = lazy(() => import("@/pages/AiMapperPage"));
+const AiMapperScansPage        = lazy(() => import("@/pages/AiMapperScansPage"));
+const AiMapperScanDetailPage   = lazy(() => import("@/pages/AiMapperScanDetailPage"));
+const AiMapperEndpointsPage    = lazy(() => import("@/pages/AiMapperEndpointsPage"));
+const AiMapperEndpointDetailPage = lazy(() => import("@/pages/AiMapperEndpointDetailPage"));
+const AiMapperBomPage          = lazy(() => import("@/pages/AiMapperBomPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -83,6 +89,17 @@ function PageLoader() {
       <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
     </div>
   );
+}
+
+function AiMapperBootstrap() {
+  const { isAuthenticated, setAiMapperEnabled } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    apiFetch<{ aiMapperEnabled?: boolean }>("/api/auth/me")
+      .then(data => setAiMapperEnabled(data.aiMapperEnabled ?? false))
+      .catch(() => {});
+  }, [isAuthenticated]);
+  return null;
 }
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -145,6 +162,11 @@ function Router() {
       <Route path="/risk" component={() => <ProtectedRoute component={RiskPage} />} />
       <Route path="/ai-copilot" component={() => <ProtectedRoute component={AiCopilotPage} />} />
       <Route path="/ai-mapper" component={() => <ProtectedRoute component={AiMapperPage} />} />
+      <Route path="/ai-mapper/scans" component={() => <ProtectedRoute component={AiMapperScansPage} />} />
+      <Route path="/ai-mapper/scans/:id" component={() => <ProtectedRoute component={AiMapperScanDetailPage} />} />
+      <Route path="/ai-mapper/endpoints" component={() => <ProtectedRoute component={AiMapperEndpointsPage} />} />
+      <Route path="/ai-mapper/endpoints/:id" component={() => <ProtectedRoute component={AiMapperEndpointDetailPage} />} />
+      <Route path="/ai-mapper/bom" component={() => <ProtectedRoute component={AiMapperBomPage} />} />
       <Route path="/reports" component={() => <ProtectedRoute component={ReportsPage} />} />
       <Route path="/audit-logs" component={() => <ProtectedRoute component={AuditLogsPage} />} />
       <Route path="/settings/users" component={() => <ProtectedRoute component={UsersPage} />} />
@@ -177,6 +199,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+          <AiMapperBootstrap />
           <Router />
         </WouterRouter>
         <Toaster />
