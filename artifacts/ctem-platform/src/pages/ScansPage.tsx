@@ -8,7 +8,7 @@ import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock,
-  ShieldAlert, ShieldCheck,
+  ShieldAlert, ShieldCheck, Calendar, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, statusBadgeClass, capitalize, formatDateTime } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import ScheduledScansList from "@/components/scan/ScheduledScansList";
 
 const SCAN_TYPES = ["passive", "active", "vulnerability", "full"];
 const PAGE_SIZE = 10;
@@ -96,7 +97,10 @@ function buildScanName(assetIds: number[], assetsList: any[]): string {
   return `${label} +${assetIds.length - 1} more Scan Report – ${date}`;
 }
 
+type TabId = "history" | "schedules";
+
 export default function ScansPage() {
+  const [activeTab, setActiveTab] = useState<TabId>("history");
   const [showCreate, setShowCreate] = useState(false);
   const [customName, setCustomName] = useState("");
   const [form, setForm] = useState({ type: "full", assetIds: [] as number[] });
@@ -203,7 +207,7 @@ export default function ScansPage() {
           <p className="text-sm text-muted-foreground">{allScans.length} total scans</p>
         </div>
         <div className="flex gap-2 items-center">
-          {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}
+          {isPrivileged && activeTab === "history" && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}
           <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: getListScansQueryKey() })}>
             <RefreshCw className="w-3.5 h-3.5" />
           </Button>
@@ -213,6 +217,46 @@ export default function ScansPage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-border pb-0">
+        {([
+          { id: "history", label: "Scan History", icon: <History className="w-3.5 h-3.5" /> },
+          { id: "schedules", label: "Scheduled Scans", icon: <Calendar className="w-3.5 h-3.5" /> },
+        ] as { id: TabId; label: string; icon: React.ReactNode }[]).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
+              activeTab === tab.id
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border",
+            )}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Scheduled Scans tab */}
+      {activeTab === "schedules" && (
+        <div className="space-y-4">
+          <ScheduledScansList />
+          <div className="bg-muted/20 border border-border rounded-xl p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground mb-1">How scheduled scans work</p>
+            <ul className="space-y-1 text-xs list-disc list-inside">
+              <li>Schedules run at the exact time and day you configure — not based on last scan completion.</li>
+              <li>Only <span className="text-green-400 font-medium">verified</span> assets in each schedule will be scanned. Unverified assets are skipped automatically.</li>
+              <li>To create a schedule, click <strong>New Scan</strong>, select assets and choose "Save as Schedule".</li>
+              <li>The beat scheduler checks every 60 seconds for overdue schedules — maximum 60s delay from configured time.</li>
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* Scan History tab */}
+      {activeTab === "history" && (<>
       <div className="grid gap-3">
         {isLoading && [...Array(3)].map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
         {!isLoading && paginated.map((scan: any) => (
@@ -278,6 +322,7 @@ export default function ScansPage() {
           </div>
         </div>
       )}
+      </>)}
 
       <Dialog open={showCreate} onOpenChange={v => {
         setShowCreate(v);

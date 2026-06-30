@@ -401,27 +401,72 @@ const WATCHLIST_TYPE_ICONS: Record<string, React.ReactNode> = {
 const WATCHLIST_TYPES = ["keyword","logo_url","domain","ip","email","social_handle","mobile_app"] as const;
 
 const FREQ_LABELS: Record<string, string> = {
-  none:   "No schedule",
-  daily:  "Daily",
-  weekly: "Weekly",
+  none:    "No schedule",
+  daily:   "Daily",
+  weekly:  "Weekly",
+  monthly: "Monthly",
 };
 
+const DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+interface WatchlistSchedule {
+  frequency: string;
+  scanTime: string;
+  dayOfWeek: number | null;
+  dayOfMonth: number | null;
+}
+
+function scheduleLabel(item: any): string {
+  const freq = item.frequency ?? "none";
+  if (freq === "none") return "";
+  const time = item.scanTime ?? "03:00";
+  if (freq === "daily") return `Daily at ${time} UTC`;
+  if (freq === "weekly") {
+    const day = DAYS_FULL[item.dayOfWeek ?? 1] ?? "Monday";
+    return `Weekly · ${day} at ${time} UTC`;
+  }
+  if (freq === "monthly") {
+    const dom = item.dayOfMonth ?? 1;
+    const suffix = dom === 1 ? "st" : dom === 2 ? "nd" : dom === 3 ? "rd" : "th";
+    return `Monthly · ${dom}${suffix} at ${time} UTC`;
+  }
+  return FREQ_LABELS[freq] ?? freq;
+}
+
 function WatchlistItem({
-  item, onDelete, onFrequencyChange, deleting,
+  item, onDelete, onScheduleChange, deleting,
 }: {
   item: any;
   onDelete: (id: number) => void;
-  onFrequencyChange: (id: number, frequency: string) => void;
+  onScheduleChange: (id: number, schedule: WatchlistSchedule) => void;
   deleting: boolean;
 }) {
   const [editingFreq, setEditingFreq] = useState(false);
   const [pendingFreq, setPendingFreq] = useState<string>(item.frequency ?? "none");
+  const [pendingTime, setPendingTime] = useState<string>(item.scanTime ?? "03:00");
+  const [pendingDow, setPendingDow] = useState<number>(item.dayOfWeek ?? 1);
+  const [pendingDom, setPendingDom] = useState<number>(item.dayOfMonth ?? 1);
   const isSchedulable = ["domain", "keyword", "email", "social_handle", "mobile_app"].includes(item.type);
 
-  function saveFreq() {
-    onFrequencyChange(item.id, pendingFreq);
+  function openEditor() {
+    setPendingFreq(item.frequency ?? "none");
+    setPendingTime(item.scanTime ?? "03:00");
+    setPendingDow(item.dayOfWeek ?? 1);
+    setPendingDom(item.dayOfMonth ?? 1);
+    setEditingFreq(true);
+  }
+
+  function saveSchedule() {
+    onScheduleChange(item.id, {
+      frequency: pendingFreq,
+      scanTime: pendingTime,
+      dayOfWeek: pendingFreq === "weekly" ? pendingDow : null,
+      dayOfMonth: pendingFreq === "monthly" ? pendingDom : null,
+    });
     setEditingFreq(false);
   }
+
+  const label = scheduleLabel(item);
 
   return (
     <div className="bg-muted/10 border border-border rounded-xl px-4 py-3 space-y-2">
@@ -435,10 +480,10 @@ function WatchlistItem({
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted border border-border text-muted-foreground capitalize shrink-0">
               {item.type?.replace(/_/g, " ")}
             </span>
-            {isSchedulable && item.frequency && item.frequency !== "none" && (
+            {isSchedulable && label && (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center gap-1 shrink-0">
                 <RotateCw className="w-2.5 h-2.5" />
-                {FREQ_LABELS[item.frequency]}
+                {label}
               </span>
             )}
           </div>
@@ -450,7 +495,7 @@ function WatchlistItem({
         {isSchedulable && (
           <Button
             variant="ghost" size="sm"
-            onClick={() => { setEditingFreq(v => !v); setPendingFreq(item.frequency ?? "none"); }}
+            onClick={() => editingFreq ? setEditingFreq(false) : openEditor()}
             className="h-7 w-7 p-0 text-muted-foreground hover:text-blue-400 shrink-0"
             title="Set scan schedule"
           >
@@ -467,8 +512,8 @@ function WatchlistItem({
         </Button>
       </div>
 
-      {/* Scheduling meta row — all schedulable types */}
-      {isSchedulable && (item.lastScanAt || item.nextScanAt || editingFreq) && (
+      {/* Scheduling meta row */}
+      {isSchedulable && !editingFreq && (item.lastScanAt || item.nextScanAt) && (
         <div className="flex items-center gap-4 pl-7 flex-wrap">
           {item.lastScanAt && (
             <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
@@ -483,25 +528,84 @@ function WatchlistItem({
         </div>
       )}
 
-      {/* Inline frequency editor */}
+      {/* Inline schedule editor */}
       {editingFreq && (
-        <div className="flex items-center gap-2 pl-7">
-          <span className="text-xs text-muted-foreground">Auto-scan:</span>
-          <select
-            value={pendingFreq}
-            onChange={e => setPendingFreq(e.target.value)}
-            className="bg-background border border-border rounded-lg px-2 py-1 text-xs focus:outline-none"
-          >
-            {Object.entries(FREQ_LABELS).map(([v, l]) => (
-              <option key={v} value={v}>{l}</option>
-            ))}
-          </select>
-          <Button size="sm" variant="ghost" onClick={saveFreq} className="h-6 w-6 p-0 text-green-400">
-            <Check className="w-3.5 h-3.5" />
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setEditingFreq(false)} className="h-6 w-6 p-0 text-muted-foreground">
-            <X className="w-3.5 h-3.5" />
-          </Button>
+        <div className="pl-7 space-y-2.5 pt-1 border-t border-border/40 mt-2">
+          <div className="flex flex-wrap items-end gap-2">
+            {/* Frequency */}
+            <div className="space-y-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Frequency</span>
+              <select
+                value={pendingFreq}
+                onChange={e => setPendingFreq(e.target.value)}
+                className="bg-background border border-border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40"
+              >
+                {Object.entries(FREQ_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Time picker — shown for all non-none frequencies */}
+            {pendingFreq !== "none" && (
+              <div className="space-y-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Time (UTC)</span>
+                <input
+                  type="time"
+                  value={pendingTime}
+                  onChange={e => setPendingTime(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40"
+                />
+              </div>
+            )}
+
+            {/* Day of week — weekly only */}
+            {pendingFreq === "weekly" && (
+              <div className="space-y-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Day</span>
+                <select
+                  value={pendingDow}
+                  onChange={e => setPendingDow(Number(e.target.value))}
+                  className="bg-background border border-border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40"
+                >
+                  {DAYS_FULL.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Day of month — monthly only */}
+            {pendingFreq === "monthly" && (
+              <div className="space-y-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Day of month</span>
+                <select
+                  value={pendingDom}
+                  onChange={e => setPendingDom(Number(e.target.value))}
+                  className="bg-background border border-border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40"
+                >
+                  {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex gap-1">
+              <Button size="sm" variant="ghost" onClick={saveSchedule} className="h-7 px-2 text-green-400 hover:text-green-300 hover:bg-green-500/10">
+                <Check className="w-3.5 h-3.5 mr-1" /> Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEditingFreq(false)} className="h-7 px-2 text-muted-foreground">
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {pendingFreq !== "none" && (
+            <p className="text-[10px] text-muted-foreground/60">
+              {pendingFreq === "daily" && `Runs every day at ${pendingTime} UTC`}
+              {pendingFreq === "weekly" && `Runs every ${DAYS_FULL[pendingDow]} at ${pendingTime} UTC`}
+              {pendingFreq === "monthly" && `Runs on day ${pendingDom} of every month at ${pendingTime} UTC`}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -514,7 +618,7 @@ function WatchlistSection() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ value: "", type: "domain", notes: "", frequency: "none" });
+  const [form, setForm] = useState({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1 });
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   async function fetchItems() {
@@ -544,12 +648,15 @@ function WatchlistSection() {
           type: form.type,
           notes: form.notes,
           frequency: form.frequency,
+          scanTime: form.frequency !== "none" ? form.scanTime : null,
+          dayOfWeek: form.frequency === "weekly" ? form.dayOfWeek : null,
+          dayOfMonth: form.frequency === "monthly" ? form.dayOfMonth : null,
         }),
       });
       if (!res.ok) throw new Error("Failed");
       toast({ title: "Watchlist item added" });
       setShowForm(false);
-      setForm({ value: "", type: "domain", notes: "", frequency: "none" });
+      setForm({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1 });
       void fetchItems();
     } catch {
       toast({ title: "Failed to add watchlist item", variant: "destructive" });
@@ -574,28 +681,32 @@ function WatchlistSection() {
     }
   }
 
-  async function handleFrequencyChange(id: number, frequency: string) {
+  async function handleScheduleChange(id: number, schedule: WatchlistSchedule) {
     try {
       const res = await fetch(`/api/brand-watchlist/${id}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ frequency }),
+        body: JSON.stringify({
+          frequency: schedule.frequency,
+          scanTime: schedule.scanTime,
+          dayOfWeek: schedule.dayOfWeek,
+          dayOfMonth: schedule.dayOfMonth,
+        }),
       });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
       setItems(prev => prev.map(i => i.id === id ? updated : i));
       toast({
-        title: frequency === "none"
+        title: schedule.frequency === "none"
           ? "Auto-scan disabled"
-          : `Auto-scan set to ${FREQ_LABELS[frequency]}`,
+          : `Schedule saved — ${scheduleLabel({ ...schedule, dayOfWeek: schedule.dayOfWeek ?? undefined, dayOfMonth: schedule.dayOfMonth ?? undefined })}`,
       });
     } catch {
       toast({ title: "Failed to update schedule", variant: "destructive" });
     }
   }
 
-  const domainItems = items.filter((i: any) => i.type === "domain");
-  const scheduledCount = domainItems.filter((i: any) => i.frequency && i.frequency !== "none").length;
+  const scheduledCount = items.filter((i: any) => i.frequency && i.frequency !== "none").length;
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -645,26 +756,56 @@ function WatchlistSection() {
               </div>
             </div>
             {!["logo_url", "ip"].includes(form.type) && (
-              <div>
+              <div className="space-y-2">
                 <label className="text-xs text-muted-foreground block mb-1">
                   <span className="flex items-center gap-1"><CalendarClock className="w-3 h-3" /> Auto-scan Schedule</span>
                 </label>
-                <select
-                  value={form.frequency}
-                  onChange={e => setForm(v => ({ ...v, frequency: e.target.value }))}
-                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
-                >
-                  {Object.entries(FREQ_LABELS).map(([val, label]) => (
-                    <option key={val} value={val}>{label}</option>
-                  ))}
-                </select>
-                {form.frequency !== "none" && (
-                  <p className="text-[10px] text-blue-400/70 mt-1.5">
-                    {form.type === "domain"
-                      ? "Brand threat scan will run automatically at 03:00 UTC."
-                      : "Monitoring check will run automatically at 03:00 UTC via IntelX / brand abuse scanner."}
-                  </p>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    value={form.frequency}
+                    onChange={e => setForm(v => ({ ...v, frequency: e.target.value }))}
+                    className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                  >
+                    {Object.entries(FREQ_LABELS).map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
+                  </select>
+                  {form.frequency !== "none" && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground">at</span>
+                      <input
+                        type="time"
+                        value={form.scanTime}
+                        onChange={e => setForm(v => ({ ...v, scanTime: e.target.value }))}
+                        className="bg-background border border-border rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                      />
+                      <span className="text-xs text-muted-foreground">UTC</span>
+                    </div>
+                  )}
+                  {form.frequency === "weekly" && (
+                    <select
+                      value={form.dayOfWeek}
+                      onChange={e => setForm(v => ({ ...v, dayOfWeek: Number(e.target.value) }))}
+                      className="bg-background border border-border rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                    >
+                      {DAYS_FULL.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  )}
+                  {form.frequency === "monthly" && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground">on day</span>
+                      <select
+                        value={form.dayOfMonth}
+                        onChange={e => setForm(v => ({ ...v, dayOfMonth: Number(e.target.value) }))}
+                        className="bg-background border border-border rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                      >
+                        {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             <div>
@@ -707,7 +848,7 @@ function WatchlistSection() {
                 key={item.id}
                 item={item}
                 onDelete={handleDelete}
-                onFrequencyChange={handleFrequencyChange}
+                onScheduleChange={handleScheduleChange}
                 deleting={deletingId === item.id}
               />
             ))}
