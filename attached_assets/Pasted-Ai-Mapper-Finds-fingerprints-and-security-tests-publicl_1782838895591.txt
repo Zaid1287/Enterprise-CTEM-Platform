@@ -1,0 +1,169 @@
+Ai Mapper Finds, fingerprints and security-tests publicly exposed AI endpoints — MCP servers, Ollama instances, vLLM/LiteLLM proxies, LangServe chains, Gradio apps, ComfyUI nodes, AI models, AI APIs, AI agents, AI gateways, prompts, vector databases, plugins, cloud AI workloads and autonomous AI workflows and the data they connect to — areas that older security tools were not built to check and more. Think Shodan, but purpose-built for the AI agent attack surface.It identifies exposed AI assets, weak AI integrations, shadow AI usage, and hidden AI activity that one-time audits cannot catch.
+
+How AI attack surface monitoring works
+
+AI attack surface monitoring follows a three-layer model that moves from finding shadow AI to acting on real risk. Ai Mapper use this same model to deliver AI security at enterprise scale.
+
+Layer 1: Continuous discovery
+- The first layer finds every AI asset across the organization — including LLM applications, AI gateways, MCP servers, AI agents, vector stores, agentic workflows, model registries, and shadow AI. The output is a continuously updated AI Bill of Materials (AI BOM): a complete, current list of every AI asset attackers could target.
+
+Layer 2: Assessment and probing
+- The second layer adds context to each AI exposure. It runs MCP-specific scanning, agentic workflow analysis, AI supply chain scanning, and active AI red-teaming to find weaknesses that attackers could actually exploit. Each finding is scored using agent agency, authentication state, blast radius, and live threat signals — so security teams know which exposures are real attack paths and which are theoretical.
+
+Layer 3: Triage and intelligence
+- The third layer turns findings into action. Real-time threat intelligence feeds, unified asset graphs, and automated reporting connect AI-layer risks to ticketing, remediation workflows, and broader attack path correlation. Security teams move from a list of AI risks to a clear set of fixes, ranked by impact.
+
+The three layers run together, all the time. That is what makes continuous AI attack surface monitoring different from a one-time audit — and why it can keep up with AI environments that change daily.
+
+What AI attack surface monitoring detects
+AI attack surface monitoring finds the AI-layer initial access vectors that traditional security tools miss:
+
+1. Prompt injection — direct or hidden inputs that override AI model instructions to extract data or bypass safety controls
+2. Tool poisoning — changes to MCP server tool definitions that redirect AI agent behavior toward attacker goals
+3. AI supply chain attacks — compromised models, datasets, embedding stores, or third-party AI integrations
+4. Shadow AI deployments — unauthorized AI tools, agents, and MCP servers running without security team awareness
+5. AI credential leakage — exposed API keys, model access tokens, and vector database credentials
+6. Agentic workflow abuse — AI agents tricked into doing things outside their normal scope, like accessing privileged systems
+7. AI API and gateway exposures — open AI endpoints, weak authentication, and excessive permissions
+8. Vector database and RAG exposure — leaked embeddings, weak retrieval pipelines, and context injection risks
+
+Each one is an AI initial access vector. Left undetected, attackers can chain any of these with a leaked credential or vendor compromise to build a complete attack path.
+
+AI attack surface monitoring monitors AI models, AI APIs, AI gateways, MCP servers, AI agents, vector databases, RAG pipelines, agentic workflows, cloud AI workloads, AI development pipelines, and third-party AI integrations — including shadow AI deployed without security team awareness.
+
+What It Does
+1. Continuous Discover — Queries Shodan with 32+ curated search queries to find exposed AI/ML endpoints across the internet. finds every AI asset, including shadow AI, MCP servers, vector stores, agentic workflows, and AI models across cloud, on-prem, and SaaS environments.
+2. Fingerprint — Probes each endpoint with Nuclei templates and live HTTP checks to identify the protocol, framework, auth status, tools, models, and system prompts
+3. Assessment and probing — runs MCP-specific scanning, agentic workflow analysis, supply chain scanning, and active AI red-teaming, then scores each exposure using agent agency, authentication state, and blast radius.
+4. Score — Computes a 0–10 risk score based on authentication, tool exposure, CORS policy, TLS, system prompt leakage, and dangerous capability combinations
+5. Test — Launches protocol-specific attack suites (MCP tool abuse, Ollama model extraction, prompt injection) with real-time streaming results
+6. Triage and intelligence — turns findings into action through real-time threat intelligence, a unified AI asset inventory (AI BOM), and automated reporting and remediation.
+7.Visualize — 3D globe showing every discovered endpoint, searchable with a Shodan-style query language
+
+Scanning — 5 custom Nuclei YAML templates for MCP server detection, MCP tool enumeration, OpenAI-compatible API detection, LangServe detection, and prompt leak testing.
+
+Supported Protocols
+- Protocol	Detection Method	Shodan Queries
+- MCP (Model Context Protocol)	SSE transport, JSON-RPC, /mcp/sse paths	4 queries
+- Ollama	Default port 11434, product fingerprint	3 queries
+- vLLM / LiteLLM / LocalAI	/v1/models, /v1/chat/completions endpoints	4 queries
+- LangServe / LangChain	Playground endpoints, langserve markers	2 queries
+- OpenClaw / Clawdbot	Control dashboard, port 18789	3 queries
+- Open WebUI / LibreChat	Title-based detection	2 queries
+- Gradio	Title, footer watermark, favicon hash	3 queries
+- Streamlit	Title, favicon hash	2 queries
+- ComfyUI / Stable Diffusion	Title, port-based detection	4 queries
+- HuggingFace TGI	HTML markers	1 query
+- Generic inference	/api/generate, /api/tags paths	2 queries
+
+Risk Scoring
+Each endpoint receives a 0–10 risk score computed from:
+
+Factor	Score Impact
+- No authentication	+4.0
+- Unknown auth status	+1.0
+- 10+ tools exposed	+2.0
+- 5+ tools exposed	+1.0
+- Critical-risk tool (e.g., exec_code, run_shell)	+1.0 each
+- High-risk tool (e.g., query_db, file_read)	+0.5 each
+- Open CORS (*)	+1.0
+- No TLS	+0.5
+- System prompt leaked	+0.5
+- Models exposed	+1.0
+- Uncensored model detected	+2.0
+- Signup enabled (no invite required)	+1.5
+- Dangerous combo (e.g., no auth + code exec tool)	+1.0 each
+
+Authentication (Clerk)
+
+AI Mapper - use Clerk for authentication. To enable:
+
+1. Create a Clerk application at clerk.com
+2. Set the backend issuer URL:
+# .env (project root)
+CLERK_ISSUER=https://your-app.clerk.accounts.dev
+3. Set the frontend publishable key:
+# frontend/.env.local
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+
+To disable authentication (local dev, demos): leave CLERK_ISSUER empty or unset. The backend will accept all requests with a synthetic local user identity.
+
+Usage
+Running a Discovery Scan
+1. Navigate to Scans in the sidebar
+2. Click New Scan
+3. Select query presets (e.g., ollama, mcp_protocol, vllm) or enter a custom Shodan query
+4. Optionally scope to a CIDR range (the orchestrator prepends net:<cidr> to each query)
+5. Click Run — the scan pipeline executes:
+- Shodan search — pulls matching hosts
+- httpx sweep — verifies hosts are alive
+- Nuclei scan — runs custom templates against live hosts
+- Enrichment — framework detection, auth probing, risk scoring
+6. Monitor progress via the real-time WebSocket status bar or by polling the scan detail page
+
+Searching Endpoints
+Use the search bar with Shodan-style query syntax:
+
+protocol:mcp                          # MCP servers
+auth:none                             # No authentication
+risk:critical                         # Risk score >= 9.0
+risk:high                             # Risk score 7.0 – 8.9
+risk:medium                           # Risk score 4.0 – 6.9
+risk:low                              # Risk score 1.0 – 3.9
+tool:query_db                         # Endpoints exposing a specific tool
+country:US                            # By country code
+port:11434                            # By port number
+org:"Amazon AWS"                      # By hosting organization (quote multi-word values)
+has:system_prompt                     # Endpoints with leaked system prompts
+
+Combine filters freely:
+
+protocol:mcp auth:none country:US     # Unauthenticated MCP servers in the US
+risk:critical tool:exec_code          # Critical endpoints with code execution tools
+protocol:ollama port:11434            # Ollama on default port
+
+Any text that doesn't match a key:value pattern is treated as a free-text search across all indexed fields.
+
+Launching Attack Tests
+1. Navigate to an endpoint's detail page
+2. Click Attack to open the test panel
+3. Select an attack profile — the system auto-selects the engine based on protocol:
+- MCP → Tool enumeration, unauthorized tool invocation, prompt injection via tool descriptions
+- Ollama → Model listing, model weight extraction, prompt injection
+- OpenAI-compatible → Model enumeration, completion abuse, system prompt extraction
+4. Watch results stream in real-time via WebSocket
+5. Results include severity ratings, raw request/response pairs, and remediation guidance
+
+Exploring the Globe
+
+The landing page features an interactive 3D globe showing all discovered endpoints:
+
+- Pin color = protocol type (blue = MCP, green = Ollama, purple = OpenAI-compat, etc.)
+- Pin height = risk score
+- Hover for endpoint summary (IP, port, protocol, risk, auth, tools, model, location)
+- Click to navigate to the endpoint detail page
+- Mouse drag to rotate, scroll to zoom
+
+Nuclei Templates
+Custom templates in the templates/ directory:
+
+Template	Purpose
+- mcp-server-detect.yaml	Detects MCP servers via SSE transport and JSON-RPC capabilities response
+- mcp-tool-enum.yaml	Enumerates tools exposed by MCP servers (names, descriptions, input schemas)
+- openai-compat-detect.yaml	Detects OpenAI-compatible endpoints via /v1/models
+- langserve-detect.yaml	Detects LangServe deployments with exposed playground
+- prompt-leak.yaml	Attempts system prompt extraction via common injection techniques
+
+Concurrency Limits
+The platform enforces global concurrency limits to prevent abuse:
+
+- Max 3 concurrent scans — additional scans receive HTTP 429
+- Max 5 concurrent attacks — additional attacks receive HTTP 429
+- Rate limiting — 10 requests/minute on scan and attack creation endpoints
+
+Optional: Modal Serverless
+For heavy scanning workloads, scans and attacks can be dispatched to Modal containers:
+
+MODAL_ENABLED=true
+
+
