@@ -49,10 +49,24 @@ router.get("/ai-mapper/module", requireAuth, async (req, res) => {
   res.json({ isEnabled: row?.isEnabled ?? false, updatedAt: row?.updatedAt ?? null });
 });
 
+// Super-admin: bulk status across all tenants
+router.get("/ai-mapper/module/all", requireAuth, async (req, res) => {
+  if (req.user!.role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  const rows = await db.select({ tenantId: aiMapperModuleAssignmentsTable.tenantId, isEnabled: aiMapperModuleAssignmentsTable.isEnabled }).from(aiMapperModuleAssignmentsTable);
+  const map: Record<number, boolean> = {};
+  for (const r of rows) map[r.tenantId] = r.isEnabled ?? false;
+  res.json(map);
+});
+
 router.patch("/ai-mapper/module", requireAuth, async (req, res) => {
   const { role, tenantId: callerTenantId } = req.user!;
   if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
-  const targetTenantId = Number(req.body.tenantId ?? callerTenantId);
+  // Admins can only toggle their own tenant; super_admin may specify any target
+  const requestedTenantId = req.body.tenantId ? Number(req.body.tenantId) : callerTenantId;
+  const targetTenantId = role === "super_admin" ? requestedTenantId : callerTenantId;
+  if (role === "admin" && requestedTenantId !== callerTenantId) {
+    res.status(403).json({ error: "Admins can only toggle their own tenant" }); return;
+  }
   const isEnabled = !!req.body.isEnabled;
   await db.insert(aiMapperModuleAssignmentsTable)
     .values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })

@@ -327,6 +327,13 @@ export default function TenantsPage() {
     staleTime: 0, // always fresh when picker/add-dialog opens
   });
 
+  // AI Mapper status across all tenants (super_admin only)
+  const { data: aiMapperStatusMap = {} } = useQuery<Record<number, boolean>>({
+    queryKey: ["ai-mapper-module-all"],
+    queryFn: () => apiFetch(`${BASE}/api/ai-mapper/module/all`),
+    enabled: user?.role === "super_admin",
+  });
+
   const amUsers = allUsers.filter(u => u.role === "account_manager");
 
   // ── Mutations ────────────────────────────────────────────────────────────────
@@ -389,6 +396,20 @@ export default function TenantsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       toast({ title: "Account manager unassigned" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const toggleAiMapperMutation = useMutation({
+    mutationFn: ({ tenantId, isEnabled }: { tenantId: number; isEnabled: boolean }) =>
+      apiFetch(`${BASE}/api/ai-mapper/module`, {
+        method: "PATCH",
+        body: JSON.stringify({ tenantId, isEnabled }),
+      }),
+    onSuccess: (_data, { isEnabled }) => {
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-mapper-module-all"] });
+      toast({ title: isEnabled ? "AI Mapper enabled for tenant" : "AI Mapper disabled for tenant" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -525,12 +546,15 @@ export default function TenantsPage() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Open Findings</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Critical</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
+                {user?.role === "super_admin" && (
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">AI Mapper</th>
+                )}
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
               {tenants.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-muted-foreground text-sm">
+                <tr><td colSpan={user?.role === "super_admin" ? 9 : 8} className="px-4 py-10 text-center text-muted-foreground text-sm">
                   No tenants yet. Click <strong>New Tenant</strong> to create one.
                 </td></tr>
               )}
@@ -573,6 +597,22 @@ export default function TenantsPage() {
                         {t.isActive ? "Active" : "Inactive"}
                       </span>
                     </td>
+                    {user?.role === "super_admin" && (
+                      <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => toggleAiMapperMutation.mutate({ tenantId: t.id, isEnabled: !(aiMapperStatusMap[t.id] ?? false) })}
+                          disabled={toggleAiMapperMutation.isPending}
+                          className={cn(
+                            "text-xs px-2 py-0.5 rounded-full font-medium border transition-colors cursor-pointer",
+                            aiMapperStatusMap[t.id]
+                              ? "bg-violet-500/10 text-violet-400 border-violet-500/25 hover:bg-violet-500/20"
+                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                          )}
+                        >
+                          {aiMapperStatusMap[t.id] ? "Enabled" : "Disabled"}
+                        </button>
+                      </td>
+                    )}
                     <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         {/* Expand/collapse */}
@@ -621,7 +661,7 @@ export default function TenantsPage() {
                   {/* Expanded panel */}
                   {expandedId === t.id && (
                     <tr className="border-b border-border/50">
-                      <td colSpan={8} className="bg-muted/10 px-6 py-4">
+                      <td colSpan={user?.role === "super_admin" ? 9 : 8} className="bg-muted/10 px-6 py-4">
                         {/* Tabs */}
                         <div className="flex gap-1 mb-4 border-b border-border pb-3">
                           {(["managers", "assets"] as ActiveTab[]).map(tab => (

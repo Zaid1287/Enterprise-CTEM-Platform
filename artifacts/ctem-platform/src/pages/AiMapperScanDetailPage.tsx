@@ -1,12 +1,13 @@
 import { useRoute, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, Server, ShieldOff, Globe, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { ArrowLeft, Server, ShieldOff, Globe, Loader2, XCircle, StopCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useToast } from "@/hooks/use-toast";
 import { RiskScoreGauge } from "@/components/aiMapper/RiskScoreGauge";
 
 const RISK_BADGE: Record<string, string> = {
@@ -35,6 +36,8 @@ export default function AiMapperScanDetailPage() {
   const [, params] = useRoute("/ai-mapper/scans/:id");
   const [, navigate] = useLocation();
   const scanId = Number(params?.id);
+  const qc = useQueryClient();
+  const { toast } = useToast();
 
   const { data: scan, isLoading } = useQuery<AiMapperScan>({
     queryKey: ["ai-mapper-scan", scanId],
@@ -44,6 +47,16 @@ export default function AiMapperScanDetailPage() {
       if (!d || d.status === "running" || d.status === "pending") return 3000;
       return false;
     },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => apiFetch(`/api/ai-mapper/scans/${scanId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ai-mapper-scan", scanId] });
+      qc.invalidateQueries({ queryKey: ["ai-mapper-scans"] });
+      toast({ title: "Scan cancelled" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   if (isLoading || !scan) return (
@@ -68,6 +81,17 @@ export default function AiMapperScanDetailPage() {
           <p className="text-sm text-muted-foreground">Scan #{scan.id} · {formatDistanceToNow(new Date(scan.createdAt), { addSuffix: true })}</p>
         </div>
         <Badge variant="outline" className="capitalize">{scan.status}</Badge>
+        {(scan.status === "running" || scan.status === "pending") && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => cancelMutation.mutate()}
+            disabled={cancelMutation.isPending}
+          >
+            {cancelMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <StopCircle className="w-3.5 h-3.5 mr-1.5" />}
+            Cancel Scan
+          </Button>
+        )}
       </div>
 
       {(scan.status === "running" || scan.status === "pending") && (

@@ -94,8 +94,8 @@ function AiMapperModuleCard({ tenantId, userRole }: { tenantId: number; userRole
   const toggle = useMutation({
     mutationFn: (enable: boolean) =>
       apiFetch(`${BASE}/api/ai-mapper/module`, {
-        method: "POST",
-        body: JSON.stringify({ enable }),
+        method: "PATCH",
+        body: JSON.stringify({ isEnabled: enable }),
       }),
     onSuccess: (_data, enable) => {
       setAiMapperEnabled(enable);

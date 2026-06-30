@@ -114,6 +114,19 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   );
 }
 
+function AiMapperRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated, aiMapperEnabled } = useAuth();
+  if (!isAuthenticated) return <Redirect to="/login" />;
+  if (!aiMapperEnabled) return <Redirect to="/dashboard" />;
+  return (
+    <AppLayout>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </AppLayout>
+  );
+}
+
 const EXTERNAL_ROLES = ["vendor", "employee", "third_party"];
 
 function useDefaultPath() {
@@ -161,12 +174,12 @@ function Router() {
       <Route path="/alerts" component={() => <ProtectedRoute component={AlertsPage} />} />
       <Route path="/risk" component={() => <ProtectedRoute component={RiskPage} />} />
       <Route path="/ai-copilot" component={() => <ProtectedRoute component={AiCopilotPage} />} />
-      <Route path="/ai-mapper" component={() => <ProtectedRoute component={AiMapperPage} />} />
-      <Route path="/ai-mapper/scans" component={() => <ProtectedRoute component={AiMapperScansPage} />} />
-      <Route path="/ai-mapper/scans/:id" component={() => <ProtectedRoute component={AiMapperScanDetailPage} />} />
-      <Route path="/ai-mapper/endpoints" component={() => <ProtectedRoute component={AiMapperEndpointsPage} />} />
-      <Route path="/ai-mapper/endpoints/:id" component={() => <ProtectedRoute component={AiMapperEndpointDetailPage} />} />
-      <Route path="/ai-mapper/bom" component={() => <ProtectedRoute component={AiMapperBomPage} />} />
+      <Route path="/ai-mapper" component={() => <AiMapperRoute component={AiMapperPage} />} />
+      <Route path="/ai-mapper/scans" component={() => <AiMapperRoute component={AiMapperScansPage} />} />
+      <Route path="/ai-mapper/scans/:id" component={() => <AiMapperRoute component={AiMapperScanDetailPage} />} />
+      <Route path="/ai-mapper/endpoints" component={() => <AiMapperRoute component={AiMapperEndpointsPage} />} />
+      <Route path="/ai-mapper/endpoints/:id" component={() => <AiMapperRoute component={AiMapperEndpointDetailPage} />} />
+      <Route path="/ai-mapper/bom" component={() => <AiMapperRoute component={AiMapperBomPage} />} />
       <Route path="/reports" component={() => <ProtectedRoute component={ReportsPage} />} />
       <Route path="/audit-logs" component={() => <ProtectedRoute component={AuditLogsPage} />} />
       <Route path="/settings/users" component={() => <ProtectedRoute component={UsersPage} />} />

@@ -48,7 +48,7 @@ interface ShodanPreset {
   id: string;
   label: string;
   protocol: string;
-  description: string;
+  query: string;
 }
 
 export default function AiMapperScansPage() {
@@ -197,7 +197,7 @@ export default function AiMapperScansPage() {
                     }`}
                   >
                     <div className="font-medium">{p.label}</div>
-                    <div className="text-xs text-muted-foreground">{p.description}</div>
+                    <div className="text-xs text-muted-foreground font-mono">{p.query}</div>
                   </button>
                 ))}
               </div>
