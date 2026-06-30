@@ -90,6 +90,8 @@ router.put("/platform/settings", requireAuth, async (req: AuthenticatedRequest, 
   if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
 
   const updates = req.body as Record<string, string>;
+  let redisUrlChanged = false;
+  let newRedisUrl: string | null = null;
 
   for (const [key, value] of Object.entries(updates)) {
     const def = PLATFORM_KEYS.find(k => k.key === key);
@@ -99,15 +101,32 @@ router.put("/platform/settings", requireAuth, async (req: AuthenticatedRequest, 
     if (existing.length > 0) {
       if (value === "" || value === null || value === undefined) {
         await db.delete(platformSettingsTable).where(eq(platformSettingsTable.key, key));
+        if (key === "redis_url") redisUrlChanged = true;
       } else {
         await db.update(platformSettingsTable).set({ value, label: def.label, description: def.description, category: def.category }).where(eq(platformSettingsTable.key, key));
+        if (key === "redis_url") { redisUrlChanged = true; newRedisUrl = value; }
       }
     } else if (value) {
       await db.insert(platformSettingsTable).values({ key, value, label: def.label, description: def.description, category: def.category });
+      if (key === "redis_url") { redisUrlChanged = true; newRedisUrl = value; }
     }
   }
 
-  res.json({ ok: true });
+  if (redisUrlChanged) {
+    try {
+      if (newRedisUrl) {
+        setRuntimeRedisUrl(newRedisUrl);
+        await reinitRedis(newRedisUrl);
+        await Promise.all([restartScanWorker(), restartAlertWorker()]);
+      } else {
+        await Promise.all([restartScanWorker(), restartAlertWorker()]);
+      }
+    } catch (err: any) {
+      req.log?.warn({ err: err?.message }, "Redis worker restart after settings save failed");
+    }
+  }
+
+  res.json({ ok: true, workersRestarted: redisUrlChanged });
 });
 
 router.get("/platform/settings/raw/:key", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -174,6 +193,30 @@ router.post("/platform/settings/test-key", requireAuth, async (req: Authenticate
     res.json({ ok: true, message });
   } catch (e: any) {
     res.json({ ok: false, message: e.message ?? "Test failed" });
+  }
+});
+
+// ── POST /admin/redis/test ── Test a Redis URL without saving or restarting workers
+router.post("/admin/redis/test", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
+  const { url } = req.body as { url?: string };
+  if (!url) { res.status(400).json({ ok: false, message: "No URL provided" }); return; }
+  const { default: Redis } = await import("ioredis");
+  const isTls = url.startsWith("rediss://");
+  const client = new Redis(url, {
+    maxRetriesPerRequest: 1, enableReadyCheck: false, lazyConnect: true,
+    connectTimeout: 5000, ...(isTls ? { tls: {} } : {}),
+  });
+  try {
+    await client.connect();
+    await client.ping();
+    const info = await client.info("server").catch(() => "");
+    const version = info.match(/redis_version:([^\r\n]+)/)?.[1]?.trim() ?? "?";
+    res.json({ ok: true, message: `Connected — Redis ${version}` });
+  } catch (err: any) {
+    res.json({ ok: false, message: err?.message ?? "Connection failed" });
+  } finally {
+    client.disconnect();
   }
 });
 

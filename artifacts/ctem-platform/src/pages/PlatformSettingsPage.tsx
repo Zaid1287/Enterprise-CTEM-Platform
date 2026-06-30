@@ -139,16 +139,25 @@ export default function PlatformSettingsPage() {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [testingKey, setTestingKey] = useState<string | null>(null);
   const [restartingWorkers, setRestartingWorkers] = useState(false);
+  const [redisStatus, setRedisStatus] = useState<{ redisConfigured: boolean; redisConnected: boolean; bullmqActive: boolean } | null>(null);
 
   const TESTABLE_KEYS = new Set(["shodan_api_key", "virustotal_api_key", "nvd_api_key", "censys_api_id", "redis_url"]);
 
   const handleTestKey = async (key: string) => {
     setTestingKey(key);
     try {
-      const res = await apiFetch<{ ok: boolean; message: string }>(`${BASE}/api/platform/settings/test-key`, {
-        method: "POST",
-        body: JSON.stringify({ key }),
-      });
+      let res: { ok: boolean; message: string };
+      if (key === "redis_url" && edits[key] !== undefined) {
+        res = await apiFetch<{ ok: boolean; message: string }>(`${BASE}/api/admin/redis/test`, {
+          method: "POST",
+          body: JSON.stringify({ url: edits[key] }),
+        });
+      } else {
+        res = await apiFetch<{ ok: boolean; message: string }>(`${BASE}/api/platform/settings/test-key`, {
+          method: "POST",
+          body: JSON.stringify({ key }),
+        });
+      }
       setTestResults(prev => ({ ...prev, [key]: res }));
     } catch (e: any) {
       setTestResults(prev => ({ ...prev, [key]: { ok: false, message: e.message ?? "Test failed" } }));
@@ -156,11 +165,19 @@ export default function PlatformSettingsPage() {
       setTestingKey(null);
     }
   };
+
+  const loadRedisStatus = () => {
+    apiFetch<{ redisConfigured: boolean; redisConnected: boolean; bullmqActive: boolean }>(`${BASE}/api/platform/workers/status`)
+      .then(data => setRedisStatus(data))
+      .catch(() => {});
+  };
+
   const [selectedCat, setSelectedCat] = useState("scanning");
 
   useEffect(() => {
     if (user?.role !== "super_admin") { navigate("/dashboard"); return; }
     loadSettings();
+    loadRedisStatus();
   }, [user?.role]);
 
   const loadSettings = () => {
@@ -189,6 +206,7 @@ export default function PlatformSettingsPage() {
     try {
       const res = await apiFetch<{ ok: boolean; message: string }>(`${BASE}/api/platform/workers/restart`, { method: "POST" });
       toast({ title: res.ok ? "Workers restarted" : "Restart failed", description: res.message, variant: res.ok ? "default" : "destructive" });
+      if (res.ok) loadRedisStatus();
     } catch (e: any) {
       toast({ title: "Restart failed", description: e?.message ?? "Unknown error", variant: "destructive" });
     } finally {
@@ -198,11 +216,12 @@ export default function PlatformSettingsPage() {
 
   const handleSave = async () => {
     if (Object.keys(edits).length === 0) return;
+    const pendingEditsSnapshot = { ...edits };
     setSaving(true);
     try {
-      await apiFetch(`${BASE}/api/platform/settings`, {
+      const result = await apiFetch<{ ok: boolean; workersRestarted?: boolean }>(`${BASE}/api/platform/settings`, {
         method: "PUT",
-        body: JSON.stringify(edits),
+        body: JSON.stringify(pendingEditsSnapshot),
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -211,7 +230,12 @@ export default function PlatformSettingsPage() {
       setShowKeys(new Set());
       const data = await apiFetch<PlatformSetting[]>(`${BASE}/api/platform/settings`);
       setSettings(data);
-      toast({ title: "Settings saved", description: `${Object.keys(edits).length} key(s) updated.` });
+      if (result.workersRestarted) {
+        loadRedisStatus();
+        toast({ title: "Settings saved — Redis workers restarted", description: "BullMQ workers are now using the new Redis URL." });
+      } else {
+        toast({ title: "Settings saved", description: `${Object.keys(pendingEditsSnapshot).length} key(s) updated.` });
+      }
     } catch (e: any) {
       toast({ title: "Save failed", description: e.message, variant: "destructive" });
     } finally {
@@ -465,12 +489,12 @@ export default function PlatformSettingsPage() {
                                 <span className="hidden sm:inline">{isRevealed ? "Hide" : "Reveal"}</span>
                               </button>
                             )}
-                            {setting.hasValue && !isEdited && TESTABLE_KEYS.has(setting.key) && (
+                            {((setting.hasValue && !isEdited) || (setting.key === "redis_url" && isEdited && edits[setting.key])) && TESTABLE_KEYS.has(setting.key) && (
                               <button
                                 onClick={() => handleTestKey(setting.key)}
                                 disabled={testingKey === setting.key}
                                 className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors px-2.5 py-2 rounded-lg hover:bg-blue-500/10 border border-border h-9 disabled:opacity-50"
-                                title="Test API key"
+                                title={setting.key === "redis_url" && isEdited ? "Test this URL (without saving)" : "Test connection"}
                               >
                                 {testingKey === setting.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
                                 <span className="hidden sm:inline">Test</span>
@@ -501,15 +525,36 @@ export default function PlatformSettingsPage() {
                             {testResults[setting.key].message}
                           </p>
                         )}
-                        {setting.key === "redis_url" && setting.hasValue && !isEdited && (
-                          <button
-                            onClick={handleRestartWorkers}
-                            disabled={restartingWorkers}
-                            className="mt-1.5 flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 transition-colors px-2 py-1 rounded-md hover:bg-violet-500/10 border border-violet-500/20 disabled:opacity-50"
-                          >
-                            {restartingWorkers ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                            Apply Redis URL &amp; Restart Workers
-                          </button>
+                        {setting.key === "redis_url" && !isEdited && (
+                          <div className="flex items-center gap-2 flex-wrap mt-1">
+                            {redisStatus && (
+                              <span className={cn(
+                                "inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-semibold",
+                                redisStatus.redisConnected
+                                  ? "bg-green-500/10 text-green-400 border-green-500/25"
+                                  : redisStatus.redisConfigured
+                                    ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                                    : "bg-muted text-muted-foreground border-border",
+                              )}>
+                                {redisStatus.redisConnected
+                                  ? <><Wifi className="w-2.5 h-2.5" /> Live — BullMQ active</>
+                                  : redisStatus.redisConfigured
+                                    ? <><WifiOff className="w-2.5 h-2.5" /> Configured but not connected</>
+                                    : <><WifiOff className="w-2.5 h-2.5" /> Not connected</>
+                                }
+                              </span>
+                            )}
+                            {setting.hasValue && (
+                              <button
+                                onClick={handleRestartWorkers}
+                                disabled={restartingWorkers}
+                                className="flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 transition-colors px-2 py-0.5 rounded-md hover:bg-violet-500/10 border border-violet-500/20 disabled:opacity-50"
+                              >
+                                {restartingWorkers ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                                Apply &amp; Restart Workers
+                              </button>
+                            )}
+                          </div>
                         )}
                         {isComingSoon && (
                           <p className="text-[10px] text-violet-400/70 mt-1">
