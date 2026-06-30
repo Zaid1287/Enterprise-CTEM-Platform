@@ -5,6 +5,88 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+export type AiMapperSummaryServiceBreakdown = {[key: string]: number};
+
+export interface AiMapperSummary {
+  totalEndpoints: number;
+  unauthEndpoints: number;
+  highRiskEndpoints: number;
+  serviceBreakdown: AiMapperSummaryServiceBreakdown;
+  lastScanAt?: string | null;
+}
+
+export interface AiMapperScan {
+  id: number;
+  tenantId: number;
+  status: string;
+  resultCount: number;
+  unauthCount: number;
+  highRiskCount: number;
+  error?: string | null;
+  startedAt: string;
+  completedAt?: string | null;
+}
+
+export interface AiMapperScanInput {
+  assetIds?: number[];
+}
+
+export interface AiMapperResult {
+  id: number;
+  scanId: number;
+  tenantId: number;
+  assetId?: number | null;
+  url: string;
+  host?: string | null;
+  port?: number | null;
+  serviceType: string;
+  framework?: string | null;
+  version?: string | null;
+  isAuthenticated: boolean;
+  corsPolicy?: string | null;
+  riskScore: number;
+  riskLevel: string;
+  modelsExposed?: string[] | null;
+  toolsExposed?: string[] | null;
+  ip?: string | null;
+  country?: string | null;
+  countryCode?: string | null;
+  city?: string | null;
+  org?: string | null;
+  discoveredAt: string;
+}
+
+export type AiMapperScanDetail = AiMapperScan & {
+  results?: AiMapperResult[];
+};
+
+export interface AiMapperResultsPage {
+  results: AiMapperResult[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface AiMapperGlobePoint {
+  country: string;
+  countryCode: string;
+  count: number;
+  highRisk: number;
+  services: string[];
+}
+
+export interface AiMapperGlobeData {
+  points: AiMapperGlobePoint[];
+  totalEndpoints: number;
+}
+
+export interface AiMapperAnalysis {
+  analysis: string;
+  suggestions: string[];
+  riskLevel: string;
+  model: string;
+}
+
 export type DiscoveryModuleResultStatus = typeof DiscoveryModuleResultStatus[keyof typeof DiscoveryModuleResultStatus];
 
 

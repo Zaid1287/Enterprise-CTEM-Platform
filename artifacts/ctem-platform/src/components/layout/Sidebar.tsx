@@ -6,7 +6,7 @@ import {
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
-  ShieldAlert, Network, Activity, Shield,
+  ShieldAlert, Network, Activity, Shield, MapPin,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -99,6 +99,7 @@ const navGroups: NavGroup[] = [
     title: "Intelligence",
     items: [
       { label: "AI Copilot", href: "/ai-copilot", icon: Brain },
+      { label: "AI Mapper", href: "/ai-mapper", icon: MapPin },
     ],
   },
   {

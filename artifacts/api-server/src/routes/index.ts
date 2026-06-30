@@ -31,6 +31,7 @@ import stripeRouter from "./stripe";
 import discoveryRouter from "./discovery";
 import graphRouter from "./graph";
 import cdnWhitelistRouter from "./cdnWhitelist";
+import aiMapperRouter from "./aiMapper";
 
 const router: IRouter = Router();
 
@@ -66,5 +67,6 @@ router.use(stripeRouter);
 router.use(discoveryRouter);
 router.use(graphRouter);
 router.use(cdnWhitelistRouter);
+router.use(aiMapperRouter);
 
 export default router;

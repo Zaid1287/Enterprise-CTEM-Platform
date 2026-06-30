@@ -36,6 +36,8 @@ tags:
     description: Audit logs
   - name: ai-copilot
     description: AI Security Copilot
+  - name: ai-mapper
+    description: AI Mapper — discover and assess exposed AI infrastructure
   - name: dashboard
     description: Dashboard and analytics
   - name: discovery
@@ -2083,8 +2085,313 @@ paths:
               schema:
                 $ref: "#/components/schemas/DiscoveryLatestResponse"
 
+  # ──────────────────────────────────────────────────────────
+  # AI MAPPER
+  # ──────────────────────────────────────────────────────────
+  /ai-mapper/summary:
+    get:
+      operationId: getAiMapperSummary
+      tags: [ai-mapper]
+      summary: Get AI Mapper overview statistics
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Summary statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiMapperSummary"
+
+  /ai-mapper/scans:
+    get:
+      operationId: listAiMapperScans
+      tags: [ai-mapper]
+      summary: List AI Mapper scan history
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiMapperScan"
+    post:
+      operationId: createAiMapperScan
+      tags: [ai-mapper]
+      summary: Start a new AI Mapper scan
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiMapperScanInput"
+      responses:
+        "201":
+          description: Scan created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiMapperScan"
+
+  /ai-mapper/scans/{id}:
+    get:
+      operationId: getAiMapperScan
+      tags: [ai-mapper]
+      summary: Get scan detail with results
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiMapperScanDetail"
+
+  /ai-mapper/results:
+    get:
+      operationId: listAiMapperResults
+      tags: [ai-mapper]
+      summary: List all discovered AI endpoints
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiMapperResultsPage"
+
+  /ai-mapper/globe-data:
+    get:
+      operationId: getAiMapperGlobeData
+      tags: [ai-mapper]
+      summary: Get geo distribution for globe visualization
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Globe data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiMapperGlobeData"
+
+  /ai-mapper/analyze:
+    post:
+      operationId: analyzeAiMapperSurface
+      tags: [ai-mapper]
+      summary: AI-powered attack surface analysis
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiMapperAnalysis"
+
 components:
   schemas:
+    AiMapperSummary:
+      type: object
+      required: [totalEndpoints, unauthEndpoints, highRiskEndpoints, serviceBreakdown]
+      properties:
+        totalEndpoints:
+          type: integer
+        unauthEndpoints:
+          type: integer
+        highRiskEndpoints:
+          type: integer
+        serviceBreakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        lastScanAt:
+          type: string
+          nullable: true
+
+    AiMapperScan:
+      type: object
+      required: [id, tenantId, status, resultCount, unauthCount, highRiskCount, startedAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        status:
+          type: string
+        resultCount:
+          type: integer
+        unauthCount:
+          type: integer
+        highRiskCount:
+          type: integer
+        error:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+        completedAt:
+          type: string
+          nullable: true
+
+    AiMapperScanInput:
+      type: object
+      properties:
+        assetIds:
+          type: array
+          items:
+            type: integer
+
+    AiMapperResult:
+      type: object
+      required: [id, scanId, tenantId, url, serviceType, isAuthenticated, riskScore, riskLevel, discoveredAt]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+        tenantId:
+          type: integer
+        assetId:
+          type: integer
+          nullable: true
+        url:
+          type: string
+        host:
+          type: string
+          nullable: true
+        port:
+          type: integer
+          nullable: true
+        serviceType:
+          type: string
+        framework:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        isAuthenticated:
+          type: boolean
+        corsPolicy:
+          type: string
+          nullable: true
+        riskScore:
+          type: integer
+        riskLevel:
+          type: string
+        modelsExposed:
+          type: array
+          items:
+            type: string
+          nullable: true
+        toolsExposed:
+          type: array
+          items:
+            type: string
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        countryCode:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        org:
+          type: string
+          nullable: true
+        discoveredAt:
+          type: string
+
+    AiMapperScanDetail:
+      allOf:
+        - $ref: "#/components/schemas/AiMapperScan"
+        - type: object
+          properties:
+            results:
+              type: array
+              items:
+                $ref: "#/components/schemas/AiMapperResult"
+
+    AiMapperResultsPage:
+      type: object
+      required: [results, total, page, limit]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiMapperResult"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    AiMapperGlobePoint:
+      type: object
+      required: [country, countryCode, count, highRisk, services]
+      properties:
+        country:
+          type: string
+        countryCode:
+          type: string
+        count:
+          type: integer
+        highRisk:
+          type: integer
+        services:
+          type: array
+          items:
+            type: string
+
+    AiMapperGlobeData:
+      type: object
+      required: [points, totalEndpoints]
+      properties:
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiMapperGlobePoint"
+        totalEndpoints:
+          type: integer
+
+    AiMapperAnalysis:
+      type: object
+      required: [analysis, suggestions, riskLevel, model]
+      properties:
+        analysis:
+          type: string
+        suggestions:
+          type: array
+          items:
+            type: string
+        riskLevel:
+          type: string
+        model:
+          type: string
+
     DiscoveryModuleResult:
       type: object
       required: [source, status, summary]

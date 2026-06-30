@@ -45,6 +45,7 @@ const CdnWhitelistPage = lazy(() => import("@/pages/CdnWhitelistPage"));
 const DiscoveryPage = lazy(() => import("@/pages/DiscoveryPage"));
 const ExposurePage = lazy(() => import("@/pages/ExposurePage"));
 const AcceptInvitationPage = lazy(() => import("@/pages/AcceptInvitationPage"));
+const AiMapperPage = lazy(() => import("@/pages/AiMapperPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -143,6 +144,7 @@ function Router() {
       <Route path="/alerts" component={() => <ProtectedRoute component={AlertsPage} />} />
       <Route path="/risk" component={() => <ProtectedRoute component={RiskPage} />} />
       <Route path="/ai-copilot" component={() => <ProtectedRoute component={AiCopilotPage} />} />
+      <Route path="/ai-mapper" component={() => <ProtectedRoute component={AiMapperPage} />} />
       <Route path="/reports" component={() => <ProtectedRoute component={ReportsPage} />} />
       <Route path="/audit-logs" component={() => <ProtectedRoute component={AuditLogsPage} />} />
       <Route path="/settings/users" component={() => <ProtectedRoute component={UsersPage} />} />

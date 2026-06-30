@@ -24,6 +24,13 @@ import type {
   AiComplianceInput,
   AiExplainFindingInput,
   AiExplanation,
+  AiMapperAnalysis,
+  AiMapperGlobeData,
+  AiMapperResultsPage,
+  AiMapperScan,
+  AiMapperScanDetail,
+  AiMapperScanInput,
+  AiMapperSummary,
   AiRemediation,
   AiRemediationInput,
   AiSummaryInput,
@@ -7801,4 +7808,530 @@ export function useListDiscoveryLatest<TData = Awaited<ReturnType<typeof listDis
 
 
 
+
+export const getGetAiMapperSummaryUrl = () => {
+
+
+
+
+  return `/api/ai-mapper/summary`
+}
+
+/**
+ * @summary Get AI Mapper overview statistics
+ */
+export const getAiMapperSummary = async ( options?: RequestInit): Promise<AiMapperSummary> => {
+
+  return customFetch<AiMapperSummary>(getGetAiMapperSummaryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAiMapperSummaryQueryKey = () => {
+    return [
+    `/api/ai-mapper/summary`
+    ] as const;
+    }
+
+
+export const getGetAiMapperSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getAiMapperSummary>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAiMapperSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAiMapperSummaryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAiMapperSummary>>> = ({ signal }) => getAiMapperSummary({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAiMapperSummary>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAiMapperSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getAiMapperSummary>>>
+export type GetAiMapperSummaryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get AI Mapper overview statistics
+ */
+
+export function useGetAiMapperSummary<TData = Awaited<ReturnType<typeof getAiMapperSummary>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAiMapperSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAiMapperSummaryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListAiMapperScansUrl = () => {
+
+
+
+
+  return `/api/ai-mapper/scans`
+}
+
+/**
+ * @summary List AI Mapper scan history
+ */
+export const listAiMapperScans = async ( options?: RequestInit): Promise<AiMapperScan[]> => {
+
+  return customFetch<AiMapperScan[]>(getListAiMapperScansUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAiMapperScansQueryKey = () => {
+    return [
+    `/api/ai-mapper/scans`
+    ] as const;
+    }
+
+
+export const getListAiMapperScansQueryOptions = <TData = Awaited<ReturnType<typeof listAiMapperScans>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAiMapperScans>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAiMapperScansQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAiMapperScans>>> = ({ signal }) => listAiMapperScans({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAiMapperScans>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAiMapperScansQueryResult = NonNullable<Awaited<ReturnType<typeof listAiMapperScans>>>
+export type ListAiMapperScansQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List AI Mapper scan history
+ */
+
+export function useListAiMapperScans<TData = Awaited<ReturnType<typeof listAiMapperScans>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAiMapperScans>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAiMapperScansQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateAiMapperScanUrl = () => {
+
+
+
+
+  return `/api/ai-mapper/scans`
+}
+
+/**
+ * @summary Start a new AI Mapper scan
+ */
+export const createAiMapperScan = async (aiMapperScanInput?: AiMapperScanInput, options?: RequestInit): Promise<AiMapperScan> => {
+
+  return customFetch<AiMapperScan>(getCreateAiMapperScanUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aiMapperScanInput,)
+  }
+);}
+
+
+
+
+export const getCreateAiMapperScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAiMapperScan>>, TError,{data?: BodyType<AiMapperScanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAiMapperScan>>, TError,{data?: BodyType<AiMapperScanInput>}, TContext> => {
+
+const mutationKey = ['createAiMapperScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAiMapperScan>>, {data?: BodyType<AiMapperScanInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAiMapperScan(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAiMapperScanMutationResult = NonNullable<Awaited<ReturnType<typeof createAiMapperScan>>>
+    export type CreateAiMapperScanMutationBody = BodyType<AiMapperScanInput> | undefined
+    export type CreateAiMapperScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Start a new AI Mapper scan
+ */
+export const useCreateAiMapperScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAiMapperScan>>, TError,{data?: BodyType<AiMapperScanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAiMapperScan>>,
+        TError,
+        {data?: BodyType<AiMapperScanInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAiMapperScanMutationOptions(options));
+    }
+
+export const getGetAiMapperScanUrl = (id: number,) => {
+
+
+
+
+  return `/api/ai-mapper/scans/${id}`
+}
+
+/**
+ * @summary Get scan detail with results
+ */
+export const getAiMapperScan = async (id: number, options?: RequestInit): Promise<AiMapperScanDetail> => {
+
+  return customFetch<AiMapperScanDetail>(getGetAiMapperScanUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAiMapperScanQueryKey = (id: number,) => {
+    return [
+    `/api/ai-mapper/scans/${id}`
+    ] as const;
+    }
+
+
+export const getGetAiMapperScanQueryOptions = <TData = Awaited<ReturnType<typeof getAiMapperScan>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAiMapperScan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAiMapperScanQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAiMapperScan>>> = ({ signal }) => getAiMapperScan(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAiMapperScan>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAiMapperScanQueryResult = NonNullable<Awaited<ReturnType<typeof getAiMapperScan>>>
+export type GetAiMapperScanQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get scan detail with results
+ */
+
+export function useGetAiMapperScan<TData = Awaited<ReturnType<typeof getAiMapperScan>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAiMapperScan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAiMapperScanQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListAiMapperResultsUrl = () => {
+
+
+
+
+  return `/api/ai-mapper/results`
+}
+
+/**
+ * @summary List all discovered AI endpoints
+ */
+export const listAiMapperResults = async ( options?: RequestInit): Promise<AiMapperResultsPage> => {
+
+  return customFetch<AiMapperResultsPage>(getListAiMapperResultsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAiMapperResultsQueryKey = () => {
+    return [
+    `/api/ai-mapper/results`
+    ] as const;
+    }
+
+
+export const getListAiMapperResultsQueryOptions = <TData = Awaited<ReturnType<typeof listAiMapperResults>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAiMapperResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAiMapperResultsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAiMapperResults>>> = ({ signal }) => listAiMapperResults({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAiMapperResults>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAiMapperResultsQueryResult = NonNullable<Awaited<ReturnType<typeof listAiMapperResults>>>
+export type ListAiMapperResultsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all discovered AI endpoints
+ */
+
+export function useListAiMapperResults<TData = Awaited<ReturnType<typeof listAiMapperResults>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAiMapperResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAiMapperResultsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetAiMapperGlobeDataUrl = () => {
+
+
+
+
+  return `/api/ai-mapper/globe-data`
+}
+
+/**
+ * @summary Get geo distribution for globe visualization
+ */
+export const getAiMapperGlobeData = async ( options?: RequestInit): Promise<AiMapperGlobeData> => {
+
+  return customFetch<AiMapperGlobeData>(getGetAiMapperGlobeDataUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAiMapperGlobeDataQueryKey = () => {
+    return [
+    `/api/ai-mapper/globe-data`
+    ] as const;
+    }
+
+
+export const getGetAiMapperGlobeDataQueryOptions = <TData = Awaited<ReturnType<typeof getAiMapperGlobeData>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAiMapperGlobeData>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAiMapperGlobeDataQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAiMapperGlobeData>>> = ({ signal }) => getAiMapperGlobeData({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAiMapperGlobeData>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAiMapperGlobeDataQueryResult = NonNullable<Awaited<ReturnType<typeof getAiMapperGlobeData>>>
+export type GetAiMapperGlobeDataQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get geo distribution for globe visualization
+ */
+
+export function useGetAiMapperGlobeData<TData = Awaited<ReturnType<typeof getAiMapperGlobeData>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAiMapperGlobeData>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAiMapperGlobeDataQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getAnalyzeAiMapperSurfaceUrl = () => {
+
+
+
+
+  return `/api/ai-mapper/analyze`
+}
+
+/**
+ * @summary AI-powered attack surface analysis
+ */
+export const analyzeAiMapperSurface = async ( options?: RequestInit): Promise<AiMapperAnalysis> => {
+
+  return customFetch<AiMapperAnalysis>(getAnalyzeAiMapperSurfaceUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getAnalyzeAiMapperSurfaceMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeAiMapperSurface>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof analyzeAiMapperSurface>>, TError,void, TContext> => {
+
+const mutationKey = ['analyzeAiMapperSurface'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof analyzeAiMapperSurface>>, void> = () => {
+
+
+          return  analyzeAiMapperSurface(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AnalyzeAiMapperSurfaceMutationResult = NonNullable<Awaited<ReturnType<typeof analyzeAiMapperSurface>>>
+
+    export type AnalyzeAiMapperSurfaceMutationError = ErrorType<unknown>
+
+    /**
+ * @summary AI-powered attack surface analysis
+ */
+export const useAnalyzeAiMapperSurface = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeAiMapperSurface>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof analyzeAiMapperSurface>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getAnalyzeAiMapperSurfaceMutationOptions(options));
+    }
 

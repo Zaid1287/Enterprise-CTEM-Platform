@@ -2121,3 +2121,145 @@ export const ListDiscoveryLatestResponse = zod.object({
 })
 
 
+/**
+ * @summary Get AI Mapper overview statistics
+ */
+export const GetAiMapperSummaryResponse = zod.object({
+  "totalEndpoints": zod.number(),
+  "unauthEndpoints": zod.number(),
+  "highRiskEndpoints": zod.number(),
+  "serviceBreakdown": zod.record(zod.string(), zod.number()),
+  "lastScanAt": zod.string().nullish()
+})
+
+
+/**
+ * @summary List AI Mapper scan history
+ */
+export const ListAiMapperScansResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "status": zod.string(),
+  "resultCount": zod.number(),
+  "unauthCount": zod.number(),
+  "highRiskCount": zod.number(),
+  "error": zod.string().nullish(),
+  "startedAt": zod.string(),
+  "completedAt": zod.string().nullish()
+})
+export const ListAiMapperScansResponse = zod.array(ListAiMapperScansResponseItem)
+
+
+/**
+ * @summary Start a new AI Mapper scan
+ */
+export const CreateAiMapperScanBody = zod.object({
+  "assetIds": zod.array(zod.number()).optional()
+})
+
+
+/**
+ * @summary Get scan detail with results
+ */
+export const GetAiMapperScanParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetAiMapperScanResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "status": zod.string(),
+  "resultCount": zod.number(),
+  "unauthCount": zod.number(),
+  "highRiskCount": zod.number(),
+  "error": zod.string().nullish(),
+  "startedAt": zod.string(),
+  "completedAt": zod.string().nullish()
+}).and(zod.object({
+  "results": zod.array(zod.object({
+  "id": zod.number(),
+  "scanId": zod.number(),
+  "tenantId": zod.number(),
+  "assetId": zod.number().nullish(),
+  "url": zod.string(),
+  "host": zod.string().nullish(),
+  "port": zod.number().nullish(),
+  "serviceType": zod.string(),
+  "framework": zod.string().nullish(),
+  "version": zod.string().nullish(),
+  "isAuthenticated": zod.boolean(),
+  "corsPolicy": zod.string().nullish(),
+  "riskScore": zod.number(),
+  "riskLevel": zod.string(),
+  "modelsExposed": zod.array(zod.string()).nullish(),
+  "toolsExposed": zod.array(zod.string()).nullish(),
+  "ip": zod.string().nullish(),
+  "country": zod.string().nullish(),
+  "countryCode": zod.string().nullish(),
+  "city": zod.string().nullish(),
+  "org": zod.string().nullish(),
+  "discoveredAt": zod.string()
+})).optional()
+}))
+
+
+/**
+ * @summary List all discovered AI endpoints
+ */
+export const ListAiMapperResultsResponse = zod.object({
+  "results": zod.array(zod.object({
+  "id": zod.number(),
+  "scanId": zod.number(),
+  "tenantId": zod.number(),
+  "assetId": zod.number().nullish(),
+  "url": zod.string(),
+  "host": zod.string().nullish(),
+  "port": zod.number().nullish(),
+  "serviceType": zod.string(),
+  "framework": zod.string().nullish(),
+  "version": zod.string().nullish(),
+  "isAuthenticated": zod.boolean(),
+  "corsPolicy": zod.string().nullish(),
+  "riskScore": zod.number(),
+  "riskLevel": zod.string(),
+  "modelsExposed": zod.array(zod.string()).nullish(),
+  "toolsExposed": zod.array(zod.string()).nullish(),
+  "ip": zod.string().nullish(),
+  "country": zod.string().nullish(),
+  "countryCode": zod.string().nullish(),
+  "city": zod.string().nullish(),
+  "org": zod.string().nullish(),
+  "discoveredAt": zod.string()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "limit": zod.number()
+})
+
+
+/**
+ * @summary Get geo distribution for globe visualization
+ */
+export const GetAiMapperGlobeDataResponse = zod.object({
+  "points": zod.array(zod.object({
+  "country": zod.string(),
+  "countryCode": zod.string(),
+  "count": zod.number(),
+  "highRisk": zod.number(),
+  "services": zod.array(zod.string())
+})),
+  "totalEndpoints": zod.number()
+})
+
+
+/**
+ * @summary AI-powered attack surface analysis
+ */
+export const AnalyzeAiMapperSurfaceResponse = zod.object({
+  "analysis": zod.string(),
+  "suggestions": zod.array(zod.string()),
+  "riskLevel": zod.string(),
+  "model": zod.string()
+})
+
+
