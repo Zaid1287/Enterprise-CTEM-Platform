@@ -1069,6 +1069,21 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       completedAt: new Date(),
     }).where(eq(brandThreatScansTable.id, scanId));
 
+    // ── Scan completion notification (fires alert rules with triggerType "brand_threat") ──
+    const totalFindings = liveCount + phishingCount + dataLeakCount + (brandAbuseCount + adMonitoringCount);
+    void dispatchNotifications({
+      tenantId,
+      eventType: "brand_threat",
+      title: `Brand Threat Scan Complete: ${domain}`,
+      message: totalFindings > 0
+        ? `Scan for "${domain}" complete — ${liveCount} live lookalike${liveCount !== 1 ? "s" : ""}${phishingCount ? `, ${phishingCount} phishing URL${phishingCount !== 1 ? "s" : ""}` : ""}${dataLeakCount ? `, ${dataLeakCount} data leak${dataLeakCount !== 1 ? "s" : ""}` : ""}${brandAbuseCount + adMonitoringCount ? `, ${brandAbuseCount + adMonitoringCount} brand abuse instance${brandAbuseCount + adMonitoringCount !== 1 ? "s" : ""}` : ""} detected.`
+        : `Scan for "${domain}" complete — no active threats detected.`,
+      severity: phishingRisk as "critical" | "high" | "medium" | "low",
+      scanId,
+      domain,
+      findingsCount: totalFindings,
+    });
+
     logger.info(
       { scanId, domain, liveCount, registeredCount, phishingCount, dataLeakCount, brandAbuseCount, faviconFound: !!faviResult },
       "Advanced brand threat scan completed",

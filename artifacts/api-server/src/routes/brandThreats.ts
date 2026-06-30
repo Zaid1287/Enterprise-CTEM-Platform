@@ -134,6 +134,12 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
       }
     }
 
+    // Enforce: only verified assets may be scanned for brand threats
+    if (asset.verificationStatus !== "verified") {
+      res.status(422).json({ error: "Asset ownership must be verified before running a brand threat scan. Please verify the asset first." });
+      return;
+    }
+
     // Derive domain from asset value (strip protocol, www, path)
     domainSource = asset.value;
     scanTenantId = asset.tenantId;

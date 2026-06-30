@@ -9,7 +9,7 @@
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
 import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable } from "@workspace/db";
-import { and, eq, sql, lte, isNotNull, ne, desc } from "drizzle-orm";
+import { and, eq, sql, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
 import { pushSseEvent } from "../lib/sseManager";
@@ -162,6 +162,23 @@ async function dispatchDueAssets(): Promise<void> {
   for (const [tenantId, tenantAssets] of byTenant) {
     const assetIds = tenantAssets.map((a) => a.id);
 
+    // Duplicate-run guard: filter out any assets already covered by a running/pending scan
+    const activeScans = await db
+      .select({ assetIds: scansTable.assetIds })
+      .from(scansTable)
+      .where(and(
+        eq(scansTable.tenantId, tenantId),
+        inArray(scansTable.status, ["running", "pending"]),
+      ));
+    const busyAssetIds = new Set<number>(
+      activeScans.flatMap(s => Array.isArray(s.assetIds) ? (s.assetIds as number[]) : []),
+    );
+    const freeAssetIds = assetIds.filter(id => !busyAssetIds.has(id));
+    if (freeAssetIds.length === 0) {
+      logger.info({ tenantId }, "Beat: asset-frequency scan skipped — all due assets already have active scans");
+      continue;
+    }
+
     const [scan] = await db
       .insert(scansTable)
       .values({
@@ -169,17 +186,17 @@ async function dispatchDueAssets(): Promise<void> {
         name: `Scheduled Scan — ${new Date().toLocaleDateString()}`,
         type: "scheduled",
         status: "pending",
-        assetIds,
+        assetIds: freeAssetIds,
         startedAt: new Date(),
       })
       .returning();
 
     await db.insert(scanJobsTable).values(
-      assetIds.map((assetId) => ({ scanId: scan.id, assetId, status: "pending" })),
+      freeAssetIds.map((assetId) => ({ scanId: scan.id, assetId, status: "pending" })),
     );
 
-    await enqueueOrRun(scan.id, tenantId, assetIds);
-    logger.info({ tenantId, scanId: scan.id, count: assetIds.length }, "Beat: asset-frequency scan dispatched");
+    await enqueueOrRun(scan.id, tenantId, freeAssetIds);
+    logger.info({ tenantId, scanId: scan.id, count: freeAssetIds.length }, "Beat: asset-frequency scan dispatched");
   }
 }
 
@@ -218,6 +235,18 @@ async function dispatchDueSchedules(): Promise<void> {
       if (assetIds.length === 0) {
         logger.warn({ scheduleId: schedule.id }, "Beat: schedule skipped — no verified assets");
         continue;
+      }
+
+      // Duplicate-run guard: skip if the previous scan for this schedule is still running
+      if (schedule.lastScanId) {
+        const [lastScan] = await db
+          .select({ status: scansTable.status })
+          .from(scansTable)
+          .where(eq(scansTable.id, schedule.lastScanId));
+        if (lastScan?.status === "running" || lastScan?.status === "pending") {
+          logger.warn({ scheduleId: schedule.id, lastScanId: schedule.lastScanId }, "Beat: schedule skipped — previous scan still running");
+          continue;
+        }
       }
 
       const [scan] = await db
@@ -339,6 +368,25 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
       let prevScanSummary: Record<string, number> | null = null;
 
       if (existing) {
+        // Concurrency guard: skip if a scan for this domain is already in progress
+        if (existing.status === "running" || existing.status === "pending") {
+          const nextScanAt = computeWatchlistNextScanAt(
+            item.frequency ?? "none",
+            now,
+            item.scanTime,
+            item.dayOfWeek,
+            item.dayOfMonth,
+          );
+          await db.update(brandWatchlistItemsTable)
+            .set({ nextScanAt })
+            .where(eq(brandWatchlistItemsTable.id, item.id));
+          logger.warn(
+            { scanId: existing.id, domain, status: existing.status },
+            "Beat: watchlist brand scan already in progress — skipped, rescheduled",
+          );
+          continue;
+        }
+
         // Snapshot the current scan summary BEFORE deletion for delta computation
         prevScanSummary = {
           totalPermutations: existing.totalPermutations ?? 0,

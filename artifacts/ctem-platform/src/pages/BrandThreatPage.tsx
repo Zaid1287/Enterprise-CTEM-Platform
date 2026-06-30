@@ -10,7 +10,7 @@ import {
   CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap, Shield,
   TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
   BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link, CalendarClock,
-  RotateCw, Edit2, Check, X,
+  RotateCw, Edit2, Check, X, LockKeyhole,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -55,12 +55,18 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
     (a: any) => SCANNABLE_TYPES.includes(a.type) && a.value,
   );
 
+  // Verified = selectable; unverified = shown but disabled
+  const verifiedAssets   = eligibleAssets.filter((a: any) => a.verificationStatus === "verified");
+  const unverifiedAssets = eligibleAssets.filter((a: any) => a.verificationStatus !== "verified");
+
+  const allSorted = [...verifiedAssets, ...unverifiedAssets];
+
   const filtered = search.trim()
-    ? eligibleAssets.filter((a: any) =>
+    ? allSorted.filter((a: any) =>
         a.name?.toLowerCase().includes(search.toLowerCase()) ||
         a.value?.toLowerCase().includes(search.toLowerCase()),
       )
-    : eligibleAssets;
+    : allSorted;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -136,31 +142,45 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
               ) : (
                 filtered.map((asset: any) => {
                   const isSelected = selectedAsset?.id === asset.id;
+                  const isVerified = asset.verificationStatus === "verified";
                   const preview = normalizeDomainPreview(asset.value);
                   return (
                     <button
                       key={asset.id}
                       type="button"
-                      onClick={() => setSelectedAsset(isSelected ? null : asset)}
+                      disabled={!isVerified}
+                      onClick={() => isVerified ? setSelectedAsset(isSelected ? null : asset) : undefined}
+                      title={!isVerified ? "Verify asset ownership first to enable brand threat scanning" : undefined}
                       className={cn(
                         "w-full text-left px-3 py-2.5 rounded-xl border transition-all flex items-center gap-3",
-                        isSelected
-                          ? "border-primary/60 bg-primary/8 ring-1 ring-primary/30"
-                          : "border-border bg-background/50 hover:border-border/80 hover:bg-muted/30",
+                        !isVerified
+                          ? "opacity-45 cursor-not-allowed border-border/40 bg-background/30"
+                          : isSelected
+                            ? "border-primary/60 bg-primary/8 ring-1 ring-primary/30"
+                            : "border-border bg-background/50 hover:border-border/80 hover:bg-muted/30",
                       )}
                     >
                       <div className={cn(
                         "w-7 h-7 rounded-lg flex items-center justify-center shrink-0",
-                        isSelected ? "bg-primary/15" : "bg-muted/40",
+                        isSelected && isVerified ? "bg-primary/15" : "bg-muted/40",
                       )}>
-                        <Globe className={cn("w-3.5 h-3.5", isSelected ? "text-primary" : "text-muted-foreground")} />
+                        {isVerified
+                          ? <Globe className={cn("w-3.5 h-3.5", isSelected ? "text-primary" : "text-muted-foreground")} />
+                          : <LockKeyhole className="w-3.5 h-3.5 text-muted-foreground/60" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium truncate">{asset.name || preview}</span>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={cn("text-sm font-medium truncate", !isVerified && "text-muted-foreground")}>
+                            {asset.name || preview}
+                          </span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded border bg-muted/50 border-border text-muted-foreground shrink-0">
                             {TYPE_LABEL[asset.type] ?? asset.type}
                           </span>
+                          {!isVerified && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-yellow-500/10 border-yellow-500/25 text-yellow-500/80 shrink-0">
+                              Unverified
+                            </span>
+                          )}
                           {asset.tenantName && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded border bg-blue-500/10 border-blue-500/25 text-blue-400 shrink-0 hidden sm:inline">
                               {asset.tenantName}
@@ -169,7 +189,7 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
                         </div>
                         <p className="text-[11px] text-muted-foreground font-mono truncate mt-0.5">{preview}</p>
                       </div>
-                      {isSelected && (
+                      {isSelected && isVerified && (
                         <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
                           <Check className="w-2.5 h-2.5 text-primary-foreground" />
                         </div>
