@@ -224,17 +224,54 @@ setImmediate(async () => {
   }
 });
 
-// ── On startup: fail stale pending scans (> 30 min = server restarted mid-queue)
+// ── On startup: re-enqueue stale pending scans (> 10 min = server restarted mid-queue)
 setImmediate(async () => {
   try {
-    const cutoff = new Date(Date.now() - 30 * 60 * 1000);
-    const stuckPending = await db.select({ id: scansTable.id }).from(scansTable)
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000);
+    const stuckPending = await db.select({
+      id: scansTable.id,
+      tenantId: scansTable.tenantId,
+      assetIds: scansTable.assetIds,
+    }).from(scansTable)
       .where(and(eq(scansTable.status, "pending" as string), lt(scansTable.createdAt, cutoff)));
+
     if (stuckPending.length > 0) {
-      logger.warn({ count: stuckPending.length }, "Marking stale pending scans as failed — no worker picked them up after restart");
+      logger.warn({ count: stuckPending.length }, "Re-enqueueing stale pending scans after restart");
       for (const scan of stuckPending) {
-        await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
-          .where(eq(scansTable.id, scan.id));
+        try {
+          const assetIds: number[] = Array.isArray(scan.assetIds) ? (scan.assetIds as number[]) : [];
+          if (assetIds.length === 0) {
+            await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
+              .where(eq(scansTable.id, scan.id));
+            continue;
+          }
+
+          const allTools = await db.select().from(securityToolsTable)
+            .where(eq(securityToolsTable.tenantId, scan.tenantId));
+          const pipelineSteps = await db.select({ tool: securityToolsTable })
+            .from(toolPipelineStepsTable)
+            .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
+            .where(and(
+              eq(toolPipelineStepsTable.tenantId, scan.tenantId),
+              eq(toolPipelineStepsTable.isEnabled, true),
+            ))
+            .orderBy(toolPipelineStepsTable.stepOrder);
+          const enabledTools = pipelineSteps.map(p => p.tool);
+
+          const configs: AssetToolConfigItem[] = assetIds.map(assetId => ({ assetId, toolIds: [] }));
+
+          logger.info({ scanId: scan.id, assetCount: assetIds.length }, "Re-enqueueing stale pending scan");
+          enqueueAndRun({
+            scanId: scan.id,
+            tenantId: scan.tenantId,
+            userId: 0,
+            configs,
+            allTools,
+            enabledTools,
+          }).catch(err => logger.error({ err, scanId: scan.id }, "Failed to re-enqueue recovered scan"));
+        } catch (err) {
+          logger.error({ err, scanId: scan.id }, "Failed to recover individual stale pending scan");
+        }
       }
     }
   } catch (err) {
