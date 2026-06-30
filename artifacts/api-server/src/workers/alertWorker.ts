@@ -1,5 +1,5 @@
 import { Worker, type ConnectionOptions } from "bullmq";
-import { makeBullConnection } from "../lib/redis";
+import { makeBullConnection, getActiveRedisUrl } from "../lib/redis";
 import { logger } from "../lib/logger";
 import { dispatchNotifications } from "../lib/notifier";
 import type { NotificationEvent } from "../lib/notifier";
@@ -7,8 +7,8 @@ import type { NotificationEvent } from "../lib/notifier";
 let _worker: Worker<NotificationEvent> | null = null;
 
 export function startAlertWorker(): void {
-  if (!process.env.REDIS_URL) {
-    logger.info("Alert worker: no REDIS_URL, using inline dispatch");
+  if (!getActiveRedisUrl()) {
+    logger.info("Alert worker: no Redis URL, using inline dispatch");
     return;
   }
 
@@ -31,7 +31,7 @@ export function startAlertWorker(): void {
   _worker.on("failed", (job, err) => logger.error({ err, jobId: job?.id }, "Alert dispatch failed"));
   _worker.on("error", (err) => logger.error({ err }, "Alert worker error"));
 
-  logger.info("Alert worker started");
+  logger.info("Alert worker started (BullMQ)");
 }
 
 export async function stopAlertWorker(): Promise<void> {
@@ -39,4 +39,9 @@ export async function stopAlertWorker(): Promise<void> {
     await _worker.close();
     _worker = null;
   }
+}
+
+export async function restartAlertWorker(): Promise<void> {
+  await stopAlertWorker();
+  startAlertWorker();
 }

@@ -1,5 +1,5 @@
 import { Queue, type ConnectionOptions } from "bullmq";
-import { makeBullConnection } from "../lib/redis";
+import { makeBullConnection, getActiveRedisUrl } from "../lib/redis";
 import { logger } from "../lib/logger";
 
 export interface ScanJobData {
@@ -13,7 +13,7 @@ export interface ScanJobData {
 let _queue: Queue<ScanJobData> | null = null;
 
 export function getScanQueue(): Queue<ScanJobData> | null {
-  if (!process.env.REDIS_URL) return null;
+  if (!getActiveRedisUrl()) return null;
   if (_queue) return _queue;
 
   const conn = makeBullConnection();
@@ -34,7 +34,14 @@ export function getScanQueue(): Queue<ScanJobData> | null {
   return _queue;
 }
 
-export async function enqueueScan(data: ScanJobData, opts?: { delay?: number; repeat?: { pattern: string } }): Promise<string | null> {
+export async function resetScanQueue(): Promise<void> {
+  if (_queue) {
+    await _queue.close().catch(() => {});
+    _queue = null;
+  }
+}
+
+export async function enqueueScan(data: ScanJobData, opts?: { delay?: number }): Promise<string | null> {
   const q = getScanQueue();
   if (!q) return null;
   try {

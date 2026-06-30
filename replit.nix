@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.masscan
     pkgs.wapiti
     pkgs.wafw00f
     pkgs.dalfox

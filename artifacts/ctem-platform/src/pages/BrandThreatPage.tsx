@@ -335,15 +335,24 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
 
         {/* Running progress */}
         {isActive && (
-          <div className="mb-4 bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 flex items-center gap-2.5">
-            <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
-            <div>
-              <p className="text-xs font-medium text-blue-400">Full intelligence scan in progress</p>
-              <p className="text-[10px] text-muted-foreground">
-                {scan.totalPermutations > 0
-                  ? `${scan.totalPermutations} permutations · RDAP + GeoIP + VT + phishing feeds + HIBP…`
-                  : "Generating permutations + running intelligence engines…"}
-              </p>
+          <div className="mb-4 bg-blue-500/5 border border-blue-500/20 rounded-xl p-3">
+            <div className="flex items-center gap-2.5 mb-2">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-blue-400">Full intelligence scan in progress</p>
+                <p className="text-[10px] text-muted-foreground truncate">
+                  {scan.totalPermutations > 0
+                    ? `${scan.totalPermutations} permutations · RDAP + GeoIP + VT + phishing feeds + HIBP…`
+                    : "Generating permutations + running intelligence engines…"}
+                </p>
+              </div>
+              <span className="text-[11px] font-semibold text-blue-400 shrink-0">{scan.progress ?? 0}%</span>
+            </div>
+            <div className="w-full bg-blue-500/10 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-700 ease-in-out"
+                style={{ width: `${Math.max(3, scan.progress ?? 0)}%` }}
+              />
             </div>
           </div>
         )}

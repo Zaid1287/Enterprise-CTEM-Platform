@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db,
@@ -155,7 +155,7 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
   let scan: typeof brandThreatScansTable.$inferSelect;
 
   if (existing) {
-    await db.delete(brandThreatResultsTable).where(eq(brandThreatResultsTable.scanId, existing.id));
+    await db.update(brandThreatResultsTable).set({ archivedAt: new Date() }).where(eq(brandThreatResultsTable.scanId, existing.id));
     await db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, existing.id));
     await db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, existing.id));
     await db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, existing.id));
@@ -223,7 +223,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const [results, phishing, dataLeaks, brandAbuse, adMonitoring, metaAdsSetting] = await Promise.all([
     db.select().from(brandThreatResultsTable)
-      .where(eq(brandThreatResultsTable.scanId, id))
+      .where(and(eq(brandThreatResultsTable.scanId, id), isNull(brandThreatResultsTable.archivedAt)))
       .orderBy(desc(brandThreatResultsTable.riskScore)),
     db.select().from(phishingDetectionsTable)
       .where(eq(phishingDetectionsTable.scanId, id))
@@ -276,7 +276,7 @@ router.get("/brand-threats/:id/typosquatting", requireAuth, async (req: Authenti
   const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const results = await db.select().from(brandThreatResultsTable)
-    .where(eq(brandThreatResultsTable.scanId, id))
+    .where(and(eq(brandThreatResultsTable.scanId, id), isNull(brandThreatResultsTable.archivedAt)))
     .orderBy(desc(brandThreatResultsTable.riskScore));
   const registered = results.filter(r => r.registrationStatus === "registered" || r.registrationStatus === "active" || r.registrationStatus === "parked" || r.registrationStatus === "protected");
   const unregistered = results.filter(r => !r.registrationStatus || r.registrationStatus === "unresolved" || r.registrationStatus === "unregistered");

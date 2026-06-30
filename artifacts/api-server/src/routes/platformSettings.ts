@@ -2,6 +2,9 @@ import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db, platformSettingsTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
+import { reinitRedis, setRuntimeRedisUrl } from "../lib/redis";
+import { restartScanWorker } from "../workers/scanWorker";
+import { restartAlertWorker } from "../workers/alertWorker";
 
 const router = Router();
 router.use(denyExternalMembers);
@@ -15,6 +18,7 @@ interface PlatformKeyDef {
 }
 
 const PLATFORM_KEYS: PlatformKeyDef[] = [
+  { key: "redis_url",            label: "Redis URL",              description: "Redis connection URL (redis:// or rediss:// for TLS). Upstash: use rediss:// scheme. Enables BullMQ durable scan queuing, retry on failure, and crash recovery. Without Redis, scans run in-process and are lost on server restart.", category: "infrastructure" },
   { key: "resend_api_key",       label: "Resend API Key",        description: "Used for sending alert emails, invitations, and notifications via Resend.com",   category: "email" },
   { key: "slack_webhook_url",    label: "Slack Webhook URL",     description: "Incoming webhook URL for posting alerts to a Slack channel",                     category: "notifications" },
   { key: "discord_webhook_url",  label: "Discord Webhook URL",   description: "Discord webhook URL for posting alerts to a Discord server",                      category: "notifications" },
@@ -132,6 +136,23 @@ router.post("/platform/settings/test-key", requireAuth, async (req: Authenticate
       if (!r.ok) throw new Error(`NVD returned ${r.status}`);
       return "NVD API key valid — enhanced rate limit active";
     },
+    redis_url: async (val) => {
+      const { default: Redis } = await import("ioredis");
+      const isTls = val.startsWith("rediss://");
+      const client = new Redis(val, {
+        maxRetriesPerRequest: 1, enableReadyCheck: false, lazyConnect: true,
+        connectTimeout: 5000, ...(isTls ? { tls: {} } : {}),
+      });
+      try {
+        await client.connect();
+        await client.ping();
+        const info = await client.info("server").catch(() => "");
+        const version = info.match(/redis_version:([^\r\n]+)/)?.[1]?.trim() ?? "?";
+        return `Connected — Redis ${version}`;
+      } finally {
+        client.disconnect();
+      }
+    },
     censys_api_id: async (val, secret) => {
       const creds = Buffer.from(`${val}:${secret}`).toString("base64");
       const r = await fetch("https://search.censys.io/api/v1/account", { headers: { Authorization: `Basic ${creds}` } });
@@ -154,6 +175,35 @@ router.post("/platform/settings/test-key", requireAuth, async (req: Authenticate
   } catch (e: any) {
     res.json({ ok: false, message: e.message ?? "Test failed" });
   }
+});
+
+// ── POST /platform/workers/restart ── Apply new Redis URL and restart BullMQ workers
+router.post("/platform/workers/restart", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
+  try {
+    const [row] = await db.select({ value: platformSettingsTable.value })
+      .from(platformSettingsTable).where(eq(platformSettingsTable.key, "redis_url"));
+    const redisUrl = row?.value ?? process.env.REDIS_URL ?? "";
+    if (!redisUrl) {
+      res.status(400).json({ ok: false, message: "No Redis URL configured. Save a Redis URL first." });
+      return;
+    }
+    setRuntimeRedisUrl(redisUrl);
+    await reinitRedis(redisUrl);
+    await Promise.all([restartScanWorker(), restartAlertWorker()]);
+    res.json({ ok: true, message: "Workers restarted with new Redis URL" });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, message: err?.message ?? "Restart failed" });
+  }
+});
+
+// ── GET /platform/workers/status ── Worker / Redis status for super admin
+router.get("/platform/workers/status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
+  const { isRedisAvailable, getActiveRedisUrl } = await import("../lib/redis");
+  const redisConnected = isRedisAvailable();
+  const hasUrl = !!getActiveRedisUrl();
+  res.json({ redisConfigured: hasUrl, redisConnected, bullmqActive: redisConnected });
 });
 
 export async function getPlatformSetting(key: string): Promise<string | null> {

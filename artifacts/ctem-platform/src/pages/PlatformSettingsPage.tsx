@@ -32,6 +32,14 @@ const CATEGORY_META: Record<string, {
   description: string;
   docsUrl?: string;
 }> = {
+  infrastructure: {
+    label: "Infrastructure",
+    icon: Database,
+    color: "text-violet-400",
+    bg: "bg-violet-500/10",
+    border: "border-violet-500/20",
+    description: "Core infrastructure configuration — Redis URL for BullMQ durable scan queuing, crash recovery, and distributed worker support.",
+  },
   scanning: {
     label: "Scanning APIs",
     icon: Search,
@@ -113,7 +121,7 @@ const CATEGORY_META: Record<string, {
   },
 };
 
-const CATEGORY_ORDER = ["billing", "scanning", "intelligence", "osint", "brand_threat", "brand_intelligence", "email", "notifications", "general"];
+const CATEGORY_ORDER = ["infrastructure", "billing", "scanning", "intelligence", "osint", "brand_threat", "brand_intelligence", "email", "notifications", "general"];
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function PlatformSettingsPage() {
@@ -130,8 +138,9 @@ export default function PlatformSettingsPage() {
   const [saved, setSaved] = useState(false);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [restartingWorkers, setRestartingWorkers] = useState(false);
 
-  const TESTABLE_KEYS = new Set(["shodan_api_key", "virustotal_api_key", "nvd_api_key", "censys_api_id"]);
+  const TESTABLE_KEYS = new Set(["shodan_api_key", "virustotal_api_key", "nvd_api_key", "censys_api_id", "redis_url"]);
 
   const handleTestKey = async (key: string) => {
     setTestingKey(key);
@@ -172,6 +181,18 @@ export default function PlatformSettingsPage() {
       setShowKeys(prev => { const n = new Set(prev); n.add(key); return n; });
     } catch {
       toast({ title: "Could not reveal key", variant: "destructive" });
+    }
+  };
+
+  const handleRestartWorkers = async () => {
+    setRestartingWorkers(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; message: string }>(`${BASE}/api/platform/workers/restart`, { method: "POST" });
+      toast({ title: res.ok ? "Workers restarted" : "Restart failed", description: res.message, variant: res.ok ? "default" : "destructive" });
+    } catch (e: any) {
+      toast({ title: "Restart failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setRestartingWorkers(false);
     }
   };
 
@@ -479,6 +500,16 @@ export default function PlatformSettingsPage() {
                             {testResults[setting.key].ok ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
                             {testResults[setting.key].message}
                           </p>
+                        )}
+                        {setting.key === "redis_url" && setting.hasValue && !isEdited && (
+                          <button
+                            onClick={handleRestartWorkers}
+                            disabled={restartingWorkers}
+                            className="mt-1.5 flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 transition-colors px-2 py-1 rounded-md hover:bg-violet-500/10 border border-violet-500/20 disabled:opacity-50"
+                          >
+                            {restartingWorkers ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                            Apply Redis URL &amp; Restart Workers
+                          </button>
                         )}
                         {isComingSoon && (
                           <p className="text-[10px] text-violet-400/70 mt-1">

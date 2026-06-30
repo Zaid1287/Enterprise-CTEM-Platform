@@ -279,6 +279,11 @@ export default function ScansPage() {
                 <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", statusBadgeClass(scan.status))}>
                   {scan.status}
                 </span>
+                {scan.status === "pending" && (scan as any).queuePosition > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    #{(scan as any).queuePosition} in queue
+                  </span>
+                )}
                 {(scan.status === "pending" || scan.status === "running") && (
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleCancel(scan.id)}>
                     <X className="w-3 h-3 mr-1" /> Cancel

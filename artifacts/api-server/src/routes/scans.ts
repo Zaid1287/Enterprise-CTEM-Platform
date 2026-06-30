@@ -3,7 +3,7 @@ import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable, externalMemberAssetsTable } from "@workspace/db";
-import { enqueueAndRun, type AssetToolConfigItem } from "./pipelineScans";
+import { enqueueAndRun, queuePosition, type AssetToolConfigItem } from "./pipelineScans";
 import {
   CreateScanBody, GetScanParams, DeleteScanParams, CancelScanParams,
   ListScansQueryParams, ListScanJobsParams,
@@ -20,6 +20,7 @@ function toScanResponse(s: typeof scansTable.$inferSelect) {
     startedAt: s.startedAt?.toISOString() ?? null,
     completedAt: s.completedAt?.toISOString() ?? null,
     createdAt: s.createdAt.toISOString(),
+    queuePosition: s.status === "pending" ? queuePosition(s.id) : null,
   };
 }
 

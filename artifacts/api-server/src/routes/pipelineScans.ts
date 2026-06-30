@@ -3,7 +3,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, lt } from "drizzle-orm";
 import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
@@ -87,7 +87,7 @@ interface QueueEntry {
 const scanQueue: QueueEntry[] = [];
 let activeScans = 0;
 
-function queuePosition(scanId: number): number {
+export function queuePosition(scanId: number): number {
   const idx = scanQueue.findIndex(e => e.scanId === scanId);
   return idx === -1 ? 0 : idx + 1;
 }
@@ -112,6 +112,27 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
     drainQueue();
   }).then(async () => {
     try {
+      // ── Brand threat runs at scan start (decoupled — before pipeline starts) ─
+      setImmediate(async () => {
+        try {
+          const assetIds = entry.configs.map(c => c.assetId);
+          const domainAssets = await db.select({ value: assetsTable.value, type: assetsTable.type })
+            .from(assetsTable)
+            .where(inArray(assetsTable.id, assetIds));
+          const uniqueDomains = [...new Set(
+            domainAssets
+              .filter(a => a.type === "domain" || a.type === "subdomain")
+              .map(a => extractDomain(a.value))
+              .filter(d => d.length > 0 && !isIp(d) && isValidHostname(d)),
+          )];
+          for (const domain of uniqueDomains) {
+            await triggerBrandThreatScan(entry.tenantId, domain, entry.scanId);
+          }
+        } catch (err) {
+          logger.warn({ err, scanId: entry.scanId }, "Pre-pipeline brand threat trigger failed (non-fatal)");
+        }
+      });
+
       const { findingsCount } = await executePipeline(
         entry.tenantId, entry.scanId, entry.configs, entry.allTools, entry.enabledTools,
       );
@@ -135,26 +156,6 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
       finalizeScannedAssets(pipelineAssetIds).catch(err =>
         logger.warn({ err, scanId: entry.scanId }, "finalizeScannedAssets failed"),
       );
-
-      // ── Auto-trigger brand threat scan for every domain asset ───────────────
-      setImmediate(async () => {
-        try {
-          const assetIds = entry.configs.map(c => c.assetId);
-          const assetRows = await db.select({ value: assetsTable.value })
-            .from(assetsTable)
-            .where(inArray(assetsTable.id, assetIds));
-          const uniqueDomains = [...new Set(
-            assetRows
-              .map(a => extractDomain(a.value))
-              .filter(d => d.length > 0 && !isIp(d) && isValidHostname(d)),
-          )];
-          for (const domain of uniqueDomains) {
-            await triggerBrandThreatScan(entry.tenantId, domain, entry.scanId);
-          }
-        } catch (err) {
-          logger.error({ err, scanId: entry.scanId }, "Failed to auto-trigger brand threat scan");
-        }
-      });
 
       // ── Dispatch Slack / Discord / email notifications ────────────────────────
       setImmediate(async () => {
@@ -220,6 +221,24 @@ setImmediate(async () => {
     }
   } catch (err) {
     logger.error({ err }, "Failed to recover stuck scans on startup");
+  }
+});
+
+// ── On startup: fail stale pending scans (> 30 min = server restarted mid-queue)
+setImmediate(async () => {
+  try {
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+    const stuckPending = await db.select({ id: scansTable.id }).from(scansTable)
+      .where(and(eq(scansTable.status, "pending" as string), lt(scansTable.createdAt, cutoff)));
+    if (stuckPending.length > 0) {
+      logger.warn({ count: stuckPending.length }, "Marking stale pending scans as failed — no worker picked them up after restart");
+      for (const scan of stuckPending) {
+        await db.update(scansTable).set({ status: "failed", completedAt: new Date() })
+          .where(eq(scansTable.id, scan.id));
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to recover stale pending scans on startup");
   }
 });
 

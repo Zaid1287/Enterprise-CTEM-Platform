@@ -74,7 +74,7 @@ async function runWithRetry(
   maxAttempts = 3,
 ): Promise<void> {
   const { signAccessToken } = await import("../lib/auth");
-  const token = signAccessToken({ userId: 0, tenantId, role: "admin" });
+  const token = signAccessToken({ userId: 0, tenantId, role: "admin", email: "" });
   const origin = `http://127.0.0.1:${_port}`;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -154,8 +154,9 @@ async function dispatchDueAssets(): Promise<void> {
 
   const byTenant = new Map<number, typeof dueAssets>();
   for (const a of dueAssets) {
-    if (!byTenant.has(a.tenantId)) byTenant.set(a.tenantId, []);
-    byTenant.get(a.tenantId)!.push(a);
+    const tid = a.tenantId!;
+    if (!byTenant.has(tid)) byTenant.set(tid, []);
+    byTenant.get(tid)!.push(a);
   }
 
   for (const [tenantId, tenantAssets] of byTenant) {
@@ -350,7 +351,7 @@ async function dispatchDueWatchlistDomains(): Promise<void> {
 
         // Delete prior child rows so new scan results are clean
         await Promise.all([
-          db.delete(brandThreatResultsTable).where(eq(brandThreatResultsTable.scanId, existing.id)),
+          db.update(brandThreatResultsTable).set({ archivedAt: new Date() }).where(eq(brandThreatResultsTable.scanId, existing.id)),
           db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, existing.id)),
           db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, existing.id)),
           db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, existing.id)),

@@ -563,7 +563,7 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     }
 
     await db.update(brandThreatScansTable)
-      .set({ totalPermutations: permResults.length })
+      .set({ totalPermutations: permResults.length, progress: 20 })
       .where(eq(brandThreatScansTable.id, scanId));
 
     // Separate live (A-record) results for enrichment that needs IPs
@@ -580,6 +580,8 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       vtApiKey ? runVtEnrichment(liveResults, vtApiKey) : Promise.resolve(new Map()),
       runPhishingChecks(liveResults, gsbKey),
     ]);
+
+    await db.update(brandThreatScansTable).set({ progress: 40 }).where(eq(brandThreatScansTable.id, scanId));
 
     // ── Phase 3: Insert permutation results ──────────────────────────────────
     let liveCount = 0;
@@ -666,6 +668,8 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     }
     await flushBatch();
 
+    await db.update(brandThreatScansTable).set({ progress: 65 }).where(eq(brandThreatScansTable.id, scanId));
+
     // ── Phase 3b: Screenshots for high-risk domains (score ≥ 70) ─────────────
     try {
       const highRiskRows = await db
@@ -682,6 +686,8 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     } catch (err) {
       logger.warn({ err, scanId }, "Screenshot phase failed (non-fatal)");
     }
+
+    await db.update(brandThreatScansTable).set({ progress: 80 }).where(eq(brandThreatScansTable.id, scanId));
 
     // ── Phase 4 pre-fetch: abuse.ch feeds (URLhaus + ThreatFox) ──────────────
     // Query each live permutation domain — no API key required
@@ -1042,6 +1048,8 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       logger.info({ scanId, domain, adMonitoringCount }, "Meta Ads monitoring results inserted");
     }
 
+    await db.update(brandThreatScansTable).set({ progress: 95 }).where(eq(brandThreatScansTable.id, scanId));
+
     // ── Final update ─────────────────────────────────────────────────────────
     const phishingRisk =
       phishingCount > 5 || liveCount > 20 ? "critical" :
@@ -1050,6 +1058,7 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
 
     await db.update(brandThreatScansTable).set({
       status: "done",
+      progress: 100,
       liveCount,
       registeredCount,
       phishingRisk,

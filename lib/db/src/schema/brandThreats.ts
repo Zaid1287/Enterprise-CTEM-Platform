@@ -30,6 +30,7 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   phishingCount:     integer("phishing_count").notNull().default(0),
   brandAbuseCount:   integer("brand_abuse_count").notNull().default(0),
   darkWebCount:      integer("dark_web_count").notNull().default(0),
+  progress:          integer("progress").notNull().default(0),
 
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:       timestamp("completed_at", { withTimezone: true }),
@@ -66,6 +67,7 @@ export const brandThreatResultsTable = pgTable("brand_threat_results", {
   riskScore:       integer("risk_score").notNull().default(0),
   isSuspicious:    boolean("is_suspicious").notNull().default(false),
   screenshot:      text("screenshot"),
+  archivedAt:      timestamp("archived_at", { withTimezone: true }),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -1,15 +1,17 @@
 import { Worker, type ConnectionOptions } from "bullmq";
-import { makeBullConnection } from "../lib/redis";
+import { makeBullConnection, getActiveRedisUrl } from "../lib/redis";
 import { logger } from "../lib/logger";
 import type { ScanJobData } from "../queues/scanQueue";
-import { db, scansTable, scanJobsTable } from "@workspace/db";
+import { db, scansTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 let _worker: Worker<ScanJobData> | null = null;
+let _port = 0;
 
 export function startScanWorker(port: number): void {
-  if (!process.env.REDIS_URL) {
-    logger.info("Scan worker: no REDIS_URL, using inline execution");
+  _port = port;
+  if (!getActiveRedisUrl()) {
+    logger.info("Scan worker: no Redis URL, using inline execution");
     return;
   }
 
@@ -25,9 +27,9 @@ export function startScanWorker(port: number): void {
       await job.updateProgress(5);
 
       try {
-        const origin = `http://127.0.0.1:${port}`;
+        const origin = `http://127.0.0.1:${_port}`;
         const { signAccessToken } = await import("../lib/auth");
-        const token = signAccessToken({ userId: job.data.userId, tenantId, role: "admin" });
+        const token = signAccessToken({ userId: job.data.userId, tenantId, role: "admin", email: "" });
 
         await db.update(scansTable).set({ status: "running", startedAt: new Date() }).where(eq(scansTable.id, scanId));
         await job.updateProgress(10);
@@ -65,7 +67,7 @@ export function startScanWorker(port: number): void {
   _worker.on("failed", (job, err) => logger.error({ err, jobId: job?.id }, "Scan job failed"));
   _worker.on("error", (err) => logger.error({ err }, "Scan worker error"));
 
-  logger.info("Scan worker started");
+  logger.info("Scan worker started (BullMQ)");
 }
 
 export async function stopScanWorker(): Promise<void> {
@@ -73,4 +75,9 @@ export async function stopScanWorker(): Promise<void> {
     await _worker.close();
     _worker = null;
   }
+}
+
+export async function restartScanWorker(): Promise<void> {
+  await stopScanWorker();
+  startScanWorker(_port);
 }

@@ -1,17 +1,17 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
-import { getRedis } from "./lib/redis";
+import { getRedis, setRuntimeRedisUrl } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startBeatScheduler } from "./workers/beatScheduler";
+import { db, platformSettingsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
+  throw new Error("PORT environment variable is required but was not provided.");
 }
 
 const port = Number(rawPort);
@@ -20,7 +20,6 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// ── Initialize Stripe (non-blocking, errors logged but don't crash server) ────
 async function initStripe() {
   try {
     const { runMigrations } = await import("stripe-replit-sync");
@@ -50,6 +49,38 @@ async function initStripe() {
   }
 }
 
+/** Read Redis URL from platform_settings if not set in environment */
+async function loadRediUrlFromPlatformSettings(): Promise<void> {
+  if (process.env.REDIS_URL) {
+    logger.info("REDIS_URL already set via environment variable");
+    return;
+  }
+  try {
+    const [row] = await db.select({ value: platformSettingsTable.value })
+      .from(platformSettingsTable)
+      .where(eq(platformSettingsTable.key, "redis_url"));
+    if (row?.value) {
+      setRuntimeRedisUrl(row.value);
+      logger.info("Redis URL loaded from platform settings");
+    } else {
+      logger.info("No Redis URL found in platform settings — BullMQ workers disabled");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Could not read redis_url from platform settings (DB may not be ready yet)");
+  }
+}
+
+/** Init workers with current Redis URL. Call after loadRedisUrlFromPlatformSettings(). */
+export function startWorkersIfRedisAvailable(): void {
+  if (process.env.REDIS_URL) {
+    logger.info("Starting BullMQ workers");
+    startScanWorker(port);
+    startAlertWorker();
+  } else {
+    logger.info("No Redis URL — BullMQ workers disabled, using in-process fallback");
+  }
+}
+
 app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -60,17 +91,17 @@ app.listen(port, (err) => {
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
   initStripe().catch(e => logger.error({ err: e }, "Stripe init error"));
 
-  // ── Redis initialisation (warm up connection) ─────────────────────────────
-  getRedis();
+  // ── Load Redis URL from platform settings (if not in env), then start workers
+  loadRediUrlFromPlatformSettings()
+    .then(() => {
+      getRedis();
+      startWorkersIfRedisAvailable();
+    })
+    .catch(e => {
+      logger.error({ err: e }, "Redis init error");
+      getRedis();
+    });
 
-  if (process.env.REDIS_URL) {
-    logger.info("Redis URL detected — starting BullMQ workers");
-    startScanWorker(port);
-    startAlertWorker();
-  } else {
-    logger.info("No REDIS_URL — BullMQ workers disabled, using in-process fallback");
-  }
-
-  // Beat scheduler handles asset-frequency and schedule-based scans (BullMQ or inline with retry)
+  // Beat scheduler handles asset-frequency and schedule-based scans
   startBeatScheduler(port).catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
 });
