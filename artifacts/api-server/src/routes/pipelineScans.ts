@@ -213,16 +213,41 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
 }
 
 // ── On startup: recover any scans stuck as "running" from a previous crash ────
+// Only recover scans that started more than 30 min ago — a newly started scan
+// (< 30 min) is extremely unlikely to survive across a restart, but the threshold
+// provides a safety buffer for any edge case where a very recent scan record exists.
 setImmediate(async () => {
   try {
+    const runningCutoff = new Date(Date.now() - 30 * 60 * 1000);
     const stuckScans = await db.select().from(scansTable)
-      .where(eq(scansTable.status, "running" as string));
+      .where(and(
+        eq(scansTable.status, "running" as string),
+        lt(scansTable.startedAt, runningCutoff),
+      ));
     if (stuckScans.length > 0) {
-      logger.warn({ count: stuckScans.length }, "Recovering scans stuck in running state from crash");
+      logger.warn({ count: stuckScans.length }, "Recovering scans stuck in running state from server restart");
       for (const scan of stuckScans) {
         await db.update(scansTable)
           .set({ status: "failed", completedAt: new Date() })
           .where(eq(scansTable.id, scan.id));
+
+        // Dispatch a notification so the team is aware the scan did not finish
+        setImmediate(async () => {
+          try {
+            await dispatchMultiTenantNotifications([scan.tenantId], {
+              eventType: "scan_complete",
+              title: `Scan Failed — Server Restart`,
+              message: `Scan #${scan.id} ("${scan.name}") was interrupted by a server restart and has been marked as failed. Please re-run the scan if needed.`,
+              severity: "medium",
+              scanId: scan.id,
+              findingsCount: 0,
+              criticalCount: 0,
+              highCount: 0,
+            });
+          } catch (notifErr) {
+            logger.warn({ err: notifErr, scanId: scan.id }, "Failed to dispatch restart-recovery notification (non-fatal)");
+          }
+        });
       }
     }
   } catch (err) {
