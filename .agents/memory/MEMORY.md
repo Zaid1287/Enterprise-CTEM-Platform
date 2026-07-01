@@ -1,3 +1,4 @@
+- [AI Mapper pipeline integrations](ai-mapper-pipeline.md) — scan loop writes to assets, findings, alerts, riskScores, compliance; dedup via onConflictDoUpdate on (tenantId,ip,port); admin cross-tenant: empty conds array must use `conds.length ? and(...conds) : undefined` not `and(...conds)`.
 - [Orval mutation wrapper pattern](orval-mutation-wrapper.md) — Orval-generated mutations require `{ data: ... }` wrapper, never raw objects
 - [CTEM auth flow](ctem-auth-flow.md) — JWT tokens via sessionStorage + setAuthTokenGetter; logout mutation takes void params
 - [Express route ordering](express-route-ordering.md) — static sub-paths (e.g. /scans/pipeline-run) must be registered BEFORE param routes (/scans/:scanId) to avoid shadowing.

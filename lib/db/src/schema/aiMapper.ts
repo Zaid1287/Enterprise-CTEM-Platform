@@ -1,6 +1,7 @@
-import { pgTable, serial, integer, text, boolean, jsonb, real, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, boolean, jsonb, real, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { tenantsTable } from "./tenants";
 import { usersTable } from "./users";
+import { assetsTable } from "./assets";
 
 export const aiMapperModuleAssignmentsTable = pgTable("ai_mapper_module_assignments", {
   tenantId:  integer("tenant_id").primaryKey().references(() => tenantsTable.id, { onDelete: "cascade" }),
@@ -33,6 +34,7 @@ export const aiMapperEndpointsTable = pgTable("ai_mapper_endpoints", {
   id:                  serial("id").primaryKey(),
   tenantId:            integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
   scanId:              integer("scan_id").references(() => aiMapperScansTable.id, { onDelete: "set null" }),
+  assetId:             integer("asset_id").references(() => assetsTable.id, { onDelete: "set null" }),
   ip:                  text("ip").notNull(),
   port:                integer("port").notNull(),
   hostname:            text("hostname"),
@@ -49,6 +51,9 @@ export const aiMapperEndpointsTable = pgTable("ai_mapper_endpoints", {
   corsPolicy:          text("cors_policy"),
   hasTls:              boolean("has_tls").notNull().default(false),
   signupEnabled:       boolean("signup_enabled").notNull().default(false),
+  certExpiry:          timestamp("cert_expiry",  { withTimezone: true }),
+  certIssuer:          text("cert_issuer"),
+  certSans:            text("cert_sans").array(),
   country:             text("country"),
   org:                 text("org"),
   city:                text("city"),
@@ -85,8 +90,27 @@ export const aiMapperBomItemsTable = pgTable("ai_mapper_bom_items", {
   lastSeenAt:       timestamp("last_seen_at",  { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const aiMapperScanSchedulesTable = pgTable("ai_mapper_scan_schedules", {
+  id:           serial("id").primaryKey(),
+  tenantId:     integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  name:         text("name").notNull().default("Scheduled AI Scan"),
+  frequency:    text("frequency").notNull().default("weekly"),
+  runTime:      text("run_time").notNull().default("02:00"),
+  dayOfWeek:    integer("day_of_week"),
+  dayOfMonth:   integer("day_of_month"),
+  queryPresets: jsonb("query_presets").notNull().default([]),
+  cidrScope:    text("cidr_scope"),
+  isActive:     boolean("is_active").notNull().default(true),
+  nextRunAt:    timestamp("next_run_at",  { withTimezone: true }),
+  lastRunAt:    timestamp("last_run_at",  { withTimezone: true }),
+  lastScanId:   integer("last_scan_id").references(() => aiMapperScansTable.id, { onDelete: "set null" }),
+  createdBy:    integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt:    timestamp("created_at",  { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type AiMapperModuleAssignment = typeof aiMapperModuleAssignmentsTable.$inferSelect;
 export type AiMapperScan             = typeof aiMapperScansTable.$inferSelect;
 export type AiMapperEndpoint         = typeof aiMapperEndpointsTable.$inferSelect;
 export type AiMapperAttackRun        = typeof aiMapperAttackRunsTable.$inferSelect;
 export type AiMapperBomItem          = typeof aiMapperBomItemsTable.$inferSelect;
+export type AiMapperScanSchedule     = typeof aiMapperScanSchedulesTable.$inferSelect;

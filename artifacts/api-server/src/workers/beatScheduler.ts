@@ -8,7 +8,7 @@
  */
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
-import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable } from "@workspace/db";
+import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable, aiMapperScanSchedulesTable, aiMapperScansTable } from "@workspace/db";
 import { and, eq, sql, lt, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
@@ -883,6 +883,38 @@ async function recoverStalePendingScans(): Promise<void> {
   }
 }
 
+async function dispatchDueAiMapperSchedules(): Promise<void> {
+  const now = new Date();
+  const due = await db.select().from(aiMapperScanSchedulesTable).where(
+    and(eq(aiMapperScanSchedulesTable.isActive, true), lte(aiMapperScanSchedulesTable.nextRunAt, now))
+  );
+  for (const sched of due) {
+    try {
+      const [{ c }] = await db.select({ c: sql<number>`count(*)` }).from(aiMapperScansTable).where(
+        and(eq(aiMapperScansTable.tenantId, sched.tenantId), eq(aiMapperScansTable.status, "running"))
+      );
+      if (Number(c) >= 3) continue;
+      const [newScan] = await db.insert(aiMapperScansTable).values({
+        tenantId: sched.tenantId,
+        status: "pending",
+        queryPresets: sched.queryPresets as any,
+        cidrScope: sched.cidrScope as any,
+        triggeredBy: `schedule:${sched.id}`,
+      } as any).returning();
+      const nextRunAt = computeNextRunAt(sched.frequency, sched.runTime, sched.dayOfWeek, sched.dayOfMonth);
+      await db.update(aiMapperScanSchedulesTable).set({ lastRunAt: now, nextRunAt }).where(eq(aiMapperScanSchedulesTable.id, sched.id));
+      logger.info({ scheduleId: sched.id, tenantId: sched.tenantId, scanId: newScan.id }, "Beat: AI Mapper schedule triggered scan");
+      // Trigger via internal API so the full scan pipeline runs
+      fetch(`http://localhost:${_port}/api/ai-mapper/scans/${newScan.id}/run-internal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-beat": "1" },
+      }).catch(() => {});
+    } catch (err) {
+      logger.error({ err, scheduleId: sched.id }, "Beat: AI Mapper schedule dispatch failed");
+    }
+  }
+}
+
 export async function startBeatScheduler(port = 8080): Promise<void> {
   _port = port;
   logger.info(
@@ -894,9 +926,13 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
   // Run once after a 15-second grace period so the DB is ready
   setTimeout(() => recoverStalePendingScans().catch(() => {}), 15_000);
 
-  setTimeout(async () => {
+  const beatPoll = async () => {
     await dispatchDueScans();
-    _intervalHandle = setInterval(dispatchDueScans, 60 * 1_000);
+    await dispatchDueAiMapperSchedules().catch(err => logger.error({ err }, "Beat: AI Mapper schedule dispatch failed (non-fatal)"));
+  };
+  setTimeout(async () => {
+    await beatPoll();
+    _intervalHandle = setInterval(beatPoll, 60 * 1_000);
     logger.info("Beat scheduler polling started (60 s interval)");
   }, 30_000);
 }

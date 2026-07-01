@@ -79,7 +79,8 @@ function AiMapperGlobe({ points }: { points: GlobePoint[] }) {
 
 export default function AiMapperPage() {
   const [, navigate] = useLocation();
-  const { aiMapperEnabled } = useAuth();
+  const { aiMapperEnabled, role } = useAuth();
+  const isAdmin = role === "admin" || role === "super_admin";
 
   const { data: stats } = useQuery<Stats>({
     queryKey: ["ai-mapper-stats"],
@@ -96,31 +97,48 @@ export default function AiMapperPage() {
   });
 
   const STAT_CARDS = [
-    { label: "Total Endpoints",  value: stats?.total       ?? 0, icon: Server,        color: "text-blue-400" },
-    { label: "Critical",         value: stats?.critical     ?? 0, icon: AlertTriangle, color: "text-red-400" },
-    { label: "High Risk",        value: stats?.high         ?? 0, icon: ShieldOff,     color: "text-orange-400" },
-    { label: "No Auth",          value: stats?.noAuth       ?? 0, icon: ShieldOff,     color: "text-yellow-400" },
-    { label: "Active Scans",     value: stats?.activeScans  ?? 0, icon: Activity,      color: "text-green-400" },
+    { label: "Total Endpoints",    value: stats?.total           ?? 0, icon: Server,        color: "text-blue-400" },
+    { label: "Critical",           value: stats?.critical         ?? 0, icon: AlertTriangle, color: "text-red-400" },
+    { label: "High Risk",          value: stats?.high             ?? 0, icon: ShieldOff,     color: "text-orange-400" },
+    { label: "No Auth",            value: stats?.noAuth           ?? 0, icon: ShieldOff,     color: "text-yellow-400" },
+    { label: "Prompt Leaks",       value: (stats as any)?.systemPromptLeaks ?? 0, icon: AlertTriangle, color: "text-purple-400" },
+    { label: "Active Scans",       value: stats?.activeScans      ?? 0, icon: Activity,      color: "text-green-400" },
   ];
 
   return (
     <div className="flex flex-col h-[calc(100vh-56px)] p-6 gap-5 w-full">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">AI Mapper — Overview</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold">AI Mapper — Overview</h1>
+            {isAdmin && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                All Tenants
+              </span>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">Exposed AI infrastructure discovered across the internet</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate("/ai-mapper/endpoints")}>
+          <Button variant="outline" size="sm" onClick={() => navigate("/ai-mapper/scan-schedules")}>
+            <Activity className="w-4 h-4 mr-2" /> Schedules
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => window.open("/api/ai-mapper/reports/csv", "_blank")}>
+            Export CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => window.open("/api/ai-mapper/reports/pdf", "_blank")}>
+            Export PDF
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate("/ai-mapper/endpoints")}>
             <Server className="w-4 h-4 mr-2" /> Endpoints
           </Button>
-          <Button onClick={() => navigate("/ai-mapper/scans")}>
+          <Button size="sm" onClick={() => navigate("/ai-mapper/scans")}>
             <Scan className="w-4 h-4 mr-2" /> Run Scan
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-6 gap-3">
         {STAT_CARDS.map(s => (
           <Card key={s.label}>
             <CardContent className="py-4 px-4">
