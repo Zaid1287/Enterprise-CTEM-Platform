@@ -4,12 +4,14 @@ import {
   Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp, ChevronRight,
   UserCheck, X, Globe, Shield, Cpu, Network, Code2, Cloud, Smartphone,
   Lock, Trash2, Loader2, Pencil, MoreHorizontal, ArrowRightLeft,
-  ShieldCheck, PlayCircle,
+  ShieldCheck, ShieldOff, PlayCircle,
   Search, CheckSquare, Square, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -282,6 +284,10 @@ export default function TenantsPage() {
 
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<TenantRow | null>(null);
+
+  // AI Mapper toggle popover
+  const [aiPopoverTenantId, setAiPopoverTenantId] = useState<number | null>(null);
+  const [aiPendingEnabled, setAiPendingEnabled]   = useState(false);
 
   // AM assignment dialog
   const [assignTarget, setAssignTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
@@ -599,18 +605,57 @@ export default function TenantsPage() {
                     </td>
                     {user?.role === "super_admin" && (
                       <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={() => toggleAiMapperMutation.mutate({ tenantId: t.id, isEnabled: !(aiMapperStatusMap[t.id] ?? false) })}
-                          disabled={toggleAiMapperMutation.isPending}
-                          className={cn(
-                            "text-xs px-2 py-0.5 rounded-full font-medium border transition-colors cursor-pointer",
-                            aiMapperStatusMap[t.id]
-                              ? "bg-violet-500/10 text-violet-400 border-violet-500/25 hover:bg-violet-500/20"
-                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
-                          )}
+                        <Popover
+                          open={aiPopoverTenantId === t.id}
+                          onOpenChange={open => {
+                            if (open) {
+                              setAiPopoverTenantId(t.id);
+                              setAiPendingEnabled(aiMapperStatusMap[t.id] ?? false);
+                            } else {
+                              setAiPopoverTenantId(null);
+                            }
+                          }}
                         >
-                          {aiMapperStatusMap[t.id] ? "Enabled" : "Disabled"}
-                        </button>
+                          <PopoverTrigger asChild>
+                            <button className={cn(
+                              "text-xs px-2 py-0.5 rounded-full font-medium border transition-colors cursor-pointer inline-flex items-center gap-1",
+                              aiMapperStatusMap[t.id]
+                                ? "bg-violet-500/10 text-violet-400 border-violet-500/25 hover:bg-violet-500/20"
+                                : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                            )}>
+                              {aiMapperStatusMap[t.id]
+                                ? <><ShieldCheck className="w-3 h-3" />Enabled</>
+                                : <><ShieldOff className="w-3 h-3" />Disabled</>}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-56 p-3 space-y-3" align="start">
+                            <p className="text-sm font-medium">{t.name}</p>
+                            <div className="flex items-center justify-between">
+                              <Label className="text-sm">AI Mapper</Label>
+                              <Switch
+                                checked={aiPendingEnabled}
+                                onCheckedChange={setAiPendingEnabled}
+                              />
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {aiPendingEnabled ? "Module will be enabled for this tenant." : "Module will be disabled for this tenant."}
+                            </p>
+                            <Button
+                              size="sm"
+                              className="w-full"
+                              disabled={toggleAiMapperMutation.isPending || aiPendingEnabled === (aiMapperStatusMap[t.id] ?? false)}
+                              onClick={() => {
+                                toggleAiMapperMutation.mutate({ tenantId: t.id, isEnabled: aiPendingEnabled });
+                                setAiPopoverTenantId(null);
+                              }}
+                            >
+                              {toggleAiMapperMutation.isPending
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                                : null}
+                              Save
+                            </Button>
+                          </PopoverContent>
+                        </Popover>
                       </td>
                     )}
                     <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>

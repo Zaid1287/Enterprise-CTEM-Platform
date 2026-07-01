@@ -20,10 +20,10 @@ const RISK_BADGE: Record<string, string> = {
 };
 
 const PHASES = [
-  { label: "Passive Discovery",    band: [0,  24]  },
-  { label: "Port Scanning",        band: [25, 49]  },
-  { label: "Tech Detection",       band: [50, 74]  },
-  { label: "Vulnerability Assessment", band: [75, 99] },
+  { label: "Passive Discovery",        band: [0,  20] },
+  { label: "Port & HTTP Probing",      band: [20, 40] },
+  { label: "Tech & Screenshot",        band: [40, 70] },
+  { label: "Vulnerability Assessment", band: [70, 100] },
 ] as const;
 
 function PhaseTimeline({ progress }: { progress: number }) {

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
+import { getToken } from "@/lib/auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +19,48 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
+
+function ScanLiveUpdater({ scanId }: { scanId: number }) {
+  const qc = useQueryClient();
+  const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    const token = getToken();
+    const wsUrl = `/api/ai-mapper/scans/${scanId}/ws?token=${encodeURIComponent(token ?? "")}`.replace(/^http/, "ws");
+    let cancelled = false;
+    let ws: WebSocket;
+
+    try {
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg?.scanId === scanId) {
+            qc.setQueryData<AiMapperScan[]>(["ai-mapper-scans"], (prev) =>
+              prev ? prev.map(s => s.id === scanId ? { ...s, ...msg } : s) : prev
+            );
+          }
+          if (msg?.status === "completed" || msg?.status === "failed") {
+            qc.invalidateQueries({ queryKey: ["ai-mapper-scans"] });
+          }
+        } catch { /* ignore */ }
+      };
+
+      ws.onerror = () => { if (!cancelled) ws.close(); };
+      ws.onclose = () => { wsRef.current = null; };
+    } catch { /* fall through to polling */ }
+
+    return () => {
+      cancelled = true;
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [scanId, qc]);
+
+  return null;
+}
 
 const STATUS_COLOR: Record<string, string> = {
   pending:   "bg-slate-500",
@@ -66,7 +109,7 @@ export default function AiMapperScansPage() {
     queryFn: () => apiFetch("/api/ai-mapper/scans"),
     refetchInterval: (query) => {
       const d = query.state.data as AiMapperScan[] | undefined;
-      if (!d || d.some(s => s.status === "running" || s.status === "pending")) return 5000;
+      if (!d || d.some(s => s.status === "running" || s.status === "pending")) return 3000;
       return false;
     },
   });
@@ -190,6 +233,9 @@ export default function AiMapperScansPage() {
         </Card>
       ) : (
         <div className="space-y-3">
+          {scans.filter(s => s.status === "running").map(s => (
+            <ScanLiveUpdater key={s.id} scanId={s.id} />
+          ))}
           {scans.map(scan => {
             const Icon = STATUS_ICON[scan.status] ?? Clock;
             const isRunning = scan.status === "running" || scan.status === "pending";

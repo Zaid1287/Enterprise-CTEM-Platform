@@ -141,19 +141,15 @@ export function Sidebar() {
     },
   ] : [];
 
-  const isAdminOrSA = role === "admin" || role === "super_admin";
   const isAM = role === "account_manager";
 
-  const aiMapperItems: NavItem[] = [
-    ...(isAdminOrSA ? [{ label: "Admin Panel",  href: "/ai-mapper/admin",   icon: Globe2       }] : []),
-    ...(isAM        ? [{ label: "My Clients",   href: "/ai-mapper/clients", icon: Users        }] : []),
-    ...(aiMapperEnabled ? [
-      { label: "Overview",   href: "/ai-mapper",            icon: Globe2       },
-      { label: "Endpoints",  href: "/ai-mapper/endpoints",  icon: Crosshair    },
-      { label: "Scans",      href: "/ai-mapper/scans",      icon: Radar        },
-      { label: "AI BOM",     href: "/ai-mapper/bom",        icon: ClipboardList },
-    ] : []),
-  ];
+  const aiMapperItems: NavItem[] = aiMapperEnabled ? [
+    { label: "Overview",   href: "/ai-mapper",            icon: Globe2       },
+    { label: "Endpoints",  href: "/ai-mapper/endpoints",  icon: Crosshair    },
+    { label: "Scans",      href: "/ai-mapper/scans",      icon: Radar        },
+    { label: "AI BOM",     href: "/ai-mapper/bom",        icon: ClipboardList },
+    ...(isAM ? [{ label: "My Clients", href: "/ai-mapper/clients", icon: Users }] : []),
+  ] : [];
 
   const aiMapperGroup: NavGroup | null = aiMapperItems.length > 0
     ? { title: "AI Mapper", items: aiMapperItems }

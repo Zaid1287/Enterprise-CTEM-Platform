@@ -2,7 +2,7 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch } from "@/lib/apiFetch";
-import { useAiMapperWs } from "@/hooks/useAiMapperWs";
+import { useAiMapperStream } from "@/hooks/useAiMapperStream";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,7 +81,7 @@ export default function AiMapperEndpointDetailPage() {
   });
 
   const attackIsRunning = attackRun?.status === "running";
-  useAiMapperWs({
+  useAiMapperStream({
     url: attackRunId != null && attackIsRunning ? `/api/ai-mapper/attacks/${attackRunId}/ws` : null,
     enabled: attackRunId != null && attackIsRunning,
     onMessage: (msg: any) => {

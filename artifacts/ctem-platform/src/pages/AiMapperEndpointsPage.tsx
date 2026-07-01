@@ -54,7 +54,7 @@ function SortTh({ label, col, cur, dir, onClick }: { label: string; col: SortCol
   );
 }
 
-function exportCsv(endpoints: AiEndpoint[]) {
+function buildCsvBlob(endpoints: AiEndpoint[]): Blob {
   const header = ["IP", "Port", "Hostname", "Protocol", "Framework", "Auth", "Risk Score", "Risk Level", "Country", "Org", "TLS", "Prompt Leaked", "First Seen"];
   const rows = endpoints.map(ep => [
     ep.ip, ep.port, ep.hostname ?? "", ep.protocol, ep.framework ?? "",
@@ -64,15 +64,20 @@ function exportCsv(endpoints: AiEndpoint[]) {
     ep.firstSeenAt ? new Date(ep.firstSeenAt).toLocaleDateString() : "",
   ]);
   const csv = [header, ...rows].map(r => r.map(c => `"${c}"`).join(",")).join("\n");
+  return new Blob([csv], { type: "text/csv" });
+}
+
+function triggerDownload(blob: Blob, filename: string) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = "ai-endpoints.csv";
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
   a.click();
 }
 
 export default function AiMapperEndpointsPage() {
   const [, navigate] = useLocation();
   const rawSearch = useSearch();
+  const [exporting, setExporting] = useState(false);
 
   function getParam(key: string, fallback: string) {
     const p = new URLSearchParams(rawSearch);
@@ -118,6 +123,30 @@ export default function AiMapperEndpointsPage() {
     else { setSort(col); setOrder("desc"); setPage(1); }
   }
 
+  const handleExportAll = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const PAGE_SIZE = 500;
+      let fetched = 0;
+      let all: AiEndpoint[] = [];
+      do {
+        const pageNum = Math.floor(fetched / PAGE_SIZE) + 1;
+        const resp: { data: AiEndpoint[]; total: number } = await apiFetch(
+          `/api/ai-mapper/endpoints?q=${encodeURIComponent(debouncedQ)}&sort=${sort}&order=${order}&page=${pageNum}&limit=${PAGE_SIZE}`
+        );
+        all = all.concat(resp.data ?? []);
+        fetched = all.length;
+        if (fetched >= resp.total) break;
+      } while (fetched < 10000);
+      triggerDownload(buildCsvBlob(all), `ai-endpoints-${new Date().toISOString().slice(0, 10)}.csv`);
+    } catch {
+      /* silently skip */
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, debouncedQ, sort, order]);
+
   return (
     <div className="p-6 space-y-5 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-4">
@@ -125,9 +154,11 @@ export default function AiMapperEndpointsPage() {
           <h1 className="text-2xl font-bold">AI Endpoints</h1>
           <p className="text-sm text-muted-foreground">{total.toLocaleString()} exposed AI endpoints discovered</p>
         </div>
-        {endpoints.length > 0 && (
-          <Button variant="outline" size="sm" onClick={() => exportCsv(endpoints)}>
-            <Download className="w-4 h-4 mr-2" /> Export CSV
+        {total > 0 && (
+          <Button variant="outline" size="sm" onClick={handleExportAll} disabled={exporting}>
+            {exporting
+              ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Exporting…</>
+              : <><Download className="w-4 h-4 mr-2" /> Export All ({total.toLocaleString()})</>}
           </Button>
         )}
       </div>
