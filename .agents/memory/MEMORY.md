@@ -1,4 +1,6 @@
 - [AI Mapper pipeline integrations](ai-mapper-pipeline.md) — scan loop writes to assets, findings, alerts, riskScores, compliance; dedup via onConflictDoUpdate on (tenantId,ip,port); admin cross-tenant: empty conds array must use `conds.length ? and(...conds) : undefined` not `and(...conds)`.
+- [Drizzle inArray vs raw ANY SQL](drizzle-inarray.md) — Never use raw sql`id = ANY(${JSON.stringify(arr)}::int[])`: JSON uses "[1]" but PG needs "{1}". Always use Drizzle's inArray(col, arr) for IN/ANY queries.
+- [AI Mapper scheme order for hasTls](ai-mapper-hasTls.md) — Live-host probe loop must try ["https","http"] (HTTPS first) so hasTls is true whenever TLS is available; HTTP-first breaks because the loop stops on first success.
 - [Orval mutation wrapper pattern](orval-mutation-wrapper.md) — Orval-generated mutations require `{ data: ... }` wrapper, never raw objects
 - [CTEM auth flow](ctem-auth-flow.md) — JWT tokens via sessionStorage + setAuthTokenGetter; logout mutation takes void params
 - [Express route ordering](express-route-ordering.md) — static sub-paths (e.g. /scans/pipeline-run) must be registered BEFORE param routes (/scans/:scanId) to avoid shadowing.
