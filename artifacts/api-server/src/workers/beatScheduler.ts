@@ -934,7 +934,7 @@ async function dispatchDueAiMapperSchedules(): Promise<void> {
         triggeredBy: `schedule:${sched.id}`,
       } as any).returning();
       const nextRunAt = computeNextRunAt(sched.frequency, sched.runTime, sched.dayOfWeek, sched.dayOfMonth);
-      await db.update(aiMapperScanSchedulesTable).set({ lastRunAt: now, nextRunAt }).where(eq(aiMapperScanSchedulesTable.id, sched.id));
+      await db.update(aiMapperScanSchedulesTable).set({ lastRunAt: now, nextRunAt, lastScanId: newScan.id } as any).where(eq(aiMapperScanSchedulesTable.id, sched.id));
       logger.info({ scheduleId: sched.id, tenantId: sched.tenantId, scanId: newScan.id }, "Beat: AI Mapper schedule triggered scan");
       // Trigger via internal API so the full scan pipeline runs
       fetch(`http://localhost:${_port}/api/ai-mapper/scans/${newScan.id}/run-internal`, {

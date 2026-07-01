@@ -89,11 +89,18 @@ async function downloadReport(format: "csv" | "pdf", toast: ReturnType<typeof us
       toast({ title: `Export failed (${res.status})`, description: "Could not generate report. Check your permissions.", variant: "destructive" });
       return;
     }
+    const contentType = res.headers.get("content-type") ?? "";
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ai-mapper-report-${new Date().toISOString().slice(0, 10)}.${format}`;
+    const isPdfFallback = format === "pdf" && !contentType.includes("application/pdf");
+    if (isPdfFallback) {
+      toast({ title: "PDF unavailable", description: "Chrome/Puppeteer not available on this server — downloading as HTML report instead.", variant: "destructive" });
+      a.download = `ai-mapper-report-${new Date().toISOString().slice(0, 10)}.html`;
+    } else {
+      a.download = `ai-mapper-report-${new Date().toISOString().slice(0, 10)}.${format}`;
+    }
     a.click();
     URL.revokeObjectURL(url);
   } catch {

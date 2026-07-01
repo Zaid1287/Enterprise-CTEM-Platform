@@ -22,6 +22,7 @@ import {
   complianceFrameworksTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, gte, lt, ilike, or, sql, isNotNull, lte, inArray } from "drizzle-orm";
+import { fetchEpssScores, fetchKevSet } from "../lib/epssKev";
 import { resolve4 } from "dns/promises";
 import { requireAuth, verifyToken, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
@@ -326,6 +327,22 @@ router.get("/ai-mapper/reports/pdf", requireAuth, requireAiMapper, async (req: A
 });
 
 // ── Attacks ───────────────────────────────────────────────────────────────────
+
+router.get("/ai-mapper/endpoints/:id/attacks", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const endpointId = Number(req.params.id);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const [ep] = await db.select({ id: aiMapperEndpointsTable.id })
+    .from(aiMapperEndpointsTable)
+    .where(and(eq(aiMapperEndpointsTable.id, endpointId), eq(aiMapperEndpointsTable.tenantId, tenantId)));
+  if (!ep) { res.status(404).json({ error: "Endpoint not found" }); return; }
+  const runs = await db.select()
+    .from(aiMapperAttackRunsTable)
+    .where(and(eq(aiMapperAttackRunsTable.endpointId, endpointId), eq(aiMapperAttackRunsTable.tenantId, tenantId)))
+    .orderBy(desc(aiMapperAttackRunsTable.startedAt))
+    .limit(limit);
+  res.json({ data: runs, total: runs.length });
+});
 
 router.post("/ai-mapper/endpoints/:id/attack", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
@@ -750,6 +767,35 @@ async function runAiMapperScan(scanId: number, tenantId: number) {
         progress: Math.min(95, 70 + Math.floor(((batchStart + batch.length) / Math.max(live.length, 1)) * 25)),
         scannedHosts: count, endpointCount: count,
       });
+    }
+
+    // ── EPSS + KEV enrichment for AI Mapper findings ──────────────────────────
+    try {
+      const cveFindings = await db
+        .select({ id: findingsTable.id, cveId: findingsTable.cveId })
+        .from(findingsTable)
+        .where(and(
+          eq(findingsTable.tenantId, tenantId),
+          eq((findingsTable as any).scanId, scanId),
+          isNotNull(findingsTable.cveId),
+        ));
+      if (cveFindings.length > 0) {
+        const cveIds = cveFindings.map(f => f.cveId as string);
+        const [epssMap, kevSet] = await Promise.all([fetchEpssScores(cveIds), fetchKevSet()]);
+        for (const f of cveFindings) {
+          const key = (f.cveId ?? "").toUpperCase();
+          const epssEntry = epssMap.get(key);
+          const isKev = kevSet.has(key);
+          if (epssEntry !== undefined || isKev) {
+            await db.update(findingsTable)
+              .set({ epss: epssEntry?.epss ?? null, isKev } as any)
+              .where(eq(findingsTable.id, f.id));
+          }
+        }
+        logger.info({ scanId, enriched: cveFindings.length }, "AI Mapper EPSS+KEV enrichment done");
+      }
+    } catch (err) {
+      logger.warn({ err, scanId }, "AI Mapper EPSS+KEV enrichment failed (non-fatal)");
     }
 
     await refreshBom(tenantId);
