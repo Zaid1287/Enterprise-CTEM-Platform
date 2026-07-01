@@ -1,0 +1,62 @@
+For Asset Inventory & Brand Threat Scanning - Explain Me The Workflow In Detail.
+
+How The Workflow Works
+What Tools Are Been Used To Run The Scans
+How The Duplicate Data Such As Sub-Domain, Endpoints, URLs, Scan Results & Findings, Etc Are Been Handle
+Are You Filtering Out Duplicate Sub-Domains, Endpoints, URLs, Scan Results & Findings, Etc.
+What Are The Commands Used For Each Tools
+For Tools Like ffuf, katana, amass, Subfinder, Certificate Transparency, Waybackurl, gau, httprobe, Nmap, Masscan, Aquatone, Shodan, etc.. all other recon tools, are saving the raw finding data in .txt file e.g ffuf.txt, katana.txt and then filter all duplicates into one file e.g final_subdomains.txt, final_urls.txt & then run httpx on final_subdomain.txt or final_urls.txt to find out live hosts and urls.
+e.g
+
+subfinder -d DOMAIN-o subfinder.txt
+amass enum -d DOMAIN -o amass.txt
+sort -u subdomains.txt > final_urls.txt
+cat subfinder.txt amass.txt | sort | uniq > final_urls.txt
+httpx -l final_subdomain.txt or httpx -l final_urls.txt
+Stores The Data In Raw Folder & Then Filter The Data In Filtered And Then Store It In DB...
+
+Explain How This Works? How You Deal With Duplicates & Live Hosts.
+
+Which Tools Are Actually Working & Which Are Not Working & Why
+Working Fully, Partially, Not Working & Not Implemented.
+How Scan Works For Automatically & Manual & Schedule.
+For Automatic & Schedule What Time And Day It Triggers.
+How Scan Works For Asset Inventory, Brand Threat & Watchlist
+If Assets Are Not Verified Scan Still Runs
+How Risk Scoring Works? On What Factors?
+How Scans Work For Non-Domains Assets
+Any Problem & Issues Scanning Brand Threat, Watchlist, Asset Inventory & Non-Domain Assets
+Explain Everything In Detail
+Explain The Flow Step By Step
+Mention All The Issues With Solutions
+Mention Everything In Detail If My Missing Anything Important.
+Be As Precise As You Can Explaining The Recon Phase Method
+Mention All The Phases With All The Tools Under Each Phase.
+How CVE Are Assinged
+Are You Using Any Nuclei Templates
+The Locations Of Nuclei Templates
+Are You Using Any Wordlist For Fuzzing And For Other Purpose
+What Is The Location Of Wordlist.
+Is Nuclie Working?
+For Rate Limiting & IP Blocking What Is The Solution.
+What Are You Doing To Tackel Rate Limiting & IP Rotations.
+When Results Changes On Re-scan How You Are handeling old and new data
+How You Are Filtering Results Based On Status Codes
+How Do You Find Scrects, API Keys, Tokens, Passwords, Etc.
+Github & Gitlab Scanning Is Working? If Not Solution For It
+Cloud Assets Findings Are Working? If Not Solution For It
+How Custome Scripts Works
+How Added Nuclie Templates Works
+What Is Working & What Is Not Working. Full List
+Answere Each and Every questions precisely.
+
+Mentions All The Problems & Issues And Also Give Solution To Fix Them. Also Give The Impact On The Scanning Process & Platform.
+
+Im Also Getting Many False Positive, Give Me Solutions To Avoid False Positives.
+
+Give Me Suggestions & Recommendation To Make The Recon & Scanning Process Easy And Effevtive With Less False Positive.
+
+Give Everything In Detail & Precise.
+
+Give Your Suggestion & Recommendation To Make It Effective & Production Ready.
+
