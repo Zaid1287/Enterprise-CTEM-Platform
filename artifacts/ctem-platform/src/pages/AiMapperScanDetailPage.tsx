@@ -9,6 +9,7 @@ import { ArrowLeft, Server, ShieldOff, Globe, Loader2, XCircle, StopCircle } fro
 import { formatDistanceToNow } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { RiskScoreGauge } from "@/components/aiMapper/RiskScoreGauge";
+import { useAiMapperWs } from "@/hooks/useAiMapperWs";
 
 const RISK_BADGE: Record<string, string> = {
   critical: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -46,6 +47,23 @@ export default function AiMapperScanDetailPage() {
       const d = query.state.data as AiMapperScan | undefined;
       if (!d || d.status === "running" || d.status === "pending") return 3000;
       return false;
+    },
+  });
+
+  // Real-time scan progress via WebSocket (polling above acts as fallback)
+  const isRunning = scan?.status === "running" || scan?.status === "pending";
+  useAiMapperWs({
+    url: isRunning ? `/api/ai-mapper/scans/${scanId}/ws` : null,
+    enabled: isRunning,
+    onMessage: (msg: any) => {
+      if (msg?.type === "done") {
+        qc.invalidateQueries({ queryKey: ["ai-mapper-scan", scanId] });
+        qc.invalidateQueries({ queryKey: ["ai-mapper-scans"] });
+      } else {
+        qc.setQueryData<AiMapperScan>(["ai-mapper-scan", scanId], (prev) =>
+          prev ? { ...prev, ...msg } : prev
+        );
+      }
     },
   });
 

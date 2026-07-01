@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Suspense, lazy, useEffect } from "react";
 import { attemptTokenRefresh } from "@/lib/auth";
 import { apiFetch } from "@/lib/apiFetch";
+import { useToast } from "@/hooks/use-toast";
 
 // Lazy-load pages for faster initial bundle
 const LoginPage = lazy(() => import("@/pages/LoginPage"));
@@ -119,8 +120,22 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 
 function AiMapperRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, aiMapperEnabled } = useAuth();
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (isAuthenticated && !aiMapperEnabled) {
+      toast({
+        title: "AI Mapper not enabled",
+        description: "AI Mapper module is not enabled for your organization. Contact an administrator.",
+        variant: "destructive",
+      });
+      navigate("/dashboard");
+    }
+  }, [isAuthenticated, aiMapperEnabled]);
+
   if (!isAuthenticated) return <Redirect to="/login" />;
-  if (!aiMapperEnabled) return <Redirect to="/dashboard" />;
+  if (!aiMapperEnabled) return null;
   return (
     <AppLayout>
       <Suspense fallback={<PageLoader />}>

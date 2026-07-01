@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, Response as ExpressResponse } from "express";
 import { db } from "@workspace/db";
 import {
   aiMapperModuleAssignmentsTable,
@@ -11,7 +11,7 @@ import {
   tenantsTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, gte, lt, ilike, or, sql } from "drizzle-orm";
-import { requireAuth } from "../lib/auth";
+import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 import { SHODAN_PRESETS, PROTOCOL_COLORS } from "../lib/aiMapper/shodanQueries";
 import { computeRiskScore } from "../lib/aiMapper/aiMapperRiskScore";
@@ -33,7 +33,7 @@ function broadcast(map: Map<number, Set<any>>, id: number, data: object) {
 }
 
 // ── requireAiMapper middleware ─────────────────────────────────────────────────
-async function requireAiMapper(req: Request, res: Response, next: Function) {
+async function requireAiMapper(req: AuthenticatedRequest, res: ExpressResponse, next: Function) {
   const tenantId = req.user?.tenantId;
   if (!tenantId) { res.status(401).json({ error: "Unauthorized" }); return; }
   try {
@@ -45,14 +45,14 @@ async function requireAiMapper(req: Request, res: Response, next: Function) {
 
 // ── Module management ─────────────────────────────────────────────────────────
 
-router.get("/ai-mapper/module", requireAuth, async (req, res) => {
+router.get("/ai-mapper/module", requireAuth, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const [row] = await db.select().from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, tenantId));
   res.json({ isEnabled: row?.isEnabled ?? false, updatedAt: row?.updatedAt ?? null });
 });
 
 // Super-admin: bulk status across all tenants
-router.get("/ai-mapper/module/all", requireAuth, async (req, res) => {
+router.get("/ai-mapper/module/all", requireAuth, async (req: AuthenticatedRequest, res) => {
   if (req.user!.role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
   const rows = await db.select({ tenantId: aiMapperModuleAssignmentsTable.tenantId, isEnabled: aiMapperModuleAssignmentsTable.isEnabled }).from(aiMapperModuleAssignmentsTable);
   const map: Record<number, boolean> = {};
@@ -60,7 +60,7 @@ router.get("/ai-mapper/module/all", requireAuth, async (req, res) => {
   res.json(map);
 });
 
-router.patch("/ai-mapper/module", requireAuth, async (req, res) => {
+router.patch("/ai-mapper/module", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role, tenantId: callerTenantId } = req.user!;
   if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   // Admins can only toggle their own tenant; super_admin may specify any target
@@ -73,13 +73,13 @@ router.patch("/ai-mapper/module", requireAuth, async (req, res) => {
   await db.insert(aiMapperModuleAssignmentsTable)
     .values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })
     .onConflictDoUpdate({ target: aiMapperModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
-  await logAudit({ tenantId: callerTenantId, userId: req.user!.userId as any, action: isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", resourceType: "tenant", resourceId: targetTenantId, metadata: { targetTenantId, isEnabled }, ip: req.ip ?? "" });
+  await logAudit(req.user!, isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
   res.json({ isEnabled });
 });
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
-router.get("/ai-mapper/stats", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/stats", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const [eRow] = await db.select({ total: sql<number>`count(*)`, critical: sql<number>`count(*) filter (where risk_level = 'critical')`, high: sql<number>`count(*) filter (where risk_level = 'high')`, noAuth: sql<number>`count(*) filter (where auth_status = 'none')` }).from(aiMapperEndpointsTable).where(eq(aiMapperEndpointsTable.tenantId, tenantId));
   const [sRow] = await db.select({ active: sql<number>`count(*) filter (where status = 'running')` }).from(aiMapperScansTable).where(eq(aiMapperScansTable.tenantId, tenantId));
@@ -88,7 +88,7 @@ router.get("/ai-mapper/stats", requireAuth, requireAiMapper, async (req, res) =>
 
 // ── Globe ─────────────────────────────────────────────────────────────────────
 
-router.get("/ai-mapper/globe", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/globe", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const rows = await db.select({ id: aiMapperEndpointsTable.id, ip: aiMapperEndpointsTable.ip, lat: aiMapperEndpointsTable.lat, lng: aiMapperEndpointsTable.lng, protocol: aiMapperEndpointsTable.protocol, port: aiMapperEndpointsTable.port, riskScore: aiMapperEndpointsTable.riskScore, riskLevel: aiMapperEndpointsTable.riskLevel, authStatus: aiMapperEndpointsTable.authStatus, country: aiMapperEndpointsTable.country }).from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.tenantId, tenantId), sql`lat IS NOT NULL AND lng IS NOT NULL`)).limit(2000);
   res.json(rows.map(r => ({ ...r, color: PROTOCOL_COLORS[r.protocol ?? "generic"] ?? "#ef4444", altitude: (r.riskScore / 10) * 0.3 })));
@@ -96,7 +96,7 @@ router.get("/ai-mapper/globe", requireAuth, requireAiMapper, async (req, res) =>
 
 // ── BOM ───────────────────────────────────────────────────────────────────────
 
-router.get("/ai-mapper/bom", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/bom", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const bom  = await db.select().from(aiMapperBomItemsTable).where(eq(aiMapperBomItemsTable.tenantId, tenantId)).orderBy(desc(aiMapperBomItemsTable.endpointCount));
   const dist = await db.select({ protocol: aiMapperEndpointsTable.protocol, count: sql<number>`count(*)` }).from(aiMapperEndpointsTable).where(eq(aiMapperEndpointsTable.tenantId, tenantId)).groupBy(aiMapperEndpointsTable.protocol);
@@ -107,23 +107,23 @@ router.get("/ai-mapper/query-presets", requireAuth, (_req, res) => res.json(SHOD
 
 // ── Scans ─────────────────────────────────────────────────────────────────────
 
-router.get("/ai-mapper/scans", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/scans", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   res.json(await db.select().from(aiMapperScansTable).where(eq(aiMapperScansTable.tenantId, tenantId)).orderBy(desc(aiMapperScansTable.createdAt)).limit(50));
 });
 
-router.post("/ai-mapper/scans", requireAuth, requireAiMapper, async (req, res) => {
+router.post("/ai-mapper/scans", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const [{ c }] = await db.select({ c: sql<number>`count(*)` }).from(aiMapperScansTable).where(and(eq(aiMapperScansTable.tenantId, tenantId), eq(aiMapperScansTable.status, "running")));
   if (Number(c) >= 3) { res.status(429).json({ error: "Max 3 concurrent AI Mapper scans" }); return; }
   const { title = "AI Surface Scan", queryPresets = [], cidrScope } = req.body;
   const [scan] = await db.insert(aiMapperScansTable).values({ tenantId, title, status: "pending", progress: 0, queryPresets, cidrScope: cidrScope ?? null, createdBy: req.user!.userId as any }).returning();
-  await logAudit({ tenantId, userId: req.user!.userId as any, action: "ai_mapper_scan_created", resourceType: "ai_mapper_scan", resourceId: scan.id, metadata: { title, queryPresets }, ip: req.ip ?? "" });
+  await logAudit(req.user!, "ai_mapper_scan_created", "ai_mapper_scan", scan.id, JSON.stringify({ title, queryPresets }), req.ip ?? "");
   setImmediate(() => runAiMapperScan(scan.id, tenantId).catch(e => logger.error({ err: e }, "AI Mapper scan error")));
   res.status(201).json(scan);
 });
 
-router.get("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const [scan] = await db.select().from(aiMapperScansTable).where(and(eq(aiMapperScansTable.id, Number(req.params.id)), eq(aiMapperScansTable.tenantId, tenantId)));
   if (!scan) { res.status(404).json({ error: "Not found" }); return; }
@@ -131,13 +131,13 @@ router.get("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req, res
   res.json({ ...scan, endpoints });
 });
 
-router.delete("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req, res) => {
+router.delete("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   await db.update(aiMapperScansTable).set({ status: "cancelled", completedAt: new Date() }).where(and(eq(aiMapperScansTable.id, Number(req.params.id)), eq(aiMapperScansTable.tenantId, tenantId)));
   res.json({ ok: true });
 });
 
-router.post("/ai-mapper/scans/:id/progress", async (req, res) => {
+router.post("/ai-mapper/scans/:id/progress", async (req: AuthenticatedRequest, res) => {
   if (!process.env.MODAL_CALLBACK_SECRET || req.headers["x-modal-secret"] !== process.env.MODAL_CALLBACK_SECRET) { res.status(403).json({ error: "Forbidden" }); return; }
   const scanId = Number(req.params.id);
   const { progress, phase, liveHosts, endpointCount, status } = req.body;
@@ -152,7 +152,7 @@ router.post("/ai-mapper/scans/:id/progress", async (req, res) => {
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
-router.get("/ai-mapper/endpoints", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/endpoints", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const page  = Math.max(1, Number(req.query.page  ?? 1));
   const limit = Math.min(100, Number(req.query.limit ?? 25));
@@ -183,7 +183,7 @@ router.get("/ai-mapper/endpoints", requireAuth, requireAiMapper, async (req, res
   res.json({ data: rows, total: Number(total), page, limit });
 });
 
-router.get("/ai-mapper/endpoints/:id", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/endpoints/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, Number(req.params.id)), eq(aiMapperEndpointsTable.tenantId, tenantId)));
   if (!ep) { res.status(404).json({ error: "Not found" }); return; }
@@ -192,7 +192,7 @@ router.get("/ai-mapper/endpoints/:id", requireAuth, requireAiMapper, async (req,
 
 // ── Attacks ───────────────────────────────────────────────────────────────────
 
-router.post("/ai-mapper/endpoints/:id/attack", requireAuth, requireAiMapper, async (req, res) => {
+router.post("/ai-mapper/endpoints/:id/attack", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const endpointId = Number(req.params.id);
   const [{ c }] = await db.select({ c: sql<number>`count(*)` }).from(aiMapperAttackRunsTable).where(and(eq(aiMapperAttackRunsTable.tenantId, tenantId), eq(aiMapperAttackRunsTable.status, "running")));
@@ -200,19 +200,19 @@ router.post("/ai-mapper/endpoints/:id/attack", requireAuth, requireAiMapper, asy
   const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, endpointId), eq(aiMapperEndpointsTable.tenantId, tenantId)));
   if (!ep) { res.status(404).json({ error: "Endpoint not found" }); return; }
   const [run] = await db.insert(aiMapperAttackRunsTable).values({ tenantId, endpointId, profile: ep.protocol, status: "running", startedAt: new Date(), createdBy: req.user!.userId as any }).returning();
-  await logAudit({ tenantId, userId: req.user!.userId as any, action: "ai_mapper_attack_launched", resourceType: "ai_mapper_endpoint", resourceId: endpointId, metadata: { attackRunId: run.id }, ip: req.ip ?? "" });
+  await logAudit(req.user!, "ai_mapper_attack_launched", "ai_mapper_endpoint", endpointId, JSON.stringify({ attackRunId: run.id }), req.ip ?? "");
   setImmediate(() => runAttackSuite(run.id, ep, tenantId).catch(e => logger.error({ err: e }, "AI Mapper attack error")));
   res.status(201).json({ attackRunId: run.id });
 });
 
-router.get("/ai-mapper/attacks/:id", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/attacks/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const [run] = await db.select().from(aiMapperAttackRunsTable).where(and(eq(aiMapperAttackRunsTable.id, Number(req.params.id)), eq(aiMapperAttackRunsTable.tenantId, tenantId)));
   if (!run) { res.status(404).json({ error: "Not found" }); return; }
   res.json(run);
 });
 
-router.get("/ai-mapper/attacks/:id/stream", requireAuth, requireAiMapper, async (req, res) => {
+router.get("/ai-mapper/attacks/:id/stream", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const attackId = Number(req.params.id);
   const [run] = await db.select().from(aiMapperAttackRunsTable).where(and(eq(aiMapperAttackRunsTable.id, attackId), eq(aiMapperAttackRunsTable.tenantId, tenantId)));
@@ -269,8 +269,8 @@ async function tFetch(url: string, init: RequestInit = {}, timeout = 5000): Prom
   finally { clearTimeout(t); }
 }
 
-async function getPSetting(tenantId: number, key: string): Promise<string | null> {
-  const [row] = await db.select({ value: platformSettingsTable.value }).from(platformSettingsTable).where(and(eq(platformSettingsTable.tenantId as any, tenantId), eq(platformSettingsTable.key, key)));
+async function getPSetting(_tenantId: number, key: string): Promise<string | null> {
+  const [row] = await db.select({ value: platformSettingsTable.value }).from(platformSettingsTable).where(eq(platformSettingsTable.key, key));
   return row?.value ?? null;
 }
 
@@ -424,7 +424,7 @@ async function runAttackSuite(runId: number, ep: typeof aiMapperEndpointsTable.$
 
 // ── Cross-tenant access control ────────────────────────────────────────────────
 
-async function assertTenantAccess(req: Request, targetTenantId: number): Promise<boolean> {
+async function assertTenantAccess(req: AuthenticatedRequest, targetTenantId: number): Promise<boolean> {
   const { role, userId } = req.user!;
   if (role === "super_admin" || role === "admin") return true;
   if (role === "account_manager") {
@@ -445,7 +445,7 @@ async function getTenantAiStats(tenantId: number) {
 
 // ── Admin: all-tenant overview (admin + super_admin) ─────────────────────────
 
-router.get("/ai-mapper/admin/overview", requireAuth, async (req, res) => {
+router.get("/ai-mapper/admin/overview", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
   if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   const tenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name, slug: tenantsTable.slug, plan: tenantsTable.plan, isActive: tenantsTable.isActive }).from(tenantsTable).orderBy(asc(tenantsTable.name));
@@ -455,7 +455,7 @@ router.get("/ai-mapper/admin/overview", requireAuth, async (req, res) => {
 
 // ── AM: assigned-client overview ──────────────────────────────────────────────
 
-router.get("/ai-mapper/am-clients", requireAuth, async (req, res) => {
+router.get("/ai-mapper/am-clients", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role, userId } = req.user!;
   if (role !== "account_manager" && role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   let tenantIds: number[];
@@ -474,37 +474,37 @@ router.get("/ai-mapper/am-clients", requireAuth, async (req, res) => {
 
 // ── Cross-tenant client routes ─────────────────────────────────────────────────
 
-router.get("/ai-mapper/client/:tenantId/module", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/module", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   const [row] = await db.select().from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, targetTenantId));
   res.json({ isEnabled: row?.isEnabled ?? false, updatedAt: row?.updatedAt ?? null });
 });
 
-router.patch("/ai-mapper/client/:tenantId/module", requireAuth, async (req, res) => {
+router.patch("/ai-mapper/client/:tenantId/module", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role, tenantId: callerTenantId } = req.user!;
   if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   const targetTenantId = Number(req.params.tenantId);
   const isEnabled = !!req.body.isEnabled;
   await db.insert(aiMapperModuleAssignmentsTable).values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() }).onConflictDoUpdate({ target: aiMapperModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
-  await logAudit({ tenantId: callerTenantId, userId: req.user!.userId as any, action: isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", resourceType: "tenant", resourceId: targetTenantId, metadata: { targetTenantId, isEnabled }, ip: req.ip ?? "" });
+  await logAudit(req.user!, isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
   res.json({ isEnabled });
 });
 
-router.get("/ai-mapper/client/:tenantId/stats", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/stats", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   res.json(await getTenantAiStats(targetTenantId));
 });
 
-router.get("/ai-mapper/client/:tenantId/globe", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/globe", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   const rows = await db.select({ id: aiMapperEndpointsTable.id, ip: aiMapperEndpointsTable.ip, lat: aiMapperEndpointsTable.lat, lng: aiMapperEndpointsTable.lng, protocol: aiMapperEndpointsTable.protocol, port: aiMapperEndpointsTable.port, riskScore: aiMapperEndpointsTable.riskScore, riskLevel: aiMapperEndpointsTable.riskLevel, authStatus: aiMapperEndpointsTable.authStatus, country: aiMapperEndpointsTable.country }).from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.tenantId, targetTenantId), sql`lat IS NOT NULL AND lng IS NOT NULL`)).limit(2000);
   res.json(rows.map(r => ({ ...r, color: PROTOCOL_COLORS[r.protocol ?? "generic"] ?? "#ef4444", altitude: (r.riskScore / 10) * 0.3 })));
 });
 
-router.get("/ai-mapper/client/:tenantId/bom", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/bom", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   const bom  = await db.select().from(aiMapperBomItemsTable).where(eq(aiMapperBomItemsTable.tenantId, targetTenantId)).orderBy(desc(aiMapperBomItemsTable.endpointCount));
@@ -512,13 +512,13 @@ router.get("/ai-mapper/client/:tenantId/bom", requireAuth, async (req, res) => {
   res.json({ bom, protocolDistribution: dist });
 });
 
-router.get("/ai-mapper/client/:tenantId/scans", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/scans", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   res.json(await db.select().from(aiMapperScansTable).where(eq(aiMapperScansTable.tenantId, targetTenantId)).orderBy(desc(aiMapperScansTable.createdAt)).limit(50));
 });
 
-router.post("/ai-mapper/client/:tenantId/scans", requireAuth, async (req, res) => {
+router.post("/ai-mapper/client/:tenantId/scans", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { tenantId: callerTenantId } = req.user!;
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
@@ -528,12 +528,12 @@ router.post("/ai-mapper/client/:tenantId/scans", requireAuth, async (req, res) =
   if (Number(c) >= 3) { res.status(429).json({ error: "Max 3 concurrent AI Mapper scans" }); return; }
   const { title = "AI Surface Scan", queryPresets = [], cidrScope } = req.body;
   const [scan] = await db.insert(aiMapperScansTable).values({ tenantId: targetTenantId, title, status: "pending", progress: 0, queryPresets, cidrScope: cidrScope ?? null, createdBy: req.user!.userId as any }).returning();
-  await logAudit({ tenantId: callerTenantId, userId: req.user!.userId as any, action: "ai_mapper_scan_created", resourceType: "ai_mapper_scan", resourceId: scan.id, metadata: { targetTenantId, title, queryPresets }, ip: req.ip ?? "" });
+  await logAudit(req.user!, "ai_mapper_scan_created", "ai_mapper_scan", scan.id, JSON.stringify({ targetTenantId, title, queryPresets }), req.ip ?? "");
   setImmediate(() => runAiMapperScan(scan.id, targetTenantId).catch(e => logger.error({ err: e }, "AI Mapper scan error")));
   res.status(201).json(scan);
 });
 
-router.get("/ai-mapper/client/:tenantId/scans/:scanId", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   const [scan] = await db.select().from(aiMapperScansTable).where(and(eq(aiMapperScansTable.id, Number(req.params.scanId)), eq(aiMapperScansTable.tenantId, targetTenantId)));
@@ -542,14 +542,14 @@ router.get("/ai-mapper/client/:tenantId/scans/:scanId", requireAuth, async (req,
   res.json({ ...scan, endpoints });
 });
 
-router.delete("/ai-mapper/client/:tenantId/scans/:scanId", requireAuth, async (req, res) => {
+router.delete("/ai-mapper/client/:tenantId/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   await db.update(aiMapperScansTable).set({ status: "cancelled", completedAt: new Date() }).where(and(eq(aiMapperScansTable.id, Number(req.params.scanId)), eq(aiMapperScansTable.tenantId, targetTenantId)));
   res.json({ ok: true });
 });
 
-router.get("/ai-mapper/client/:tenantId/endpoints", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/endpoints", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   const page  = Math.max(1, Number(req.query.page  ?? 1));
@@ -565,7 +565,7 @@ router.get("/ai-mapper/client/:tenantId/endpoints", requireAuth, async (req, res
   res.json({ data: rows, total: Number(total), page, limit });
 });
 
-router.get("/ai-mapper/client/:tenantId/endpoints/:id", requireAuth, async (req, res) => {
+router.get("/ai-mapper/client/:tenantId/endpoints/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
   const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, Number(req.params.id)), eq(aiMapperEndpointsTable.tenantId, targetTenantId)));
@@ -573,7 +573,7 @@ router.get("/ai-mapper/client/:tenantId/endpoints/:id", requireAuth, async (req,
   res.json(ep);
 });
 
-router.post("/ai-mapper/client/:tenantId/endpoints/:id/attack", requireAuth, async (req, res) => {
+router.post("/ai-mapper/client/:tenantId/endpoints/:id/attack", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { tenantId: callerTenantId } = req.user!;
   const targetTenantId = Number(req.params.tenantId);
   if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
@@ -583,7 +583,7 @@ router.post("/ai-mapper/client/:tenantId/endpoints/:id/attack", requireAuth, asy
   const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, endpointId), eq(aiMapperEndpointsTable.tenantId, targetTenantId)));
   if (!ep) { res.status(404).json({ error: "Endpoint not found" }); return; }
   const [run] = await db.insert(aiMapperAttackRunsTable).values({ tenantId: targetTenantId, endpointId, profile: ep.protocol, status: "running", startedAt: new Date(), createdBy: req.user!.userId as any }).returning();
-  await logAudit({ tenantId: callerTenantId, userId: req.user!.userId as any, action: "ai_mapper_attack_launched", resourceType: "ai_mapper_endpoint", resourceId: endpointId, metadata: { attackRunId: run.id, targetTenantId }, ip: req.ip ?? "" });
+  await logAudit(req.user!, "ai_mapper_attack_launched", "ai_mapper_endpoint", endpointId, JSON.stringify({ attackRunId: run.id, targetTenantId }), req.ip ?? "");
   setImmediate(() => runAttackSuite(run.id, ep, targetTenantId).catch(e => logger.error({ err: e }, "AI Mapper attack error")));
   res.status(201).json({ attackRunId: run.id });
 });

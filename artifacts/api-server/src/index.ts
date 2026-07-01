@@ -7,6 +7,9 @@ import { startAlertWorker } from "./workers/alertWorker";
 import { startBeatScheduler } from "./workers/beatScheduler";
 import { db, platformSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { WebSocketServer } from "ws";
+import { scanProgressSockets, attackRunSockets } from "./routes/aiMapper";
+import { verifyToken } from "./lib/auth";
 
 const rawPort = process.env["PORT"];
 
@@ -81,7 +84,7 @@ export function startWorkersIfRedisAvailable(): void {
   }
 }
 
-app.listen(port, (err) => {
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -104,4 +107,41 @@ app.listen(port, (err) => {
 
   // Beat scheduler handles asset-frequency and schedule-based scans
   startBeatScheduler(port).catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
+});
+
+// ── WebSocket server for AI Mapper real-time scan/attack streams ──────────────
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  const rawUrl = req.url ?? "";
+  const searchStart = rawUrl.indexOf("?");
+  const search = searchStart !== -1 ? rawUrl.slice(searchStart + 1) : "";
+  const params = new URLSearchParams(search);
+  const token = params.get("token");
+
+  if (!token) { socket.destroy(); return; }
+  try { verifyToken(token); } catch { socket.destroy(); return; }
+
+  const scanMatch  = rawUrl.match(/\/api\/ai-mapper\/scans\/(\d+)\/ws/);
+  const attackMatch = rawUrl.match(/\/api\/ai-mapper\/attacks\/(\d+)\/ws/);
+  if (!scanMatch && !attackMatch) { socket.destroy(); return; }
+
+  wss.handleUpgrade(req, socket as any, head, (ws) => {
+    if (scanMatch) {
+      const id = Number(scanMatch[1]);
+      if (!scanProgressSockets.has(id)) scanProgressSockets.set(id, new Set());
+      scanProgressSockets.get(id)!.add(ws);
+      ws.on("close", () => {
+        const s = scanProgressSockets.get(id);
+        if (s) { s.delete(ws); if (!s.size) scanProgressSockets.delete(id); }
+      });
+    } else if (attackMatch) {
+      const id = Number(attackMatch[1]);
+      if (!attackRunSockets.has(id)) attackRunSockets.set(id, new Set());
+      attackRunSockets.get(id)!.add(ws);
+      ws.on("close", () => {
+        const s = attackRunSockets.get(id);
+        if (s) { s.delete(ws); if (!s.size) attackRunSockets.delete(id); }
+      });
+    }
+  });
 });

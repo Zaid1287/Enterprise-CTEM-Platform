@@ -2,6 +2,7 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch } from "@/lib/apiFetch";
+import { useAiMapperWs } from "@/hooks/useAiMapperWs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -74,6 +75,22 @@ export default function AiMapperEndpointDetailPage() {
       const d = query.state.data as AttackRun | undefined;
       if (!d || d.status === "running") return 2000;
       return false;
+    },
+  });
+
+  // Real-time attack results via WebSocket (polling acts as fallback)
+  const attackIsRunning = attackRun?.status === "running";
+  useAiMapperWs({
+    url: attackRunId != null && attackIsRunning ? `/api/ai-mapper/attacks/${attackRunId}/ws` : null,
+    enabled: attackRunId != null && attackIsRunning,
+    onMessage: (msg: any) => {
+      if (msg?.type === "done") {
+        qc.invalidateQueries({ queryKey: ["ai-mapper-attack", attackRunId] });
+      } else if (msg?.testName) {
+        qc.setQueryData<AttackRun>(["ai-mapper-attack", attackRunId], (prev) =>
+          prev ? { ...prev, results: [...(prev.results ?? []), msg as AttackResult] } : prev
+        );
+      }
     },
   });
 

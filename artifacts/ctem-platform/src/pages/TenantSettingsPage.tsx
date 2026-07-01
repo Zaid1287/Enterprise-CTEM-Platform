@@ -277,8 +277,10 @@ export default function TenantSettingsPage() {
             </div>
           </div>
 
-          {/* AI Mapper Module */}
-          <AiMapperModuleCard tenantId={tenantId} userRole={user?.role ?? ""} />
+          {/* AI Mapper Module — admins only */}
+          {(user?.role === "admin" || user?.role === "super_admin") && (
+            <AiMapperModuleCard tenantId={tenantId} userRole={user?.role ?? ""} />
+          )}
 
           {/* Notification Channels — all roles */}
           <NotificationChannelsSection />
