@@ -91,7 +91,7 @@ export default function AiMapperPage() {
   const { data: globePoints = [], isLoading: globeLoading } = useQuery<GlobePoint[]>({
     queryKey: ["ai-mapper-globe"],
     queryFn: () => apiFetch("/api/ai-mapper/globe"),
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
     enabled: aiMapperEnabled,
   });
 

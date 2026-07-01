@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
-import { getToken } from "@/lib/auth";
+import { useAiMapperWs } from "@/hooks/useAiMapperWs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,43 +20,28 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 
-function ScanLiveUpdater({ scanId }: { scanId: number }) {
+function ScanLiveUpdater({ scanId, onConnectedChange }: {
+  scanId: number;
+  onConnectedChange: (id: number, connected: boolean) => void;
+}) {
   const qc = useQueryClient();
-  const wsRef = useRef<WebSocket | null>(null);
+
+  const { connected } = useAiMapperWs({
+    url: `/api/ai-mapper/scans/${scanId}/ws`,
+    onMessage: (msg: any) => {
+      qc.setQueryData<AiMapperScan[]>(["ai-mapper-scans"], (prev) =>
+        prev ? prev.map(s => s.id === scanId ? { ...s, ...msg } : s) : prev
+      );
+      if (msg?.status === "completed" || msg?.status === "failed") {
+        qc.invalidateQueries({ queryKey: ["ai-mapper-scans"] });
+      }
+    },
+  });
 
   useEffect(() => {
-    const token = getToken();
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${proto}//${window.location.host}/api/ai-mapper/scans/${scanId}/ws?token=${encodeURIComponent(token ?? "")}`;
-    let cancelled = false;
-    let ws: WebSocket;
-
-    try {
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onmessage = (e) => {
-        try {
-          const msg = JSON.parse(e.data);
-          qc.setQueryData<AiMapperScan[]>(["ai-mapper-scans"], (prev) =>
-            prev ? prev.map(s => s.id === scanId ? { ...s, ...msg } : s) : prev
-          );
-          if (msg?.status === "completed" || msg?.status === "failed") {
-            qc.invalidateQueries({ queryKey: ["ai-mapper-scans"] });
-          }
-        } catch { /* ignore */ }
-      };
-
-      ws.onerror = () => { if (!cancelled) ws.close(); };
-      ws.onclose = () => { wsRef.current = null; };
-    } catch { /* fall through to polling */ }
-
-    return () => {
-      cancelled = true;
-      wsRef.current?.close();
-      wsRef.current = null;
-    };
-  }, [scanId, qc]);
+    onConnectedChange(scanId, connected);
+    return () => onConnectedChange(scanId, false);
+  }, [connected, scanId, onConnectedChange]);
 
   return null;
 }
@@ -95,6 +80,15 @@ export default function AiMapperScansPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
+  const [wsConnectedSet, setWsConnectedSet] = useState<Set<number>>(new Set());
+  const handleConnectedChange = useCallback((id: number, conn: boolean) => {
+    setWsConnectedSet(prev => {
+      const next = new Set(prev);
+      if (conn) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
+
   const [showNew, setShowNew]               = useState(false);
   const [dialogTab, setDialogTab]           = useState("presets");
   const [title, setTitle]                   = useState("AI Surface Scan");
@@ -108,8 +102,9 @@ export default function AiMapperScansPage() {
     queryFn: () => apiFetch("/api/ai-mapper/scans"),
     refetchInterval: (query) => {
       const d = query.state.data as AiMapperScan[] | undefined;
-      if (!d || d.some(s => s.status === "running" || s.status === "pending")) return 3000;
-      return false;
+      const hasRunning = !d || d.some(s => s.status === "running" || s.status === "pending");
+      if (!hasRunning) return false;
+      return wsConnectedSet.size > 0 ? 30_000 : 3_000;
     },
   });
 
@@ -233,7 +228,7 @@ export default function AiMapperScansPage() {
       ) : (
         <div className="space-y-3">
           {scans.filter(s => s.status === "running").map(s => (
-            <ScanLiveUpdater key={s.id} scanId={s.id} />
+            <ScanLiveUpdater key={s.id} scanId={s.id} onConnectedChange={handleConnectedChange} />
           ))}
           {scans.map(scan => {
             const Icon = STATUS_ICON[scan.status] ?? Clock;
@@ -345,38 +340,65 @@ export default function AiMapperScansPage() {
 
               {/* Shodan Presets Tab */}
               <TabsContent value="presets" className="mt-3">
-                <p className="text-xs text-muted-foreground mb-2">
-                  Select Shodan query presets to run. If none selected, all protocols are queried.
-                  Requires a Shodan API key in Platform Settings.
-                </p>
-                <div className="grid grid-cols-1 gap-1.5 max-h-60 overflow-y-auto pr-1">
-                  {presets.map(p => (
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-muted-foreground">
+                    Select presets. If none selected, all protocols are queried.
+                  </p>
+                  <div className="flex gap-2 shrink-0">
                     <button
-                      key={p.id}
-                      onClick={() => togglePreset(p.id)}
-                      className={cn(
-                        "text-left px-3 py-2 rounded-md border text-sm transition-colors",
-                        selectedPresets.includes(p.id)
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border hover:border-primary/40 hover:bg-muted/40"
-                      )}
+                      className="text-xs text-primary hover:underline"
+                      onClick={() => setSelectedPresets(presets.map(p => p.id))}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-medium text-xs">{p.label}</div>
-                        <Badge variant="outline" className="text-xs capitalize shrink-0">{p.protocol}</Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{p.query}</div>
+                      Select All
                     </button>
+                    {selectedPresets.length > 0 && (
+                      <button
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setSelectedPresets([])}
+                      >
+                        Clear ({selectedPresets.length})
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="max-h-64 overflow-y-auto pr-1 space-y-3">
+                  {Array.from(new Set(presets.map(p => p.protocol))).map(proto => (
+                    <div key={proto}>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{proto}</p>
+                        <button
+                          className="text-xs text-primary/70 hover:text-primary"
+                          onClick={() => {
+                            const ids = presets.filter(p => p.protocol === proto).map(p => p.id);
+                            const allSelected = ids.every(id => selectedPresets.includes(id));
+                            setSelectedPresets(prev =>
+                              allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]
+                            );
+                          }}
+                        >
+                          {presets.filter(p => p.protocol === proto).every(p => selectedPresets.includes(p.id)) ? "Deselect" : "Select all"}
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {presets.filter(p => p.protocol === proto).map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => togglePreset(p.id)}
+                            className={cn(
+                              "text-left px-3 py-2 rounded-md border text-sm transition-colors",
+                              selectedPresets.includes(p.id)
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border hover:border-primary/40 hover:bg-muted/40"
+                            )}
+                          >
+                            <div className="font-medium text-xs">{p.label}</div>
+                            <div className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{p.query}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
-                {selectedPresets.length > 0 && (
-                  <button
-                    className="mt-2 text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => setSelectedPresets([])}
-                  >
-                    Clear {selectedPresets.length} selected
-                  </button>
-                )}
               </TabsContent>
 
               {/* Asset Selector Tab */}

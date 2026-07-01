@@ -11,7 +11,7 @@ import {
   tenantsTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, gte, lt, ilike, or, sql } from "drizzle-orm";
-import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, verifyToken, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
 import { SHODAN_PRESETS, PROTOCOL_COLORS } from "../lib/aiMapper/shodanQueries";
 import { computeRiskScore } from "../lib/aiMapper/aiMapperRiskScore";
@@ -212,8 +212,19 @@ router.get("/ai-mapper/attacks/:id", requireAuth, requireAiMapper, async (req: A
   res.json(run);
 });
 
-router.get("/ai-mapper/attacks/:id/stream", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const tenantId = req.user!.tenantId;
+router.get("/ai-mapper/attacks/:id/stream", async (req: AuthenticatedRequest, res) => {
+  // Supports both Bearer-header auth (requireAuth) and ?token= query param (EventSource fallback)
+  let tenantId: number | undefined;
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    try { const p = verifyToken(authHeader.slice(7)); tenantId = p.tenantId; } catch { /* fall through */ }
+  }
+  if (!tenantId) {
+    const qToken = String(req.query["token"] ?? "");
+    try { const p = verifyToken(qToken); tenantId = p.tenantId; } catch { /* fall through */ }
+  }
+  if (!tenantId) { res.status(401).json({ error: "Unauthorized" }); return; }
+
   const attackId = Number(req.params.id);
   const [run] = await db.select().from(aiMapperAttackRunsTable).where(and(eq(aiMapperAttackRunsTable.id, attackId), eq(aiMapperAttackRunsTable.tenantId, tenantId)));
   if (!run) { res.status(404).json({ error: "Not found" }); return; }

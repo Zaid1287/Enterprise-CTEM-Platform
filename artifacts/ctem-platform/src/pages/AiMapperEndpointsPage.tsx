@@ -195,16 +195,16 @@ export default function AiMapperEndpointsPage() {
       {/* Quick-filter chips */}
       <div className="flex flex-wrap gap-2">
         {[
-          { label: "No Auth",       query: "auth:none" },
-          { label: "Critical",      query: "risk:critical" },
-          { label: "Prompt Leaked", query: "has:system_prompt" },
-          { label: "Ollama",        query: "protocol:ollama" },
-          { label: "MCP",           query: "protocol:mcp" },
-          { label: "Open CORS",     query: "has:open_cors" },
-          { label: "No TLS",        query: "has:no_tls" },
+          { label: "All",      query: "" },
+          { label: "Critical", query: "risk:critical" },
+          { label: "High",     query: "risk:high" },
+          { label: "No Auth",  query: "auth:none" },
+          { label: "MCP",      query: "protocol:mcp" },
+          { label: "Ollama",   query: "protocol:ollama" },
+          { label: "vLLM",     query: "protocol:vllm" },
         ].map(chip => (
           <button
-            key={chip.query}
+            key={chip.label}
             onClick={() => { setQ(chip.query); setPage(1); }}
             className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
               q === chip.query ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-primary/50 text-muted-foreground hover:text-foreground"
@@ -213,11 +213,6 @@ export default function AiMapperEndpointsPage() {
             {chip.label}
           </button>
         ))}
-        {q && (
-          <button onClick={() => { setQ(""); setPage(1); }} className="px-2.5 py-1 text-xs rounded-full border border-border text-muted-foreground hover:text-foreground">
-            ✕ Clear
-          </button>
-        )}
       </div>
 
       {isLoading ? (

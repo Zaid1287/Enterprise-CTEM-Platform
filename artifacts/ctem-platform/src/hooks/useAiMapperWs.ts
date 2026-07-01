@@ -5,46 +5,72 @@ interface UseAiMapperWsOptions {
   url: string | null;
   onMessage: (data: unknown) => void;
   enabled?: boolean;
+  /** Optional SSE fallback URL. EventSource is started when WS fails and sseUrl is provided. */
+  sseUrl?: string | null;
 }
 
-export function useAiMapperWs({ url, onMessage, enabled = true }: UseAiMapperWsOptions) {
+function buildAbsWsUrl(path: string): string {
+  const token = getToken();
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const abs = path.startsWith("http") ? path : `${proto}//${window.location.host}${path}`;
+  const wsAbs = abs.startsWith("http") ? abs.replace(/^http/, "ws") : abs;
+  return `${wsAbs}?token=${encodeURIComponent(token ?? "")}`;
+}
+
+function buildAbsSseUrl(path: string): string {
+  const token = getToken();
+  const abs = path.startsWith("http") ? path : `${window.location.origin}${path}`;
+  return `${abs}${abs.includes("?") ? "&" : "?"}token=${encodeURIComponent(token ?? "")}`;
+}
+
+export function useAiMapperWs({ url, onMessage, enabled = true, sseUrl }: UseAiMapperWsOptions) {
   const [connected, setConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
   useEffect(() => {
     if (!enabled || !url) return;
 
-    const token = getToken();
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const absoluteUrl = url.startsWith("http") ? url : `${proto}//${window.location.host}${url}`;
-    const wsUrl = absoluteUrl.replace(/^http/, "ws") + `?token=${encodeURIComponent(token ?? "")}`;
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+    let sse: EventSource | null = null;
 
-    let ws: WebSocket;
+    function startSse() {
+      if (cancelled || !sseUrl) return;
+      sse = new EventSource(buildAbsSseUrl(sseUrl));
+      sse.onmessage = (e) => {
+        try { onMessageRef.current(JSON.parse(e.data)); } catch { /* ignore */ }
+      };
+      sse.onerror = () => { sse?.close(); sse = null; };
+    }
+
     try {
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      ws = new WebSocket(buildAbsWsUrl(url));
 
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => { if (!cancelled) setConnected(true); };
+
       ws.onmessage = (e) => {
         try { onMessageRef.current(JSON.parse(e.data)); } catch { /* ignore */ }
       };
-      ws.onerror = () => setConnected(false);
-      ws.onclose = () => setConnected(false);
+
+      ws.onerror = () => {
+        if (!cancelled) { setConnected(false); startSse(); }
+      };
+
+      ws.onclose = () => {
+        if (!cancelled) setConnected(false);
+      };
     } catch {
-      setConnected(false);
+      startSse();
     }
 
     return () => {
-      wsRef.current?.close();
-      wsRef.current = null;
+      cancelled = true;
       setConnected(false);
+      ws?.close();
+      sse?.close();
     };
-  }, [url, enabled]);
+  }, [url, sseUrl, enabled]);
 
-  return {
-    connected,
-    close: () => { wsRef.current?.close(); },
-  };
+  return { connected };
 }

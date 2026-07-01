@@ -2,7 +2,7 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch } from "@/lib/apiFetch";
-import { useAiMapperStream } from "@/hooks/useAiMapperStream";
+import { useAiMapperWs } from "@/hooks/useAiMapperWs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,8 +81,9 @@ export default function AiMapperEndpointDetailPage() {
   });
 
   const attackIsRunning = attackRun?.status === "running";
-  useAiMapperStream({
+  useAiMapperWs({
     url: attackRunId != null && attackIsRunning ? `/api/ai-mapper/attacks/${attackRunId}/ws` : null,
+    sseUrl: attackRunId != null && attackIsRunning ? `/api/ai-mapper/attacks/${attackRunId}/stream` : null,
     enabled: attackRunId != null && attackIsRunning,
     onMessage: (msg: any) => {
       if (msg?.type === "done") {
@@ -145,33 +146,17 @@ export default function AiMapperEndpointDetailPage() {
         <div className="space-y-4">
           <Card>
             <CardContent className="py-5 flex flex-col items-center gap-3">
-              <RiskScoreGauge score={ep.riskScore} size="lg" />
-              <div className="grid grid-cols-2 gap-2 w-full text-xs">
-                <div className="bg-muted/40 rounded p-2">
-                  <p className="text-muted-foreground">Auth</p>
-                  <p className={`font-semibold ${ep.authStatus === "none" ? "text-red-400" : "text-green-400"}`}>
-                    {ep.authStatus}
-                  </p>
-                </div>
-                <div className="bg-muted/40 rounded p-2">
-                  <p className="text-muted-foreground">CORS</p>
-                  <p className={`font-semibold ${ep.corsPolicy === "open" ? "text-orange-400" : "text-green-400"}`}>
-                    {ep.corsPolicy ?? "unknown"}
-                  </p>
-                </div>
-                <div className="bg-muted/40 rounded p-2">
-                  <p className="text-muted-foreground">TLS</p>
-                  <p className={`font-semibold ${ep.hasTls ? "text-green-400" : "text-red-400"}`}>
-                    {ep.hasTls ? "Yes" : "No"}
-                  </p>
-                </div>
-                <div className="bg-muted/40 rounded p-2">
-                  <p className="text-muted-foreground">Signup</p>
-                  <p className={`font-semibold ${ep.signupEnabled ? "text-orange-400" : "text-slate-400"}`}>
-                    {ep.signupEnabled ? "Open" : "Disabled"}
-                  </p>
-                </div>
-              </div>
+              <RiskScoreGauge
+                score={ep.riskScore}
+                size="lg"
+                factors={[
+                  { label: "Authentication",   value: ep.authStatus === "none" ? "None (−3.0)" : ep.authStatus,   highlight: ep.authStatus === "none" ? "bad" : "good" },
+                  { label: "TLS/HTTPS",        value: ep.hasTls ? "Enabled" : "Missing (−1.0)",                   highlight: ep.hasTls ? "good" : "bad" },
+                  { label: "CORS Policy",      value: ep.corsPolicy === "open" ? "Open (−1.5)" : (ep.corsPolicy ?? "unknown"), highlight: ep.corsPolicy === "open" ? "warn" : "neutral" },
+                  { label: "Prompt Leaked",    value: ep.systemPromptLeaked ? "Yes (−1.0)" : "No",                highlight: ep.systemPromptLeaked ? "warn" : "good" },
+                  { label: "Open Signup",      value: ep.signupEnabled ? "Yes (−0.5)" : "No",                     highlight: ep.signupEnabled ? "warn" : "neutral" },
+                ]}
+              />
             </CardContent>
           </Card>
 
