@@ -10,6 +10,7 @@ import {
   invitationsTable, sessionsTable, screenshotsTable, technologyDetectionsTable,
   auditLogsTable, reportsTable, userAiSettingsTable,
   dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable, adMonitoringResultsTable,
+  aiMapperModuleAssignmentsTable,
 } from "@workspace/db";
 import { CreateTenantBody, UpdateTenantBody, GetTenantParams, UpdateTenantParams } from "@workspace/api-zod";
 import { requireAuth, requireRole, hashPassword, type AuthenticatedRequest } from "../lib/auth";
@@ -243,42 +244,63 @@ router.post("/tenants", requireAuth, requireRole("super_admin", "admin"), async 
   // Admins automatically become the parent of tenants they create
   const parentTenantId = req.user!.role === "admin" ? req.user!.tenantId : undefined;
 
+  const { adminFirstName, adminLastName, adminEmail: adminEmailOverride } = req.body ?? {};
+
   const temporaryPassword = crypto.randomBytes(10).toString("base64url").slice(0, 14);
   const passwordHash = await hashPassword(temporaryPassword);
 
-  // Step 1: Create the tenant + admin user atomically.
+  // Validate required admin user fields
+  const firstName = typeof adminFirstName === "string" && adminFirstName.trim() ? adminFirstName.trim() : null;
+  const lastName  = typeof adminLastName  === "string" && adminLastName.trim()  ? adminLastName.trim()  : null;
+  const adminEmail = typeof adminEmailOverride === "string" && adminEmailOverride.trim()
+    ? adminEmailOverride.trim().toLowerCase()
+    : null;
+
+  if (!adminEmail) { res.status(400).json({ error: "adminEmail is required" }); return; }
+  if (!firstName)  { res.status(400).json({ error: "adminFirstName is required" }); return; }
+  if (!lastName)   { res.status(400).json({ error: "adminLastName is required" }); return; }
+
+  // Check email uniqueness before starting transaction
+  const [existingUser] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, adminEmail));
+  if (existingUser) { res.status(409).json({ error: "A user with this email already exists" }); return; }
+
+  // Step 1: Create the tenant + client user atomically.
   // Seeding is intentionally done AFTER commit so the tenant FK is visible
   // on the global connection pool used by seedNewTenantData.
-  const { tenant, adminUser } = await db.transaction(async (tx) => {
+  const { tenant, clientUser } = await db.transaction(async (tx) => {
     const [t] = await tx.insert(tenantsTable)
       .values({ ...parsed.data, isPlatform: false, parentTenantId: parentTenantId ?? null })
       .returning();
 
-    const adminEmail = `admin@${(parsed.data as any).slug ?? t.slug}.sentinelware.io`;
     const [u] = await tx.insert(usersTable).values({
       tenantId: t.id,
       email: adminEmail,
       passwordHash,
-      firstName: "Tenant",
-      lastName: "Admin",
-      role: "admin",
+      firstName,
+      lastName,
+      role: "client",
       requiresPasswordReset: true,
     }).returning();
 
-    return { tenant: t, adminUser: u };
+    return { tenant: t, clientUser: u };
   });
 
   // Step 2: Seed tools and frameworks now that the tenant row is committed and
   // visible to the global connection pool. Failure here rolls up to the caller.
   await seedNewTenantData(tenant.id);
 
+  // Step 3: Explicitly set AI Mapper as disabled for this tenant (ensures a clear audit record).
+  await db.insert(aiMapperModuleAssignmentsTable)
+    .values({ tenantId: tenant.id, isEnabled: false, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })
+    .onConflictDoNothing();
+
   res.status(201).json({
     ...toTenantResponse(tenant),
     adminUser: {
-      id: adminUser.id,
-      email: adminUser.email,
+      id: clientUser.id,
+      email: clientUser.email,
       temporaryPassword,
-      note: "Share these credentials with the tenant admin. They will be required to set a new password on first login.",
+      note: "Share these credentials with the tenant client. They will be required to set a new password on first login.",
     },
   });
 });

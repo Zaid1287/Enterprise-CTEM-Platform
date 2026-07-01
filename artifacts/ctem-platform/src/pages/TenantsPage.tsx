@@ -97,7 +97,7 @@ function typeLabel(t: string) { return TYPE_CONFIG[t]?.label ?? t; }
 function typeValueLabel(t: string) { return TYPE_CONFIG[t]?.valueLabel ?? "Value"; }
 function typeValuePlaceholder(t: string) { return TYPE_CONFIG[t]?.valuePlaceholder ?? ""; }
 
-const emptyTenantForm = { name: "", slug: "", plan: "" };
+const emptyTenantForm = { name: "", slug: "", plan: "", adminFirstName: "", adminLastName: "", adminEmail: "" };
 const emptyEditForm   = { name: "", plan: "", isActive: true, maxAssets: "", maxUsers: "" };
 const emptyAssetForm  = { name: "", type: "domain", value: "", description: "", scanFrequency: "daily", businessImpact: 5 };
 
@@ -826,17 +826,26 @@ export default function TenantsPage() {
 
       {/* ── Create Tenant Dialog ───────────────────────────────────────────── */}
       <Dialog open={showCreate} onOpenChange={v => { if (!v) setShowCreate(false); }}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Create New Tenant</DialogTitle>
-            <DialogDescription>Add a new client organization to the platform.</DialogDescription>
+            <DialogDescription>Add a new client organization and their primary client user.</DialogDescription>
           </DialogHeader>
           <form className="space-y-3 mt-2" onSubmit={e => {
             e.preventDefault();
             if (!tenantForm.name.trim()) return;
+            if (!tenantForm.adminFirstName.trim() || !tenantForm.adminLastName.trim() || !tenantForm.adminEmail.trim()) return;
             const slug = tenantForm.slug.trim() || tenantForm.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-            createTenantMutation.mutate({ name: tenantForm.name.trim(), slug, plan: tenantForm.plan || "starter" });
+            createTenantMutation.mutate({
+              name: tenantForm.name.trim(),
+              slug,
+              plan: tenantForm.plan || "starter",
+              adminFirstName: tenantForm.adminFirstName.trim(),
+              adminLastName: tenantForm.adminLastName.trim(),
+              adminEmail: tenantForm.adminEmail.trim(),
+            });
           }}>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-1">Organization</p>
             <div className="space-y-1.5">
               <Label className="text-xs">Organization Name *</Label>
               <Input
@@ -880,9 +889,43 @@ export default function TenantsPage() {
                 </Select>
               )}
             </div>
+
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Client User</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">First Name *</Label>
+                <Input
+                  value={tenantForm.adminFirstName}
+                  onChange={e => setTenantForm(p => ({ ...p, adminFirstName: e.target.value }))}
+                  placeholder="Jane" required className="h-9"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Last Name *</Label>
+                <Input
+                  value={tenantForm.adminLastName}
+                  onChange={e => setTenantForm(p => ({ ...p, adminLastName: e.target.value }))}
+                  placeholder="Smith" required className="h-9"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Email Address *</Label>
+              <Input
+                type="email"
+                value={tenantForm.adminEmail}
+                onChange={e => setTenantForm(p => ({ ...p, adminEmail: e.target.value }))}
+                placeholder="jane@acmecorp.com" required className="h-9"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">A one-time password will be generated. The user must reset it on first login.</p>
+
             <DialogFooter className="mt-4">
               <Button variant="outline" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
-              <Button type="submit" disabled={createTenantMutation.isPending}>
+              <Button
+                type="submit"
+                disabled={createTenantMutation.isPending || !tenantForm.adminFirstName?.trim() || !tenantForm.adminLastName?.trim() || !tenantForm.adminEmail?.trim()}
+              >
                 {createTenantMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Creating…</> : "Create Tenant"}
               </Button>
             </DialogFooter>
@@ -894,9 +937,9 @@ export default function TenantsPage() {
       <Dialog open={!!newTenantCredentials} onOpenChange={v => { if (!v) setNewTenantCredentials(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Tenant Created — Admin Credentials</DialogTitle>
+            <DialogTitle>Tenant Created — Client Credentials</DialogTitle>
             <DialogDescription>
-              Share these one-time credentials with the tenant admin. They will be asked to set a new password on first login.
+              Share these one-time credentials with the client user. They will be asked to set a new password on first login.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 my-2">
