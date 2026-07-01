@@ -2817,6 +2817,9 @@ components:
       properties:
         method:
           type: string
+        emailUsername:
+          type: string
+          description: Username portion of the verification email address (email method only)
 
     VerificationChallenge:
       type: object

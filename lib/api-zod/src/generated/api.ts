@@ -404,7 +404,8 @@ export const VerifyAssetParams = zod.object({
 })
 
 export const VerifyAssetBody = zod.object({
-  "method": zod.string()
+  "method": zod.string(),
+  "emailUsername": zod.string().optional().describe('Username portion of the verification email address (email method only)')
 })
 
 export const VerifyAssetResponse = zod.object({

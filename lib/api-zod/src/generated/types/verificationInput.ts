@@ -8,4 +8,6 @@
 
 export interface VerificationInput {
   method: string;
+  /** Username portion of the verification email address (email method only) */
+  emailUsername?: string;
 }
