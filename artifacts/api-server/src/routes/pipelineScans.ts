@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { exec } from "child_process";
+import { writeFile, unlink } from "fs/promises";
 import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray, lt } from "drizzle-orm";
-import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable } from "@workspace/db";
+import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
@@ -3066,6 +3067,54 @@ async function executePipeline(
       }
     }
 
+    // ── Custom Nuclei Templates: run any templates assigned to this asset ────
+    if (isWebAsset) {
+      try {
+        const nucleiTemplateRows = await db
+          .select({ template: customNucleiTemplatesTable })
+          .from(customNucleiTemplateAssignmentsTable)
+          .innerJoin(customNucleiTemplatesTable, eq(customNucleiTemplatesTable.id, customNucleiTemplateAssignmentsTable.templateId))
+          .where(and(
+            eq(customNucleiTemplateAssignmentsTable.assetId, asset.id),
+            eq(customNucleiTemplateAssignmentsTable.tenantId, tenantId),
+          ));
+        for (const { template } of nucleiTemplateRows) {
+          const tmpTmpl = `/tmp/nuclei-tmpl-${template.id}-${scanId}-${Date.now()}.yaml`;
+          try {
+            await writeFile(tmpTmpl, template.content, { mode: 0o644 });
+            const { stdout } = await execAsync(
+              `nuclei -t "${tmpTmpl}" -u "${target}" -jsonl -silent -timeout 30 -no-interactsh`,
+              { timeout: 120_000 },
+            ).catch(() => ({ stdout: "" }));
+            for (const line of stdout.split("\n").filter(Boolean)) {
+              try {
+                const hit = JSON.parse(line) as any;
+                const sev: string = (hit["info"]?.["severity"] ?? hit["severity"] ?? "info").toLowerCase();
+                if (sev === "info") continue;
+                const validSeverities = ["critical", "high", "medium", "low"];
+                const severity = validSeverities.includes(sev) ? sev : "medium";
+                findingInserts.push({
+                  tenantId, assetId: asset.id, scanId,
+                  title: hit["info"]?.["name"] ?? hit["template-id"] ?? template.name,
+                  cve: hit["info"]?.["classification"]?.["cve-id"]?.[0] ?? `CUSTOM-${template.id}-${(hit["template-id"] ?? "").slice(0, 20)}`,
+                  severity: severity as any,
+                  cvss: sev === "critical" ? 9.0 : sev === "high" ? 7.5 : sev === "medium" ? 5.3 : 3.1,
+                  cwe: hit["info"]?.["classification"]?.["cwe-id"]?.[0] ?? undefined,
+                  status: "open" as const,
+                  description: `[Custom Template: ${template.name}] ${hit["info"]?.["description"] ?? ""} URL: ${hit["matched-at"] ?? target}`.trim(),
+                  remediation: hit["info"]?.["remediation"] ?? hit["info"]?.["reference"]?.join(", ") ?? `Remediate findings from custom template "${template.name}".`,
+                });
+              } catch { /* invalid JSON line */ }
+            }
+          } finally {
+            unlink(tmpTmpl).catch(() => {});
+          }
+        }
+      } catch (err) {
+        logger.warn({ err, assetId: asset.id, scanId }, "Custom nuclei template execution failed (non-fatal)");
+      }
+    }
+
     // Deduplicate by CVE+asset, enrich with EPSS/KEV, then insert
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
@@ -3112,6 +3161,60 @@ async function executePipeline(
       if (t.status === "running" || t.status === "queued") {
         Object.assign(t, { status: "done", completedAt: new Date().toISOString(), detail: "Complete" });
       }
+    }
+
+    // ── Custom Scripts: run any scripts assigned to this asset ────────────────
+    try {
+      const scriptRows = await db
+        .select({ script: customScriptsTable })
+        .from(customScriptAssignmentsTable)
+        .innerJoin(customScriptsTable, eq(customScriptsTable.id, customScriptAssignmentsTable.scriptId))
+        .where(and(
+          eq(customScriptAssignmentsTable.assetId, asset.id),
+          eq(customScriptAssignmentsTable.tenantId, tenantId),
+        ));
+      if (scriptRows.length > 0) {
+        const interpreters: Record<string, string> = { bash: "bash", sh: "sh", python: "python3", node: "node" };
+        for (const { script } of scriptRows) {
+          const tmpScript = `/tmp/cscript-${script.id}-${scanId}-${Date.now()}`;
+          const [run] = await db.insert(customScriptRunsTable).values({
+            tenantId, scriptId: script.id, assetId: asset.id, scanId,
+            status: "running", startedAt: new Date(),
+          }).returning();
+          try {
+            await writeFile(tmpScript, script.content, { mode: 0o755 });
+            const interpreter = interpreters[script.language] ?? "bash";
+            const { stdout, stderr } = await execAsync(`${interpreter} "${tmpScript}"`, {
+              timeout: (script.timeout || 60) * 1000,
+              env: {
+                ...process.env,
+                TARGET: target,
+                DOMAIN: domain,
+                ASSET_ID: String(asset.id),
+                SCAN_ID: String(scanId),
+                ASSET_NAME: asset.name ?? "",
+              },
+            });
+            await db.update(customScriptRunsTable).set({
+              status: "completed", stdout, stderr: stderr || null, exitCode: 0, completedAt: new Date(),
+            }).where(eq(customScriptRunsTable.id, run.id));
+            logger.info({ scriptId: script.id, assetId: asset.id, scanId }, "Custom script completed");
+          } catch (err: any) {
+            await db.update(customScriptRunsTable).set({
+              status: "failed",
+              stdout: err?.stdout ?? null,
+              stderr: err?.stderr ?? err?.message ?? null,
+              exitCode: err?.code ?? 1,
+              completedAt: new Date(),
+            }).where(eq(customScriptRunsTable.id, run.id));
+            logger.warn({ err: err?.message, scriptId: script.id, assetId: asset.id }, "Custom script failed (non-fatal)");
+          } finally {
+            unlink(tmpScript).catch(() => {});
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, assetId: asset.id, scanId }, "Custom script phase failed (non-fatal)");
     }
   }
 

@@ -32,6 +32,7 @@ import discoveryRouter from "./discovery";
 import graphRouter from "./graph";
 import cdnWhitelistRouter from "./cdnWhitelist";
 import aiMapperRouter from "./aiMapper";
+import customToolsRouter from "./customTools";
 
 const router: IRouter = Router();
 
@@ -68,5 +69,6 @@ router.use(discoveryRouter);
 router.use(graphRouter);
 router.use(cdnWhitelistRouter);
 router.use(aiMapperRouter);
+router.use(customToolsRouter);
 
 export default router;

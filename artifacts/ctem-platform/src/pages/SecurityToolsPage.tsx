@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import {
   useListSecurityTools, useCreateSecurityTool, useDeleteSecurityTool, useUpdateSecurityTool,
@@ -12,8 +12,9 @@ import {
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
   ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
   Zap, Cpu, Network, Globe, Shield, Search, Wifi, Pencil, ChevronLeft, ChevronRight as ChevronRightIcon,
-  ArrowUpCircle,
+  ArrowUpCircle, Code2, FileCode, Tag,
 } from "lucide-react";
+import apiFetch from "@/lib/apiFetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +27,31 @@ import RunScanDialog from "@/components/scan/RunScanDialog";
 import ScheduledScansList from "@/components/scan/ScheduledScansList";
 
 const CATEGORIES = ["recon", "vuln_scan", "port_scan", "ssl_check", "web_recon", "osint"];
+
+const NUCLEI_TMPL_PLACEHOLDER = `id: custom-template-id
+info:
+  name: Custom Check
+  author: security-team
+  severity: medium
+  description: Describe what this template detects.
+  tags: custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/admin"
+    matchers:
+      - type: status
+        status:
+          - 200
+`;
+
+const SCRIPT_LANGUAGE_OPTIONS = [
+  { value: "bash", label: "Bash" },
+  { value: "sh", label: "Shell (sh)" },
+  { value: "python", label: "Python 3" },
+  { value: "node", label: "Node.js" },
+];
 const OUTPUT_FORMATS = ["json", "text", "xml", "csv", "markdown"];
 
 const categoryColor: Record<string, string> = {
@@ -44,7 +70,7 @@ const statusIcon = (status: string) => {
   return <Clock className="w-4 h-4 text-muted-foreground" />;
 };
 
-type Tab = "tools" | "pipeline" | "runs";
+type Tab = "tools" | "pipeline" | "runs" | "scripts" | "nuclei";
 
 const TOOLS_PAGE_SIZE = 15;
 
@@ -68,6 +94,63 @@ export default function SecurityToolsPage() {
   const [showRunScan, setShowRunScan] = useState(false);
   const qc = useQueryClient();
   const [, navigate] = useLocation();
+
+  // ── Custom Scripts state ────────────────────────────────────────────────
+  const [scripts, setScripts] = useState<any[]>([]);
+  const [scriptsLoading, setScriptsLoading] = useState(false);
+  const [showAddScript, setShowAddScript] = useState(false);
+  const [editScript, setEditScript] = useState<any>(null);
+  const [scriptForm, setScriptForm] = useState({ name: "", description: "", language: "bash", content: "", timeout: "60" });
+  const [selectedScript, setSelectedScript] = useState<any>(null);
+  const [scriptRuns, setScriptRuns] = useState<any[]>([]);
+  const [scriptRunsLoading, setScriptRunsLoading] = useState(false);
+  const [scriptAssignments, setScriptAssignments] = useState<any[]>([]);
+  const [scriptAssetsLoading, setScriptAssetsLoading] = useState(false);
+  const [scriptRunningId, setScriptRunningId] = useState<number | null>(null);
+  const [scriptRunAssetId, setScriptRunAssetId] = useState<string>("");
+
+  // ── Custom Nuclei Templates state ───────────────────────────────────────
+  const [nucleiTemplates, setNucleiTemplates] = useState<any[]>([]);
+  const [nucleiLoading, setNucleiLoading] = useState(false);
+  const [showAddNuclei, setShowAddNuclei] = useState(false);
+  const [editNuclei, setEditNuclei] = useState<any>(null);
+  const [nucleiForm, setNucleiForm] = useState({ name: "", description: "", content: "" });
+  const [selectedNuclei, setSelectedNuclei] = useState<any>(null);
+  const [nucleiAssignments, setNucleiAssignments] = useState<any[]>([]);
+  const [nucleiAssetsLoading, setNucleiAssetsLoading] = useState(false);
+
+  // Fetch helpers
+  const fetchScripts = useCallback(async () => {
+    setScriptsLoading(true);
+    try { const d = await apiFetch("/custom-scripts"); setScripts(d); } finally { setScriptsLoading(false); }
+  }, []);
+  const fetchNucleiTemplates = useCallback(async () => {
+    setNucleiLoading(true);
+    try { const d = await apiFetch("/custom-nuclei-templates"); setNucleiTemplates(d); } finally { setNucleiLoading(false); }
+  }, []);
+  const fetchScriptRuns = useCallback(async (scriptId: number) => {
+    setScriptRunsLoading(true);
+    try { const d = await apiFetch(`/custom-scripts/${scriptId}/runs`); setScriptRuns(d.data ?? []); } finally { setScriptRunsLoading(false); }
+  }, []);
+  const fetchScriptAssignments = useCallback(async (scriptId: number) => {
+    setScriptAssetsLoading(true);
+    try { const d = await apiFetch(`/custom-scripts/${scriptId}/assignments`); setScriptAssignments(d); } finally { setScriptAssetsLoading(false); }
+  }, []);
+  const fetchNucleiAssignments = useCallback(async (templateId: number) => {
+    setNucleiAssetsLoading(true);
+    try { const d = await apiFetch(`/custom-nuclei-templates/${templateId}/assignments`); setNucleiAssignments(d); } finally { setNucleiAssetsLoading(false); }
+  }, []);
+
+  useEffect(() => { if (tab === "scripts") fetchScripts(); }, [tab, fetchScripts]);
+  useEffect(() => { if (tab === "nuclei") fetchNucleiTemplates(); }, [tab, fetchNucleiTemplates]);
+  useEffect(() => {
+    if (selectedScript) { fetchScriptRuns(selectedScript.id); fetchScriptAssignments(selectedScript.id); }
+    else { setScriptRuns([]); setScriptAssignments([]); }
+  }, [selectedScript, fetchScriptRuns, fetchScriptAssignments]);
+  useEffect(() => {
+    if (selectedNuclei) fetchNucleiAssignments(selectedNuclei.id);
+    else setNucleiAssignments([]);
+  }, [selectedNuclei, fetchNucleiAssignments]);
 
   const { data: toolsData, isLoading: toolsLoading } = useListSecurityTools();
   const { data: pipelineData, isLoading: pipelineLoading } = useGetToolPipeline({
@@ -227,6 +310,8 @@ export default function SecurityToolsPage() {
     { key: "tools", label: "Tool Library", icon: GitBranch },
     { key: "pipeline", label: "Pipeline", icon: Settings2 },
     { key: "runs", label: "Run History", icon: Terminal },
+    { key: "scripts", label: "Custom Scripts", icon: Code2 },
+    { key: "nuclei", label: "Nuclei Templates", icon: FileCode },
   ];
 
   return (
@@ -346,6 +431,26 @@ export default function SecurityToolsPage() {
             <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: getListToolRunsQueryKey({}) })}>
               <RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh
             </Button>
+          )}
+          {tab === "scripts" && (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={fetchScripts}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh
+              </Button>
+              <Button size="sm" onClick={() => { setScriptForm({ name: "", description: "", language: "bash", content: "", timeout: "60" }); setShowAddScript(true); }}>
+                <Plus className="w-4 h-4 mr-1.5" /> New Script
+              </Button>
+            </div>
+          )}
+          {tab === "nuclei" && (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={fetchNucleiTemplates}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh
+              </Button>
+              <Button size="sm" onClick={() => { setNucleiForm({ name: "", description: "", content: NUCLEI_TMPL_PLACEHOLDER }); setShowAddNuclei(true); }}>
+                <Plus className="w-4 h-4 mr-1.5" /> New Template
+              </Button>
+            </div>
           )}
         </div>
       </div>
@@ -980,6 +1085,419 @@ export default function SecurityToolsPage() {
         assets={allAssets.map((a: any) => ({ id: a.id, name: a.name, value: a.value, type: a.type }))}
         onRunComplete={scanId => navigate(`/scan-reports/${scanId}`)}
       />
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          CUSTOM SCRIPTS TAB
+      ══════════════════════════════════════════════════════════════════════ */}
+      {tab === "scripts" && (
+        <div className="flex gap-4">
+          {/* Left: Script list */}
+          <div className="w-80 flex-shrink-0 bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <span className="text-sm font-medium">Scripts</span>
+              <span className="text-xs text-muted-foreground">{scripts.length}</span>
+            </div>
+            {scriptsLoading ? (
+              <div className="p-4 space-y-2">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
+            ) : scripts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm gap-2">
+                <Code2 className="w-8 h-8 opacity-30" />
+                <p>No custom scripts yet</p>
+                <Button size="sm" variant="outline" onClick={() => { setScriptForm({ name: "", description: "", language: "bash", content: "", timeout: "60" }); setShowAddScript(true); }}>
+                  <Plus className="w-3.5 h-3.5 mr-1.5" /> Create Script
+                </Button>
+              </div>
+            ) : (
+              <div className="divide-y divide-border/50">
+                {scripts.map((s: any) => (
+                  <div
+                    key={s.id}
+                    onClick={() => setSelectedScript(selectedScript?.id === s.id ? null : s)}
+                    className={cn("px-4 py-3 cursor-pointer hover:bg-accent/30 transition-colors", selectedScript?.id === s.id && "bg-accent/50")}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium truncate">{s.name}</span>
+                      <span className="text-[10px] text-muted-foreground bg-accent px-1.5 py-0.5 rounded ml-1 flex-shrink-0">{s.language}</span>
+                    </div>
+                    {s.description && <p className="text-xs text-muted-foreground mt-0.5 truncate">{s.description}</p>}
+                    <p className="text-[10px] text-muted-foreground mt-1">Timeout: {s.timeout}s</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right: Script detail */}
+          {selectedScript ? (
+            <div className="flex-1 space-y-4">
+              {/* Header */}
+              <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between">
+                <div>
+                  <h2 className="font-semibold">{selectedScript.name}</h2>
+                  {selectedScript.description && <p className="text-sm text-muted-foreground mt-0.5">{selectedScript.description}</p>}
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-xs bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded">{selectedScript.language}</span>
+                    <span className="text-xs text-muted-foreground">Timeout: {selectedScript.timeout}s</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => { setScriptForm({ name: selectedScript.name, description: selectedScript.description ?? "", language: selectedScript.language, content: selectedScript.content, timeout: String(selectedScript.timeout) }); setEditScript(selectedScript); }}>
+                    <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={async () => {
+                    if (!confirm("Delete this script?")) return;
+                    await apiFetch(`/custom-scripts/${selectedScript.id}`, { method: "DELETE" });
+                    setSelectedScript(null); fetchScripts();
+                  }}>
+                    <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
+                  </Button>
+                </div>
+              </div>
+
+              {/* Script content */}
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border text-xs font-medium text-muted-foreground">Script Content</div>
+                <pre className="p-4 text-xs font-mono overflow-auto max-h-48 text-foreground/80 bg-accent/10">{selectedScript.content}</pre>
+              </div>
+
+              {/* Run on demand */}
+              <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                <h3 className="text-sm font-medium flex items-center gap-2"><Play className="w-4 h-4 text-primary" /> Run Now</h3>
+                <div className="flex items-center gap-2">
+                  <select
+                    className="flex-1 h-9 text-sm rounded-md border border-input bg-background px-3"
+                    value={scriptRunAssetId}
+                    onChange={e => setScriptRunAssetId(e.target.value)}
+                  >
+                    <option value="">Select an asset…</option>
+                    {allAssets.map((a: any) => <option key={a.id} value={String(a.id)}>{a.name} ({a.type})</option>)}
+                  </select>
+                  <Button size="sm" disabled={!scriptRunAssetId || scriptRunningId === selectedScript.id} onClick={async () => {
+                    if (!scriptRunAssetId) return;
+                    setScriptRunningId(selectedScript.id);
+                    try {
+                      await apiFetch(`/custom-scripts/${selectedScript.id}/run`, { method: "POST", body: JSON.stringify({ assetId: Number(scriptRunAssetId) }) });
+                      setTimeout(() => fetchScriptRuns(selectedScript.id), 1500);
+                    } finally { setScriptRunningId(null); }
+                  }}>
+                    {scriptRunningId === selectedScript.id ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin mr-1.5" />Running…</> : <><Play className="w-3.5 h-3.5 mr-1.5" />Run</>}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Assignments */}
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
+                  <span className="text-sm font-medium flex items-center gap-1.5"><Tag className="w-3.5 h-3.5" /> Asset Assignments</span>
+                  <span className="text-xs text-muted-foreground">{scriptAssignments.length} assigned</span>
+                </div>
+                {scriptAssetsLoading ? (
+                  <div className="p-3 space-y-2">{[...Array(2)].map((_, i) => <Skeleton key={i} className="h-8" />)}</div>
+                ) : (
+                  <div className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <select className="flex-1 h-8 text-sm rounded border border-input bg-background px-2" id="script-assign-select">
+                        <option value="">Select asset to assign…</option>
+                        {allAssets.filter((a: any) => !scriptAssignments.find((sa: any) => sa.assetId === a.id)).map((a: any) => (
+                          <option key={a.id} value={String(a.id)}>{a.name}</option>
+                        ))}
+                      </select>
+                      <Button size="sm" variant="outline" onClick={async () => {
+                        const sel = document.getElementById("script-assign-select") as HTMLSelectElement;
+                        if (!sel.value) return;
+                        await apiFetch(`/custom-scripts/${selectedScript.id}/assignments`, { method: "POST", body: JSON.stringify({ assetId: Number(sel.value) }) });
+                        sel.value = "";
+                        fetchScriptAssignments(selectedScript.id);
+                      }}>Assign</Button>
+                    </div>
+                    {scriptAssignments.length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-2 text-center">No assets assigned — this script won't run in pipeline scans</p>
+                    ) : scriptAssignments.map((sa: any) => (
+                      <div key={sa.assetId} className="flex items-center justify-between text-sm bg-accent/30 rounded px-3 py-1.5">
+                        <span>{sa.asset?.name ?? `Asset #${sa.assetId}`}</span>
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-400" onClick={async () => {
+                          await apiFetch(`/custom-scripts/${selectedScript.id}/assignments/${sa.assetId}`, { method: "DELETE" });
+                          fetchScriptAssignments(selectedScript.id);
+                        }}><XCircle className="w-3.5 h-3.5" /></Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Run history */}
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
+                  <span className="text-sm font-medium">Run History</span>
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => fetchScriptRuns(selectedScript.id)}><RefreshCw className="w-3 h-3 mr-1" />Refresh</Button>
+                </div>
+                {scriptRunsLoading ? (
+                  <div className="p-3 space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+                ) : scriptRuns.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">No runs yet</p>
+                ) : (
+                  <div className="divide-y divide-border/50">
+                    {scriptRuns.map((r: any) => {
+                      const dur = r.startedAt && r.completedAt
+                        ? `${((new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000).toFixed(1)}s` : "—";
+                      return (
+                        <details key={r.id} className="group">
+                          <summary className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-accent/20 list-none">
+                            <div className="flex items-center gap-1.5 flex-1">
+                              {statusIcon(r.status)}
+                              <span className="text-xs capitalize">{r.status}</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground">{allAssets.find((a: any) => a.id === r.assetId)?.name ?? `Asset #${r.assetId}`}</span>
+                            <span className="text-xs text-muted-foreground">{dur}</span>
+                            <span className="text-xs text-muted-foreground">{r.startedAt ? formatDateTime(r.startedAt) : "—"}</span>
+                            <span className="text-xs text-muted-foreground">Exit: {r.exitCode ?? "—"}</span>
+                          </summary>
+                          <div className="px-4 pb-3 space-y-2">
+                            {r.stdout && <pre className="text-[10px] font-mono bg-accent/20 rounded p-2 max-h-32 overflow-auto whitespace-pre-wrap">{r.stdout}</pre>}
+                            {r.stderr && <pre className="text-[10px] font-mono bg-red-500/10 text-red-400 rounded p-2 max-h-24 overflow-auto whitespace-pre-wrap">{r.stderr}</pre>}
+                          </div>
+                        </details>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+              <div className="text-center space-y-2">
+                <Code2 className="w-10 h-10 opacity-20 mx-auto" />
+                <p>Select a script to view details</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Add / Edit Script Dialog */}
+      <Dialog open={showAddScript || !!editScript} onOpenChange={open => { if (!open) { setShowAddScript(false); setEditScript(null); } }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editScript ? "Edit Script" : "New Custom Script"}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={async e => {
+            e.preventDefault();
+            if (editScript) {
+              await apiFetch(`/custom-scripts/${editScript.id}`, { method: "PATCH", body: JSON.stringify({ ...scriptForm, timeout: Number(scriptForm.timeout) }) });
+              setSelectedScript({ ...editScript, ...scriptForm, timeout: Number(scriptForm.timeout) });
+              setEditScript(null);
+            } else {
+              await apiFetch("/custom-scripts", { method: "POST", body: JSON.stringify({ ...scriptForm, timeout: Number(scriptForm.timeout) }) });
+              setShowAddScript(false);
+            }
+            fetchScripts();
+          }} className="space-y-4 mt-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Name *</Label>
+                <Input value={scriptForm.name} onChange={e => setScriptForm(p => ({ ...p, name: e.target.value }))} placeholder="My Recon Script" required className="h-9" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Language</Label>
+                <select className="h-9 w-full text-sm rounded-md border border-input bg-background px-3"
+                  value={scriptForm.language} onChange={e => setScriptForm(p => ({ ...p, language: e.target.value }))}>
+                  {SCRIPT_LANGUAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2 space-y-1.5">
+                <Label className="text-xs">Description (optional)</Label>
+                <Input value={scriptForm.description} onChange={e => setScriptForm(p => ({ ...p, description: e.target.value }))} placeholder="What does this script do?" className="h-9" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Timeout (seconds)</Label>
+                <Input type="number" min="5" max="600" value={scriptForm.timeout} onChange={e => setScriptForm(p => ({ ...p, timeout: e.target.value }))} className="h-9" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Script Content *</Label>
+              <p className="text-[10px] text-muted-foreground">Available env vars: <code className="bg-accent px-1 rounded">TARGET</code> <code className="bg-accent px-1 rounded">DOMAIN</code> <code className="bg-accent px-1 rounded">ASSET_ID</code> <code className="bg-accent px-1 rounded">ASSET_NAME</code> <code className="bg-accent px-1 rounded">SCAN_ID</code></p>
+              <Textarea
+                value={scriptForm.content}
+                onChange={e => setScriptForm(p => ({ ...p, content: e.target.value }))}
+                className="h-64 font-mono text-xs resize-none"
+                placeholder={`#!/usr/bin/env bash\n# TARGET is set to the asset's value (domain/IP/URL)\necho "Scanning $TARGET"\ncurl -sI "$TARGET"`}
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => { setShowAddScript(false); setEditScript(null); }}>Cancel</Button>
+              <Button type="submit">{editScript ? "Save Changes" : "Create Script"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          CUSTOM NUCLEI TEMPLATES TAB
+      ══════════════════════════════════════════════════════════════════════ */}
+      {tab === "nuclei" && (
+        <div className="flex gap-4">
+          {/* Left: Template list */}
+          <div className="w-80 flex-shrink-0 bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <span className="text-sm font-medium">Templates</span>
+              <span className="text-xs text-muted-foreground">{nucleiTemplates.length}</span>
+            </div>
+            {nucleiLoading ? (
+              <div className="p-4 space-y-2">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
+            ) : nucleiTemplates.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm gap-2">
+                <FileCode className="w-8 h-8 opacity-30" />
+                <p>No custom templates yet</p>
+                <Button size="sm" variant="outline" onClick={() => { setNucleiForm({ name: "", description: "", content: NUCLEI_TMPL_PLACEHOLDER }); setShowAddNuclei(true); }}>
+                  <Plus className="w-3.5 h-3.5 mr-1.5" /> Create Template
+                </Button>
+              </div>
+            ) : (
+              <div className="divide-y divide-border/50">
+                {nucleiTemplates.map((t: any) => (
+                  <div
+                    key={t.id}
+                    onClick={() => setSelectedNuclei(selectedNuclei?.id === t.id ? null : t)}
+                    className={cn("px-4 py-3 cursor-pointer hover:bg-accent/30 transition-colors", selectedNuclei?.id === t.id && "bg-accent/50")}
+                  >
+                    <div className="font-medium text-sm truncate">{t.name}</div>
+                    {t.description && <p className="text-xs text-muted-foreground mt-0.5 truncate">{t.description}</p>}
+                    <p className="text-[10px] text-muted-foreground mt-1">{formatDateTime(t.createdAt)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right: Template detail */}
+          {selectedNuclei ? (
+            <div className="flex-1 space-y-4">
+              <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between">
+                <div>
+                  <h2 className="font-semibold">{selectedNuclei.name}</h2>
+                  {selectedNuclei.description && <p className="text-sm text-muted-foreground mt-0.5">{selectedNuclei.description}</p>}
+                  <p className="text-xs text-muted-foreground mt-1.5">Created {formatDateTime(selectedNuclei.createdAt)}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => { setNucleiForm({ name: selectedNuclei.name, description: selectedNuclei.description ?? "", content: selectedNuclei.content }); setEditNuclei(selectedNuclei); }}>
+                    <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={async () => {
+                    if (!confirm("Delete this template?")) return;
+                    await apiFetch(`/custom-nuclei-templates/${selectedNuclei.id}`, { method: "DELETE" });
+                    setSelectedNuclei(null); fetchNucleiTemplates();
+                  }}>
+                    <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
+                  </Button>
+                </div>
+              </div>
+
+              {/* YAML content */}
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border text-xs font-medium text-muted-foreground">Template YAML</div>
+                <pre className="p-4 text-xs font-mono overflow-auto max-h-64 text-foreground/80 bg-accent/10">{selectedNuclei.content}</pre>
+              </div>
+
+              {/* Asset Assignments */}
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
+                  <span className="text-sm font-medium flex items-center gap-1.5"><Tag className="w-3.5 h-3.5" /> Asset Assignments</span>
+                  <span className="text-xs text-muted-foreground">{nucleiAssignments.length} assigned</span>
+                </div>
+                {nucleiAssetsLoading ? (
+                  <div className="p-3 space-y-2">{[...Array(2)].map((_, i) => <Skeleton key={i} className="h-8" />)}</div>
+                ) : (
+                  <div className="p-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">Templates assigned to an asset will run automatically during pipeline scans of that asset. Findings are stored alongside standard nuclei results.</p>
+                    <div className="flex items-center gap-2">
+                      <select className="flex-1 h-8 text-sm rounded border border-input bg-background px-2" id="nuclei-assign-select">
+                        <option value="">Select asset to assign…</option>
+                        {allAssets.filter((a: any) => !nucleiAssignments.find((na: any) => na.assetId === a.id)).map((a: any) => (
+                          <option key={a.id} value={String(a.id)}>{a.name}</option>
+                        ))}
+                      </select>
+                      <Button size="sm" variant="outline" onClick={async () => {
+                        const sel = document.getElementById("nuclei-assign-select") as HTMLSelectElement;
+                        if (!sel.value) return;
+                        await apiFetch(`/custom-nuclei-templates/${selectedNuclei.id}/assignments`, { method: "POST", body: JSON.stringify({ assetId: Number(sel.value) }) });
+                        sel.value = "";
+                        fetchNucleiAssignments(selectedNuclei.id);
+                      }}>Assign</Button>
+                    </div>
+                    {nucleiAssignments.length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-2 text-center">No assets assigned — assign assets above to include this template in their pipeline scans</p>
+                    ) : nucleiAssignments.map((na: any) => (
+                      <div key={na.assetId} className="flex items-center justify-between text-sm bg-accent/30 rounded px-3 py-1.5">
+                        <span>{na.asset?.name ?? `Asset #${na.assetId}`}</span>
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-400" onClick={async () => {
+                          await apiFetch(`/custom-nuclei-templates/${selectedNuclei.id}/assignments/${na.assetId}`, { method: "DELETE" });
+                          fetchNucleiAssignments(selectedNuclei.id);
+                        }}><XCircle className="w-3.5 h-3.5" /></Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+              <div className="text-center space-y-2">
+                <FileCode className="w-10 h-10 opacity-20 mx-auto" />
+                <p>Select a template to view details</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Add / Edit Nuclei Template Dialog */}
+      <Dialog open={showAddNuclei || !!editNuclei} onOpenChange={open => { if (!open) { setShowAddNuclei(false); setEditNuclei(null); } }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{editNuclei ? "Edit Nuclei Template" : "New Custom Nuclei Template"}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={async e => {
+            e.preventDefault();
+            if (editNuclei) {
+              await apiFetch(`/custom-nuclei-templates/${editNuclei.id}`, { method: "PATCH", body: JSON.stringify(nucleiForm) });
+              setSelectedNuclei({ ...editNuclei, ...nucleiForm });
+              setEditNuclei(null);
+            } else {
+              await apiFetch("/custom-nuclei-templates", { method: "POST", body: JSON.stringify(nucleiForm) });
+              setShowAddNuclei(false);
+            }
+            fetchNucleiTemplates();
+          }} className="space-y-4 mt-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Name *</Label>
+                <Input value={nucleiForm.name} onChange={e => setNucleiForm(p => ({ ...p, name: e.target.value }))} placeholder="Admin Panel Exposure Check" required className="h-9" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Description (optional)</Label>
+                <Input value={nucleiForm.description} onChange={e => setNucleiForm(p => ({ ...p, description: e.target.value }))} placeholder="Brief description of what this template finds" className="h-9" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Template YAML *</Label>
+              <p className="text-[10px] text-muted-foreground">Must be valid Nuclei YAML with <code className="bg-accent px-1 rounded">id:</code> and <code className="bg-accent px-1 rounded">http:</code>/<code className="bg-accent px-1 rounded">requests:</code> sections. Use <code className="bg-accent px-1 rounded">{"{{BaseURL}}"}</code> as the target placeholder.</p>
+              <Textarea
+                value={nucleiForm.content}
+                onChange={e => setNucleiForm(p => ({ ...p, content: e.target.value }))}
+                className="h-80 font-mono text-xs resize-none"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => { setShowAddNuclei(false); setEditNuclei(null); }}>Cancel</Button>
+              <Button type="submit">{editNuclei ? "Save Changes" : "Create Template"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

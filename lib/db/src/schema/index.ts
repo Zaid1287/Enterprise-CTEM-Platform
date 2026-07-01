@@ -25,3 +25,5 @@ export * from "./discoveryResults";
 export * from "./externalMemberAssets";
 export * from "./cdnWhitelist";
 export * from "./aiMapper";
+export * from "./customScripts";
+export * from "./customNucleiTemplates";
