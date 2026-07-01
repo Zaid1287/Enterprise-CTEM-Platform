@@ -79,7 +79,8 @@ function AiMapperGlobe({ points }: { points: GlobePoint[] }) {
 
 export default function AiMapperPage() {
   const [, navigate] = useLocation();
-  const { aiMapperEnabled, role } = useAuth();
+  const { aiMapperEnabled, user } = useAuth();
+  const role = user?.role ?? "";
   const isAdmin = role === "admin" || role === "super_admin";
 
   const { data: stats } = useQuery<Stats>({
