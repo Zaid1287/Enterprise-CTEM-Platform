@@ -7,6 +7,8 @@ import {
   aiMapperAttackRunsTable,
   aiMapperBomItemsTable,
   platformSettingsTable,
+  accountManagerClientsTable,
+  tenantsTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, gte, lt, ilike, or, sql } from "drizzle-orm";
 import { requireAuth } from "../lib/auth";
@@ -419,5 +421,171 @@ async function runAttackSuite(runId: number, ep: typeof aiMapperEndpointsTable.$
   await db.update(aiMapperAttackRunsTable).set({ status: "completed", progress: 100, completedAt: new Date(), results: results as any }).where(eq(aiMapperAttackRunsTable.id, runId));
   broadcast(attackRunSockets, runId, { type: "done", totalResults: results.length });
 }
+
+// ── Cross-tenant access control ────────────────────────────────────────────────
+
+async function assertTenantAccess(req: Request, targetTenantId: number): Promise<boolean> {
+  const { role, userId } = req.user!;
+  if (role === "super_admin" || role === "admin") return true;
+  if (role === "account_manager") {
+    const [row] = await db.select({ id: accountManagerClientsTable.id })
+      .from(accountManagerClientsTable)
+      .where(and(eq(accountManagerClientsTable.accountManagerUserId, userId as any), eq(accountManagerClientsTable.clientTenantId, targetTenantId)));
+    return !!row;
+  }
+  return false;
+}
+
+async function getTenantAiStats(tenantId: number) {
+  const [eRow] = await db.select({ total: sql<number>`count(*)`, critical: sql<number>`count(*) filter (where risk_level = 'critical')`, high: sql<number>`count(*) filter (where risk_level = 'high')`, noAuth: sql<number>`count(*) filter (where auth_status = 'none')` }).from(aiMapperEndpointsTable).where(eq(aiMapperEndpointsTable.tenantId, tenantId));
+  const [sRow] = await db.select({ total: sql<number>`count(*)`, active: sql<number>`count(*) filter (where status = 'running')`, lastAt: sql<string>`max(created_at)` }).from(aiMapperScansTable).where(eq(aiMapperScansTable.tenantId, tenantId));
+  const [mod] = await db.select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled }).from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, tenantId));
+  return { endpoints: Number(eRow?.total ?? 0), critical: Number(eRow?.critical ?? 0), high: Number(eRow?.high ?? 0), noAuth: Number(eRow?.noAuth ?? 0), scans: Number(sRow?.total ?? 0), activeScans: Number(sRow?.active ?? 0), lastScanAt: sRow?.lastAt ?? null, isEnabled: mod?.isEnabled ?? false };
+}
+
+// ── Admin: all-tenant overview (admin + super_admin) ─────────────────────────
+
+router.get("/ai-mapper/admin/overview", requireAuth, async (req, res) => {
+  const { role } = req.user!;
+  if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const tenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name, slug: tenantsTable.slug, plan: tenantsTable.plan, isActive: tenantsTable.isActive }).from(tenantsTable).orderBy(asc(tenantsTable.name));
+  const results = await Promise.all(tenants.map(async t => ({ ...t, ...(await getTenantAiStats(t.id)) })));
+  res.json(results);
+});
+
+// ── AM: assigned-client overview ──────────────────────────────────────────────
+
+router.get("/ai-mapper/am-clients", requireAuth, async (req, res) => {
+  const { role, userId } = req.user!;
+  if (role !== "account_manager" && role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  let tenantIds: number[];
+  if (role === "account_manager") {
+    const rows = await db.select({ clientTenantId: accountManagerClientsTable.clientTenantId }).from(accountManagerClientsTable).where(eq(accountManagerClientsTable.accountManagerUserId, userId as any));
+    tenantIds = rows.map(r => r.clientTenantId);
+  } else {
+    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable);
+    tenantIds = rows.map(r => r.id);
+  }
+  if (!tenantIds.length) { res.json([]); return; }
+  const tenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name, slug: tenantsTable.slug, plan: tenantsTable.plan }).from(tenantsTable).where(sql`${tenantsTable.id} = ANY(${JSON.stringify(tenantIds)}::int[])`);
+  const results = await Promise.all(tenants.map(async t => ({ ...t, ...(await getTenantAiStats(t.id)) })));
+  res.json(results);
+});
+
+// ── Cross-tenant client routes ─────────────────────────────────────────────────
+
+router.get("/ai-mapper/client/:tenantId/module", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const [row] = await db.select().from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, targetTenantId));
+  res.json({ isEnabled: row?.isEnabled ?? false, updatedAt: row?.updatedAt ?? null });
+});
+
+router.patch("/ai-mapper/client/:tenantId/module", requireAuth, async (req, res) => {
+  const { role, tenantId: callerTenantId } = req.user!;
+  if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const targetTenantId = Number(req.params.tenantId);
+  const isEnabled = !!req.body.isEnabled;
+  await db.insert(aiMapperModuleAssignmentsTable).values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() }).onConflictDoUpdate({ target: aiMapperModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
+  await logAudit({ tenantId: callerTenantId, userId: req.user!.userId as any, action: isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", resourceType: "tenant", resourceId: targetTenantId, metadata: { targetTenantId, isEnabled }, ip: req.ip ?? "" });
+  res.json({ isEnabled });
+});
+
+router.get("/ai-mapper/client/:tenantId/stats", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  res.json(await getTenantAiStats(targetTenantId));
+});
+
+router.get("/ai-mapper/client/:tenantId/globe", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const rows = await db.select({ id: aiMapperEndpointsTable.id, ip: aiMapperEndpointsTable.ip, lat: aiMapperEndpointsTable.lat, lng: aiMapperEndpointsTable.lng, protocol: aiMapperEndpointsTable.protocol, port: aiMapperEndpointsTable.port, riskScore: aiMapperEndpointsTable.riskScore, riskLevel: aiMapperEndpointsTable.riskLevel, authStatus: aiMapperEndpointsTable.authStatus, country: aiMapperEndpointsTable.country }).from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.tenantId, targetTenantId), sql`lat IS NOT NULL AND lng IS NOT NULL`)).limit(2000);
+  res.json(rows.map(r => ({ ...r, color: PROTOCOL_COLORS[r.protocol ?? "generic"] ?? "#ef4444", altitude: (r.riskScore / 10) * 0.3 })));
+});
+
+router.get("/ai-mapper/client/:tenantId/bom", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const bom  = await db.select().from(aiMapperBomItemsTable).where(eq(aiMapperBomItemsTable.tenantId, targetTenantId)).orderBy(desc(aiMapperBomItemsTable.endpointCount));
+  const dist = await db.select({ protocol: aiMapperEndpointsTable.protocol, count: sql<number>`count(*)` }).from(aiMapperEndpointsTable).where(eq(aiMapperEndpointsTable.tenantId, targetTenantId)).groupBy(aiMapperEndpointsTable.protocol);
+  res.json({ bom, protocolDistribution: dist });
+});
+
+router.get("/ai-mapper/client/:tenantId/scans", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  res.json(await db.select().from(aiMapperScansTable).where(eq(aiMapperScansTable.tenantId, targetTenantId)).orderBy(desc(aiMapperScansTable.createdAt)).limit(50));
+});
+
+router.post("/ai-mapper/client/:tenantId/scans", requireAuth, async (req, res) => {
+  const { tenantId: callerTenantId } = req.user!;
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const [mod] = await db.select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled }).from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, targetTenantId));
+  if (!mod?.isEnabled) { res.status(403).json({ error: "AI Mapper is not enabled for this client" }); return; }
+  const [{ c }] = await db.select({ c: sql<number>`count(*)` }).from(aiMapperScansTable).where(and(eq(aiMapperScansTable.tenantId, targetTenantId), eq(aiMapperScansTable.status, "running")));
+  if (Number(c) >= 3) { res.status(429).json({ error: "Max 3 concurrent AI Mapper scans" }); return; }
+  const { title = "AI Surface Scan", queryPresets = [], cidrScope } = req.body;
+  const [scan] = await db.insert(aiMapperScansTable).values({ tenantId: targetTenantId, title, status: "pending", progress: 0, queryPresets, cidrScope: cidrScope ?? null, createdBy: req.user!.userId as any }).returning();
+  await logAudit({ tenantId: callerTenantId, userId: req.user!.userId as any, action: "ai_mapper_scan_created", resourceType: "ai_mapper_scan", resourceId: scan.id, metadata: { targetTenantId, title, queryPresets }, ip: req.ip ?? "" });
+  setImmediate(() => runAiMapperScan(scan.id, targetTenantId).catch(e => logger.error({ err: e }, "AI Mapper scan error")));
+  res.status(201).json(scan);
+});
+
+router.get("/ai-mapper/client/:tenantId/scans/:scanId", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const [scan] = await db.select().from(aiMapperScansTable).where(and(eq(aiMapperScansTable.id, Number(req.params.scanId)), eq(aiMapperScansTable.tenantId, targetTenantId)));
+  if (!scan) { res.status(404).json({ error: "Not found" }); return; }
+  const endpoints = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.scanId, scan.id), eq(aiMapperEndpointsTable.tenantId, targetTenantId))).orderBy(desc(aiMapperEndpointsTable.riskScore)).limit(200);
+  res.json({ ...scan, endpoints });
+});
+
+router.delete("/ai-mapper/client/:tenantId/scans/:scanId", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  await db.update(aiMapperScansTable).set({ status: "cancelled", completedAt: new Date() }).where(and(eq(aiMapperScansTable.id, Number(req.params.scanId)), eq(aiMapperScansTable.tenantId, targetTenantId)));
+  res.json({ ok: true });
+});
+
+router.get("/ai-mapper/client/:tenantId/endpoints", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const page  = Math.max(1, Number(req.query.page  ?? 1));
+  const limit = Math.min(100, Number(req.query.limit ?? 25));
+  const q     = String(req.query.q   ?? "").trim();
+  const sort  = String(req.query.sort ?? "riskScore");
+  const order = String(req.query.order ?? "desc");
+  const conds = [eq(aiMapperEndpointsTable.tenantId, targetTenantId)];
+  if (q) { const p = parseQ(q); if (p.protocol) conds.push(eq(aiMapperEndpointsTable.protocol, p.protocol)); if (p.auth) conds.push(eq(aiMapperEndpointsTable.authStatus, p.auth)); if (p.risk === "critical") conds.push(gte(aiMapperEndpointsTable.riskScore, 9)); if (p.freeText) conds.push(or(ilike(aiMapperEndpointsTable.ip, `%${p.freeText}%`), ilike(aiMapperEndpointsTable.hostname, `%${p.freeText}%`))!); }
+  const orderCol = sort === "riskScore" ? (order === "asc" ? asc(aiMapperEndpointsTable.riskScore) : desc(aiMapperEndpointsTable.riskScore)) : desc(aiMapperEndpointsTable.firstSeenAt);
+  const [{ total }] = await db.select({ total: sql<number>`count(*)` }).from(aiMapperEndpointsTable).where(and(...conds));
+  const rows = await db.select().from(aiMapperEndpointsTable).where(and(...conds)).orderBy(orderCol).limit(limit).offset((page - 1) * limit);
+  res.json({ data: rows, total: Number(total), page, limit });
+});
+
+router.get("/ai-mapper/client/:tenantId/endpoints/:id", requireAuth, async (req, res) => {
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, Number(req.params.id)), eq(aiMapperEndpointsTable.tenantId, targetTenantId)));
+  if (!ep) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(ep);
+});
+
+router.post("/ai-mapper/client/:tenantId/endpoints/:id/attack", requireAuth, async (req, res) => {
+  const { tenantId: callerTenantId } = req.user!;
+  const targetTenantId = Number(req.params.tenantId);
+  if (!(await assertTenantAccess(req, targetTenantId))) { res.status(403).json({ error: "Access denied" }); return; }
+  const endpointId = Number(req.params.id);
+  const [{ c }] = await db.select({ c: sql<number>`count(*)` }).from(aiMapperAttackRunsTable).where(and(eq(aiMapperAttackRunsTable.tenantId, targetTenantId), eq(aiMapperAttackRunsTable.status, "running")));
+  if (Number(c) >= 5) { res.status(429).json({ error: "Max 5 concurrent attack runs" }); return; }
+  const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, endpointId), eq(aiMapperEndpointsTable.tenantId, targetTenantId)));
+  if (!ep) { res.status(404).json({ error: "Endpoint not found" }); return; }
+  const [run] = await db.insert(aiMapperAttackRunsTable).values({ tenantId: targetTenantId, endpointId, profile: ep.protocol, status: "running", startedAt: new Date(), createdBy: req.user!.userId as any }).returning();
+  await logAudit({ tenantId: callerTenantId, userId: req.user!.userId as any, action: "ai_mapper_attack_launched", resourceType: "ai_mapper_endpoint", resourceId: endpointId, metadata: { attackRunId: run.id, targetTenantId }, ip: req.ip ?? "" });
+  setImmediate(() => runAttackSuite(run.id, ep, targetTenantId).catch(e => logger.error({ err: e }, "AI Mapper attack error")));
+  res.status(201).json({ attackRunId: run.id });
+});
 
 export default router;

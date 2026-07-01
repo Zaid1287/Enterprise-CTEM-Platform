@@ -52,6 +52,9 @@ const AiMapperScanDetailPage   = lazy(() => import("@/pages/AiMapperScanDetailPa
 const AiMapperEndpointsPage    = lazy(() => import("@/pages/AiMapperEndpointsPage"));
 const AiMapperEndpointDetailPage = lazy(() => import("@/pages/AiMapperEndpointDetailPage"));
 const AiMapperBomPage          = lazy(() => import("@/pages/AiMapperBomPage"));
+const AiMapperAdminPage        = lazy(() => import("@/pages/AiMapperAdminPage"));
+const AiMapperAmClientsPage    = lazy(() => import("@/pages/AiMapperAmClientsPage"));
+const AiMapperClientViewPage   = lazy(() => import("@/pages/AiMapperClientViewPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -180,6 +183,11 @@ function Router() {
       <Route path="/ai-mapper/endpoints" component={() => <AiMapperRoute component={AiMapperEndpointsPage} />} />
       <Route path="/ai-mapper/endpoints/:id" component={() => <AiMapperRoute component={AiMapperEndpointDetailPage} />} />
       <Route path="/ai-mapper/bom" component={() => <AiMapperRoute component={AiMapperBomPage} />} />
+      <Route path="/ai-mapper/admin" component={() => <ProtectedRoute component={AiMapperAdminPage} />} />
+      <Route path="/ai-mapper/clients" component={() => <ProtectedRoute component={AiMapperAmClientsPage} />} />
+      <Route path="/ai-mapper/clients/:tenantId" component={() => <ProtectedRoute component={AiMapperClientViewPage} />} />
+      <Route path="/ai-mapper/clients/:tenantId/scans/:scanId" component={() => <ProtectedRoute component={AiMapperClientViewPage} />} />
+      <Route path="/ai-mapper/clients/:tenantId/endpoints/:id" component={() => <ProtectedRoute component={AiMapperClientViewPage} />} />
       <Route path="/reports" component={() => <ProtectedRoute component={ReportsPage} />} />
       <Route path="/audit-logs" component={() => <ProtectedRoute component={AuditLogsPage} />} />
       <Route path="/settings/users" component={() => <ProtectedRoute component={UsersPage} />} />
