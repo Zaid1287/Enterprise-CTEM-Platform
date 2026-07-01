@@ -26,7 +26,8 @@ function ScanLiveUpdater({ scanId }: { scanId: number }) {
 
   useEffect(() => {
     const token = getToken();
-    const wsUrl = `/api/ai-mapper/scans/${scanId}/ws?token=${encodeURIComponent(token ?? "")}`.replace(/^http/, "ws");
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${proto}//${window.location.host}/api/ai-mapper/scans/${scanId}/ws?token=${encodeURIComponent(token ?? "")}`;
     let cancelled = false;
     let ws: WebSocket;
 
@@ -37,11 +38,9 @@ function ScanLiveUpdater({ scanId }: { scanId: number }) {
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
-          if (msg?.scanId === scanId) {
-            qc.setQueryData<AiMapperScan[]>(["ai-mapper-scans"], (prev) =>
-              prev ? prev.map(s => s.id === scanId ? { ...s, ...msg } : s) : prev
-            );
-          }
+          qc.setQueryData<AiMapperScan[]>(["ai-mapper-scans"], (prev) =>
+            prev ? prev.map(s => s.id === scanId ? { ...s, ...msg } : s) : prev
+          );
           if (msg?.status === "completed" || msg?.status === "failed") {
             qc.invalidateQueries({ queryKey: ["ai-mapper-scans"] });
           }

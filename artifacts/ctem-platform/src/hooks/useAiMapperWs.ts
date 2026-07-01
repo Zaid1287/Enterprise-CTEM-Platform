@@ -17,7 +17,9 @@ export function useAiMapperWs({ url, onMessage, enabled = true }: UseAiMapperWsO
     if (!enabled || !url) return;
 
     const token = getToken();
-    const wsUrl = url.replace(/^http/, "ws") + `?token=${encodeURIComponent(token ?? "")}`;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const absoluteUrl = url.startsWith("http") ? url : `${proto}//${window.location.host}${url}`;
+    const wsUrl = absoluteUrl.replace(/^http/, "ws") + `?token=${encodeURIComponent(token ?? "")}`;
 
     let ws: WebSocket;
     try {

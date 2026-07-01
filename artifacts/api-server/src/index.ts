@@ -6,7 +6,8 @@ import { startScanWorker } from "./workers/scanWorker";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startBeatScheduler } from "./workers/beatScheduler";
 import { db, platformSettingsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 import { WebSocketServer } from "ws";
 import { scanProgressSockets, attackRunSockets } from "./routes/aiMapper";
 import { verifyToken } from "./lib/auth";
@@ -119,29 +120,56 @@ server.on("upgrade", (req, socket, head) => {
   const token = params.get("token");
 
   if (!token) { socket.destroy(); return; }
-  try { verifyToken(token); } catch { socket.destroy(); return; }
 
-  const scanMatch  = rawUrl.match(/\/api\/ai-mapper\/scans\/(\d+)\/ws/);
+  let payload: ReturnType<typeof verifyToken>;
+  try { payload = verifyToken(token); } catch { socket.destroy(); return; }
+
+  const tenantId = payload.tenantId;
+
+  const scanMatch   = rawUrl.match(/\/api\/ai-mapper\/scans\/(\d+)\/ws/);
   const attackMatch = rawUrl.match(/\/api\/ai-mapper\/attacks\/(\d+)\/ws/);
   if (!scanMatch && !attackMatch) { socket.destroy(); return; }
 
-  wss.handleUpgrade(req, socket as any, head, (ws) => {
-    if (scanMatch) {
-      const id = Number(scanMatch[1]);
-      if (!scanProgressSockets.has(id)) scanProgressSockets.set(id, new Set());
-      scanProgressSockets.get(id)!.add(ws);
-      ws.on("close", () => {
-        const s = scanProgressSockets.get(id);
-        if (s) { s.delete(ws); if (!s.size) scanProgressSockets.delete(id); }
+  // Verify ownership (tenant isolation) asynchronously before accepting the socket.
+  (async () => {
+    try {
+      if (scanMatch) {
+        const id = Number(scanMatch[1]);
+        const [row] = await db
+          .select({ id: aiMapperScansTable.id })
+          .from(aiMapperScansTable)
+          .where(and(eq(aiMapperScansTable.id, id), eq(aiMapperScansTable.tenantId, tenantId)));
+        if (!row) { socket.destroy(); return; }
+      } else if (attackMatch) {
+        const id = Number(attackMatch[1]);
+        const [row] = await db
+          .select({ id: aiMapperAttackRunsTable.id })
+          .from(aiMapperAttackRunsTable)
+          .where(and(eq(aiMapperAttackRunsTable.id, id), eq(aiMapperAttackRunsTable.tenantId, tenantId)));
+        if (!row) { socket.destroy(); return; }
+      }
+
+      wss.handleUpgrade(req, socket as any, head, (ws) => {
+        if (scanMatch) {
+          const id = Number(scanMatch[1]);
+          if (!scanProgressSockets.has(id)) scanProgressSockets.set(id, new Set());
+          scanProgressSockets.get(id)!.add(ws);
+          ws.on("close", () => {
+            const s = scanProgressSockets.get(id);
+            if (s) { s.delete(ws); if (!s.size) scanProgressSockets.delete(id); }
+          });
+        } else if (attackMatch) {
+          const id = Number(attackMatch[1]);
+          if (!attackRunSockets.has(id)) attackRunSockets.set(id, new Set());
+          attackRunSockets.get(id)!.add(ws);
+          ws.on("close", () => {
+            const s = attackRunSockets.get(id);
+            if (s) { s.delete(ws); if (!s.size) attackRunSockets.delete(id); }
+          });
+        }
       });
-    } else if (attackMatch) {
-      const id = Number(attackMatch[1]);
-      if (!attackRunSockets.has(id)) attackRunSockets.set(id, new Set());
-      attackRunSockets.get(id)!.add(ws);
-      ws.on("close", () => {
-        const s = attackRunSockets.get(id);
-        if (s) { s.delete(ws); if (!s.size) attackRunSockets.delete(id); }
-      });
+    } catch {
+      socket.destroy();
     }
-  });
+  })();
 });

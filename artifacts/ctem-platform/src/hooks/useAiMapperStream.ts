@@ -7,76 +7,42 @@ interface UseAiMapperStreamOptions {
   enabled?: boolean;
 }
 
+function buildWsUrl(url: string): string {
+  const token = getToken();
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const abs = url.startsWith("http") ? url : `${proto}//${window.location.host}${url}`;
+  return abs.replace(/^http/, "ws") + `?token=${encodeURIComponent(token ?? "")}`;
+}
+
 export function useAiMapperStream({ url, onMessage, enabled = true }: UseAiMapperStreamOptions) {
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
-  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!enabled || !url) return;
 
-    const token = getToken();
-
     let cancelled = false;
-    let wsConnected = false;
-
-    const wsUrl = url.replace(/^http/, "ws") + `?token=${encodeURIComponent(token ?? "")}`;
     let ws: WebSocket | null = null;
-    let sseSource: EventSource | null = null;
-
-    function startSse() {
-      if (cancelled) return;
-      const sseUrl = url!.replace(/\/ws$/, "/stream") + `?token=${encodeURIComponent(token ?? "")}`;
-      sseSource = new EventSource(sseUrl);
-      sseSource.onmessage = (e) => {
-        try { onMessageRef.current(JSON.parse(e.data)); } catch { /* ignore */ }
-      };
-      sseSource.onerror = () => {
-        sseSource?.close();
-        sseSource = null;
-      };
-    }
 
     try {
-      ws = new WebSocket(wsUrl);
-
-      const connTimeout = setTimeout(() => {
-        if (!wsConnected && !cancelled) {
-          ws?.close();
-          startSse();
-        }
-      }, 3000);
-
-      ws.onopen = () => {
-        wsConnected = true;
-        clearTimeout(connTimeout);
-      };
+      ws = new WebSocket(buildWsUrl(url));
 
       ws.onmessage = (e) => {
         try { onMessageRef.current(JSON.parse(e.data)); } catch { /* ignore */ }
       };
-
       ws.onerror = () => {
-        clearTimeout(connTimeout);
-        if (!cancelled) startSse();
-      };
-
-      ws.onclose = () => {
-        clearTimeout(connTimeout);
+        ws?.close();
+        ws = null;
       };
     } catch {
-      startSse();
+      /* no-op — polling fallback handles live updates */
     }
 
-    cleanupRef.current = () => {
-      cancelled = true;
-      ws?.close();
-      sseSource?.close();
-    };
-
     return () => {
-      cleanupRef.current?.();
-      cleanupRef.current = null;
+      cancelled = true;
+      void cancelled;
+      ws?.close();
+      ws = null;
     };
   }, [url, enabled]);
 }
