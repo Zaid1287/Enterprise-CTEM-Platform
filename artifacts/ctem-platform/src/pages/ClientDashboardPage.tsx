@@ -10,10 +10,11 @@ import {
   TrendingUp, TrendingDown, Server, Bug, AlertTriangle, Bell,
   CheckCircle2, ShieldOff, Globe, Flag, XCircle, Clock,
   Loader2, ChevronRight, ShieldAlert, Shield, Activity,
-  BarChart2, Layers,
+  BarChart2, Layers, Globe2, Crosshair, ArrowRight,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/hooks/useAuth";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -149,10 +150,18 @@ function SectionCard({ title, href, children, action }: {
 
 export default function ClientDashboardPage() {
   const [, navigate] = useLocation();
+  const { aiMapperEnabled } = useAuth();
 
   const { data: d, isLoading } = useQuery<any>({
     queryKey: ["client-overview"],
     queryFn: () => apiFetch(`${BASE}/api/dashboard/client-overview`),
+    staleTime: 30_000,
+  });
+
+  const { data: aiStats, isLoading: aiLoading } = useQuery<{ total: number; critical: number; high: number; noAuth: number; activeScans: number }>({
+    queryKey: ["ai-mapper-stats"],
+    queryFn: () => apiFetch(`${BASE}/api/ai-mapper/stats`),
+    enabled: aiMapperEnabled,
     staleTime: 30_000,
   });
 
@@ -726,6 +735,46 @@ export default function ClientDashboardPage() {
             </p>
           </div>
         </SectionCard>
+
+      {aiMapperEnabled && (
+        <div className="rounded-xl border border-violet-500/20 bg-gradient-to-r from-violet-950/40 via-purple-950/20 to-slate-900/40 p-4">
+          <div className="flex items-start justify-between gap-4 mb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-violet-500/15 border border-violet-500/25 flex items-center justify-center shrink-0">
+                <Globe2 className="w-4 h-4 text-violet-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">AI Mapper</h3>
+                <p className="text-[11px] text-muted-foreground">Exposed AI infrastructure discovered across the internet</p>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate("/ai-mapper")}
+              className="inline-flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 font-medium transition-colors shrink-0">
+              Open AI Mapper <ArrowRight className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: "Total Endpoints", value: aiStats?.total,       icon: Globe2,        color: "text-blue-400"   },
+              { label: "Critical Risk",   value: aiStats?.critical,    icon: AlertTriangle, color: "text-red-400"    },
+              { label: "No Auth",         value: aiStats?.noAuth,      icon: ShieldOff,     color: "text-yellow-400" },
+              { label: "Active Scans",    value: aiStats?.activeScans, icon: Crosshair,     color: "text-green-400"  },
+            ].map(({ label, value, icon: Icon, color }) => (
+              <div key={label} className="bg-black/20 rounded-lg px-3 py-2.5 border border-white/5">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <Icon className={cn("w-3 h-3", color)} />
+                  <p className="text-[10px] text-muted-foreground">{label}</p>
+                </div>
+                <p className={cn("text-xl font-bold tabular-nums", color)}>
+                  {aiLoading ? "—" : (value ?? 0).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       </div>
     </div>
   );
