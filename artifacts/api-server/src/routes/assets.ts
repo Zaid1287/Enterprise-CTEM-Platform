@@ -235,8 +235,7 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(assetsTable.tenantId, ids);
   } else if (role === "super_admin" || role === "admin") {
-    // Super admins and admins see ALL assets across all tenants (platform operator view)
-    tenantFilter = undefined;
+    tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
   } else if (role === "client") {
     // Clients see only their assigned assets — cross-tenant, no tenantId restriction
     tenantFilter = undefined;
@@ -476,7 +475,10 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
     const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
     const baseUrl = getPlatformBaseUrl(req as any);
     const confirmUrl = `${baseUrl}/api/assets/${existing.id}/verify/email-confirm?token=${emailToken}`;
-    const adminEmail = `admin@${domain}`;
+    const emailUsername = typeof req.body.emailUsername === "string" && req.body.emailUsername.trim()
+      ? req.body.emailUsername.trim()
+      : "admin";
+    const adminEmail = `${emailUsername}@${domain}`;
 
     await db.update(assetsTable)
       .set({ verificationToken: token, verificationMethod: method, verificationStatus: "pending",

@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
-import { db, tenantsTable, usersTable, sessionsTable, accountManagerClientsTable, aiMapperModuleAssignmentsTable } from "@workspace/db";
+import { eq, and, desc } from "drizzle-orm";
+import { db, tenantsTable, usersTable, sessionsTable, accountManagerClientsTable, aiMapperModuleAssignmentsTable, accessRequestsTable } from "@workspace/db";
 import { LoginBody, RegisterBody, RefreshTokenBody, ChangePasswordBody } from "@workspace/api-zod";
 import {
   hashPassword,
@@ -759,5 +759,67 @@ export async function seedNewTenantData(tenantId: number): Promise<void> {
     { tenantId, name: "nuclei", description: "Fast and customizable vulnerability scanner", githubUrl: "https://github.com/projectdiscovery/nuclei", category: "vuln_scan", installCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", updateCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", runCommand: "nuclei -u {target} -json", outputFormat: "json", isActive: true },
   ]).onConflictDoNothing();
 }
+
+// ── Request for Access (public — no account created) ──────────────────────────
+
+const FREE_EMAIL_DOMAINS = [
+  "gmail.com","yahoo.com","hotmail.com","outlook.com","live.com","icloud.com",
+  "aol.com","protonmail.com","mail.com","yandex.com","zoho.com","gmx.com",
+  "inbox.com","msn.com","me.com","mac.com","comcast.net","verizon.net",
+  "mailinator.com","guerrillamail.com","tempmail.com","throwam.com","sharklasers.com",
+  "dispostable.com","yopmail.com","trashmail.com","fakeinbox.com","maildrop.cc",
+];
+
+function isBusinessEmail(email: string): boolean {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain) return false;
+  return !FREE_EMAIL_DOMAINS.includes(domain);
+}
+
+router.post("/auth/request-access", async (req, res): Promise<void> => {
+  const { fullName, companyName, email, jobTitle, teamSize, phone, message } = req.body ?? {};
+  if (!fullName || !companyName || !email) {
+    res.status(400).json({ error: "fullName, companyName, and email are required." });
+    return;
+  }
+  if (!isBusinessEmail(email)) {
+    res.status(400).json({ error: "Please use a business email address. Free or temporary email providers are not accepted." });
+    return;
+  }
+  await db.insert(accessRequestsTable).values({
+    fullName: String(fullName).trim(),
+    companyName: String(companyName).trim(),
+    email: String(email).toLowerCase().trim(),
+    jobTitle: jobTitle ? String(jobTitle).trim() : null,
+    teamSize: teamSize ? String(teamSize) : null,
+    phone: phone ? String(phone).trim() : null,
+    message: message ? String(message).trim() : null,
+  });
+  res.status(201).json({ ok: true, message: "Your request has been received. We'll be in touch soon." });
+});
+
+router.get("/auth/access-requests", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const rows = await db.select().from(accessRequestsTable).orderBy(desc(accessRequestsTable.createdAt));
+  res.json(rows);
+});
+
+router.patch("/auth/access-requests/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
+  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const { status, reviewNotes } = req.body ?? {};
+  if (!["pending", "approved", "rejected"].includes(status)) {
+    res.status(400).json({ error: "status must be pending, approved, or rejected" });
+    return;
+  }
+  await db.update(accessRequestsTable)
+    .set({ status, reviewNotes: reviewNotes ?? null, reviewedByUserId: String(req.user!.userId) })
+    .where(eq(accessRequestsTable.id, id));
+  const [updated] = await db.select().from(accessRequestsTable).where(eq(accessRequestsTable.id, id));
+  res.json(updated);
+});
 
 export default router;

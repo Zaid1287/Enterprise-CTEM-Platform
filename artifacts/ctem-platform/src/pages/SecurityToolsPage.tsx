@@ -14,7 +14,7 @@ import {
   Zap, Cpu, Network, Globe, Shield, Search, Wifi, Pencil, ChevronLeft, ChevronRight as ChevronRightIcon,
   ArrowUpCircle, Code2, FileCode, Tag,
 } from "lucide-react";
-import apiFetch from "@/lib/apiFetch";
+import { apiFetch } from "@/lib/apiFetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

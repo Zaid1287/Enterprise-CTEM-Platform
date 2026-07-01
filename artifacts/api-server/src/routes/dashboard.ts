@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, count, and, desc, sql, inArray, or, isNull, lte, gte } from "drizzle-orm";
+import { eq, count, and, desc, sql, inArray, or, isNull, lte, gte, ne } from "drizzle-orm";
 import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable, brandThreatScansTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { cacheGet, cacheSet, cacheDelete, ck } from "../lib/cache";
@@ -202,8 +202,9 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   const callerRole = req.user!.role;
   if (callerRole !== "super_admin" && callerRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
 
-  // All non-platform tenants (clients)
-  const allClientTenants = await db.select().from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+  // All non-platform tenants (clients) — exclude the caller's own tenant so it never inflates the count
+  const allClientTenants = await db.select().from(tenantsTable)
+    .where(and(eq(tenantsTable.isPlatform, false), ne(tenantsTable.id, req.user!.tenantId)));
 
   // Super admin and platform-admin see all client tenants.
   // Non-platform admin sees only direct child tenants.

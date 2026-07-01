@@ -107,6 +107,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "Users", href: "/settings/users", icon: Users, onlyFor: ["super_admin", "admin"] },
       { label: "Tenant Management", href: "/tenants", icon: Building2, onlyFor: ["admin"] },
+      { label: "Access Requests", href: "/access-requests", icon: UserCheck, onlyFor: ["super_admin", "admin"] },
       { label: "Audit Logs", href: "/audit-logs", icon: ClipboardList, onlyFor: ["super_admin", "admin"] },
     ],
   },

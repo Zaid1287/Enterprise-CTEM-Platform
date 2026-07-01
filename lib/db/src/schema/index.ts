@@ -27,3 +27,4 @@ export * from "./cdnWhitelist";
 export * from "./aiMapper";
 export * from "./customScripts";
 export * from "./customNucleiTemplates";
+export * from "./accessRequests";

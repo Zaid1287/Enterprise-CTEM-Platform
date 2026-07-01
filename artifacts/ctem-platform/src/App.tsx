@@ -11,7 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 
 // Lazy-load pages for faster initial bundle
 const LoginPage = lazy(() => import("@/pages/LoginPage"));
-const RegisterPage = lazy(() => import("@/pages/RegisterPage"));
+const RequestAccessPage = lazy(() => import("@/pages/RequestAccessPage"));
+const AccessRequestsPage = lazy(() => import("@/pages/AccessRequestsPage"));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage"));
 const AssetsPage = lazy(() => import("@/pages/AssetsPage"));
 const AssetDetailPage = lazy(() => import("@/pages/AssetDetailPage"));
@@ -173,7 +174,7 @@ function Router() {
       {/* Public routes */}
       <Route path="/" component={() => <Redirect to={defaultPath} />} />
       <Route path="/login" component={() => <PublicRoute component={LoginPage} />} />
-      <Route path="/register" component={() => <PublicRoute component={RegisterPage} />} />
+      <Route path="/register" component={() => <PublicRoute component={RequestAccessPage} />} />
       <Route path="/forgot-password" component={() => <PublicRoute component={ForgotPasswordPage} />} />
       <Route path="/accept-invitation" component={() => (
         <Suspense fallback={<PageLoader />}>
@@ -217,6 +218,7 @@ function Router() {
       <Route path="/packages" component={() => <ProtectedRoute component={PackagesPage} />} />
       <Route path="/my-clients" component={() => <ProtectedRoute component={MyClientsPage} />} />
       <Route path="/tenants" component={() => <ProtectedRoute component={TenantsPage} />} />
+      <Route path="/access-requests" component={() => <ProtectedRoute component={AccessRequestsPage} />} />
       <Route path="/takedowns" component={() => <ProtectedRoute component={TakedownsPage} />} />
       <Route path="/settings/account" component={() => <ProtectedRoute component={AccountSettingsPage} />} />
       <Route path="/alerts/:id" component={() => <ProtectedRoute component={AlertDetailPage} />} />

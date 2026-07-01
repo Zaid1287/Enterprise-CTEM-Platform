@@ -66,13 +66,13 @@ const emptyForm = {
   assignedAccountManagerId: undefined as number | undefined,
 };
 
-type VerifyStep = "idle" | "method_select" | "token_shown" | "email_sent" | "checking" | "verified" | "failed";
+type VerifyStep = "idle" | "method_select" | "email_config" | "token_shown" | "email_sent" | "checking" | "verified" | "failed";
 type VerifyMethod = "dns_txt" | "email" | "http_file" | "cloud";
 
 const VERIFY_METHODS: { value: VerifyMethod; label: string; desc: string }[] = [
   { value: "dns_txt",   label: "DNS TXT Record",   desc: "Add a TXT record to your domain's DNS — fastest and most reliable." },
   { value: "http_file", label: "HTTP File",         desc: "Place a verification file on your web server." },
-  { value: "email",     label: "Admin Email",       desc: "Receive a confirmation link at admin@yourdomain.com." },
+  { value: "email",     label: "Admin Email",       desc: "Receive a confirmation link at a mailbox on your domain." },
   { value: "cloud",     label: "Cloud Resource Tag", desc: "Add a tag to your cloud resource (AWS / GCP / Azure)." },
 ];
 
@@ -103,6 +103,7 @@ export default function AssetsPage() {
   const [verifyExtra, setVerifyExtra] = useState<Record<string, any>>({});
   const [pendingAssetId, setPendingAssetId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [emailUsernameInput, setEmailUsernameInput] = useState("");
 
   // Edit dialog
   const [showEdit, setShowEdit] = useState(false);
@@ -249,11 +250,16 @@ export default function AssetsPage() {
     toast({ title: "Asset added successfully" });
   };
 
-  async function initiateVerify(assetId: number, method: VerifyMethod) {
+  async function initiateVerify(assetId: number, method: VerifyMethod, emailUsername?: string) {
+    if (method === "email" && !emailUsername) {
+      setVerifyMethod("email");
+      setVerifyStep("email_config");
+      return;
+    }
     setVerifyMethod(method);
     setVerifyStep(method === "email" ? "email_sent" : "token_shown");
     try {
-      const res = await verifyAsset.mutateAsync({ assetId, data: { method } as any });
+      const res = await verifyAsset.mutateAsync({ assetId, data: { method, ...(emailUsername ? { emailUsername } : {}) } as any });
       const data = res as any;
       setVerifyToken(data.challenge ?? "");
       setVerifyExtra(data);
@@ -842,10 +848,13 @@ export default function AssetsPage() {
               assetValue={newAsset.value}
               assetType={newAsset.type}
               copied={copied}
+              emailUsernameInput={emailUsernameInput}
+              onEmailUsernameChange={setEmailUsernameInput}
               onCopy={copyToken}
               onMethodSelect={(m) => pendingAssetId && initiateVerify(pendingAssetId, m)}
+              onEmailConfirm={(u) => { if (pendingAssetId) { setEmailUsernameInput(""); initiateVerify(pendingAssetId, "email", u); } }}
               onCheck={checkVerification}
-              onRetry={() => setVerifyStep("method_select")}
+              onRetry={() => { setVerifyStep("method_select"); setEmailUsernameInput(""); }}
               onDone={() => { setShowCreate(false); resetCreateForm(); }}
             />
           ) : (
@@ -1172,10 +1181,13 @@ export default function AssetsPage() {
               assetValue={newAsset.value}
               assetType={newAsset.type}
               copied={copied}
+              emailUsernameInput={emailUsernameInput}
+              onEmailUsernameChange={setEmailUsernameInput}
               onCopy={copyToken}
               onMethodSelect={(m) => pendingAssetId && initiateVerify(pendingAssetId, m)}
+              onEmailConfirm={(u) => { if (pendingAssetId) { setEmailUsernameInput(""); initiateVerify(pendingAssetId, "email", u); } }}
               onCheck={checkVerification}
-              onRetry={() => setVerifyStep("method_select")}
+              onRetry={() => { setVerifyStep("method_select"); setEmailUsernameInput(""); }}
               onDone={() => { setShowVerify(false); setVerifyStep("idle"); setPendingAssetId(null); }}
             />
           )}
@@ -1547,7 +1559,8 @@ function VerifyBadge({ status }: { status: string }) {
 
 function VerifyOwnershipPanel({
   step, method, token, extra, message, assetValue, assetType, copied,
-  onCopy, onMethodSelect, onCheck, onRetry, onDone,
+  emailUsernameInput, onEmailUsernameChange,
+  onCopy, onMethodSelect, onEmailConfirm, onCheck, onRetry, onDone,
 }: {
   step: VerifyStep;
   method: VerifyMethod;
@@ -1557,8 +1570,11 @@ function VerifyOwnershipPanel({
   assetValue: string;
   assetType: string;
   copied: boolean;
+  emailUsernameInput: string;
+  onEmailUsernameChange: (v: string) => void;
   onCopy: () => void;
   onMethodSelect: (m: VerifyMethod) => void;
+  onEmailConfirm: (username: string) => void;
   onCheck: () => void;
   onRetry: () => void;
   onDone: () => void;
@@ -1610,6 +1626,52 @@ function VerifyOwnershipPanel({
       <div className="py-10 text-center space-y-3">
         <Loader2 className="w-10 h-10 text-primary mx-auto animate-spin" />
         <p className="text-sm text-muted-foreground">Checking verification…</p>
+      </div>
+    );
+  }
+
+  // ── Email config (collect username before sending) ──────────────────────────
+  if (step === "email_config") {
+    return (
+      <div className="space-y-4 py-2">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
+          <p className="font-semibold text-foreground flex items-center gap-2">
+            <Shield className="w-4 h-4 text-primary" /> Confirm verification email address
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Enter the username of the mailbox you want the verification link sent to at <strong>@{domain}</strong>.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Email username</label>
+          <div className="flex items-center gap-0 rounded-lg border border-border overflow-hidden focus-within:ring-2 focus-within:ring-primary/30">
+            <input
+              type="text"
+              value={emailUsernameInput}
+              onChange={e => onEmailUsernameChange(e.target.value.replace(/[@\s]/g, ""))}
+              placeholder="admin"
+              className="flex-1 bg-transparent px-3 py-2 text-sm outline-none"
+              autoFocus
+              onKeyDown={e => { if (e.key === "Enter" && emailUsernameInput.trim()) onEmailConfirm(emailUsernameInput.trim()); }}
+            />
+            <span className="px-3 py-2 text-sm text-muted-foreground bg-accent/30 border-l border-border select-none">
+              @{domain}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The verification link will be sent to <strong>{emailUsernameInput.trim() || "admin"}@{domain}</strong>
+          </p>
+        </div>
+        <Button
+          className="w-full"
+          disabled={!emailUsernameInput.trim()}
+          onClick={() => onEmailConfirm(emailUsernameInput.trim() || "admin")}
+        >
+          <Shield className="w-3.5 h-3.5 mr-1.5" /> Send Verification Email
+        </Button>
+        <Button variant="ghost" size="sm" className="text-muted-foreground w-full" onClick={onRetry}>
+          Choose a different method
+        </Button>
       </div>
     );
   }
@@ -1749,6 +1811,15 @@ function VerifyOwnershipPanel({
   // ── HTTP File instructions ──────────────────────────────────────────────────
   if (step === "token_shown" && method === "http_file") {
     const fileUrl = extra.checkUrl ?? `https://${domain}/.well-known/sentinelware-verification.txt`;
+    const handleDownload = () => {
+      if (!token) return;
+      const blob = new Blob([token], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "sentinelware-verification.txt";
+      a.click();
+      URL.revokeObjectURL(url);
+    };
     return (
       <div className="space-y-4 py-2">
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-1">
@@ -1763,12 +1834,15 @@ function VerifyOwnershipPanel({
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 2 — File content (exact)</p>
           <div className="flex items-center gap-2 bg-accent/20 rounded px-3 py-2 border border-border font-mono text-xs">
             <span className="flex-1 truncate text-primary">{token || "Generating…"}</span>
-            <button type="button" onClick={onCopy} className="text-muted-foreground hover:text-foreground shrink-0">
+            <button type="button" onClick={onCopy} className="text-muted-foreground hover:text-foreground shrink-0" title="Copy token">
               {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
           </div>
           <p className="text-xs text-muted-foreground">The file must be accessible at: <strong className="font-mono">{fileUrl}</strong></p>
         </div>
+        <Button variant="outline" size="sm" className="w-full" onClick={handleDownload} disabled={!token}>
+          <Server className="w-3.5 h-3.5 mr-1.5" /> Download sentinelware-verification.txt
+        </Button>
         <Button onClick={onCheck} className="w-full">
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Check Verification
         </Button>

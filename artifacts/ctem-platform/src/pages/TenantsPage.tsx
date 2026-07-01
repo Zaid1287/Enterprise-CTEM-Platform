@@ -545,6 +545,7 @@ export default function TenantsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/20">
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground w-12">ID</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Organization</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Plan</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Users</th>
@@ -560,7 +561,7 @@ export default function TenantsPage() {
             </thead>
             <tbody>
               {tenants.length === 0 && (
-                <tr><td colSpan={user?.role === "super_admin" ? 9 : 8} className="px-4 py-10 text-center text-muted-foreground text-sm">
+                <tr><td colSpan={user?.role === "super_admin" ? 10 : 9} className="px-4 py-10 text-center text-muted-foreground text-sm">
                   No tenants yet. Click <strong>New Tenant</strong> to create one.
                 </td></tr>
               )}
@@ -573,6 +574,9 @@ export default function TenantsPage() {
                     )}
                     onClick={() => toggleRow(t.id)}
                   >
+                    <td className="px-4 py-2.5 tabular-nums text-xs text-muted-foreground font-mono">
+                      {t.id}
+                    </td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{t.name}</span>
