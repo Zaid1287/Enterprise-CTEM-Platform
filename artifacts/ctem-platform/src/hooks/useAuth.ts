@@ -15,6 +15,7 @@ interface AuthStore {
   token: string | null;
   isAuthenticated: boolean;
   aiMapperEnabled: boolean;
+  aiMapperLoaded: boolean;
   login: (token: string, refreshToken: string, user: AuthUser) => void;
   logout: () => void;
   setUser: (user: AuthUser) => void;
@@ -35,6 +36,7 @@ export const useAuth = create<AuthStore>((set) => ({
   token: getToken(),
   isAuthenticated: !!getToken(),
   aiMapperEnabled: false,
+  aiMapperLoaded: false,
 
   login: (token, refreshToken, user) => {
     persistToken(token);
@@ -47,7 +49,7 @@ export const useAuth = create<AuthStore>((set) => ({
     persistToken(null);
     sessionStorage.removeItem("ctem_user");
     sessionStorage.removeItem("ctem_refresh_token");
-    set({ user: null, token: null, isAuthenticated: false, aiMapperEnabled: false });
+    set({ user: null, token: null, isAuthenticated: false, aiMapperEnabled: false, aiMapperLoaded: false });
   },
 
   setUser: (user) => {
@@ -55,5 +57,5 @@ export const useAuth = create<AuthStore>((set) => ({
     set({ user });
   },
 
-  setAiMapperEnabled: (enabled: boolean) => set({ aiMapperEnabled: enabled }),
+  setAiMapperEnabled: (enabled: boolean) => set({ aiMapperEnabled: enabled, aiMapperLoaded: true }),
 }));

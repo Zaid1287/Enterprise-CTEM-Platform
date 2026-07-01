@@ -226,30 +226,79 @@ export default function AiMapperScansPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {scans.filter(s => s.status === "running").map(s => (
             <ScanLiveUpdater key={s.id} scanId={s.id} onConnectedChange={handleConnectedChange} />
           ))}
-          {scans.map(scan => {
-            const Icon = STATUS_ICON[scan.status] ?? Clock;
-            const isRunning = scan.status === "running" || scan.status === "pending";
-            return (
-              <Card
-                key={scan.id}
-                className="hover:border-primary/40 transition-colors cursor-pointer"
-                onClick={() => navigate(`/ai-mapper/scans/${scan.id}`)}
-              >
-                <CardContent className="py-4 px-5">
-                  <div className="flex items-start gap-4">
-                    <div className={cn("mt-1.5 w-2.5 h-2.5 rounded-full shrink-0", STATUS_COLOR[scan.status] ?? "bg-slate-400")} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium truncate">{scan.title}</p>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant="outline" className="text-xs capitalize">{scan.status}</Badge>
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/40 text-muted-foreground text-xs uppercase tracking-wide">
+                  <th className="text-left px-4 py-2.5 w-8">Status</th>
+                  <th className="text-left px-4 py-2.5">Title</th>
+                  <th className="text-left px-4 py-2.5">Progress</th>
+                  <th className="text-right px-4 py-2.5">Endpoints</th>
+                  <th className="text-right px-4 py-2.5">Live Hosts</th>
+                  <th className="text-right px-4 py-2.5">Targets</th>
+                  <th className="text-left px-4 py-2.5">Created</th>
+                  <th className="px-4 py-2.5" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {scans.map(scan => {
+                  const Icon = STATUS_ICON[scan.status] ?? Clock;
+                  const isRunning = scan.status === "running" || scan.status === "pending";
+                  return (
+                    <tr
+                      key={scan.id}
+                      className="hover:bg-muted/30 cursor-pointer transition-colors"
+                      onClick={() => navigate(`/ai-mapper/scans/${scan.id}`)}
+                    >
+                      <td className="px-4 py-3">
+                        <div className={cn("w-2 h-2 rounded-full", STATUS_COLOR[scan.status] ?? "bg-slate-400")} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium truncate max-w-56">{scan.title}</p>
+                        <p className="text-xs text-muted-foreground capitalize flex items-center gap-1 mt-0.5">
+                          <Icon className={cn("w-3 h-3", scan.status === "running" && "animate-spin")} />
+                          {scan.status}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 min-w-36">
+                        {isRunning ? (
+                          <div>
+                            <Progress value={scan.progress ?? 0} className="h-1.5 w-28" />
+                            <p className="text-xs text-muted-foreground mt-1">{scan.progress ?? 0}%</p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {scan.status === "completed" ? "100%" : "—"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {scan.endpointCount != null
+                          ? <span className="font-medium text-violet-400">{scan.endpointCount.toLocaleString()}</span>
+                          : <span className="text-muted-foreground">—</span>
+                        }
+                      </td>
+                      <td className="px-4 py-3 text-right text-muted-foreground">
+                        {scan.liveHosts != null ? scan.liveHosts.toLocaleString() : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right text-muted-foreground text-xs">
+                        {scan.cidrScope
+                          ? scan.cidrScope.split("\n").filter(Boolean).length
+                          : <span className="text-muted-foreground/40">—</span>
+                        }
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                        {formatDistanceToNow(new Date(scan.createdAt), { addSuffix: true })}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
                           <Button
                             variant="ghost" size="icon" className="w-7 h-7"
-                            onClick={e => { e.stopPropagation(); navigate(`/ai-mapper/scans/${scan.id}`); }}
+                            onClick={() => navigate(`/ai-mapper/scans/${scan.id}`)}
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
@@ -257,42 +306,19 @@ export default function AiMapperScansPage() {
                             <Button
                               variant="ghost" size="icon"
                               className="w-7 h-7 text-red-400 hover:text-red-300"
-                              onClick={e => { e.stopPropagation(); cancelScan.mutate(scan.id); }}
+                              onClick={() => cancelScan.mutate(scan.id)}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           )}
                         </div>
-                      </div>
-
-                      {isRunning && (
-                        <div className="mt-2">
-                          <Progress value={scan.progress ?? 0} className="h-1.5" />
-                          <p className="text-xs text-muted-foreground mt-1">{scan.progress ?? 0}% complete</p>
-                        </div>
-                      )}
-
-                      <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
-                        <span className="flex items-center gap-1">
-                          <Icon className={cn("w-3 h-3", scan.status === "running" && "animate-spin")} />
-                          {scan.status}
-                        </span>
-                        {scan.endpointCount != null && <span>{scan.endpointCount} endpoints found</span>}
-                        {scan.liveHosts     != null && <span>{scan.liveHosts} live hosts</span>}
-                        {scan.cidrScope && (
-                          <span className="flex items-center gap-1">
-                            <Target className="w-3 h-3" />
-                            Scoped ({scan.cidrScope.split("\n").filter(Boolean).length} targets)
-                          </span>
-                        )}
-                        <span>{formatDistanceToNow(new Date(scan.createdAt), { addSuffix: true })}</span>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

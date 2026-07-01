@@ -11,6 +11,7 @@ import { RiskScoreGauge } from "@/components/aiMapper/RiskScoreGauge";
 import {
   Search, ChevronLeft, ChevronRight, Loader2, Crosshair,
   Download, ArrowUp, ArrowDown, ArrowUpDown, HelpCircle,
+  ShieldOff, Lock, AlertTriangle, Wrench, BrainCircuit, ShieldCheck,
 } from "lucide-react";
 
 const RISK_BADGE: Record<string, string> = {
@@ -20,14 +21,18 @@ const RISK_BADGE: Record<string, string> = {
   low:      "bg-green-500/20 text-green-400 border-green-500/30",
 };
 const PROTOCOL_COLORS: Record<string, string> = {
-  mcp:       "bg-purple-500/20 text-purple-400",
-  ollama:    "bg-blue-500/20 text-blue-400",
-  vllm:      "bg-cyan-500/20 text-cyan-400",
-  gradio:    "bg-pink-500/20 text-pink-400",
-  comfyui:   "bg-amber-500/20 text-amber-400",
-  langserve: "bg-emerald-500/20 text-emerald-400",
-  litellm:   "bg-indigo-500/20 text-indigo-400",
-  generic:   "bg-slate-500/20 text-slate-400",
+  mcp:        "bg-blue-500/20 text-blue-400",
+  ollama:     "bg-green-500/20 text-green-400",
+  vllm:       "bg-purple-500/20 text-purple-400",
+  langserve:  "bg-orange-500/20 text-orange-400",
+  gradio:     "bg-pink-500/20 text-pink-400",
+  litellm:    "bg-purple-500/20 text-purple-400",
+  comfyui:    "bg-amber-500/20 text-amber-400",
+  openwebui:  "bg-sky-500/20 text-sky-400",
+  librechat:  "bg-teal-500/20 text-teal-400",
+  localai:    "bg-violet-500/20 text-violet-400",
+  openclaw:   "bg-rose-500/20 text-rose-400",
+  generic:    "bg-red-500/20 text-red-400",
 };
 
 const SORT_COLS = ["riskScore", "firstSeenAt", "protocol", "authStatus"] as const;
@@ -237,8 +242,11 @@ export default function AiMapperEndpointsPage() {
                   <th className="text-left px-4 py-2.5">Endpoint</th>
                   <SortTh label="Protocol" col="protocol"    cur={sort} dir={order} onClick={() => handleSort("protocol")} />
                   <SortTh label="Auth"     col="authStatus"  cur={sort} dir={order} onClick={() => handleSort("authStatus")} />
+                  <th className="text-center px-3 py-2.5" title="TLS">TLS</th>
+                  <th className="text-center px-3 py-2.5" title="System Prompt Leaked">Prompt</th>
+                  <th className="text-center px-3 py-2.5">Models</th>
+                  <th className="text-center px-3 py-2.5">Tools</th>
                   <th className="text-left px-4 py-2.5">Location</th>
-                  <th className="text-left px-4 py-2.5">Findings</th>
                   <SortTh label="First Seen" col="firstSeenAt" cur={sort} dir={order} onClick={() => handleSort("firstSeenAt")} />
                 </tr>
               </thead>
@@ -254,34 +262,51 @@ export default function AiMapperEndpointsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-mono font-medium">{ep.ip}:{ep.port}</p>
-                      {ep.hostname && <p className="text-xs text-muted-foreground truncate max-w-48">{ep.hostname}</p>}
+                      {ep.hostname && <p className="text-xs text-muted-foreground truncate max-w-40">{ep.hostname}</p>}
                       {ep.framework && <p className="text-xs text-muted-foreground">{ep.framework}</p>}
                     </td>
                     <td className="px-4 py-3">
-                      <Badge className={`text-xs ${PROTOCOL_COLORS[ep.protocol] ?? PROTOCOL_COLORS.generic}`}>
+                      <Badge className={`text-xs border ${PROTOCOL_COLORS[ep.protocol] ?? PROTOCOL_COLORS.generic}`}>
                         {ep.protocol}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
                       {ep.authStatus === "none"
-                        ? <Badge variant="destructive" className="text-xs">None</Badge>
+                        ? <span className="inline-flex items-center gap-1 text-xs text-red-400"><ShieldOff className="w-3.5 h-3.5" />None</span>
                         : ep.authStatus === "required"
-                          ? <Badge variant="outline" className="text-xs text-green-400">Required</Badge>
-                          : <Badge variant="outline" className="text-xs">Unknown</Badge>
+                          ? <span className="inline-flex items-center gap-1 text-xs text-green-400"><Lock className="w-3.5 h-3.5" />Required</span>
+                          : <span className="text-xs text-muted-foreground">Unknown</span>
+                      }
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {ep.hasTls
+                        ? <ShieldCheck className="w-4 h-4 text-green-400 mx-auto" />
+                        : <AlertTriangle className="w-4 h-4 text-yellow-400 mx-auto" />
+                      }
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {ep.systemPromptLeaked
+                        ? <span title="System prompt leaked"><AlertTriangle className="w-4 h-4 text-red-400 mx-auto" /></span>
+                        : <span className="text-xs text-muted-foreground">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {ep.models && ep.models.length > 0
+                        ? <span className="inline-flex items-center gap-1 text-xs font-medium text-violet-400"><BrainCircuit className="w-3.5 h-3.5" />{ep.models.length}</span>
+                        : <span className="text-xs text-muted-foreground">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {ep.tools && ep.tools.length > 0
+                        ? <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-400"><Wrench className="w-3.5 h-3.5" />{ep.tools.length}</span>
+                        : <span className="text-xs text-muted-foreground">—</span>
                       }
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {ep.country && <p>{ep.city ? `${ep.city}, ` : ""}{ep.country}</p>}
-                      {ep.org && <p className="truncate max-w-32">{ep.org}</p>}
+                      {ep.org && <p className="truncate max-w-28">{ep.org}</p>}
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {ep.systemPromptLeaked && <Badge variant="destructive" className="text-xs">Prompt Leaked</Badge>}
-                        {ep.corsPolicy === "open" && <Badge className="text-xs bg-orange-500/20 text-orange-400 border-orange-500/30">Open CORS</Badge>}
-                        {!ep.hasTls && <Badge variant="outline" className="text-xs text-yellow-400">No TLS</Badge>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                       {ep.firstSeenAt ? new Date(ep.firstSeenAt).toLocaleDateString() : "—"}
                     </td>
                   </tr>

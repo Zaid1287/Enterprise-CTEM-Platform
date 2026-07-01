@@ -18,14 +18,14 @@ interface Stats {
 }
 
 const PROTOCOL_LEGEND = [
-  { label: "MCP Server",  color: "#a855f7" },
-  { label: "Ollama",      color: "#3b82f6" },
-  { label: "vLLM",        color: "#06b6d4" },
+  { label: "MCP Server",  color: "#3b82f6" },
+  { label: "Ollama",      color: "#22c55e" },
+  { label: "vLLM",        color: "#a855f7" },
+  { label: "LangServe",   color: "#f97316" },
   { label: "Gradio",      color: "#ec4899" },
+  { label: "LiteLLM",     color: "#a855f7" },
   { label: "ComfyUI",     color: "#f59e0b" },
-  { label: "LangServe",   color: "#10b981" },
-  { label: "LiteLLM",     color: "#6366f1" },
-  { label: "Generic",     color: "#64748b" },
+  { label: "Generic",     color: "#ef4444" },
 ];
 
 function AiMapperGlobe({ points }: { points: GlobePoint[] }) {

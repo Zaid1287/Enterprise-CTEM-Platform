@@ -119,11 +119,12 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 }
 
 function AiMapperRoute({ component: Component }: { component: React.ComponentType }) {
-  const { isAuthenticated, aiMapperEnabled } = useAuth();
+  const { isAuthenticated, aiMapperEnabled, aiMapperLoaded } = useAuth();
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
   useEffect(() => {
+    if (!aiMapperLoaded) return;
     if (isAuthenticated && !aiMapperEnabled) {
       toast({
         title: "AI Mapper not enabled",
@@ -132,9 +133,10 @@ function AiMapperRoute({ component: Component }: { component: React.ComponentTyp
       });
       navigate("/dashboard");
     }
-  }, [isAuthenticated, aiMapperEnabled]);
+  }, [isAuthenticated, aiMapperEnabled, aiMapperLoaded]);
 
   if (!isAuthenticated) return <Redirect to="/login" />;
+  if (!aiMapperLoaded) return <AppLayout><PageLoader /></AppLayout>;
   if (!aiMapperEnabled) return null;
   return (
     <AppLayout>
