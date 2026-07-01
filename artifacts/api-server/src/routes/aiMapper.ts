@@ -141,7 +141,7 @@ router.get("/ai-mapper/scans", requireAuth, requireAiMapper, async (req: Authent
   const scans = await db.select().from(aiMapperScansTable).where(cond).orderBy(desc(aiMapperScansTable.createdAt)).limit(100);
   if (isAdmin) {
     const ids = [...new Set(scans.map(s => s.tenantId))];
-    const tenants = ids.length ? await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).where(sql`${tenantsTable.id} = ANY(${JSON.stringify(ids)}::int[])`) : [];
+    const tenants = ids.length ? await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).where(inArray(tenantsTable.id, ids)) : [];
     const tm = Object.fromEntries(tenants.map(t => [t.id, t.name]));
     res.json(scans.map(s => ({ ...s, tenantName: tm[s.tenantId] ?? `Tenant #${s.tenantId}` })));
   } else {
@@ -173,6 +173,22 @@ router.delete("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req: 
   const tenantId = req.user!.tenantId;
   await db.update(aiMapperScansTable).set({ status: "cancelled", completedAt: new Date() }).where(and(eq(aiMapperScansTable.id, Number(req.params.id)), eq(aiMapperScansTable.tenantId, tenantId)));
   res.json({ ok: true });
+});
+
+// ── Internal: beat scheduler triggers scan execution via this route ────────────
+router.post("/ai-mapper/scans/:id/run-internal", async (req, res) => {
+  if (req.headers["x-internal-beat"] !== "1") { res.status(403).json({ error: "Forbidden" }); return; }
+  const scanId = Number(req.params.id);
+  if (!scanId) { res.status(400).json({ error: "Invalid scan id" }); return; }
+  const [scan] = await db.select().from(aiMapperScansTable).where(eq(aiMapperScansTable.id, scanId));
+  if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+  if (scan.status !== "pending") { res.status(409).json({ error: `Scan is already ${scan.status}` }); return; }
+  setImmediate(() => {
+    runAiMapperScan(scanId, scan.tenantId).catch(err => {
+      logger.error({ err, scanId }, "AI Mapper scheduled scan failed");
+    });
+  });
+  res.json({ ok: true, scanId });
 });
 
 router.post("/ai-mapper/scans/:id/progress", async (req: AuthenticatedRequest, res) => {
@@ -559,123 +575,133 @@ async function runAiMapperScan(scanId: number, tenantId: number) {
     let highCount = 0;
     let noAuthCount = 0;
 
-    for (const h of live) {
-      const base = `${h.scheme}://${h.ip}:${h.port}`;
-      const en   = await enrichEndpoint(base);
-      const { score, level } = computeRiskScore({ authStatus: en.authStatus as any, tools: en.tools, models: en.models, corsPolicy: en.corsPolicy as any, hasTls: en.hasTls, systemPromptLeaked: en.systemPromptLeaked, signupEnabled: en.signupEnabled });
-      const protocol = detectProto(en, h.port);
-      if (level === "critical") criticalCount++;
-      else if (level === "high") highCount++;
-      if (en.authStatus === "none") noAuthCount++;
+    // Process endpoints 5 at a time — concurrent enrichment avoids blocking the event loop
+    const ENRICH_CONCURRENCY = 5;
+    for (let batchStart = 0; batchStart < live.length; batchStart += ENRICH_CONCURRENCY) {
+      const batch = live.slice(batchStart, batchStart + ENRICH_CONCURRENCY);
+      await Promise.all(batch.map(async (h) => {
+        const base = `${h.scheme}://${h.ip}:${h.port}`;
+        const en   = await enrichEndpoint(base);
+        const { score, level } = computeRiskScore({ authStatus: en.authStatus as any, tools: en.tools, models: en.models, corsPolicy: en.corsPolicy as any, hasTls: en.hasTls, systemPromptLeaked: en.systemPromptLeaked, signupEnabled: en.signupEnabled });
+        const protocol = detectProto(en, h.port);
+        // JS is single-threaded — these increments are safe inside Promise.all
+        if (level === "critical") criticalCount++;
+        else if (level === "high") highCount++;
+        if (en.authStatus === "none") noAuthCount++;
 
-      const shodanMeta = shodanHostData.get(h.ip);
-      const finalLat = shodanMeta?.lat ?? h.lat ?? null;
-      const finalLng = shodanMeta?.lng ?? h.lng ?? null;
-      const finalCountry = shodanMeta?.country ?? h.country ?? null;
-      const finalOrg = shodanMeta?.org ?? h.org ?? null;
-      const finalCity = shodanMeta?.city ?? h.city ?? null;
-      const nucleiRaw = nucleiOutputMap.get(base) ?? null;
+        const shodanMeta = shodanHostData.get(h.ip);
+        const finalLat = shodanMeta?.lat ?? h.lat ?? null;
+        const finalLng = shodanMeta?.lng ?? h.lng ?? null;
+        const finalCountry = shodanMeta?.country ?? h.country ?? null;
+        const finalOrg = shodanMeta?.org ?? h.org ?? null;
+        const finalCity = shodanMeta?.city ?? h.city ?? null;
+        const nucleiRaw = nucleiOutputMap.get(base) ?? null;
 
-      // ── Asset inventory integration ────────────────────────────────────────
-      let assetId: number | null = null;
-      try {
-        const [existingAsset] = await db.select({ id: assetsTable.id })
-          .from(assetsTable)
-          .where(and(eq(assetsTable.tenantId, tenantId), sql`value = ${h.ip}`, sql`type = 'IP'`));
-        if (existingAsset) {
-          assetId = existingAsset.id;
-          await db.update(assetsTable).set({ riskLevel: level, updatedAt: new Date() } as any).where(eq(assetsTable.id, existingAsset.id));
-        } else {
-          const [newAsset] = await db.insert(assetsTable).values({
-            tenantId, name: `AI Endpoint ${h.ip}:${h.port}`, type: "IP", value: h.ip,
-            isActive: true, riskLevel: level,
-            tags: ["ai-mapper", "auto-discovered", protocol] as any,
-            businessImpact: level === "critical" ? 9 : level === "high" ? 7 : 5,
-          } as any).returning({ id: assetsTable.id });
-          assetId = newAsset?.id ?? null;
-        }
-      } catch { /* ignore asset errors */ }
+        // ── Asset inventory integration ──────────────────────────────────────
+        let assetId: number | null = null;
+        try {
+          const [existingAsset] = await db.select({ id: assetsTable.id })
+            .from(assetsTable)
+            .where(and(eq(assetsTable.tenantId, tenantId), sql`value = ${h.ip}`, sql`type = 'IP'`));
+          if (existingAsset) {
+            assetId = existingAsset.id;
+            await db.update(assetsTable).set({ riskLevel: level, updatedAt: new Date() } as any).where(eq(assetsTable.id, existingAsset.id));
+          } else {
+            const [newAsset] = await db.insert(assetsTable).values({
+              tenantId, name: `AI Endpoint ${h.ip}:${h.port}`, type: "IP", value: h.ip,
+              isActive: true, riskLevel: level,
+              tags: ["ai-mapper", "auto-discovered", protocol] as any,
+              businessImpact: level === "critical" ? 9 : level === "high" ? 7 : 5,
+            } as any).returning({ id: assetsTable.id });
+            assetId = newAsset?.id ?? null;
+          }
+        } catch { /* ignore asset errors */ }
 
-      // ── Dedup upsert — onConflictDoUpdate on (tenantId, ip, port) ─────────
-      try {
-        await db.insert(aiMapperEndpointsTable).values({
-          tenantId, scanId, assetId: assetId as any, ip: h.ip, port: h.port,
-          hostname: h.hostname ?? null, url: base, protocol,
-          framework: en.framework ?? null, authStatus: en.authStatus,
-          riskScore: score, riskLevel: level, tools: en.tools as any, models: en.models as any,
-          systemPromptLeaked: en.systemPromptLeaked, systemPromptContent: en.systemPromptContent ?? null,
-          corsPolicy: en.corsPolicy ?? null, hasTls: en.hasTls, signupEnabled: en.signupEnabled,
-          certExpiry: en.certExpiry as any, certIssuer: en.certIssuer as any, certSans: en.certSans as any,
-          country: finalCountry, org: finalOrg, city: finalCity, lat: finalLat, lng: finalLng,
-          rawNucleiOutput: nucleiRaw,
-        }).onConflictDoUpdate({
-          target: [aiMapperEndpointsTable.tenantId, aiMapperEndpointsTable.ip, aiMapperEndpointsTable.port],
-          set: {
-            scanId, assetId: assetId as any, lastSeenAt: new Date(),
+        // ── Dedup upsert — onConflictDoUpdate on (tenantId, ip, port) ───────
+        try {
+          await db.insert(aiMapperEndpointsTable).values({
+            tenantId, scanId, assetId: assetId as any, ip: h.ip, port: h.port,
+            hostname: h.hostname ?? null, url: base, protocol,
+            framework: en.framework ?? null, authStatus: en.authStatus,
             riskScore: score, riskLevel: level, tools: en.tools as any, models: en.models as any,
             systemPromptLeaked: en.systemPromptLeaked, systemPromptContent: en.systemPromptContent ?? null,
-            corsPolicy: en.corsPolicy ?? null, hasTls: en.hasTls, authStatus: en.authStatus,
+            corsPolicy: en.corsPolicy ?? null, hasTls: en.hasTls, signupEnabled: en.signupEnabled,
             certExpiry: en.certExpiry as any, certIssuer: en.certIssuer as any, certSans: en.certSans as any,
-            rawNucleiOutput: nucleiRaw, country: finalCountry, org: finalOrg, city: finalCity, lat: finalLat, lng: finalLng,
-          }
-        });
-        count++;
-      } catch { /* insert failed */ }
+            country: finalCountry, org: finalOrg, city: finalCity, lat: finalLat, lng: finalLng,
+            rawNucleiOutput: nucleiRaw,
+          }).onConflictDoUpdate({
+            target: [aiMapperEndpointsTable.tenantId, aiMapperEndpointsTable.ip, aiMapperEndpointsTable.port],
+            set: {
+              scanId, assetId: assetId as any, lastSeenAt: new Date(),
+              riskScore: score, riskLevel: level, tools: en.tools as any, models: en.models as any,
+              systemPromptLeaked: en.systemPromptLeaked, systemPromptContent: en.systemPromptContent ?? null,
+              corsPolicy: en.corsPolicy ?? null, hasTls: en.hasTls, authStatus: en.authStatus,
+              certExpiry: en.certExpiry as any, certIssuer: en.certIssuer as any, certSans: en.certSans as any,
+              rawNucleiOutput: nucleiRaw, country: finalCountry, org: finalOrg, city: finalCity, lat: finalLat, lng: finalLng,
+            }
+          });
+          count++;
+        } catch { /* insert failed */ }
 
-      // ── Risk score propagation ─────────────────────────────────────────────
-      if (assetId) {
-        try {
-          await db.insert(riskScoresTable).values({
-            tenantId, assetId, score, level, calculatedAt: new Date(),
-            factors: { authStatus: en.authStatus, hasTls: en.hasTls, systemPromptLeaked: en.systemPromptLeaked } as any,
-          } as any).onConflictDoUpdate({ target: [(riskScoresTable as any).assetId], set: { score, level, calculatedAt: new Date() } });
-        } catch { /* ignore risk score errors */ }
-      }
-
-      // ── Finding integration — system prompt leak ───────────────────────────
-      if (en.systemPromptLeaked && assetId) {
-        try {
-          await db.insert(findingsTable).values({
-            tenantId, assetId, scanId,
-            title: `AI System Prompt Exposed — ${h.ip}:${h.port}`,
-            description: `The AI endpoint at ${base} leaked system prompt content: "${(en.systemPromptContent ?? "").slice(0, 300)}"`,
-            severity: "high", status: "open", cvss: 7.5,
-            remediation: "Implement prompt injection detection and output filtering. Never echo system prompts in completions.",
-          } as any).onConflictDoNothing();
-        } catch { /* ignore */ }
-      }
-
-      // ── Finding integration — nuclei findings ─────────────────────────────
-      if (nucleiRaw && assetId) {
-        for (const line of nucleiRaw.split("\n").filter(l => l.trim().startsWith("{")).slice(0, 25)) {
+        // ── Risk score propagation ───────────────────────────────────────────
+        if (assetId) {
           try {
-            const n = JSON.parse(line) as { info?: { name?: string; severity?: string; description?: string }; matched_at?: string; "template-id"?: string };
-            if (!n.info?.name) continue;
-            const sev = (n.info.severity ?? "medium").toLowerCase();
-            await db.insert(findingsTable).values({
-              tenantId, assetId, scanId, title: n.info.name,
-              description: n.info.description ?? `Nuclei finding on ${base}: ${n.info.name}`,
-              severity: sev, status: "open",
-              cvss: sev === "critical" ? 9.0 : sev === "high" ? 7.5 : sev === "medium" ? 5.0 : 2.0,
-              remediation: `Review and remediate the ${n["template-id"] ?? "detected"} finding.`,
-            } as any).onConflictDoNothing();
-          } catch { /* invalid nuclei line */ }
+            await db.insert(riskScoresTable).values({
+              tenantId, assetId, score, level, calculatedAt: new Date(),
+              factors: { authStatus: en.authStatus, hasTls: en.hasTls, systemPromptLeaked: en.systemPromptLeaked } as any,
+            } as any).onConflictDoUpdate({ target: [(riskScoresTable as any).assetId], set: { score, level, calculatedAt: new Date() } as any });
+          } catch { /* ignore risk score errors */ }
         }
-      }
 
-      // ── Alert integration — high/critical endpoints ────────────────────────
-      if ((level === "critical" || level === "high") && assetId) {
-        try {
-          await db.insert(alertsTable).values({
-            tenantId,
-            title: `${level === "critical" ? "Critical" : "High"} Risk AI Endpoint — ${h.ip}:${h.port}`,
-            message: `AI Mapper found a ${level}-risk endpoint: ${base}. Framework: ${en.framework ?? "unknown"}. Auth: ${en.authStatus}. Score: ${score.toFixed(1)}/10.${en.systemPromptLeaked ? " ⚠ System prompt leaked." : ""}`,
-            type: "ai_mapper_discovery", severity: level, isRead: false,
-          } as any).onConflictDoNothing();
-        } catch { /* ignore */ }
-      }
+        // ── Finding — system prompt leak ─────────────────────────────────────
+        if (en.systemPromptLeaked && assetId) {
+          try {
+            await db.insert(findingsTable).values({
+              tenantId, assetId, scanId,
+              title: `AI System Prompt Exposed — ${h.ip}:${h.port}`,
+              description: `The AI endpoint at ${base} leaked system prompt content: "${(en.systemPromptContent ?? "").slice(0, 300)}"`,
+              severity: "high", status: "open", cvss: 7.5,
+              remediation: "Implement prompt injection detection and output filtering. Never echo system prompts in completions.",
+            } as any).onConflictDoNothing();
+          } catch { /* ignore */ }
+        }
 
-      await updateScan(scanId, { progress: Math.min(95, 70 + Math.floor((count / Math.max(live.length, 1)) * 25)), scannedHosts: count, endpointCount: count });
+        // ── Findings — nuclei hits ───────────────────────────────────────────
+        if (nucleiRaw && assetId) {
+          for (const line of nucleiRaw.split("\n").filter(l => l.trim().startsWith("{")).slice(0, 25)) {
+            try {
+              const n = JSON.parse(line) as { info?: { name?: string; severity?: string; description?: string }; matched_at?: string; "template-id"?: string };
+              if (!n.info?.name) continue;
+              const sev = (n.info.severity ?? "medium").toLowerCase();
+              await db.insert(findingsTable).values({
+                tenantId, assetId, scanId, title: n.info.name,
+                description: n.info.description ?? `Nuclei finding on ${base}: ${n.info.name}`,
+                severity: sev, status: "open",
+                cvss: sev === "critical" ? 9.0 : sev === "high" ? 7.5 : sev === "medium" ? 5.0 : 2.0,
+                remediation: `Review and remediate the ${n["template-id"] ?? "detected"} finding.`,
+              } as any).onConflictDoNothing();
+            } catch { /* invalid nuclei line */ }
+          }
+        }
+
+        // ── Alert — high/critical endpoints ─────────────────────────────────
+        if ((level === "critical" || level === "high") && assetId) {
+          try {
+            await db.insert(alertsTable).values({
+              tenantId,
+              title: `${level === "critical" ? "Critical" : "High"} Risk AI Endpoint — ${h.ip}:${h.port}`,
+              message: `AI Mapper found a ${level}-risk endpoint: ${base}. Framework: ${en.framework ?? "unknown"}. Auth: ${en.authStatus}. Score: ${score.toFixed(1)}/10.${en.systemPromptLeaked ? " ⚠ System prompt leaked." : ""}`,
+              type: "ai_mapper_discovery", severity: level, isRead: false,
+            } as any).onConflictDoNothing();
+          } catch { /* ignore */ }
+        }
+      }));
+
+      // Progress update after each batch
+      await updateScan(scanId, {
+        progress: Math.min(95, 70 + Math.floor(((batchStart + batch.length) / Math.max(live.length, 1)) * 25)),
+        scannedHosts: count, endpointCount: count,
+      });
     }
 
     await refreshBom(tenantId);
@@ -927,6 +953,35 @@ async function runAttackSuite(runId: number, ep: typeof aiMapperEndpointsTable.$
 
   await db.update(aiMapperAttackRunsTable).set({ status: "completed", progress: 100, completedAt: new Date(), results: results as any }).where(eq(aiMapperAttackRunsTable.id, runId));
   broadcast(attackRunSockets, runId, { type: "done", totalResults: results.length });
+
+  // ── Wire attack suite findings → main findingsTable + alertsTable ──────────
+  const criticalHighResults = results.filter((r: any) => !r.passed && (r.severity === "critical" || r.severity === "high"));
+  for (const r of criticalHighResults) {
+    try {
+      const [epRow] = await db.select({ assetId: aiMapperEndpointsTable.assetId, scanId: aiMapperEndpointsTable.scanId })
+        .from(aiMapperEndpointsTable)
+        .where(and(eq(aiMapperEndpointsTable.tenantId, _tenantId), eq(aiMapperEndpointsTable.url, ep.url)))
+        .limit(1);
+      const linkedAssetId = epRow?.assetId ?? null;
+      const linkedScanId  = epRow?.scanId  ?? null;
+      if (linkedAssetId) {
+        await db.insert(findingsTable).values({
+          tenantId: _tenantId, assetId: linkedAssetId, scanId: linkedScanId,
+          title: `AI Attack: ${(r as any).testName}`,
+          description: `Attack test failed on ${ep.url} — ${(r as any).testName}. HTTP ${(r as any).response?.status ?? "?"}: ${((r as any).response?.body ?? "").slice(0, 400)}`,
+          severity: (r as any).severity, status: "open",
+          cvss: (r as any).severity === "critical" ? 9.0 : 7.5,
+          remediation: (r as any).remediationGuidance ?? "Review and harden this AI endpoint.",
+        } as any).onConflictDoNothing();
+      }
+      await db.insert(alertsTable).values({
+        tenantId: _tenantId,
+        title: `AI Attack Finding: ${(r as any).testName}`,
+        message: `${((r as any).severity as string).toUpperCase()} vulnerability confirmed on ${ep.url}: ${(r as any).testName}. ${(r as any).remediationGuidance ?? ""}`,
+        type: "ai_mapper_attack", severity: (r as any).severity, isRead: false,
+      } as any).onConflictDoNothing();
+    } catch { /* non-fatal — attack results already saved to attack_runs */ }
+  }
 }
 
 // ── Cross-tenant access control ────────────────────────────────────────────────
@@ -976,7 +1031,7 @@ router.get("/ai-mapper/admin/activity", requireAuth, async (req: AuthenticatedRe
   const ids = [...new Set(scans.map(s => s.tenantId))];
   const tenants = ids.length
     ? await db.select({ id: tenantsTable.id, name: tenantsTable.name })
-        .from(tenantsTable).where(sql`${tenantsTable.id} = ANY(${JSON.stringify(ids)}::int[])`)
+        .from(tenantsTable).where(inArray(tenantsTable.id, ids))
     : [];
   const tm = Object.fromEntries(tenants.map(t => [t.id, t.name]));
   res.json(scans.map(s => ({ ...s, tenantName: tm[s.tenantId] ?? `Tenant #${s.tenantId}` })));

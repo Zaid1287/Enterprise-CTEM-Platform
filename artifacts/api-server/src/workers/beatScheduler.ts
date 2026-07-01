@@ -883,6 +883,38 @@ async function recoverStalePendingScans(): Promise<void> {
   }
 }
 
+// ── AI Mapper orphan recovery — marks "running" scans stale after 45 min ──────
+async function recoverStaleAiMapperScans(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - 45 * 60 * 1_000); // 45-minute timeout
+    const stale = await db
+      .update(aiMapperScansTable)
+      .set({ status: "failed", completedAt: new Date() })
+      .where(and(eq(aiMapperScansTable.status, "running"), lt(aiMapperScansTable.startedAt, cutoff)))
+      .returning({ id: aiMapperScansTable.id, tenantId: aiMapperScansTable.tenantId });
+    if (stale.length > 0) {
+      logger.warn({ count: stale.length }, "Beat: timed out orphaned AI Mapper running scans");
+    }
+    // Also re-queue any pending AI Mapper scans older than 10 minutes (stuck in queue)
+    const stalePending = new Date(Date.now() - 10 * 60 * 1_000);
+    const stuck = await db
+      .select({ id: aiMapperScansTable.id, tenantId: aiMapperScansTable.tenantId })
+      .from(aiMapperScansTable)
+      .where(and(eq(aiMapperScansTable.status, "pending"), lt(aiMapperScansTable.createdAt, stalePending)));
+    for (const s of stuck) {
+      try {
+        fetch(`http://localhost:${_port}/api/ai-mapper/scans/${s.id}/run-internal`, {
+          method: "POST",
+          headers: { "x-internal-beat": "1" },
+        }).catch(() => {});
+        logger.info({ scanId: s.id }, "Beat: re-triggered stale pending AI Mapper scan");
+      } catch { /* non-fatal */ }
+    }
+  } catch (err) {
+    logger.error({ err }, "Beat: AI Mapper stale scan recovery error (non-fatal)");
+  }
+}
+
 async function dispatchDueAiMapperSchedules(): Promise<void> {
   const now = new Date();
   const due = await db.select().from(aiMapperScanSchedulesTable).where(
@@ -924,11 +956,15 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
   );
 
   // Run once after a 15-second grace period so the DB is ready
-  setTimeout(() => recoverStalePendingScans().catch(() => {}), 15_000);
+  setTimeout(() => {
+    recoverStalePendingScans().catch(() => {});
+    recoverStaleAiMapperScans().catch(() => {});
+  }, 15_000);
 
   const beatPoll = async () => {
     await dispatchDueScans();
     await dispatchDueAiMapperSchedules().catch(err => logger.error({ err }, "Beat: AI Mapper schedule dispatch failed (non-fatal)"));
+    await recoverStaleAiMapperScans().catch(err => logger.error({ err }, "Beat: AI Mapper orphan recovery failed (non-fatal)"));
   };
   setTimeout(async () => {
     await beatPoll();
