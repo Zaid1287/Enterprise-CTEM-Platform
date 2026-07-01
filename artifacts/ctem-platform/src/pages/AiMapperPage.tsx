@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
+import { getToken } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Server, ShieldOff, AlertTriangle, Activity, Scan, Globe2, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Server, ShieldOff, AlertTriangle, Activity, Scan, Globe2, Loader2, Download } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
 interface GlobePoint {
@@ -77,9 +79,34 @@ function AiMapperGlobe({ points }: { points: GlobePoint[] }) {
   return <div ref={containerRef} className="w-full h-full" />;
 }
 
+async function downloadReport(format: "csv" | "pdf", toast: ReturnType<typeof useToast>["toast"]) {
+  const token = getToken();
+  try {
+    const res = await fetch(`/api/ai-mapper/reports/${format}`, {
+      headers: { Authorization: `Bearer ${token ?? ""}` },
+    });
+    if (!res.ok) {
+      toast({ title: `Export failed (${res.status})`, description: "Could not generate report. Check your permissions.", variant: "destructive" });
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ai-mapper-report-${new Date().toISOString().slice(0, 10)}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    toast({ title: "Export failed", description: "Network error during export.", variant: "destructive" });
+  }
+}
+
 export default function AiMapperPage() {
   const [, navigate] = useLocation();
   const { aiMapperEnabled, user } = useAuth();
+  const { toast } = useToast();
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const role = user?.role ?? "";
   const isAdmin = role === "admin" || role === "super_admin";
 
@@ -124,10 +151,12 @@ export default function AiMapperPage() {
           <Button variant="outline" size="sm" onClick={() => navigate("/ai-mapper/scan-schedules")}>
             <Activity className="w-4 h-4 mr-2" /> Schedules
           </Button>
-          <Button variant="outline" size="sm" onClick={() => window.open("/api/ai-mapper/reports/csv", "_blank")}>
+          <Button variant="outline" size="sm" disabled={csvLoading} onClick={async () => { setCsvLoading(true); await downloadReport("csv", toast); setCsvLoading(false); }}>
+            {csvLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Export CSV
           </Button>
-          <Button variant="outline" size="sm" onClick={() => window.open("/api/ai-mapper/reports/pdf", "_blank")}>
+          <Button variant="outline" size="sm" disabled={pdfLoading} onClick={async () => { setPdfLoading(true); await downloadReport("pdf", toast); setPdfLoading(false); }}>
+            {pdfLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Export PDF
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate("/ai-mapper/endpoints")}>
