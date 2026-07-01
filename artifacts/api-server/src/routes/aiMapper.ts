@@ -262,6 +262,31 @@ function parseQ(q: string) {
   return r;
 }
 
+function parseCidrScope(cidrScope: string | null): string[] {
+  if (!cidrScope) return [];
+  const ips: string[] = [];
+  const entries = cidrScope.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  for (const entry of entries) {
+    if (!entry.includes("/")) {
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(entry)) ips.push(entry);
+      else if (/^[\w.-]+$/.test(entry)) ips.push(entry); // hostname/domain
+      continue;
+    }
+    const [base, maskStr] = entry.split("/");
+    const mask = parseInt(maskStr, 10);
+    if (!base || isNaN(mask) || mask < 16 || mask > 32) continue;
+    const parts = base.split(".").map(Number);
+    if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) continue;
+    const baseInt = (parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!;
+    const hostCount = Math.min(2 ** (32 - mask), 256);
+    for (let i = 1; i < hostCount - 1 && ips.length < 512; i++) {
+      const ip = baseInt + i;
+      ips.push(`${(ip >>> 24) & 0xff}.${(ip >>> 16) & 0xff}.${(ip >>> 8) & 0xff}.${ip & 0xff}`);
+    }
+  }
+  return ips;
+}
+
 async function tFetch(url: string, init: RequestInit = {}, timeout = 5000): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeout);
@@ -291,9 +316,23 @@ async function runAiMapperScan(scanId: number, tenantId: number) {
     const presets   = SHODAN_PRESETS.filter(p => !presetIds.length || presetIds.includes(p.id));
     const discovered: Array<{ ip: string; port: number; hostname?: string; country?: string; org?: string; city?: string; lat?: number; lng?: number }> = [];
 
+    // Expand cidrScope into explicit targets (IPs + common AI ports)
+    const AI_PORTS: Record<string, number[]> = { mcp: [3000, 8080], ollama: [11434], vllm: [8000], gradio: [7860], comfyui: [8188], langserve: [8080], litellm: [4000], generic: [5000, 8080] };
+    const scopedTargets = parseCidrScope(scan.cidrScope as string | null);
+    if (scopedTargets.length > 0) {
+      const protocols = [...new Set(presets.map(p => p.protocol))];
+      const ports = [...new Set(protocols.flatMap(pr => AI_PORTS[pr] ?? [8080]))];
+      for (const ip of scopedTargets.slice(0, 512)) {
+        for (const port of ports) discovered.push({ ip, port });
+      }
+    }
+
     const shodanKey = await getPSetting(tenantId, "shodan_api_key");
     if (shodanKey) {
-      for (const preset of presets.slice(0, 5)) {
+      const queryPresets = scopedTargets.length > 0
+        ? presets.slice(0, 3).map(p => ({ ...p, query: `${p.query} net:${scopedTargets.slice(0, 10).join(",")}` }))
+        : presets.slice(0, 5);
+      for (const preset of queryPresets) {
         try {
           const r = await tFetch(`https://api.shodan.io/shodan/host/search?key=${encodeURIComponent(shodanKey)}&query=${encodeURIComponent(preset.query)}&minify=true`, {}, 15000);
           if (r.ok) {
@@ -302,8 +341,7 @@ async function runAiMapperScan(scanId: number, tenantId: number) {
           }
         } catch { /* ignore */ }
       }
-    } else {
-      const AI_PORTS: Record<string, number[]> = { mcp: [3000, 8080], ollama: [11434], vllm: [8000], gradio: [7860], comfyui: [8188], langserve: [8080], litellm: [4000], generic: [5000] };
+    } else if (scopedTargets.length === 0) {
       const protocols = [...new Set(presets.map(p => p.protocol))];
       for (const proto of protocols) for (const port of AI_PORTS[proto] ?? [8080]) discovered.push({ ip: "127.0.0.1", port });
     }
@@ -442,6 +480,38 @@ async function getTenantAiStats(tenantId: number) {
   const [mod] = await db.select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled }).from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, tenantId));
   return { endpoints: Number(eRow?.total ?? 0), critical: Number(eRow?.critical ?? 0), high: Number(eRow?.high ?? 0), noAuth: Number(eRow?.noAuth ?? 0), scans: Number(sRow?.total ?? 0), activeScans: Number(sRow?.active ?? 0), lastScanAt: sRow?.lastAt ?? null, isEnabled: mod?.isEnabled ?? false };
 }
+
+// ── Admin: protocol distribution across all tenants ──────────────────────────
+
+router.get("/ai-mapper/admin/protocols", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const rows = await db.select({ protocol: aiMapperEndpointsTable.protocol, count: sql<number>`count(*)` })
+    .from(aiMapperEndpointsTable)
+    .groupBy(aiMapperEndpointsTable.protocol)
+    .orderBy(desc(sql<number>`count(*)`));
+  res.json(rows.map(r => ({ protocol: r.protocol ?? "generic", count: Number(r.count) })));
+});
+
+// ── Admin: recent scan activity across all tenants ────────────────────────────
+
+router.get("/ai-mapper/admin/activity", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const scans = await db.select({
+    id: aiMapperScansTable.id, title: aiMapperScansTable.title,
+    status: aiMapperScansTable.status, progress: aiMapperScansTable.progress,
+    endpointCount: aiMapperScansTable.endpointCount, tenantId: aiMapperScansTable.tenantId,
+    createdAt: aiMapperScansTable.createdAt, completedAt: aiMapperScansTable.completedAt,
+  }).from(aiMapperScansTable).orderBy(desc(aiMapperScansTable.createdAt)).limit(30);
+  const ids = [...new Set(scans.map(s => s.tenantId))];
+  const tenants = ids.length
+    ? await db.select({ id: tenantsTable.id, name: tenantsTable.name })
+        .from(tenantsTable).where(sql`${tenantsTable.id} = ANY(${JSON.stringify(ids)}::int[])`)
+    : [];
+  const tm = Object.fromEntries(tenants.map(t => [t.id, t.name]));
+  res.json(scans.map(s => ({ ...s, tenantName: tm[s.tenantId] ?? `Tenant #${s.tenantId}` })));
+});
 
 // ── Admin: all-tenant overview (admin + super_admin) ─────────────────────────
 
