@@ -341,16 +341,12 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     res.status(404).json({ error: "User not found" });
     return;
   }
-  const isPrivileged = ["super_admin", "admin"].includes(req.user!.role);
-  let aiMapperEnabled = isPrivileged;
-  if (!isPrivileged) {
-    const [moduleRow] = await db
-      .select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
-      .from(aiMapperModuleAssignmentsTable)
-      .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
-      .limit(1);
-    aiMapperEnabled = moduleRow?.isEnabled ?? false;
-  }
+  const [moduleRow] = await db
+    .select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
+    .from(aiMapperModuleAssignmentsTable)
+    .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
+    .limit(1);
+  const aiMapperEnabled = moduleRow?.isEnabled ?? false;
   res.json({ ...toUserResponse(user), aiMapperEnabled });
 });
 
@@ -748,6 +744,11 @@ export async function seedNewTenantData(tenantId: number): Promise<void> {
       { name: "CIS Controls", shortName: "CIS", version: "v8", description: "Center for Internet Security Critical Security Controls", totalControls: 153 },
     ]).returning();
   }
+
+  // Seed AI Mapper module as enabled for new tenants (idempotent)
+  await db.insert(aiMapperModuleAssignmentsTable)
+    .values({ tenantId, isEnabled: true })
+    .onConflictDoNothing();
 
   // Default tools for every tenant — errors propagate to the caller
   await db.insert(securityToolsTable).values([

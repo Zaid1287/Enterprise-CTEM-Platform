@@ -101,7 +101,7 @@ function AiMapperBootstrap() {
     if (!isAuthenticated) return;
     apiFetch<{ aiMapperEnabled?: boolean }>("/api/auth/me")
       .then(data => setAiMapperEnabled(data.aiMapperEnabled ?? false))
-      .catch(() => {});
+      .catch(() => setAiMapperEnabled(false));
   }, [isAuthenticated]);
   return null;
 }
