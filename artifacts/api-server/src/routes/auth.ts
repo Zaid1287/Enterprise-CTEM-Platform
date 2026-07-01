@@ -346,7 +346,8 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     .from(aiMapperModuleAssignmentsTable)
     .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
     .limit(1);
-  const aiMapperEnabled = moduleRow?.isEnabled ?? false;
+  const aiMapperEnabled =
+    (user.role === "admin" || user.role === "super_admin") ? true : (moduleRow?.isEnabled ?? false);
   res.json({ ...toUserResponse(user), aiMapperEnabled });
 });
 

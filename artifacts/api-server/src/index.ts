@@ -149,7 +149,7 @@ server.on("upgrade", (req, socket, head) => {
         if (!row) { socket.destroy(); return; }
       }
 
-      wss.handleUpgrade(req, socket as any, head, (ws) => {
+      wss.handleUpgrade(req, socket as any, head, async (ws) => {
         if (scanMatch) {
           const id = Number(scanMatch[1]);
           if (!scanProgressSockets.has(id)) scanProgressSockets.set(id, new Set());
@@ -158,6 +158,11 @@ server.on("upgrade", (req, socket, head) => {
             const s = scanProgressSockets.get(id);
             if (s) { s.delete(ws); if (!s.size) scanProgressSockets.delete(id); }
           });
+          // Replay current scan state immediately so clients joining mid-scan get latest progress
+          try {
+            const [cur] = await db.select({ status: aiMapperScansTable.status, progress: aiMapperScansTable.progress, liveHosts: aiMapperScansTable.liveHosts, totalHosts: aiMapperScansTable.totalHosts, scannedHosts: aiMapperScansTable.scannedHosts, endpointCount: aiMapperScansTable.endpointCount }).from(aiMapperScansTable).where(eq(aiMapperScansTable.id, id));
+            if (cur && ws.readyState === 1) ws.send(JSON.stringify({ ...cur, type: "state_replay" }));
+          } catch { /* ignore replay error */ }
         } else if (attackMatch) {
           const id = Number(attackMatch[1]);
           if (!attackRunSockets.has(id)) attackRunSockets.set(id, new Set());
@@ -166,6 +171,11 @@ server.on("upgrade", (req, socket, head) => {
             const s = attackRunSockets.get(id);
             if (s) { s.delete(ws); if (!s.size) attackRunSockets.delete(id); }
           });
+          // Replay existing attack results for clients joining mid-run
+          try {
+            const [cur] = await db.select({ status: aiMapperAttackRunsTable.status, progress: aiMapperAttackRunsTable.progress, results: aiMapperAttackRunsTable.results }).from(aiMapperAttackRunsTable).where(eq(aiMapperAttackRunsTable.id, id));
+            if (cur && ws.readyState === 1) ws.send(JSON.stringify({ ...cur, type: "state_replay" }));
+          } catch { /* ignore replay error */ }
         }
       });
     } catch {
