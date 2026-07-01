@@ -154,8 +154,13 @@ router.post("/auth/login", async (req, res): Promise<void> => {
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
   if (!user || !user.isActive) {
-    recordFailedAttempt(email);
-    res.status(401).json({ error: "Invalid credentials" });
+    const updatedEntry = recordFailedAttempt(email);
+    const remaining = MAX_ATTEMPTS - updatedEntry.count;
+    if (updatedEntry.blockedUntil) {
+      res.status(429).json({ error: "Too many failed attempts. Your account is locked for 15 minutes." });
+    } else {
+      res.status(401).json({ error: `Invalid credentials. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before account lockout.` });
+    }
     return;
   }
 

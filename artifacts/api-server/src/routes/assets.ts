@@ -475,8 +475,9 @@ router.post("/assets/:assetId/verify", requireAuth, async (req: AuthenticatedReq
     const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
     const baseUrl = getPlatformBaseUrl(req as any);
     const confirmUrl = `${baseUrl}/api/assets/${existing.id}/verify/email-confirm?token=${emailToken}`;
-    const emailUsername = typeof req.body.emailUsername === "string" && req.body.emailUsername.trim()
-      ? req.body.emailUsername.trim()
+    const rawEmailUsername = (body.data as any).emailUsername ?? req.body.emailUsername;
+    const emailUsername = typeof rawEmailUsername === "string" && rawEmailUsername.trim()
+      ? rawEmailUsername.trim()
       : "admin";
     const adminEmail = `${emailUsername}@${domain}`;
 

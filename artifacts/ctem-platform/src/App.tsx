@@ -61,6 +61,7 @@ const AiMapperScanSchedulesPage     = lazy(() => import("@/pages/AiMapperScanSch
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
+    if (!useAuth.getState().isAuthenticated) return;
     const refreshed = await attemptTokenRefresh();
     if (refreshed) {
       queryClient.invalidateQueries();
