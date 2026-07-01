@@ -114,7 +114,7 @@ export default function AiMapperBomPage() {
   });
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="p-6 space-y-6 w-full">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold">AI Bill of Materials</h1>

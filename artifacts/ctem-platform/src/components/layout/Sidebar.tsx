@@ -155,18 +155,20 @@ export function Sidebar() {
     ? { title: "AI Mapper", items: aiMapperItems }
     : null;
 
-  const visibleGroups = isExternalMember
-    ? externalGroups
-    : [
-        ...navGroups
-          .filter(g => !g.onlyFor || g.onlyFor.includes(role))
-          .map(g => ({
-            ...g,
-            items: g.items.filter(item => !item.onlyFor || item.onlyFor.includes(role)),
-          }))
-          .filter(g => g.items.length > 0),
-        ...(aiMapperGroup ? [aiMapperGroup] : []),
-      ];
+  const filteredGroups = navGroups
+    .filter(g => !g.onlyFor || g.onlyFor.includes(role))
+    .map(g => ({
+      ...g,
+      items: g.items.filter(item => !item.onlyFor || item.onlyFor.includes(role)),
+    }))
+    .filter(g => g.items.length > 0);
+
+  if (aiMapperGroup) {
+    const brandIdx = filteredGroups.findIndex(g => g.title === "Brand Monitoring");
+    filteredGroups.splice(brandIdx >= 0 ? brandIdx + 1 : filteredGroups.length, 0, aiMapperGroup);
+  }
+
+  const visibleGroups = isExternalMember ? externalGroups : filteredGroups;
 
   return (
     <aside

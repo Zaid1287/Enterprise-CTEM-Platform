@@ -341,12 +341,17 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     res.status(404).json({ error: "User not found" });
     return;
   }
-  const [moduleRow] = await db
-    .select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
-    .from(aiMapperModuleAssignmentsTable)
-    .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
-    .limit(1);
-  res.json({ ...toUserResponse(user), aiMapperEnabled: moduleRow?.isEnabled ?? false });
+  const isPrivileged = ["super_admin", "admin"].includes(req.user!.role);
+  let aiMapperEnabled = isPrivileged;
+  if (!isPrivileged) {
+    const [moduleRow] = await db
+      .select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
+      .from(aiMapperModuleAssignmentsTable)
+      .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
+      .limit(1);
+    aiMapperEnabled = moduleRow?.isEnabled ?? false;
+  }
+  res.json({ ...toUserResponse(user), aiMapperEnabled });
 });
 
 // ── My Account Manager (client role only) ─────────────────────────────────────

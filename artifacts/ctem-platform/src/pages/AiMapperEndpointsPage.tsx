@@ -153,7 +153,7 @@ export default function AiMapperEndpointsPage() {
   }, [exporting, debouncedQ, sort, order]);
 
   return (
-    <div className="p-6 space-y-5 max-w-6xl mx-auto">
+    <div className="p-6 space-y-5 w-full">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">AI Endpoints</h1>

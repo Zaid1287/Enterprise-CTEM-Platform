@@ -163,7 +163,7 @@ export default function AiMapperEndpointDetailPage() {
   const isDone  = attackRun?.status === "completed";
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="p-6 space-y-6 w-full">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate(-1 as any)}>

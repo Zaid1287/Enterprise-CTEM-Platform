@@ -139,7 +139,7 @@ export default function AiMapperScanDetailPage() {
   const noAuth   = endpoints.filter(e => e.authStatus === "none").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="p-6 space-y-6 w-full">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate("/ai-mapper/scans")}>
           <ArrowLeft className="w-4 h-4" />

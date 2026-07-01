@@ -36,6 +36,8 @@ function broadcast(map: Map<number, Set<any>>, id: number, data: object) {
 async function requireAiMapper(req: AuthenticatedRequest, res: ExpressResponse, next: Function) {
   const tenantId = req.user?.tenantId;
   if (!tenantId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  // super_admin and admin always have AI Mapper access
+  if (["super_admin", "admin"].includes(req.user?.role ?? "")) { next(); return; }
   try {
     const [row] = await db.select().from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, tenantId));
     if (!row?.isEnabled) { res.status(403).json({ error: "AI Mapper module is not enabled for this tenant" }); return; }

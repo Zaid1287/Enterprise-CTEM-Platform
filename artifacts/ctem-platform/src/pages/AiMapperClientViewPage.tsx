@@ -159,7 +159,7 @@ export default function AiMapperClientViewPage() {
     : <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-muted/50 text-muted-foreground border border-border font-medium"><ShieldOff className="w-3 h-3" />Module Inactive</span>;
 
   return (
-    <div className="p-6 space-y-5 max-w-7xl mx-auto">
+    <div className="p-6 space-y-5 w-full">
       {/* Header */}
       <div className="flex items-center gap-3 flex-wrap">
         <Button variant="ghost" size="icon" onClick={() => navigate(backPath)}>

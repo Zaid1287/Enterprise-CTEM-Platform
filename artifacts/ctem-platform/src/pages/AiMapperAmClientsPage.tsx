@@ -32,7 +32,7 @@ export default function AiMapperAmClientsPage() {
   const totalCritical  = clients.reduce((s, c) => s + c.critical,  0);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-6 space-y-6 w-full">
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">

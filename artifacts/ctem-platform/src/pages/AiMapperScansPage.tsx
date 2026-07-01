@@ -195,7 +195,7 @@ export default function AiMapperScansPage() {
   const scopeLines   = scopePreview?.split("\n").filter(Boolean) ?? [];
 
   return (
-    <div className="p-6 space-y-5 max-w-5xl mx-auto">
+    <div className="p-6 space-y-5 w-full">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">AI Surface Scans</h1>

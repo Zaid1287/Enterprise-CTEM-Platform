@@ -104,7 +104,7 @@ export default function AiMapperPage() {
   ];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)] p-6 gap-5 max-w-7xl mx-auto">
+    <div className="flex flex-col h-[calc(100vh-56px)] p-6 gap-5 w-full">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">AI Mapper — Overview</h1>
