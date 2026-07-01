@@ -11,6 +11,8 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -78,6 +80,8 @@ export default function AiMapperAdminPage() {
   const [search, setSearch]       = useState("");
   const [tab, setTab]             = useState<FilterTab>("all");
   const [sortCol, setSortCol]     = useState<SortCol>("endpoints");
+  const [popoverTenantId, setPopoverTenantId] = useState<number | null>(null);
+  const [pendingEnabled, setPendingEnabled]   = useState(false);
   const [sortDir, setSortDir]     = useState<"asc" | "desc">("desc");
   const [launchTenant, setLaunchTenant] = useState<TenantAiRow | null>(null);
   const [scanTitle, setScanTitle] = useState("AI Surface Scan");
@@ -397,20 +401,51 @@ export default function AiMapperAdminPage() {
                         <Badge variant="outline" className="text-xs capitalize">{t.plan}</Badge>
                       </td>
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => toggleMut.mutate({ tenantId: t.id, isEnabled: !t.isEnabled })}
-                          disabled={toggleMut.isPending}
-                          className={cn(
-                            "text-xs px-2.5 py-1 rounded-full font-medium border transition-colors cursor-pointer inline-flex items-center gap-1.5",
-                            t.isEnabled
-                              ? "bg-violet-500/10 text-violet-400 border-violet-500/25 hover:bg-violet-500/20"
-                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
-                          )}
+                        <Popover
+                          open={popoverTenantId === t.id}
+                          onOpenChange={open => {
+                            if (open) { setPopoverTenantId(t.id); setPendingEnabled(t.isEnabled); }
+                            else setPopoverTenantId(null);
+                          }}
                         >
-                          {t.isEnabled
-                            ? <><ShieldCheck className="w-3 h-3" />Enabled</>
-                            : <><ShieldOff className="w-3 h-3" />Disabled</>}
-                        </button>
+                          <PopoverTrigger asChild>
+                            <button className={cn(
+                              "text-xs px-2.5 py-1 rounded-full font-medium border transition-colors cursor-pointer inline-flex items-center gap-1.5",
+                              t.isEnabled
+                                ? "bg-violet-500/10 text-violet-400 border-violet-500/25 hover:bg-violet-500/20"
+                                : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                            )}>
+                              {t.isEnabled
+                                ? <><ShieldCheck className="w-3 h-3" />Enabled</>
+                                : <><ShieldOff className="w-3 h-3" />Disabled</>}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-56 p-3 space-y-3" align="start">
+                            <p className="text-sm font-medium">{t.name}</p>
+                            <div className="flex items-center justify-between">
+                              <Label className="text-sm">AI Mapper</Label>
+                              <Switch
+                                checked={pendingEnabled}
+                                onCheckedChange={setPendingEnabled}
+                              />
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {pendingEnabled ? "Module will be enabled for this tenant." : "Module will be disabled for this tenant."}
+                            </p>
+                            <Button
+                              size="sm"
+                              className="w-full"
+                              disabled={toggleMut.isPending || pendingEnabled === t.isEnabled}
+                              onClick={() => {
+                                toggleMut.mutate({ tenantId: t.id, isEnabled: pendingEnabled });
+                                setPopoverTenantId(null);
+                              }}
+                            >
+                              {toggleMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+                              Save
+                            </Button>
+                          </PopoverContent>
+                        </Popover>
                       </td>
                       <td className="px-4 py-3 tabular-nums text-right">
                         {t.endpoints > 0

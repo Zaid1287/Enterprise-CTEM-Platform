@@ -5,11 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, Server, ShieldOff, Globe, Loader2, XCircle, StopCircle } from "lucide-react";
+import { ArrowLeft, Server, ShieldOff, Globe, Loader2, XCircle, StopCircle, CheckCircle2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { RiskScoreGauge } from "@/components/aiMapper/RiskScoreGauge";
 import { useAiMapperWs } from "@/hooks/useAiMapperWs";
+import { cn } from "@/lib/utils";
 
 const RISK_BADGE: Record<string, string> = {
   critical: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -17,6 +18,56 @@ const RISK_BADGE: Record<string, string> = {
   medium:   "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
   low:      "bg-green-500/20 text-green-400 border-green-500/30",
 };
+
+const PHASES = [
+  { label: "Passive Discovery",    band: [0,  24]  },
+  { label: "Port Scanning",        band: [25, 49]  },
+  { label: "Tech Detection",       band: [50, 74]  },
+  { label: "Vulnerability Assessment", band: [75, 99] },
+] as const;
+
+function PhaseTimeline({ progress }: { progress: number }) {
+  const currentPhase = PHASES.findIndex((_, i) => {
+    const next = PHASES[i + 1];
+    return progress < (next?.band[0] ?? 100);
+  });
+  const active = currentPhase === -1 ? PHASES.length - 1 : currentPhase;
+
+  return (
+    <div className="flex items-start gap-0 mt-4">
+      {PHASES.map((phase, i) => {
+        const done    = progress >= phase.band[1] + 1;
+        const current = i === active && progress < 100;
+        return (
+          <div key={i} className="flex-1 flex flex-col items-center gap-1">
+            <div className="flex items-center w-full">
+              {i > 0 && (
+                <div className={cn("h-0.5 flex-1 transition-colors", done || current ? "bg-violet-500" : "bg-border")} />
+              )}
+              <div className={cn(
+                "w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
+                done    ? "border-violet-500 bg-violet-500 text-white" :
+                current ? "border-violet-400 bg-violet-400/20 text-violet-400" :
+                          "border-border bg-background text-muted-foreground/40",
+              )}>
+                {done ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-xs font-bold">{i + 1}</span>}
+              </div>
+              {i < PHASES.length - 1 && (
+                <div className={cn("h-0.5 flex-1 transition-colors", done ? "bg-violet-500" : "bg-border")} />
+              )}
+            </div>
+            <span className={cn(
+              "text-xs text-center leading-tight max-w-20 px-1",
+              done ? "text-violet-400" : current ? "text-foreground" : "text-muted-foreground/50"
+            )}>
+              {phase.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 interface AiEndpoint {
   id: number; ip: string; port: number; hostname?: string; url: string;
@@ -50,7 +101,6 @@ export default function AiMapperScanDetailPage() {
     },
   });
 
-  // Real-time scan progress via WebSocket (polling above acts as fallback)
   const isRunning = scan?.status === "running" || scan?.status === "pending";
   useAiMapperWs({
     url: isRunning ? `/api/ai-mapper/scans/${scanId}/ws` : null,
@@ -99,7 +149,7 @@ export default function AiMapperScanDetailPage() {
           <p className="text-sm text-muted-foreground">Scan #{scan.id} · {formatDistanceToNow(new Date(scan.createdAt), { addSuffix: true })}</p>
         </div>
         <Badge variant="outline" className="capitalize">{scan.status}</Badge>
-        {(scan.status === "running" || scan.status === "pending") && (
+        {isRunning && (
           <Button
             variant="destructive"
             size="sm"
@@ -112,29 +162,30 @@ export default function AiMapperScanDetailPage() {
         )}
       </div>
 
-      {(scan.status === "running" || scan.status === "pending") && (
+      {isRunning && (
         <Card>
-          <CardContent className="py-4">
+          <CardContent className="py-5">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium">Scan in progress…</span>
               <span className="text-sm text-muted-foreground">{scan.progress ?? 0}%</span>
             </div>
             <Progress value={scan.progress ?? 0} className="h-2" />
-            <div className="flex gap-6 mt-3 text-xs text-muted-foreground">
-              {scan.totalHosts != null   && <span>Total: {scan.totalHosts}</span>}
-              {scan.liveHosts != null    && <span>Live: {scan.liveHosts}</span>}
+            <div className="flex gap-6 mt-2.5 text-xs text-muted-foreground">
+              {scan.totalHosts   != null && <span>Total: {scan.totalHosts}</span>}
+              {scan.liveHosts    != null && <span>Live: {scan.liveHosts}</span>}
               {scan.scannedHosts != null && <span>Scanned: {scan.scannedHosts}</span>}
             </div>
+            <PhaseTimeline progress={scan.progress ?? 0} />
           </CardContent>
         </Card>
       )}
 
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: "Endpoints Found", value: endpoints.length, icon: Server, color: "text-blue-400" },
-          { label: "Critical",        value: critical,          icon: XCircle,        color: "text-red-400" },
-          { label: "High",            value: high,              icon: ShieldOff,      color: "text-orange-400" },
-          { label: "No Auth",         value: noAuth,            icon: Globe,          color: "text-yellow-400" },
+          { label: "Endpoints Found", value: endpoints.length, icon: Server,   color: "text-blue-400" },
+          { label: "Critical",        value: critical,          icon: XCircle,  color: "text-red-400" },
+          { label: "High",            value: high,              icon: ShieldOff, color: "text-orange-400" },
+          { label: "No Auth",         value: noAuth,            icon: Globe,    color: "text-yellow-400" },
         ].map(s => (
           <Card key={s.label}>
             <CardContent className="py-4">

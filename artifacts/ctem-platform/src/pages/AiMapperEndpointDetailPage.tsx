@@ -6,11 +6,13 @@ import { useAiMapperWs } from "@/hooks/useAiMapperWs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
 import { RiskScoreGauge } from "@/components/aiMapper/RiskScoreGauge";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, Zap, Loader2, CheckCircle2, XCircle, AlertTriangle,
-  Info, ShieldOff, Globe, Lock, Key, Server, Eye
+  Info, ShieldOff, Key, Eye,
 } from "lucide-react";
 
 interface AttackResult {
@@ -78,7 +80,6 @@ export default function AiMapperEndpointDetailPage() {
     },
   });
 
-  // Real-time attack results via WebSocket (polling acts as fallback)
   const attackIsRunning = attackRun?.status === "running";
   useAiMapperWs({
     url: attackRunId != null && attackIsRunning ? `/api/ai-mapper/attacks/${attackRunId}/ws` : null,
@@ -112,6 +113,7 @@ export default function AiMapperEndpointDetailPage() {
   const results = attackRun?.results ?? [];
   const passed  = results.filter(r => r.passed).length;
   const failed  = results.filter(r => !r.passed).length;
+  const isDone  = attackRun?.status === "completed";
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -134,12 +136,12 @@ export default function AiMapperEndpointDetailPage() {
             ? <Loader2 className="w-4 h-4 animate-spin mr-2" />
             : <Zap className="w-4 h-4 mr-2" />
           }
-          {attackRun ? "Running…" : "Launch Attack Suite"}
+          {attackRun?.status === "running" ? "Running…" : "Launch Attack Suite"}
         </Button>
       </div>
 
       <div className="grid grid-cols-3 gap-6">
-        {/* Left: risk + info */}
+        {/* Left column: risk gauge + security tiles + infrastructure */}
         <div className="space-y-4">
           <Card>
             <CardContent className="py-5 flex flex-col items-center gap-3">
@@ -177,12 +179,13 @@ export default function AiMapperEndpointDetailPage() {
             <CardHeader className="pb-2"><CardTitle className="text-sm">Infrastructure</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               {[
-                { label: "Protocol",  value: ep.protocol },
-                { label: "Framework", value: ep.framework ?? "—" },
-                { label: "Country",   value: ep.country ?? "—" },
-                { label: "City",      value: ep.city ?? "—" },
-                { label: "Org",       value: ep.org ?? "—" },
+                { label: "Protocol",   value: ep.protocol },
+                { label: "Framework",  value: ep.framework ?? "—" },
+                { label: "Country",    value: ep.country ?? "—" },
+                { label: "City",       value: ep.city ?? "—" },
+                { label: "Org",        value: ep.org ?? "—" },
                 { label: "First Seen", value: new Date(ep.firstSeenAt).toLocaleDateString() },
+                ...(ep.lastSeenAt ? [{ label: "Last Seen", value: new Date(ep.lastSeenAt).toLocaleDateString() }] : []),
               ].map(({ label, value }) => (
                 <div key={label} className="flex justify-between gap-2">
                   <span className="text-muted-foreground shrink-0">{label}</span>
@@ -193,70 +196,102 @@ export default function AiMapperEndpointDetailPage() {
           </Card>
         </div>
 
-        {/* Right: models, tools, prompt, attack */}
+        {/* Right 2 columns: tabbed Models / MCP Tools / System Prompt + Attack */}
         <div className="col-span-2 space-y-4">
-          {/* Models */}
-          {(ep.models?.length ?? 0) > 0 && (
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Exposed Models ({ep.models!.length})</CardTitle></CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-1.5">
-                  {ep.models!.map(m => (
-                    <Badge key={m} variant="outline" className="font-mono text-xs">{m}</Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/* Tabbed endpoint info */}
+          <Card>
+            <CardContent className="pt-4 pb-4">
+              <Tabs defaultValue="models">
+                <TabsList className="w-full mb-3">
+                  <TabsTrigger value="models" className="flex-1">
+                    Models {(ep.models?.length ?? 0) > 0 && <span className="ml-1.5 text-xs opacity-70">({ep.models!.length})</span>}
+                  </TabsTrigger>
+                  <TabsTrigger value="tools" className="flex-1">
+                    MCP Tools {(ep.tools?.length ?? 0) > 0 && <span className="ml-1.5 text-xs opacity-70">({ep.tools!.length})</span>}
+                  </TabsTrigger>
+                  <TabsTrigger value="prompt" className="flex-1">
+                    System Prompt
+                    {ep.systemPromptLeaked && <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />}
+                  </TabsTrigger>
+                </TabsList>
 
-          {/* MCP Tools */}
-          {(ep.tools?.length ?? 0) > 0 && (
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">MCP Tools ({ep.tools!.length})</CardTitle></CardHeader>
-              <CardContent>
-                <div className="space-y-1.5">
-                  {ep.tools!.map(t => (
-                    <div key={t.name} className="flex items-start gap-2 text-sm">
-                      <Key className="w-3.5 h-3.5 mt-0.5 text-purple-400 shrink-0" />
-                      <div>
-                        <span className="font-mono font-medium">{t.name}</span>
-                        {t.description && <p className="text-xs text-muted-foreground">{t.description}</p>}
-                      </div>
+                <TabsContent value="models">
+                  {(ep.models?.length ?? 0) === 0 ? (
+                    <p className="text-sm text-muted-foreground py-4 text-center">No models discovered</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {ep.models!.map(m => (
+                        <Badge key={m} variant="outline" className="font-mono text-xs">{m}</Badge>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                  )}
+                </TabsContent>
 
-          {/* System prompt leak */}
-          {ep.systemPromptLeaked && (
-            <Card className="border-red-500/40">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-red-400 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4" /> System Prompt Leaked
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {ep.systemPromptContent
-                  ? <pre className="text-xs font-mono bg-muted/50 rounded p-3 max-h-40 overflow-auto whitespace-pre-wrap">{ep.systemPromptContent}</pre>
-                  : <p className="text-sm text-muted-foreground">System prompt was confirmed exposed but content was not captured.</p>
-                }
-              </CardContent>
-            </Card>
-          )}
+                <TabsContent value="tools">
+                  {(ep.tools?.length ?? 0) === 0 ? (
+                    <p className="text-sm text-muted-foreground py-4 text-center">No MCP tools discovered</p>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {ep.tools!.map(t => (
+                        <div key={t.name} className="flex items-start gap-2 text-sm">
+                          <Key className="w-3.5 h-3.5 mt-0.5 text-purple-400 shrink-0" />
+                          <div>
+                            <span className="font-mono font-medium">{t.name}</span>
+                            {t.description && <p className="text-xs text-muted-foreground">{t.description}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="prompt">
+                  {!ep.systemPromptLeaked ? (
+                    <p className="text-sm text-muted-foreground py-4 text-center">No system prompt leak detected</p>
+                  ) : (
+                    <div>
+                      <p className="text-xs text-red-400 flex items-center gap-1.5 mb-2">
+                        <AlertTriangle className="w-3.5 h-3.5" /> System prompt was exposed
+                      </p>
+                      {ep.systemPromptContent
+                        ? <pre className="text-xs font-mono bg-muted/50 rounded p-3 max-h-40 overflow-auto whitespace-pre-wrap">{ep.systemPromptContent}</pre>
+                        : <p className="text-sm text-muted-foreground">Content was not captured during scanning.</p>
+                      }
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
 
           {/* Attack results */}
-          {(attackRun || launchAttack.isPending) && (
+          {isDone && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 text-sm">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>Attack suite completed — <strong>{failed} issue{failed !== 1 ? "s" : ""} found</strong>, {passed} passed</span>
+            </div>
+          )}
+
+          {(attackRun || launchAttack.isPending) ? (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm">Attack Suite Results</CardTitle>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {attackRun?.status === "running" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    {results.length > 0 && <><span className="text-green-400">{passed} passed</span> · <span className="text-red-400">{failed} failed</span></>}
+                    {attackRun?.status === "running" && (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>{attackRun.progress ?? 0}%</span>
+                      </>
+                    )}
+                    {results.length > 0 && (
+                      <><span className="text-green-400">{passed} passed</span> · <span className="text-red-400">{failed} failed</span></>
+                    )}
                   </div>
                 </div>
+                {attackRun?.status === "running" && attackRun.progress != null && (
+                  <Progress value={attackRun.progress} className="h-1 mt-1" />
+                )}
               </CardHeader>
               <CardContent className="space-y-2">
                 {results.length === 0 && attackRun?.status === "running" && (
@@ -264,11 +299,13 @@ export default function AiMapperEndpointDetailPage() {
                 )}
                 {results.map((r, i) => {
                   const Icon = SEV_ICON[r.severity] ?? Info;
+                  const isOpen = selectedResult?.testName === r.testName;
                   return (
                     <div key={i} className={`rounded-lg border p-3 ${SEV_BG[r.severity]}`}>
                       <div className="flex items-center gap-2 mb-1">
                         <Icon className={`w-4 h-4 shrink-0 ${SEV_COLOR[r.severity]}`} />
                         <span className="font-medium text-sm flex-1">{r.testName}</span>
+                        <Badge variant="outline" className={`text-xs capitalize ${SEV_COLOR[r.severity]}`}>{r.severity}</Badge>
                         {r.passed
                           ? <CheckCircle2 className="w-4 h-4 text-green-400" />
                           : <XCircle className="w-4 h-4 text-red-400" />
@@ -277,12 +314,12 @@ export default function AiMapperEndpointDetailPage() {
                       <p className="text-xs text-muted-foreground pl-6 mb-1.5">{r.remediationGuidance}</p>
                       <button
                         className="text-xs text-primary/70 hover:text-primary pl-6 flex items-center gap-1"
-                        onClick={() => setSelectedResult(selectedResult?.testName === r.testName ? null : r)}
+                        onClick={() => setSelectedResult(isOpen ? null : r)}
                       >
                         <Eye className="w-3 h-3" />
-                        {selectedResult?.testName === r.testName ? "Hide" : "Show"} request/response
+                        {isOpen ? "Hide" : "Show"} request/response
                       </button>
-                      {selectedResult?.testName === r.testName && (
+                      {isOpen && (
                         <div className="mt-2 ml-6 space-y-2">
                           <div>
                             <p className="text-xs font-semibold text-muted-foreground mb-1">Request</p>
@@ -303,14 +340,15 @@ export default function AiMapperEndpointDetailPage() {
                 })}
               </CardContent>
             </Card>
-          )}
-
-          {!attackRun && !launchAttack.isPending && (
+          ) : (
             <Card className="border-dashed">
               <CardContent className="py-10 text-center">
                 <Zap className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
                 <p className="font-medium text-sm">No attack runs yet</p>
                 <p className="text-xs text-muted-foreground mt-1">Launch the attack suite to test this endpoint for MCP, Ollama, and OpenAI-compat vulnerabilities</p>
+                <Button className="mt-4" size="sm" variant="destructive" onClick={() => launchAttack.mutate()}>
+                  <Zap className="w-4 h-4 mr-2" /> Launch Attack Suite
+                </Button>
               </CardContent>
             </Card>
           )}

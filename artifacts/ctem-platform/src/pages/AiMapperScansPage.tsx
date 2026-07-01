@@ -108,11 +108,12 @@ export default function AiMapperScansPage() {
         cidrScope: buildCidrScope(),
       }),
     }),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ["ai-mapper-scans"] });
       setShowNew(false);
       resetDialog();
       toast({ title: "Scan started" });
+      if (data?.id) navigate(`/ai-mapper/scans/${data.id}`);
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
