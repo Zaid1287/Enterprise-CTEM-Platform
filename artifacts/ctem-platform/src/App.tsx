@@ -200,11 +200,11 @@ function Router() {
       <Route path="/ai-mapper/endpoints" component={() => <AiMapperRoute component={AiMapperEndpointsPage} />} />
       <Route path="/ai-mapper/endpoints/:id" component={() => <AiMapperRoute component={AiMapperEndpointDetailPage} />} />
       <Route path="/ai-mapper/bom" component={() => <AiMapperRoute component={AiMapperBomPage} />} />
-      <Route path="/ai-mapper/admin" component={() => <ProtectedRoute component={AiMapperAdminPage} />} />
-      <Route path="/ai-mapper/clients" component={() => <ProtectedRoute component={AiMapperAmClientsPage} />} />
-      <Route path="/ai-mapper/clients/:tenantId" component={() => <ProtectedRoute component={AiMapperClientViewPage} />} />
-      <Route path="/ai-mapper/clients/:tenantId/scans/:scanId" component={() => <ProtectedRoute component={AiMapperClientViewPage} />} />
-      <Route path="/ai-mapper/clients/:tenantId/endpoints/:id" component={() => <ProtectedRoute component={AiMapperClientViewPage} />} />
+      <Route path="/ai-mapper/admin" component={() => <AiMapperRoute component={AiMapperAdminPage} />} />
+      <Route path="/ai-mapper/clients" component={() => <AiMapperRoute component={AiMapperAmClientsPage} />} />
+      <Route path="/ai-mapper/clients/:tenantId" component={() => <AiMapperRoute component={AiMapperClientViewPage} />} />
+      <Route path="/ai-mapper/clients/:tenantId/scans/:scanId" component={() => <AiMapperRoute component={AiMapperClientViewPage} />} />
+      <Route path="/ai-mapper/clients/:tenantId/endpoints/:id" component={() => <AiMapperRoute component={AiMapperClientViewPage} />} />
       <Route path="/reports" component={() => <ProtectedRoute component={ReportsPage} />} />
       <Route path="/audit-logs" component={() => <ProtectedRoute component={AuditLogsPage} />} />
       <Route path="/settings/users" component={() => <ProtectedRoute component={UsersPage} />} />

@@ -33,14 +33,57 @@ interface AttackRun {
   completedAt?: string;
 }
 
+interface McpTool {
+  name: string;
+  description?: string;
+  inputSchema?: {
+    type?: string;
+    properties?: Record<string, { type?: string; description?: string }>;
+    required?: string[];
+  };
+}
+
 interface AiEndpoint {
   id: number; ip: string; port: number; hostname?: string; url: string;
   protocol: string; framework?: string; authStatus: string;
   riskScore: number; riskLevel: string; country?: string; org?: string; city?: string;
-  models?: string[]; tools?: { name: string; description?: string }[];
+  models?: string[]; tools?: McpTool[];
   systemPromptLeaked: boolean; systemPromptContent?: string;
   corsPolicy?: string; hasTls: boolean; signupEnabled: boolean;
   firstSeenAt: string; lastSeenAt?: string;
+}
+
+const TOOL_RISK_PATTERNS: Array<{ pattern: RegExp; level: "critical" | "high" | "medium" | "low"; label: string }> = [
+  { pattern: /exec|shell|run_command|bash|cmd|eval/i,         level: "critical", label: "Remote Execution" },
+  { pattern: /file|read_file|write_file|fs|path|directory/i,  level: "high",     label: "File System Access" },
+  { pattern: /http|fetch|request|webhook|curl|url/i,          level: "high",     label: "External Network" },
+  { pattern: /database|sql|query|db|mongo|redis/i,            level: "high",     label: "Database Access" },
+  { pattern: /email|smtp|send_mail|message/i,                 level: "medium",   label: "Email / Messaging" },
+  { pattern: /search|browse|web|scrape/i,                     level: "medium",   label: "Web Access" },
+];
+
+function classifyTool(name: string): { level: "critical" | "high" | "medium" | "low"; label: string } {
+  for (const p of TOOL_RISK_PATTERNS) {
+    if (p.pattern.test(name)) return { level: p.level, label: p.label };
+  }
+  return { level: "low", label: "Data / Compute" };
+}
+
+const TOOL_RISK_BADGE: Record<string, string> = {
+  critical: "bg-red-500/20 text-red-400 border-red-500/30",
+  high:     "bg-orange-500/20 text-orange-400 border-orange-500/30",
+  medium:   "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  low:      "bg-slate-500/20 text-slate-400 border-slate-500/30",
+};
+
+const UNCENSORED_PATTERNS = /uncensor|abliterat|dolphin|wizard|goat|evil|jailbreak/i;
+
+function parseModelSize(name: string): string | null {
+  const m = name.match(/(\d+(?:\.\d+)?)\s*[bBmM]/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  const unit = name[m.index! + m[0].length - 1].toUpperCase();
+  return unit === "B" ? `${n}B params` : `${n}M params`;
 }
 
 const SEV_ICON: Record<string, React.ElementType> = {
@@ -112,8 +155,11 @@ export default function AiMapperEndpointDetailPage() {
   );
 
   const results = attackRun?.results ?? [];
-  const passed  = results.filter(r => r.passed).length;
-  const failed  = results.filter(r => !r.passed).length;
+  const passed   = results.filter(r => r.passed).length;
+  const failed   = results.filter(r => !r.passed).length;
+  const critical = results.filter(r => !r.passed && r.severity === "critical").length;
+  const high     = results.filter(r => !r.passed && r.severity === "high").length;
+  const medium   = results.filter(r => !r.passed && r.severity === "medium").length;
   const isDone  = attackRun?.status === "completed";
 
   return (
@@ -204,10 +250,22 @@ export default function AiMapperEndpointDetailPage() {
                   {(ep.models?.length ?? 0) === 0 ? (
                     <p className="text-sm text-muted-foreground py-4 text-center">No models discovered</p>
                   ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {ep.models!.map(m => (
-                        <Badge key={m} variant="outline" className="font-mono text-xs">{m}</Badge>
-                      ))}
+                    <div className="space-y-2 max-h-52 overflow-y-auto">
+                      {ep.models!.map(m => {
+                        const isUncensored = UNCENSORED_PATTERNS.test(m);
+                        const size = parseModelSize(m);
+                        return (
+                          <div key={m} className="flex items-center gap-2 px-3 py-2 rounded-md bg-muted/40 border border-border">
+                            <span className="font-mono text-sm flex-1 truncate">{m}</span>
+                            {size && <span className="text-xs text-muted-foreground shrink-0">{size}</span>}
+                            {isUncensored && (
+                              <Badge className="text-xs bg-red-500/20 text-red-400 border-red-500/30 shrink-0">
+                                ⚠ Uncensored
+                              </Badge>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </TabsContent>
@@ -216,16 +274,38 @@ export default function AiMapperEndpointDetailPage() {
                   {(ep.tools?.length ?? 0) === 0 ? (
                     <p className="text-sm text-muted-foreground py-4 text-center">No MCP tools discovered</p>
                   ) : (
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {ep.tools!.map(t => (
-                        <div key={t.name} className="flex items-start gap-2 text-sm">
-                          <Key className="w-3.5 h-3.5 mt-0.5 text-purple-400 shrink-0" />
-                          <div>
-                            <span className="font-mono font-medium">{t.name}</span>
-                            {t.description && <p className="text-xs text-muted-foreground">{t.description}</p>}
+                    <div className="space-y-2 max-h-52 overflow-y-auto">
+                      {ep.tools!.map(t => {
+                        const risk = classifyTool(t.name);
+                        const props = t.inputSchema?.properties ?? {};
+                        const propList = Object.entries(props);
+                        const required = new Set(t.inputSchema?.required ?? []);
+                        return (
+                          <div key={t.name} className="rounded-md border border-border bg-muted/30 p-3 space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <Key className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                              <span className="font-mono font-medium text-sm flex-1">{t.name}</span>
+                              <Badge className={`text-xs border ${TOOL_RISK_BADGE[risk.level]}`}>{risk.label}</Badge>
+                            </div>
+                            {t.description && (
+                              <p className="text-xs text-muted-foreground">{t.description}</p>
+                            )}
+                            {propList.length > 0 && (
+                              <div className="mt-1.5 space-y-0.5">
+                                <p className="text-xs font-medium text-muted-foreground">Input parameters:</p>
+                                {propList.map(([k, v]) => (
+                                  <div key={k} className="flex items-baseline gap-1.5 text-xs pl-2">
+                                    <span className="font-mono text-violet-400">{k}</span>
+                                    {required.has(k) && <span className="text-red-400 text-[10px]">required</span>}
+                                    <span className="text-muted-foreground">{v.type ?? "any"}</span>
+                                    {v.description && <span className="text-muted-foreground truncate max-w-52">— {v.description}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </TabsContent>
@@ -253,7 +333,13 @@ export default function AiMapperEndpointDetailPage() {
           {isDone && (
             <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 text-sm">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>Attack suite completed — <strong>{failed} issue{failed !== 1 ? "s" : ""} found</strong>, {passed} passed</span>
+              <span>
+                Attack suite completed —{" "}
+                {critical > 0 && <><strong className="text-red-400">{critical} critical</strong>{" · "}</>}
+                {high > 0     && <><strong className="text-orange-400">{high} high</strong>{" · "}</>}
+                {medium > 0   && <><strong className="text-yellow-400">{medium} medium</strong>{" · "}</>}
+                <strong>{failed} issue{failed !== 1 ? "s" : ""} found</strong>, {passed} passed
+              </span>
             </div>
           )}
 
