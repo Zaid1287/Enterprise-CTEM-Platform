@@ -21,7 +21,11 @@ import {
   type PassiveDiscoveryOptions,
 } from "../lib/passiveDiscovery";
 import { runDirFuzz, type DirFuzzResult } from "../lib/dirFuzzer";
-import { runNucleiScan, type VulnScanResult } from "../lib/nucleiScanner";
+import { runNucleiScan, runCustomNucleiTemplatesBinary, type VulnScanResult, type CustomNucleiTemplate } from "../lib/nucleiScanner";
+import { runHarvesterScan } from "../lib/harvesterScanner";
+import { runParamScan } from "../lib/paramScanner";
+import { runSslTest } from "../lib/sslTestScanner";
+import { runWpScan } from "../lib/wpScanner";
 import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
@@ -41,6 +45,10 @@ import { dispatchMultiTenantNotifications } from "../lib/notifier";
 const execAsync = promisify(exec);
 const router = Router();
 router.use(denyExternalMembers);
+
+// Module-level cache for SecurityTrails key loaded from platform_settings
+// (the discoverOriginIp helper runs outside the per-scan scope where the key is loaded)
+let _platformSecurityTrailsKey: string | null = null;
 
 // ── Active nmap killers ────────────────────────────────────────────────────────
 const activeScanKillers = new Map<number, () => void>();
@@ -999,8 +1007,8 @@ async function discoverOriginIps(domain: string, dnsRecords: DnsRecord[], subdom
     } catch {}
   }
 
-  // Method 5: SecurityTrails (if API key configured — optional)
-  const stKey = process.env["SECURITYTRAILS_API_KEY"];
+  // Method 5: SecurityTrails (if API key configured via platform settings or env var)
+  const stKey = _platformSecurityTrailsKey ?? process.env["SECURITYTRAILS_API_KEY"];
   if (stKey) {
     try {
       const resp = await fetch(`https://api.securitytrails.com/v1/history/${domain}/dns/a`, {
@@ -1492,7 +1500,7 @@ async function executePipeline(
     .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
 
   // ── Load platform API keys for this run ──────────────────────────────────
-  const [nvdKey, shodanKey, vtKey, hunterKey, githubToken, fofaEmail, fofaApiKey, censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey] = await Promise.all([
+  const [nvdKey, shodanKey, vtKey, hunterKey, githubToken, fofaEmail, fofaApiKey, censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey, securityTrailsKey] = await Promise.all([
     getPlatformSetting("nvd_api_key"),
     getPlatformSetting("shodan_api_key"),
     getPlatformSetting("virustotal_api_key"),
@@ -1504,8 +1512,10 @@ async function executePipeline(
     getPlatformSetting("censys_api_secret"),
     getPlatformSetting("intelx_api_key"),
     getPlatformSetting("criminalip_api_key"),
+    getPlatformSetting("securitytrails_api_key"),
   ]);
   if (nvdKey) setNvdApiKey(nvdKey);
+  if (securityTrailsKey) _platformSecurityTrailsKey = securityTrailsKey;
 
   // ── Auto-ensure built-in tools exist for this tenant (fallback — startup seed is primary) ──
   for (const def of BUILTIN_TOOL_DEFS) {
@@ -2279,6 +2289,78 @@ async function executePipeline(
             logger.warn({ err, domain }, "Dalfox scan failed or unavailable");
           }
         })(),
+        // ── WordPress security checks (no wpscan binary required) ─────────────
+        isHostLive && ["domain", "subdomain", "url"].includes(asset.type ?? "") && (async () => {
+          try {
+            const wpResult = await runWpScan(target);
+            if (wpResult.isWordpress) {
+              for (const finding of wpResult.findings) {
+                const sev = finding.severity as VulnFinding["severity"];
+                const cvssMap: Record<string, number> = { critical: 9.5, high: 7.5, medium: 5.0, low: 3.0, info: 2.0 };
+                cveFindings.push({
+                  title: finding.title,
+                  severity: sev,
+                  remediation: finding.remediation,
+                  cvss: cvssMap[sev] ?? 5.0,
+                  cve: finding.cve ?? `WP-${Buffer.from(finding.title).toString("hex").slice(0, 12).toUpperCase()}`,
+                  cwe: "CWE-16",
+                  source: finding.url ?? target,
+                } as VulnFinding);
+              }
+              logger.info({ domain, version: wpResult.wpVersion, findings: wpResult.findings.length, plugins: wpResult.pluginsFound.length }, "WordPress scan complete");
+            }
+          } catch (err) { logger.warn({ err, domain }, "WordPress scan failed"); }
+        })(),
+        // ── Parameter discovery (arjun + uro + linkfinder) ────────────────────
+        isHostLive && (async () => {
+          try {
+            const paramResult = await runParamScan(target, []);
+            if (paramResult.stats.paramsFound > 0) {
+              cveFindings.push({
+                title: `Injectable Parameters Discovered (${paramResult.stats.paramsFound} parameters found)`,
+                severity: "medium",
+                remediation: "Review discovered parameters for SQL injection, XSS, and other injection flaws. Validate and sanitize all inputs server-side.",
+                cvss: 5.3,
+                cve: `PARAM-DISC-${Date.now().toString(36).slice(-8).toUpperCase()}`,
+                cwe: "CWE-20",
+                source: target,
+              } as VulnFinding);
+              logger.info({ domain, ...paramResult.stats }, "Parameter discovery complete");
+            }
+          } catch (err) { logger.warn({ err, domain }, "Param scan failed"); }
+        })(),
+        // ── Custom Nuclei Templates from DB ────────────────────────────────────
+        isHostLive && (async () => {
+          try {
+            const templateRows = await db
+              .select({ t: customNucleiTemplatesTable })
+              .from(customNucleiTemplateAssignmentsTable)
+              .innerJoin(customNucleiTemplatesTable, eq(customNucleiTemplatesTable.id, customNucleiTemplateAssignmentsTable.templateId))
+              .where(and(
+                eq(customNucleiTemplateAssignmentsTable.assetId, asset.id),
+                eq(customNucleiTemplateAssignmentsTable.tenantId, tenantId),
+              ))
+              .catch(() => [] as any[]);
+            if (templateRows.length > 0) {
+              const templates: CustomNucleiTemplate[] = templateRows.map((row: any) => ({
+                id: row.t.id, name: row.t.name, content: row.t.content,
+              }));
+              const customFindings = await runCustomNucleiTemplatesBinary(target, templates);
+              for (const f of customFindings) {
+                cveFindings.push({
+                  title: f.name,
+                  severity: f.severity as VulnFinding["severity"],
+                  remediation: f.remediation,
+                  cvss: f.cvss ?? 5.0,
+                  cve: f.cve ?? f.templateId,
+                  cwe: f.cwe ?? "CWE-200",
+                  source: f.url ?? target,
+                } as VulnFinding);
+              }
+              logger.info({ domain, templates: templates.length, findings: customFindings.length }, "Custom nuclei templates scan complete");
+            }
+          } catch (err) { logger.warn({ err, domain }, "Custom nuclei templates scan failed"); }
+        })(),
       ].filter(Boolean));
 
       for (const t of p4) {
@@ -2303,9 +2385,31 @@ async function executePipeline(
     if (needsSsl) {
       const p5Start = Date.now();
       for (const t of p5) startTool(t.name, `Analyzing SSL/TLS configuration of ${domain}…`);
-      const sslResult = await runSslAnalysis(target);
-      sslIntel = sslResult.intel;
-      sslVulns = sslResult.vulns;
+      const [sslResult, testsslResult] = await Promise.allSettled([
+        runSslAnalysis(target),
+        domain && !isIp(domain) ? runSslTest(domain, 443) : Promise.resolve(null),
+      ]);
+      if (sslResult.status === "fulfilled") {
+        sslIntel = sslResult.value.intel;
+        sslVulns = sslResult.value.vulns;
+      }
+      // Merge testssl.sh findings
+      if (testsslResult.status === "fulfilled" && testsslResult.value) {
+        const cvssMap: Record<string, number> = { critical: 9.5, high: 7.5, medium: 5.0, low: 3.0, info: 2.0 };
+        for (const v of testsslResult.value.vulnerabilities) {
+          if (v.severity === "info") continue;
+          sslVulns.push({
+            title: v.name,
+            severity: v.severity as VulnFinding["severity"],
+            remediation: v.remediation,
+            cvss: cvssMap[v.severity] ?? 5.0,
+            cve: `SSL-${v.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
+            cwe: "CWE-326",
+            source: `${domain}:443`,
+          } as VulnFinding);
+        }
+        logger.info({ domain, grade: testsslResult.value.grade, tls: testsslResult.value.vulnerabilities.length }, "testssl.sh TLS analysis complete");
+      }
       for (const t of p5) doneTool(t.name, sslVulns.length, `${sslIntel.length} cert details, ${sslVulns.length} issues`, p5Start);
     }
 
@@ -3141,7 +3245,14 @@ async function executePipeline(
         const discoveryOpts: PassiveDiscoveryOptions = {
           githubToken, shodanApiKey: shodanKey, fofaEmail, fofaApiKey,
           censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey,
+          securityTrailsApiKey: securityTrailsKey,
         };
+        // OSINT harvester scan (theHarvester alternative — OSINT APIs) in parallel with passive discovery
+        void runHarvesterScan(target, hunterKey).then(h => {
+          if (h.stats.hostsFound > 0 || h.stats.emailsFound > 0) {
+            logger.info({ target, ...h.stats }, "OSINT harvester scan complete (background)");
+          }
+        }).catch(() => null);
         const discoveryResults = await runPassiveDiscovery(target, discoveryOpts);
         for (const result of discoveryResults) {
           await db.insert(discoveryResultsTable).values({

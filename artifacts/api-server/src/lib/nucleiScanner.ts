@@ -1,5 +1,8 @@
 import { exec } from "child_process";
 import { promisify } from "util";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { logger } from "./logger";
 
 const execAsync = promisify(exec);
@@ -528,4 +531,65 @@ export async function runNucleiScan(target: string, subdomainNames: string[] = [
 
   logger.info({ target, ...stats }, "Nuclei scan complete");
   return { findings: allFindings, headers, cors: corsVulns, stats };
+}
+
+// ── Custom Nuclei Templates from DB ───────────────────────────────────────────
+
+export interface CustomNucleiTemplate {
+  id: number;
+  name: string;
+  content: string;
+}
+
+export async function runCustomNucleiTemplatesBinary(
+  target: string,
+  templates: CustomNucleiTemplate[],
+): Promise<NucleiVuln[]> {
+  if (!templates.length) return [];
+
+  const tmpDir = path.join(os.tmpdir(), `nuclei-custom-${Date.now()}`);
+  try {
+    await fs.promises.mkdir(tmpDir, { recursive: true });
+
+    await Promise.all(templates.map(async (t) => {
+      const safeName = t.name.replace(/[^a-zA-Z0-9\-_]/g, "_");
+      await fs.promises.writeFile(
+        path.join(tmpDir, `${safeName}-${t.id}.yaml`),
+        t.content,
+        "utf8"
+      );
+    }));
+
+    const safeTarget = target.replace(/"/g, "").replace(/`/g, "").slice(0, 500);
+    const { stdout } = await execAsync(
+      `nuclei -u "${safeTarget}" -t "${tmpDir}" -json -timeout 15 -rate-limit 50 -no-interactsh -silent -no-update-check 2>/dev/null`,
+      { timeout: 120_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+
+    logger.info({ target, templates: templates.length }, "Custom nuclei templates binary scan complete");
+
+    return stdout.trim().split("\n")
+      .filter(Boolean)
+      .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } })
+      .map((r: any) => ({
+        templateId: r["template-id"] ?? r.templateID ?? "",
+        name: r.info?.name ?? r["template-id"] ?? "Custom Template Finding",
+        severity: (r.info?.severity ?? "medium") as VulnSeverity,
+        category: mapNucleiTag(r.info?.tags ?? []),
+        host: r.host ?? safeTarget,
+        url: r["matched-at"] ?? r.matched ?? r.host ?? safeTarget,
+        evidence: (r["extracted-results"] ?? [r["matched-at"] ?? ""]).join(", ").slice(0, 500),
+        description: r.info?.description ?? "Custom nuclei template match",
+        remediation: r.info?.remediation ?? "Review the custom template finding and remediate accordingly.",
+        cvss: r.info?.classification?.["cvss-score"] ?? undefined,
+        cve: r.info?.classification?.["cve-id"]?.[0] ?? undefined,
+        cwe: r.info?.classification?.["cwe-id"]?.[0] ?? undefined,
+        tags: r.info?.tags ?? [],
+      }));
+  } catch (err) {
+    logger.warn({ target, err }, "Custom nuclei templates scan failed");
+    return [];
+  } finally {
+    try { await fs.promises.rm(tmpDir, { recursive: true, force: true }); } catch {}
+  }
 }

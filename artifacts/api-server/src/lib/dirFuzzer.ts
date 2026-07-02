@@ -452,6 +452,148 @@ async function runFfuf(baseUrl: string, host: string): Promise<FuzzedEndpoint[]>
   }
 }
 
+// ── Gobuster integration ──────────────────────────────────────────────────────
+
+async function runGobuster(baseUrl: string, host: string): Promise<FuzzedEndpoint[]> {
+  const wlFile = path.join(os.tmpdir(), `gob-wl-${Date.now()}.txt`);
+  const outFile = path.join(os.tmpdir(), `gobuster-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
+  try {
+    fs.writeFileSync(wlFile, [...WORDLIST, ...WORDLIST_MINI].filter((v, i, a) => a.indexOf(v) === i).join("\n"));
+    await execAsync(
+      `gobuster dir -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" -q -t 25 --timeout 10s --no-error 2>/dev/null`,
+      { timeout: 90_000 }
+    ).catch(() => null);
+    if (!fs.existsSync(outFile)) return [];
+    return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {
+      const m = line.match(/^(\S+)\s+\(Status:\s*(\d+)\)/);
+      if (!m) return [];
+      const [, urlPath, statusStr] = m;
+      const status = parseInt(statusStr, 10);
+      const redirect = line.match(/-->\s*(\S+)/)?.[1];
+      const fullPath = urlPath.startsWith("/") ? urlPath : `/${urlPath}`;
+      return [{ url: `${baseUrl}${fullPath}`, path: fullPath, host, statusCode: status, redirectTo: redirect, source: "fuzz" as const, isInteresting: INTERESTING_KEYWORDS.some(kw => fullPath.toLowerCase().includes(kw)), depth: 0, parentPath: "" }];
+    });
+  } catch { return []; }
+  finally {
+    try { if (fs.existsSync(wlFile)) fs.unlinkSync(wlFile); } catch {}
+    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+  }
+}
+
+// ── Feroxbuster integration ───────────────────────────────────────────────────
+
+async function runFeroxbuster(baseUrl: string, host: string): Promise<FuzzedEndpoint[]> {
+  const wlFile = path.join(os.tmpdir(), `ferox-wl-${Date.now()}.txt`);
+  const outFile = path.join(os.tmpdir(), `ferox-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
+  try {
+    fs.writeFileSync(wlFile, WORDLIST.join("\n"));
+    await execAsync(
+      `feroxbuster -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" --no-state --silent -t 25 --timeout 10 -k 2>/dev/null`,
+      { timeout: 90_000 }
+    ).catch(() => null);
+    if (!fs.existsSync(outFile)) return [];
+    return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {
+      const m = line.match(/^(\d{3})\s+\w+\s+\S+\s+\S+\s+\S+\s+(\S+)/);
+      if (!m) return [];
+      const [, statusStr, rawUrl] = m;
+      try {
+        const u = new URL(rawUrl);
+        return [{ url: u.href, path: u.pathname, host, statusCode: parseInt(statusStr, 10), source: "fuzz" as const, isInteresting: INTERESTING_KEYWORDS.some(kw => u.pathname.toLowerCase().includes(kw)), depth: 0, parentPath: "" }];
+      } catch { return []; }
+    });
+  } catch { return []; }
+  finally {
+    try { if (fs.existsSync(wlFile)) fs.unlinkSync(wlFile); } catch {}
+    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+  }
+}
+
+// ── Katana web crawler integration ────────────────────────────────────────────
+
+async function runKatana(baseUrl: string, host: string): Promise<FuzzedEndpoint[]> {
+  const outFile = path.join(os.tmpdir(), `katana-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
+  try {
+    await execAsync(
+      `katana -u "${baseUrl}" -o "${outFile}" -silent -depth 3 -jc -kf all -timeout 10 -rl 50 -no-color 2>/dev/null`,
+      { timeout: 90_000 }
+    ).catch(() => null);
+    if (!fs.existsSync(outFile)) return [];
+    return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {
+      try {
+        const u = new URL(line.trim());
+        if (u.hostname !== host) return [];
+        return [{ url: u.href, path: u.pathname, host, statusCode: 200, source: "crawl" as const, isInteresting: INTERESTING_KEYWORDS.some(kw => u.pathname.toLowerCase().includes(kw)), depth: 0, parentPath: "" }];
+      } catch { return []; }
+    });
+  } catch { return []; }
+  finally {
+    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+  }
+}
+
+// ── GAU integration ───────────────────────────────────────────────────────────
+
+const GAU_BIN = "/tmp/security-tools/gau";
+
+async function runGau(host: string): Promise<FuzzedEndpoint[]> {
+  if (!fs.existsSync(GAU_BIN)) return [];
+  try {
+    const { stdout } = await execAsync(
+      `"${GAU_BIN}" --threads 5 --timeout 10 --retries 1 --blacklist png,jpg,gif,svg,ico,woff,woff2,ttf,eot,mp4,mp3 "${host}" 2>/dev/null`,
+      { timeout: 60_000 }
+    );
+    return stdout.trim().split("\n").filter(Boolean).flatMap(rawUrl => {
+      try {
+        const u = new URL(rawUrl.trim());
+        if (u.hostname !== host && !u.hostname.endsWith(`.${host}`)) return [];
+        return [{ url: u.href, path: u.pathname, host, statusCode: 200, source: "wayback" as const, isInteresting: INTERESTING_KEYWORDS.some(kw => u.pathname.toLowerCase().includes(kw)), depth: 0, parentPath: "" }];
+      } catch { return []; }
+    });
+  } catch { return []; }
+}
+
+// ── Waybackurls integration ───────────────────────────────────────────────────
+
+const WAYBACKURLS_BIN = "/tmp/security-tools/waybackurls";
+
+async function runWaybackurlsBin(host: string): Promise<FuzzedEndpoint[]> {
+  if (!fs.existsSync(WAYBACKURLS_BIN)) return [];
+  try {
+    const { stdout } = await execAsync(
+      `echo "${host}" | "${WAYBACKURLS_BIN}" 2>/dev/null`,
+      { timeout: 60_000 }
+    );
+    return stdout.trim().split("\n").filter(Boolean).flatMap(rawUrl => {
+      try {
+        const u = new URL(rawUrl.trim());
+        if (u.hostname !== host && !u.hostname.endsWith(`.${host}`)) return [];
+        return [{ url: u.href, path: u.pathname, host, statusCode: 200, source: "wayback" as const, isInteresting: INTERESTING_KEYWORDS.some(kw => u.pathname.toLowerCase().includes(kw)), depth: 0, parentPath: "" }];
+      } catch { return []; }
+    });
+  } catch { return []; }
+}
+
+// ── Hakrawler integration ─────────────────────────────────────────────────────
+
+const HAKRAWLER_BIN = path.join(process.env.HOME ?? "/home/runner", "go/bin/hakrawler");
+
+async function runHakrawler(baseUrl: string, host: string): Promise<FuzzedEndpoint[]> {
+  if (!fs.existsSync(HAKRAWLER_BIN)) return [];
+  try {
+    const { stdout } = await execAsync(
+      `echo "${baseUrl}" | "${HAKRAWLER_BIN}" -depth 3 -insecure -subs 2>/dev/null`,
+      { timeout: 60_000 }
+    );
+    return stdout.trim().split("\n").filter(Boolean).flatMap(rawUrl => {
+      try {
+        const u = new URL(rawUrl.trim());
+        if (u.hostname !== host && !u.hostname.endsWith(`.${host}`)) return [];
+        return [{ url: u.href, path: u.pathname, host, statusCode: 200, source: "crawl" as const, isInteresting: INTERESTING_KEYWORDS.some(kw => u.pathname.toLowerCase().includes(kw)), depth: 0, parentPath: "" }];
+      } catch { return []; }
+    });
+  } catch { return []; }
+}
+
 async function fuzzHost(baseUrl: string, isFull: boolean): Promise<HostFuzzResult> {
   let host: string;
   try { host = new URL(baseUrl).hostname; } catch { return emptyHost(baseUrl, "unknown", false, 0); }
@@ -514,15 +656,21 @@ async function fuzzLiveHost(baseUrl: string, host: string, liveStatus: number, i
     }
   }
 
-  // 3. Root-level active fuzz (depth 0) — Node.js probe + ffuf binary in parallel
+  // 3. Root-level active fuzz (depth 0) — all binary tools in parallel
   const rootWordlist = isFull ? WORDLIST : WORDLIST_MINI;
-  const [depth0Dirs, ffufHits] = await Promise.all([
+  const [depth0Dirs, ffufHits, gobusterHits, feroxHits, katanaHits, gauHits, waybackBinHits, hakrawlerHits] = await Promise.all([
     probeWordlist(baseUrl, host, rootWordlist, visited, sem, 0, "", "fuzz", MAX_ENDPOINTS, all),
     runFfuf(baseUrl, host),
+    isFull ? runGobuster(baseUrl, host) : Promise.resolve<FuzzedEndpoint[]>([]),
+    isFull ? runFeroxbuster(baseUrl, host) : Promise.resolve<FuzzedEndpoint[]>([]),
+    runKatana(baseUrl, host),
+    runGau(host),
+    runWaybackurlsBin(host),
+    runHakrawler(baseUrl, host),
   ]);
-  // Merge ffuf results — deduplicate by URL
+  // Merge all binary tool results — deduplicate by URL
   const seenUrls = new Set(all.map(e => e.url));
-  for (const r of ffufHits) {
+  for (const r of [...ffufHits, ...gobusterHits, ...feroxHits, ...katanaHits, ...gauHits, ...waybackBinHits, ...hakrawlerHits]) {
     if (!seenUrls.has(r.url) && all.length < MAX_ENDPOINTS) {
       seenUrls.add(r.url);
       visited.add(r.url);

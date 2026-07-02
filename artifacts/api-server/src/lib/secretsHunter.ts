@@ -1,4 +1,9 @@
+import { exec } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs";
 import { logger } from "./logger";
+
+const execAsync = promisify(exec);
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -372,6 +377,70 @@ async function runGitDirChecks(target: string): Promise<GitDirExposure[]> {
     .map(r => (r as PromiseFulfilledResult<GitDirExposure>).value);
 }
 
+// ── TruffleHog binary integration ─────────────────────────────────────────────
+
+async function runTrufflehogOnGitUrl(repoUrl: string): Promise<GitHubSecretFinding[]> {
+  try {
+    const { stdout } = await execAsync(
+      `trufflehog git "${repoUrl}" --json --no-update --only-verified 2>/dev/null`,
+      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+    return stdout.trim().split("\n")
+      .filter(Boolean)
+      .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } })
+      .map((r: any) => ({
+        type:        r.DetectorName ?? r.detector_name ?? "Secret",
+        severity:    "critical" as const,
+        repo:        repoUrl,
+        file:        r.SourceMetadata?.Data?.Git?.file ?? "",
+        value:       `[${r.DetectorName ?? "secret"} detected — verified]`,
+        lineContext: (r.Raw ?? "").slice(0, 100),
+        url:         repoUrl,
+        verified:    true,
+        source:      "file" as const,
+        commitSha:   r.SourceMetadata?.Data?.Git?.commit ?? undefined,
+      }));
+  } catch { return []; }
+}
+
+async function runTrufflehogOnFilesystem(dir: string): Promise<GitHubSecretFinding[]> {
+  if (!fs.existsSync(dir)) return [];
+  try {
+    const { stdout } = await execAsync(
+      `trufflehog filesystem "${dir}" --json --no-update 2>/dev/null`,
+      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+    return stdout.trim().split("\n")
+      .filter(Boolean)
+      .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } })
+      .map((r: any) => ({
+        type:        r.DetectorName ?? "Secret",
+        severity:    (r.Verified ? "critical" : "high") as "critical" | "high",
+        repo:        dir,
+        file:        r.SourceMetadata?.Data?.Filesystem?.file ?? "",
+        value:       `[${r.DetectorName ?? "secret"} in exposed .git]`,
+        lineContext: (r.Raw ?? "").slice(0, 100),
+        url:         dir,
+        verified:    r.Verified ?? false,
+        source:      "file" as const,
+      }));
+  } catch { return []; }
+}
+
+async function runGitDumperAndScan(gitUrl: string): Promise<GitHubSecretFinding[]> {
+  const tmpDir = `/tmp/gitdump-${Date.now()}`;
+  try {
+    await execAsync(
+      `python3 -m gitdumper "${gitUrl}" "${tmpDir}" 2>/dev/null`,
+      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+    return runTrufflehogOnFilesystem(tmpDir);
+  } catch { return []; }
+  finally {
+    try { await execAsync(`rm -rf "${tmpDir}"`, { timeout: 5000 }); } catch {}
+  }
+}
+
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
 export async function runSecretsHunt(target: string, githubToken?: string | null): Promise<SecretsHuntResult> {
@@ -394,8 +463,25 @@ export async function runSecretsHunt(target: string, githubToken?: string | null
   const gh   = ghResult.status   === "fulfilled" ? ghResult.value   : { org: undefined, secrets: [], stats: { reposScanned: 0, filesScanned: 0, commitsScanned: 0 } };
   const dirs = gitDirResults.status === "fulfilled" ? gitDirResults.value : [];
 
-  const allSecrets = gh.secrets;
   const exposed = dirs.filter(d => d.isExposed);
+
+  // ── TruffleHog binary: scan exposed .git dirs + public GitHub repos ─────────
+  const thGitDirResults = await Promise.allSettled(
+    exposed.slice(0, 3).map(d => runGitDumperAndScan(d.url))
+  );
+  const thGitDirSecrets = thGitDirResults.flatMap(r => r.status === "fulfilled" ? r.value : []);
+
+  const publicRepoUrls: string[] = (gh.org as any)?.repos
+    ?.filter((r: any) => !r.private)
+    .slice(0, 5)
+    .map((r: any) => r.clone_url ?? r.html_url ?? r.url)
+    .filter(Boolean) ?? [];
+  const thRepoResults = await Promise.allSettled(
+    publicRepoUrls.map(url => runTrufflehogOnGitUrl(url))
+  );
+  const thRepoSecrets = thRepoResults.flatMap(r => r.status === "fulfilled" ? r.value : []);
+
+  const allSecrets = [...gh.secrets, ...thGitDirSecrets, ...thRepoSecrets];
 
   const stats = {
     reposScanned:    gh.stats.reposScanned,

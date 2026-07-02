@@ -559,6 +559,76 @@ function ensureWordlist(): void {
   }
 }
 
+// ── Amass integration (Nix PATH) ─────────────────────────────────────────────
+
+async function runAmass(domain: string): Promise<string[]> {
+  const safeDomain = domain.replace(/[^a-zA-Z0-9.\-]/g, "").slice(0, 253);
+  try {
+    const { stdout } = await execAsync(
+      `amass enum -passive -d "${safeDomain}" -timeout 5 -nocolor -silent 2>/dev/null`,
+      { timeout: 90_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+    return stdout.trim().split("\n").filter(Boolean).map(l => l.trim().toLowerCase());
+  } catch (err) {
+    return [];
+  }
+}
+
+// ── ShuffleDNS integration ────────────────────────────────────────────────────
+
+const SHUFFLEDNS_BIN      = "/tmp/security-tools/shuffledns";
+const SHUFFLEDNS_RESOLVERS = "/tmp/shuffledns-resolvers.txt";
+const SHUFFLEDNS_WORDLIST  = "/tmp/shuffledns-wordlist.txt";
+
+const SHUFFLE_RESOLVERS = [
+  "1.1.1.1","1.0.0.1","8.8.8.8","8.8.4.4","9.9.9.9","149.112.112.112",
+  "208.67.222.222","208.67.220.220","64.6.64.6","64.6.65.6",
+  "185.228.168.9","185.228.169.9","77.88.8.8","77.88.8.1",
+];
+
+const SHUFFLE_WORDS = [
+  "www","mail","ftp","dev","staging","api","admin","test","qa","prod",
+  "beta","app","login","auth","portal","dashboard","cdn","media","img",
+  "static","assets","data","blog","shop","store","remote","vpn","smtp",
+  "pop","imap","mx","ns1","ns2","ns3","dns","web","www2","m","mobile",
+  "intranet","internal","secure","support","help","docs","developer",
+  "sandbox","demo","ops","monitor","status","smtp2","relay","gateway",
+  "backup","bk","old","new","beta2","alpha","feature","v2","v3",
+  "mysql","db","database","redis","cache","queue","worker","jobs",
+  "service","services","git","gitlab","github","jira","confluence",
+  "grafana","kibana","prometheus","vault","consul","k8s","jenkins",
+];
+
+function ensureShuffleDnsFiles(): boolean {
+  try {
+    if (!fs.existsSync(SHUFFLEDNS_RESOLVERS)) {
+      fs.writeFileSync(SHUFFLEDNS_RESOLVERS, SHUFFLE_RESOLVERS.join("\n"), "utf8");
+    }
+    if (!fs.existsSync(SHUFFLEDNS_WORDLIST)) {
+      fs.writeFileSync(SHUFFLEDNS_WORDLIST, SHUFFLE_WORDS.join("\n"), "utf8");
+    }
+    return fs.existsSync(SHUFFLEDNS_BIN);
+  } catch { return false; }
+}
+
+async function runShuffleDns(domain: string): Promise<string[]> {
+  const safeDomain = domain.replace(/[^a-zA-Z0-9.\-]/g, "").slice(0, 253);
+  if (!ensureShuffleDnsFiles()) return [];
+  const outFile = `/tmp/shuffledns-${safeDomain.replace(/\W/g, "_")}-${Date.now()}.txt`;
+  try {
+    await execAsync(
+      `"${SHUFFLEDNS_BIN}" -d "${safeDomain}" -w "${SHUFFLEDNS_WORDLIST}" -r "${SHUFFLEDNS_RESOLVERS}" -o "${outFile}" -silent 2>/dev/null`,
+      { timeout: 120_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+    if (!fs.existsSync(outFile)) return [];
+    return fs.readFileSync(outFile, "utf8").trim().split("\n")
+      .filter(Boolean).map(l => l.trim().toLowerCase());
+  } catch { return []; }
+  finally {
+    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+  }
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export async function scanSubdomains(domain: string): Promise<SubdomainScanReport> {
@@ -608,18 +678,24 @@ export async function scanSubdomains(domain: string): Promise<SubdomainScanRepor
     rawLines.push(`  ${src.padEnd(18)}: ${count} subdomains`);
   }
 
-  // ── Phase B: Run binary tools (subfinder + findomain) in parallel ─────────
+  // ── Phase B: Run binary tools in parallel (subfinder + findomain + amass + shuffledns) ────
   rawLines.push("\n--- Phase B: Binary tool enumeration ---");
 
-  const [subfinderSubs, findomainSubs] = await Promise.all([
+  const [subfinderSubs, findomainSubs, amassSubs, shufflednsSubdomains] = await Promise.all([
     subfinderBin ? withTimeout(runSubfinder(domain, subfinderBin), 45_000, [] as string[]) : Promise.resolve([] as string[]),
     findomainBin ? withTimeout(runFindomain(domain, findomainBin), 45_000, [] as string[]) : Promise.resolve([] as string[]),
+    withTimeout(runAmass(domain), 90_000, [] as string[]),
+    withTimeout(runShuffleDns(domain), 120_000, [] as string[]),
   ]);
 
-  sourceCounts["Subfinder"] = subfinderSubs.length;
-  sourceCounts["Findomain"] = findomainSubs.length;
-  rawLines.push(`  Subfinder: ${subfinderSubs.length} subdomains`);
-  rawLines.push(`  Findomain: ${findomainSubs.length} subdomains`);
+  sourceCounts["Subfinder"]  = subfinderSubs.length;
+  sourceCounts["Findomain"]  = findomainSubs.length;
+  sourceCounts["Amass"]      = amassSubs.length;
+  sourceCounts["ShuffleDNS"] = shufflednsSubdomains.length;
+  rawLines.push(`  Subfinder:  ${subfinderSubs.length} subdomains`);
+  rawLines.push(`  Findomain:  ${findomainSubs.length} subdomains`);
+  rawLines.push(`  Amass:      ${amassSubs.length} subdomains`);
+  rawLines.push(`  ShuffleDNS: ${shufflednsSubdomains.length} subdomains`);
 
   // ── Phase C: Merge all passive results ────────────────────────────────────
   rawLines.push("\n--- Phase C: Merge & deduplicate ---");
@@ -638,8 +714,10 @@ export async function scanSubdomains(domain: string): Promise<SubdomainScanRepor
   addSubs(urlscanSubs,    "URLScan.io");
   addSubs(rapidDnsSubs,   "RapidDNS");
   addSubs(commonCrawlSubs,"CommonCrawl");
-  addSubs(subfinderSubs,  "Subfinder");
-  addSubs(findomainSubs,  "Findomain");
+  addSubs(subfinderSubs,       "Subfinder");
+  addSubs(findomainSubs,       "Findomain");
+  addSubs(amassSubs,           "Amass");
+  addSubs(shufflednsSubdomains,"ShuffleDNS");
 
   // Build merged set with source tracking
   const mergedMap = new Map<string, Set<string>>(); // subdomain -> set of sources

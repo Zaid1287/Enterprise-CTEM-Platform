@@ -33,6 +33,7 @@ const PLATFORM_KEYS: PlatformKeyDef[] = [
   { key: "censys_api_secret",    label: "Censys API Secret",     description: "Censys Search API Secret — used with the API ID for Basic authentication",        category: "intelligence" },
   { key: "intelx_api_key",       label: "IntelX API Key",        description: "Intelligence X (intelx.io) API key — searches breached data, pastes, dark web mentions for target domains", category: "intelligence" },
   { key: "criminalip_api_key",   label: "CriminalIP API Key",    description: "CriminalIP (criminalip.io) API key — provides threat intelligence reports and IP risk scoring for target domains", category: "intelligence" },
+  { key: "securitytrails_api_key", label: "SecurityTrails API Key", description: "SecurityTrails API key — queries historical DNS records, IP history, and associated infrastructure for origin IP discovery and passive recon", category: "intelligence" },
   { key: "hibp_api_key",         label: "HIBP API Key",          description: "Have I Been Pwned API key — checks if your domain's email accounts appear in known data breaches", category: "brand_threat" },
   { key: "google_safe_browsing_key", label: "Google Safe Browsing Key", description: "Google Safe Browsing API key — verifies brand threat domains against Google's phishing/malware database", category: "brand_threat" },
   { key: "whoisxml_api_key",     label: "WhoisXML API Key",      description: "WhoisXML API key — enhanced WHOIS lookups with registrant contact data and domain age analysis", category: "brand_threat" },

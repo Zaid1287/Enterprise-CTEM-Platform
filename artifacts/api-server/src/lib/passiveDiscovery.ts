@@ -545,6 +545,7 @@ export interface PassiveDiscoveryOptions {
   censysApiSecret?: string | null;
   intelxApiKey?: string | null;
   criminalIpApiKey?: string | null;
+  securityTrailsApiKey?: string | null;
   modules?: string[];  // if set, only run these modules
 }
 
