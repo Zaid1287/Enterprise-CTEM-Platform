@@ -274,7 +274,10 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   const tenantsWithCritical = new Set(allFindings.filter(f => f.severity === "critical").map(f => f.tenantId));
   const clientsAtCriticalRisk = tenantsWithCritical.size;
 
-  const openAlertsCount = allAlerts.filter(a => !a.isRead).length;
+  const _dedupedAlerts = allAlerts.filter((a, idx, arr) =>
+    a.type !== "tool_update" || arr.findIndex(x => x.title === a.title) === idx
+  );
+  const openAlertsCount = _dedupedAlerts.filter(a => !a.isRead).length;
 
   const platformRiskScore = allRiskScores.length > 0
     ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
@@ -997,7 +1000,10 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
 
   const criticalClients = clientRiskRankings.filter(c => c.criticalCount > 0 || c.riskLevel === "critical").length;
 
-  const openAlertsCount = allAlerts.filter(a => !a.isRead).length;
+  const _dedupedAlerts = allAlerts.filter((a, idx, arr) =>
+    a.type !== "tool_update" || arr.findIndex(x => x.title === a.title) === idx
+  );
+  const openAlertsCount = _dedupedAlerts.filter(a => !a.isRead).length;
   const CLOSED_STATUSES_ADMIN = ["mitigated", "accepted_risk", "false_positive"];
   const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
   const resolvedVulns7D = allFindings.filter(f => CLOSED_STATUSES_ADMIN.includes(f.status) && new Date(f.updatedAt) >= sevenDaysAgo).length;

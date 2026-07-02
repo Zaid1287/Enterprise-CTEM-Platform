@@ -449,19 +449,23 @@ export default function AiMapperScansPage() {
                 ) : (
                   <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
                     {filteredAssets.map(a => {
-                      const target = a.ip || a.domain;
+                      const target = a.ip || (a as any).domain;
+                      const isVerified = (a as any).verificationStatus === "verified";
+                      const isDisabled = !target || !isVerified;
                       const isSelected = selectedAssets.has(a.id);
                       return (
                         <button
                           key={a.id}
-                          onClick={() => toggleAsset(a.id)}
-                          disabled={!target}
+                          onClick={() => !isDisabled && toggleAsset(a.id)}
+                          disabled={isDisabled}
                           className={cn(
                             "w-full text-left px-3 py-2 rounded-md border text-sm transition-colors",
-                            !target && "opacity-40 cursor-not-allowed",
-                            isSelected
+                            isDisabled && "opacity-40 cursor-not-allowed",
+                            !isDisabled && isSelected
                               ? "border-primary bg-primary/10 text-primary"
-                              : "border-border hover:border-primary/40 hover:bg-muted/40"
+                              : !isDisabled
+                              ? "border-border hover:border-primary/40 hover:bg-muted/40"
+                              : "border-border"
                           )}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -471,7 +475,12 @@ export default function AiMapperScansPage() {
                                 {target ?? "No IP or domain — cannot scan"}
                               </div>
                             </div>
-                            <Badge variant="outline" className="text-xs capitalize shrink-0">{a.type}</Badge>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {!isVerified && (
+                                <span className="text-[10px] text-amber-400 border border-amber-500/30 rounded px-1 py-0.5">Unverified</span>
+                              )}
+                              <Badge variant="outline" className="text-xs capitalize">{a.type}</Badge>
+                            </div>
                           </div>
                         </button>
                       );

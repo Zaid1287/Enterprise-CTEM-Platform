@@ -1294,12 +1294,6 @@ export default function TenantsPage() {
                 }}>
                   Cancel
                 </Button>
-                <Button
-                  variant="secondary" size="sm"
-                  onClick={() => { setAssetForm({ ...emptyAssetForm }); setAddStep(2); }}
-                >
-                  <Plus className="w-3.5 h-3.5 mr-1.5" /> Create from Scratch
-                </Button>
               </div>
             </>
           ) : (

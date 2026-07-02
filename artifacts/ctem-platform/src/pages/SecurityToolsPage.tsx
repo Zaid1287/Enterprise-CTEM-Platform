@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import {
   useListSecurityTools, useCreateSecurityTool, useDeleteSecurityTool, useUpdateSecurityTool,
@@ -1316,7 +1316,30 @@ export default function SecurityToolsPage() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Script Content *</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Script Content *</Label>
+                <button
+                  type="button"
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                  onClick={() => document.getElementById("script-file-upload")?.click()}
+                >
+                  <Download className="w-3 h-3" /> Upload file
+                </button>
+                <input
+                  id="script-file-upload"
+                  type="file"
+                  className="hidden"
+                  accept=".sh,.bash,.py,.js,.ts,.txt"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => setScriptForm(p => ({ ...p, content: ev.target?.result as string ?? "" }));
+                    reader.readAsText(file);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
               <p className="text-[10px] text-muted-foreground">Available env vars: <code className="bg-accent px-1 rounded">TARGET</code> <code className="bg-accent px-1 rounded">DOMAIN</code> <code className="bg-accent px-1 rounded">ASSET_ID</code> <code className="bg-accent px-1 rounded">ASSET_NAME</code> <code className="bg-accent px-1 rounded">SCAN_ID</code></p>
               <Textarea
                 value={scriptForm.content}
@@ -1482,7 +1505,30 @@ export default function SecurityToolsPage() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Template YAML *</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Template YAML *</Label>
+                <button
+                  type="button"
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                  onClick={() => document.getElementById("nuclei-file-upload")?.click()}
+                >
+                  <Download className="w-3 h-3" /> Upload file
+                </button>
+                <input
+                  id="nuclei-file-upload"
+                  type="file"
+                  className="hidden"
+                  accept=".yaml,.yml,.txt"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => setNucleiForm(p => ({ ...p, content: ev.target?.result as string ?? "" }));
+                    reader.readAsText(file);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
               <p className="text-[10px] text-muted-foreground">Must be valid Nuclei YAML with <code className="bg-accent px-1 rounded">id:</code> and <code className="bg-accent px-1 rounded">http:</code>/<code className="bg-accent px-1 rounded">requests:</code> sections. Use <code className="bg-accent px-1 rounded">{"{{BaseURL}}"}</code> as the target placeholder.</p>
               <Textarea
                 value={nucleiForm.content}

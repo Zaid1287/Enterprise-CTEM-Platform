@@ -8,12 +8,8 @@ import {
   RadialBarChart, RadialBar, Cell,
 } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
 import { cn, riskLevelBg, capitalize } from "@/lib/utils";
 import { apiFetch } from "@/lib/apiFetch";
-import { useToast } from "@/hooks/use-toast";
-import { useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 
@@ -24,26 +20,10 @@ const RISK_COLORS: Record<string, string> = {
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function RiskPage() {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
   const { user } = useAuth();
-  const [recalculating, setRecalculating] = useState(false);
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
 
-  const handleRecalculate = async () => {
-    setRecalculating(true);
-    try {
-      const result = await apiFetch<{ recalculated: number }>(`${BASE}/api/risk/recalculate`, { method: "POST" });
-      queryClient.invalidateQueries({ queryKey: getListRiskScoresQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getGetTopRiskyAssetsQueryKey({ limit: 10 }) });
-      toast({ title: "Risk scores recalculated", description: `Updated ${result.recalculated} asset score${result.recalculated !== 1 ? "s" : ""}.` });
-    } catch (err: any) {
-      toast({ title: "Recalculation failed", description: err?.message ?? "Unknown error", variant: "destructive" });
-    } finally {
-      setRecalculating(false);
-    }
-  };
 
   const { data: scores, isLoading } = useListRiskScores({
     query: {
@@ -80,14 +60,6 @@ export default function RiskPage() {
         </div>
         <div className="flex items-center gap-2">
           {isPrivileged && <TenantFilter value={tenantFilter} onChange={setTenantFilter} />}
-          <Button
-            variant="outline" size="sm" className="h-8 gap-1.5"
-            onClick={handleRecalculate}
-            disabled={recalculating}
-          >
-            <RefreshCw className={cn("w-3.5 h-3.5", recalculating && "animate-spin")} />
-            {recalculating ? "Recalculating…" : "Recalculate Scores"}
-          </Button>
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, Link } from "wouter";
+import { useLocation } from "wouter";
 import { Bell, LogOut, ChevronDown, User } from "lucide-react";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { useAuth } from "@/hooks/useAuth";
@@ -111,18 +111,16 @@ export function Navbar() {
 
       <div className="flex items-center gap-2">
         <GlobalSearch />
-        <Link href="/alerts">
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="w-4 h-4" />
-            {unreadCount > 0 && (
-              <Badge
-                className="absolute -top-1 -right-1 h-4 w-4 p-0 flex items-center justify-center text-[10px] bg-red-500 text-white border-0"
-              >
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </Badge>
-            )}
-          </Button>
-        </Link>
+        <Button variant="ghost" size="icon" className="relative" onClick={() => navigate("/alerts")}>
+          <Bell className="w-4 h-4" />
+          {unreadCount > 0 && (
+            <Badge
+              className="absolute -top-1 -right-1 h-4 w-4 p-0 flex items-center justify-center text-[10px] bg-red-500 text-white border-0"
+            >
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </Badge>
+          )}
+        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

@@ -158,11 +158,23 @@ export default function AiMapperPage() {
           <Button variant="outline" size="sm" onClick={() => navigate("/ai-mapper/scan-schedules")}>
             <Activity className="w-4 h-4 mr-2" /> Schedules
           </Button>
-          <Button variant="outline" size="sm" disabled={csvLoading} onClick={async () => { setCsvLoading(true); await downloadReport("csv", toast); setCsvLoading(false); }}>
+          <Button variant="outline" size="sm" disabled={csvLoading} onClick={async () => {
+            if ((stats?.total ?? 0) === 0) {
+              toast({ title: "No data to export", description: "No scan data found. Run a scan first to generate report data.", variant: "destructive" });
+              return;
+            }
+            setCsvLoading(true); await downloadReport("csv", toast); setCsvLoading(false);
+          }}>
             {csvLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Export CSV
           </Button>
-          <Button variant="outline" size="sm" disabled={pdfLoading} onClick={async () => { setPdfLoading(true); await downloadReport("pdf", toast); setPdfLoading(false); }}>
+          <Button variant="outline" size="sm" disabled={pdfLoading} onClick={async () => {
+            if ((stats?.total ?? 0) === 0) {
+              toast({ title: "No data to export", description: "No scan data found. Run a scan first to generate report data.", variant: "destructive" });
+              return;
+            }
+            setPdfLoading(true); await downloadReport("pdf", toast); setPdfLoading(false);
+          }}>
             {pdfLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Export PDF
           </Button>

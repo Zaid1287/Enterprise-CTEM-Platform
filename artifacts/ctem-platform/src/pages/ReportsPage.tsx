@@ -85,13 +85,22 @@ export default function ReportsPage() {
   const { data: assetsData } = useListAssets();
   const assets: any[] = (assetsData as any[]) ?? [];
 
-  const filteredAssets = assetSearch.trim()
-    ? assets.filter(a =>
-        a.name.toLowerCase().includes(assetSearch.toLowerCase()) ||
-        a.value?.toLowerCase().includes(assetSearch.toLowerCase()) ||
-        a.type?.toLowerCase().includes(assetSearch.toLowerCase()),
-      )
-    : assets;
+  const eligibleAssets = assets.filter((a: any) =>
+    a.verificationStatus === "verified" && a.lastScannedAt
+  );
+  const ineligibleAssets = assets.filter((a: any) =>
+    a.verificationStatus !== "verified" || !a.lastScannedAt
+  );
+
+  const searchMatch = (a: any) =>
+    !assetSearch.trim() ||
+    a.name.toLowerCase().includes(assetSearch.toLowerCase()) ||
+    (a.value ?? "").toLowerCase().includes(assetSearch.toLowerCase()) ||
+    (a.type ?? "").toLowerCase().includes(assetSearch.toLowerCase());
+
+  const filteredEligible = eligibleAssets.filter(searchMatch);
+  const filteredIneligible = ineligibleAssets.filter(searchMatch);
+  const filteredAssets = [...filteredEligible, ...filteredIneligible];
 
   const createReport = useCreateReport();
   const deleteReport = useDeleteReport();
@@ -179,10 +188,10 @@ export default function ReportsPage() {
   };
 
   const toggleAll = () => {
-    if (selectedIds.size === filteredAssets.length) {
+    if (filteredEligible.every((a: any) => selectedIds.has(a.id)) && filteredEligible.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredAssets.map((a: any) => a.id)));
+      setSelectedIds(new Set(filteredEligible.map((a: any) => a.id)));
     }
   };
 
@@ -337,8 +346,9 @@ export default function ReportsPage() {
                   variant="outline"
                   className="h-8 text-xs shrink-0"
                   onClick={toggleAll}
+                  disabled={filteredEligible.length === 0}
                 >
-                  {selectedIds.size === filteredAssets.length && filteredAssets.length > 0
+                  {filteredEligible.length > 0 && filteredEligible.every((a: any) => selectedIds.has(a.id))
                     ? "Deselect All"
                     : "Select All"}
                 </Button>
@@ -354,7 +364,7 @@ export default function ReportsPage() {
                 {filteredAssets.length === 0 && (
                   <div className="p-6 text-center text-sm text-muted-foreground">No assets found.</div>
                 )}
-                {filteredAssets.map((a: any) => {
+                {filteredEligible.map((a: any) => {
                   const isSelected = selectedIds.has(a.id);
                   const risk = a.riskLevel ?? "unknown";
                   return (
@@ -367,7 +377,6 @@ export default function ReportsPage() {
                         isSelected ? "bg-blue-500/8" : "hover:bg-muted/40",
                       )}
                     >
-                      {/* Checkbox */}
                       <div className={cn(
                         "w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors",
                         isSelected ? "bg-blue-500 border-blue-500" : "border-border",
@@ -378,16 +387,43 @@ export default function ReportsPage() {
                           </svg>
                         )}
                       </div>
-                      {/* Info */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{a.name}</p>
                         <p className="text-xs text-muted-foreground truncate">{a.value} · {a.type}</p>
                       </div>
-                      {/* Risk badge */}
                       <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0 capitalize", riskBadgeClass(risk))}>
                         {risk}
                       </span>
                     </button>
+                  );
+                })}
+                {filteredIneligible.map((a: any) => {
+                  const notVerified = a.verificationStatus !== "verified";
+                  const notScanned = !a.lastScannedAt;
+                  const risk = a.riskLevel ?? "unknown";
+                  return (
+                    <div
+                      key={a.id}
+                      className="w-full flex items-center gap-3 px-4 py-3 opacity-45 cursor-not-allowed"
+                      title={notVerified ? "Asset must be verified before inclusion in reports" : "Asset has no completed scan"}
+                    >
+                      <div className="w-4 h-4 rounded border border-border flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{a.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{a.value} · {a.type}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {notVerified && (
+                          <span className="text-[10px] text-amber-400 border border-amber-500/30 rounded px-1 py-0.5">Unverified</span>
+                        )}
+                        {!notVerified && notScanned && (
+                          <span className="text-[10px] text-muted-foreground border border-border rounded px-1 py-0.5">No scan</span>
+                        )}
+                        <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium capitalize", riskBadgeClass(risk))}>
+                          {risk}
+                        </span>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
