@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { eq, and, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
-import { db, alertsTable, alertRulesTable, assetsTable } from "@workspace/db";
+import { db, alertsTable, alertRulesTable, assetsTable, tenantsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
   CreateAlertRuleBody, UpdateAlertRuleBody, UpdateAlertRuleParams,
@@ -23,12 +23,14 @@ const CHANNEL_PREFIX = "__channel__";
 const CHANNEL_KEYS = ["email", "slack", "discord", "telegram", "webhook"] as const;
 type ChannelKey = typeof CHANNEL_KEYS[number];
 
-function toAlertResponse(a: typeof alertsTable.$inferSelect) {
+function toAlertResponse(a: typeof alertsTable.$inferSelect & { tenantName?: string | null; tenantCount?: number }) {
   return {
-    id: a.id, tenantId: a.tenantId, title: a.title, message: a.message,
+    id: a.id, tenantId: a.tenantId, tenantName: a.tenantName ?? null,
+    title: a.title, message: a.message,
     type: a.type, severity: a.severity, isRead: a.isRead,
     relatedAssetId: a.relatedAssetId, relatedFindingId: a.relatedFindingId,
     createdAt: a.createdAt.toISOString(),
+    tenantCount: a.tenantCount ?? 1,
   };
 }
 
@@ -291,8 +293,53 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (q.data.severity) filters.push(eq(alertsTable.severity, q.data.severity));
     if (q.data.read !== undefined) filters.push(eq(alertsTable.isRead, q.data.read));
   }
-  const alerts = await db.select().from(alertsTable).where(and(...filters));
-  res.json(alerts.map(toAlertResponse));
+
+  // Fetch alerts with tenant name via left join
+  const rows = await db
+    .select({
+      id: alertsTable.id, tenantId: alertsTable.tenantId, title: alertsTable.title,
+      message: alertsTable.message, type: alertsTable.type, severity: alertsTable.severity,
+      isRead: alertsTable.isRead, relatedAssetId: alertsTable.relatedAssetId,
+      relatedFindingId: alertsTable.relatedFindingId, createdAt: alertsTable.createdAt,
+      tenantName: tenantsTable.name,
+    })
+    .from(alertsTable)
+    .leftJoin(tenantsTable, eq(alertsTable.tenantId, tenantsTable.id))
+    .where(filters.length ? and(...filters) : undefined);
+
+  // For privileged users viewing all tenants (no specific tenant filter), deduplicate
+  // tool_update alerts by title — the same tool update fires for every tenant but is
+  // platform-wide news, so showing N identical rows is confusing. Keep the most recent
+  // per title and report how many tenants share it via tenantCount.
+  const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+  const isAllTenantsAdminView = (role === "super_admin" || role === "admin") && isNaN(qTenantId);
+
+  let result: typeof rows;
+  if (isAllTenantsAdminView) {
+    const seen = new Map<string, typeof rows[number] & { tenantCount: number }>();
+    for (const row of rows) {
+      if (row.type === "tool_update") {
+        const key = row.title;
+        const existing = seen.get(key);
+        if (!existing) {
+          seen.set(key, { ...row, tenantName: null, tenantCount: 1 });
+        } else {
+          existing.tenantCount++;
+          // Keep most recent
+          if (row.createdAt > existing.createdAt) {
+            seen.set(key, { ...row, tenantName: null, tenantCount: existing.tenantCount });
+          }
+        }
+      } else {
+        seen.set(`${row.type}:${row.id}`, { ...row, tenantCount: 1 });
+      }
+    }
+    result = [...seen.values()];
+  } else {
+    result = rows.map(r => ({ ...r, tenantCount: 1 }));
+  }
+
+  res.json(result.map(toAlertResponse));
 });
 
 router.get("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

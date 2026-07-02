@@ -240,9 +240,15 @@ export default function AlertsPage() {
                   <AlertTypeIcon type={alert.type} className="w-4 h-4 shrink-0 mt-0.5" />
                   <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <p className="text-sm font-medium truncate">{alert.title}</p>
                       <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium shrink-0", severityBgColor(alert.severity))}>{alert.severity}</span>
+                      {isPrivileged && !tenantFilter && alert.tenantName && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium shrink-0">{alert.tenantName}</span>
+                      )}
+                      {isPrivileged && !tenantFilter && (alert.tenantCount ?? 1) > 1 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium shrink-0">{alert.tenantCount} tenants</span>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground">{alert.message}</p>
                     <p className="text-[10px] text-muted-foreground mt-1">{formatDateTime(alert.createdAt)}</p>
@@ -300,9 +306,15 @@ export default function AlertsPage() {
                 <div className="flex items-start gap-2.5 flex-1 min-w-0">
                   <AlertTypeIcon type={alert.type} className="w-4 h-4 shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <p className="text-sm font-medium truncate">{alert.title}</p>
                       <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium shrink-0", severityBgColor(alert.severity))}>{alert.severity}</span>
+                      {isPrivileged && !tenantFilter && alert.tenantName && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium shrink-0">{alert.tenantName}</span>
+                      )}
+                      {isPrivileged && !tenantFilter && (alert.tenantCount ?? 1) > 1 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium shrink-0">{alert.tenantCount} tenants</span>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground">{alert.message}</p>
                     <p className="text-[10px] text-muted-foreground mt-1">{formatDateTime(alert.createdAt)}</p>
