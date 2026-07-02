@@ -320,7 +320,7 @@ export default function ScanReportsPage() {
         open={showRunScan}
         onOpenChange={setShowRunScan}
         pipelineTools={pipelineTools}
-        assets={allAssets.map((a: any) => ({ id: a.id, name: a.name, value: a.value, type: a.type }))}
+        assets={allAssets.map((a: any) => ({ id: a.id, name: a.name, value: a.value, type: a.type, verificationStatus: a.verificationStatus }))}
         onRunComplete={scanId => {
           qc.invalidateQueries({ queryKey: getListScansQueryKey({} as any) });
           navigate(`/scan-reports/${scanId}`);

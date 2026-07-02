@@ -382,7 +382,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     };
   }).sort((a, b) => b.riskScore - a.riskScore);
 
-  const recentAlerts = allAlerts.slice(0, 8).map(a => ({
+  const recentAlerts = allAlerts.filter(a => !a.isRead).slice(0, 8).map(a => ({
     id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
     type: a.type,
     createdAt: a.createdAt.toISOString(),
@@ -544,7 +544,7 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
 
   // ── Recent alerts (only those related to assigned assets) ───────────────────
   const recentAlerts = rawAlerts
-    .filter(a => !a.relatedAssetId || assignedAssetIds.includes(a.relatedAssetId))
+    .filter(a => !a.isRead && (!a.relatedAssetId || assignedAssetIds.includes(a.relatedAssetId)))
     .slice(0, 8)
     .map(a => ({
       id: a.id, title: a.title, severity: a.severity,
@@ -703,6 +703,7 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
 
   // Recent alerts (last 5)
   const recentAlerts = [...alerts]
+    .filter(a => !a.isRead)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5)
     .map(a => ({ id: a.id, title: a.title, message: a.message, severity: a.severity, isRead: a.isRead, createdAt: a.createdAt }));
@@ -1055,7 +1056,7 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
       };
     });
 
-  const recentAlerts = allAlerts.slice(0, 8).map(a => ({
+  const recentAlerts = allAlerts.filter(a => !a.isRead).slice(0, 8).map(a => ({
     id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
     type: a.type, status: a.status,
     createdAt: a.createdAt.toISOString(),

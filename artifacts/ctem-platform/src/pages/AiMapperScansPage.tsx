@@ -128,7 +128,7 @@ export default function AiMapperScansPage() {
       for (const id of selectedAssets) {
         const a = assets.find(x => x.id === id);
         if (!a) continue;
-        const target = a.ip || a.domain;
+        const target = (a as any).value || (a as any).ipAddress;
         if (target && !lines.includes(target)) lines.push(target);
       }
     }
@@ -186,8 +186,8 @@ export default function AiMapperScansPage() {
   const filteredAssets = assets.filter(a =>
     !assetSearch ||
     a.name.toLowerCase().includes(assetSearch.toLowerCase()) ||
-    (a.domain ?? "").toLowerCase().includes(assetSearch.toLowerCase()) ||
-    (a.ip ?? "").includes(assetSearch)
+    ((a as any).value ?? "").toLowerCase().includes(assetSearch.toLowerCase()) ||
+    ((a as any).ipAddress ?? "").includes(assetSearch)
   );
 
   const scopePreview = buildCidrScope();
@@ -448,7 +448,7 @@ export default function AiMapperScansPage() {
                 ) : (
                   <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
                     {filteredAssets.map(a => {
-                      const target = a.ip || (a as any).domain;
+                      const target = (a as any).value || (a as any).ipAddress;
                       const isVerified = (a as any).verificationStatus === "verified";
                       const isDisabled = !target || !isVerified;
                       const isSelected = selectedAssets.has(a.id);

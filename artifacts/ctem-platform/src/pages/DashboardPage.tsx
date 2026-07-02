@@ -393,13 +393,13 @@ function SuperAdminDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border/50">
           {recentAlerts.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground col-span-2">
-              <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
+              <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No unread alerts
             </div>
           ) : recentAlerts.map((a: any) => (
-            <div key={a.id} className={cn("px-4 py-3 transition-colors hover:bg-accent/20", !a.isRead && "bg-primary/[0.03]")}>
+            <div key={a.id} className="px-4 py-3 transition-colors hover:bg-accent/20 bg-primary/[0.03]">
               <div className="flex items-start gap-2.5">
-                {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
-                <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-xs font-medium truncate flex-1">{a.title}</p>
                     <SeverityBadge severity={a.severity} />
@@ -948,15 +948,13 @@ function AccountManagerDashboard() {
             {recentAlerts.length === 0 ? (
               <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                 <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" />
-                No alerts for assigned assets
+                No unread alerts
               </div>
             ) : recentAlerts.map((a: any) => (
-              <div key={a.id} className={cn("px-4 py-3 transition-colors", !a.isRead && "bg-primary/[0.03]")}>
+              <div key={a.id} className="px-4 py-3 transition-colors bg-primary/[0.03]">
                 <div className="flex items-start gap-2.5">
-                  {!a.isRead && (
-                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-medium truncate flex-1">{a.title}</p>
                       <SeverityBadge severity={a.severity} />
@@ -1513,13 +1511,13 @@ function AdminDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 divide-border/50 [&>*]:border-b [&>*]:border-border/50">
           {recentAlerts.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground col-span-2">
-              <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No alerts yet
+              <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No unread alerts
             </div>
           ) : recentAlerts.map((a: any) => (
-            <div key={a.id} className={cn("px-4 py-3 transition-colors", !a.isRead && "bg-primary/[0.03]")}>
+            <div key={a.id} className="px-4 py-3 transition-colors bg-primary/[0.03]">
               <div className="flex items-start gap-2.5">
-                {!a.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />}
-                <div className="flex-1 min-w-0" style={{ marginLeft: a.isRead ? "10px" : undefined }}>
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-xs font-medium truncate flex-1">{a.title}</p>
                     <SeverityBadge severity={a.severity} />

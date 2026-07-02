@@ -763,7 +763,7 @@ function WatchlistSection() {
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
-      <div className="max-w-3xl">
+      <div className="w-full">
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-sm font-semibold">Brand Asset Watchlist</h2>
@@ -1030,7 +1030,7 @@ function SchedulesSection() {
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
-      <div className="max-w-3xl">
+      <div className="w-full">
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-sm font-semibold">Brand Threat Schedules</h2>
