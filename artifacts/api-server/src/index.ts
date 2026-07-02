@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { bootstrapNucleiTemplates } from "./lib/nucleiScanner";
+import { warmBrowser } from "./lib/screenshotEngine";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
 import { getRedis, setRuntimeRedisUrl } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
@@ -112,6 +113,11 @@ const server = app.listen(port, (err) => {
 
   // Download official nuclei-templates in the background (non-blocking)
   bootstrapNucleiTemplates().catch(() => {});
+
+  // Pre-warm the Puppeteer browser so the first scan has zero cold-start cost
+  warmBrowser()
+    .then(() => logger.info("Puppeteer browser pre-warmed"))
+    .catch(e => logger.warn({ err: e?.message }, "Puppeteer pre-warm failed (non-fatal)"));
 });
 
 // ── WebSocket server for AI Mapper real-time scan/attack streams ──────────────

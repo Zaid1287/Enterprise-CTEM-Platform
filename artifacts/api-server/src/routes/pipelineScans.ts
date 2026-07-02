@@ -5,7 +5,7 @@ import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray, lt, sql, not, gte, or, isNull } from "drizzle-orm";
-import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable } from "@workspace/db";
+import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable, scanSuppressionsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
@@ -1550,6 +1550,9 @@ async function executePipeline(
     const asset = assets.find(a => a.id === config.assetId);
     if (!asset) return;
 
+    // Phase-1 email security findings are collected here before findingInserts is initialized
+    const emailSecurityFindings: Array<typeof findingsTable.$inferInsert> = [];
+
     const toolsForAsset = config.toolIds.length > 0
       ? allTools.filter(t => config.toolIds.includes(t.id))
       : enabledTools;
@@ -1816,6 +1819,44 @@ async function executePipeline(
             if (d.hasDkim) whoisIntel.push({ type: "Email Security", key: "DKIM selectors found", value: String((d.dkimSelectors as any[]).length) });
             if (!d.hasSpf)   whoisIntel.push({ type: "Email Security", key: "SPF missing",   value: "No SPF record — spoofing risk" });
             if (!d.hasDmarc) whoisIntel.push({ type: "Email Security", key: "DMARC missing", value: "No DMARC record — spoofing risk" });
+
+            // ── Emit real findings for email security issues ──────────────────────
+            const domainSlug = domain.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 20);
+            if (!d.hasSpf) {
+              emailSecurityFindings.push({
+                tenantId, assetId: asset.id, scanId,
+                title: "No SPF Record — Email Spoofing Risk",
+                cve: `SPF-ABSENT-${domainSlug}`, severity: "medium", cvss: 5.3, cwe: "CWE-306", status: "open",
+                description: `No SPF record found for ${domain}. Any server can send email claiming to be from this domain, enabling phishing and BEC.`,
+                remediation: `Add a DNS TXT record: "v=spf1 include:YOUR-MAIL-PROVIDER ~all". After testing, switch to -all (hardfail).`,
+              });
+            } else if (d.spf?.includes("~all") || d.spf?.includes("?all")) {
+              emailSecurityFindings.push({
+                tenantId, assetId: asset.id, scanId,
+                title: "Weak SPF Policy — Softfail Permits Spoofing",
+                cve: `SPF-WEAK-${domainSlug}`, severity: "info", cvss: 2.0, cwe: "CWE-306", status: "open",
+                description: `SPF for ${domain} uses ~all (softfail) or ?all (neutral) — unauthorized senders are not hard-rejected. Value: ${d.spf}`,
+                remediation: `Change SPF record to end with "-all" to actively reject unauthorized senders.`,
+              });
+            }
+            if (!d.hasDmarc) {
+              emailSecurityFindings.push({
+                tenantId, assetId: asset.id, scanId,
+                title: "No DMARC Policy — Email Spoofing Risk",
+                cve: `DMARC-ABSENT-${domainSlug}`, severity: "medium", cvss: 5.3, cwe: "CWE-693", status: "open",
+                description: `No DMARC record at _dmarc.${domain}. Receivers cannot enforce SPF/DKIM and cannot send you spoofing reports.`,
+                remediation: `Add TXT at _dmarc.${domain}: "v=DMARC1; p=none; rua=mailto:dmarc@${domain}". Review reports then move to p=quarantine/reject.`,
+              });
+            } else if (d.dmarc?.toLowerCase().includes("p=none")) {
+              emailSecurityFindings.push({
+                tenantId, assetId: asset.id, scanId,
+                title: "Weak DMARC Policy (p=none) — Monitoring Only",
+                cve: `DMARC-WEAK-${domainSlug}`, severity: "info", cvss: 2.0, cwe: "CWE-693", status: "open",
+                description: `DMARC for ${domain} is p=none — only monitoring, no enforcement. Spoofed emails are not blocked. Value: ${d.dmarc}`,
+                remediation: `After reviewing aggregate reports, upgrade to p=quarantine then p=reject.`,
+              });
+            }
+
             logger.info({ domain, hasDkim: d.hasDkim, hasSpf: d.hasSpf, hasDmarc: d.hasDmarc }, "DKIM/SPF/DMARC check complete");
           }
         } catch (err) { logger.warn({ err, domain }, "DKIM check failed (non-fatal)"); }
@@ -2513,7 +2554,8 @@ async function executePipeline(
     }
 
     const results: Array<typeof scanAssetResultsTable.$inferInsert> = [];
-    const findingInserts: Array<typeof findingsTable.$inferInsert>   = [];
+    // Seed with email security findings collected during Phase-1 DKIM/SPF/DMARC checks
+    const findingInserts: Array<typeof findingsTable.$inferInsert> = [...emailSecurityFindings];
 
     // ── VirusTotal findings — domains flagged malicious or suspicious ─────────
     if (vtKey && domain && !isIp(domain)) {
@@ -3251,6 +3293,53 @@ async function executePipeline(
       logger.warn({ err }, "EPSS/KEV enrichment failed — inserting without enrichment (non-fatal)");
     }
 
+    // ── Suppression filter: remove findings matching tenant suppression list ─────
+    let filteredFindings = enriched;
+    try {
+      const suppressions = await db.select().from(scanSuppressionsTable)
+        .where(and(
+          eq(scanSuppressionsTable.tenantId, tenantId),
+        ));
+      if (suppressions.length > 0) {
+        const before = filteredFindings.length;
+        filteredFindings = filteredFindings.filter(f => {
+          for (const s of suppressions) {
+            if (s.assetId !== null && s.assetId !== f.assetId) continue;
+            if (s.matchType === "cve_id" && f.cve && f.cve === s.pattern) return false;
+            if (s.matchType === "title_contains" && f.title.toLowerCase().includes(s.pattern.toLowerCase())) return false;
+            if (s.matchType === "url_exact" || s.matchType === "url_pattern") {
+              try {
+                const ev = JSON.parse(f.evidence ?? "{}");
+                const url = ev.url ?? ev.matched_at ?? "";
+                if (s.matchType === "url_exact" && url === s.pattern) return false;
+                if (s.matchType === "url_pattern" && url && url.includes(s.pattern)) return false;
+              } catch {}
+            }
+          }
+          return true;
+        });
+        if (filteredFindings.length < before)
+          logger.info({ assetId: asset.id, suppressed: before - filteredFindings.length }, "Findings removed by suppression list");
+      }
+    } catch (err) {
+      logger.warn({ err, assetId: asset.id }, "Suppression filter failed (non-fatal)");
+    }
+
+    // ── Min-severity threshold: per-tenant setting filters out noisy low findings ─
+    const SEV_ORDER: Record<string, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
+    try {
+      const minSevSetting = await getPlatformSetting("min_finding_severity") as string | null;
+      const minOrder = SEV_ORDER[minSevSetting ?? "info"] ?? 0;
+      if (minOrder > 0) {
+        const before = filteredFindings.length;
+        filteredFindings = filteredFindings.filter(f => (SEV_ORDER[f.severity ?? "info"] ?? 0) >= minOrder);
+        if (filteredFindings.length < before)
+          logger.info({ assetId: asset.id, suppressed: before - filteredFindings.length, minSeverity: minSevSetting }, "Findings below min-severity threshold skipped");
+      }
+    } catch (err) {
+      logger.warn({ err, assetId: asset.id }, "Min-severity filter failed (non-fatal)");
+    }
+
     // ── Re-scan upsert: update seen-again findings, insert genuinely new ones ──
     const scanSeenAt = new Date();
     const terminalStatuses = ["mitigated", "accepted_risk", "false_positive", "auto_mitigated"];
@@ -3273,11 +3362,11 @@ async function executePipeline(
       if (!existingMap.has(k)) existingMap.set(k, ef);
     }
 
-    // Split enriched findings into updates (already in DB) and inserts (brand new)
-    const toInsert: typeof enriched = [];
+    // Split filtered findings into updates (already in DB) and inserts (brand new)
+    const toInsert: typeof filteredFindings = [];
     // Group "seen again" findings by their previous scanId so we can batch-update
     const updateGroupsByPrev = new Map<number | null, number[]>();
-    for (const f of enriched) {
+    for (const f of filteredFindings) {
       const k = f.cve ? `cve:${f.cve}` : `title:${f.title}`;
       const existing = existingMap.get(k);
       if (existing) {
@@ -3337,6 +3426,14 @@ async function executePipeline(
     } catch (err) {
       logger.warn({ err, assetId: asset.id }, "Stale finding auto-mitigate failed (non-fatal)");
     }
+
+    // ── Persist scan progress to DB so a server restart doesn't lose state ──────
+    try {
+      const progressSnapshot = scanProgressMap.get(scanId) ?? [];
+      await db.update(scansTable)
+        .set({ progressData: progressSnapshot as any })
+        .where(eq(scansTable.id, scanId));
+    } catch { /* non-fatal */ }
 
     // ── Passive discovery: save results to history (non-blocking) ─────────────
     // Runs free tools + any configured commercial API tools in the background

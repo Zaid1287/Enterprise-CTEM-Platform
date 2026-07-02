@@ -460,6 +460,69 @@ router.get("/tool-runs", requireAuth, async (req: AuthenticatedRequest, res): Pr
   res.json({ runs, total, page, pageSize });
 });
 
+// ── Scanner health — which binaries are available ─────────────────────────────
+router.get("/tools/health", requireAuth, async (_req, res): Promise<void> => {
+  const TOOLS = [
+    { name: "nuclei",      binary: "nuclei",      category: "vuln_scan",  description: "Nuclei — template-based vulnerability scanner" },
+    { name: "subfinder",   binary: "subfinder",   category: "recon",      description: "Subfinder — passive subdomain enumeration" },
+    { name: "nmap",        binary: "nmap",        category: "port_scan",  description: "Nmap — network port scanner" },
+    { name: "naabu",       binary: "naabu",       category: "port_scan",  description: "Naabu — fast port scanner" },
+    { name: "masscan",     binary: "masscan",     category: "port_scan",  description: "Masscan — high-speed port scanner" },
+    { name: "ffuf",        binary: "ffuf",        category: "fuzzing",    description: "ffuf — web fuzzer / directory bruteforce" },
+    { name: "nikto",       binary: "nikto",       category: "web_vuln",   description: "Nikto — web server vulnerability scanner" },
+    { name: "amass",       binary: "amass",       category: "recon",      description: "Amass — attack surface enumeration" },
+    { name: "katana",      binary: "katana",      category: "crawling",   description: "Katana — web crawler / endpoint discovery" },
+    { name: "dnsx",        binary: "dnsx",        category: "dns",        description: "dnsx — DNS toolkit" },
+    { name: "gobuster",    binary: "gobuster",    category: "fuzzing",    description: "Gobuster — directory/DNS bruteforce" },
+    { name: "feroxbuster", binary: "feroxbuster", category: "fuzzing",    description: "Feroxbuster — recursive content discovery" },
+    { name: "dalfox",      binary: "dalfox",      category: "web_vuln",   description: "Dalfox — XSS scanner" },
+    { name: "httpx",       binary: "httpx",       category: "probing",    description: "httpx — HTTP toolkit / web prober" },
+    { name: "chromium",    binary: "chromium",    category: "screenshot", description: "Chromium — headless browser for screenshots" },
+    { name: "shuffledns",  binary: "shuffledns",  category: "dns",        description: "shuffleDNS — DNS bruteforce resolver" },
+    { name: "wpscan",      binary: "wpscan",      category: "web_vuln",   description: "WPScan — WordPress vulnerability scanner" },
+    { name: "dnsx-alt",    binary: "dnsx",        category: "dns",        description: "dnsx (alt) — additional DNS alias check" },
+  ];
+
+  const { execFileSync } = await import("child_process");
+  const { execFile } = await import("child_process");
+  const { promisify } = await import("util");
+  const execFileAsync = promisify(execFile);
+
+  async function checkTool(tool: (typeof TOOLS)[number]) {
+    let path: string | undefined;
+    try {
+      path = execFileSync("which", [tool.binary], { encoding: "utf8", timeout: 2000 }).trim();
+    } catch {
+      return { ...tool, available: false, path: undefined, version: undefined };
+    }
+    let version: string | undefined;
+    for (const flag of ["--version", "-version", "-V"]) {
+      try {
+        const { stdout, stderr } = await execFileAsync(tool.binary, [flag], { timeout: 3000 });
+        const raw = (stdout || stderr).split("\n")[0].trim().slice(0, 80);
+        if (raw) { version = raw; break; }
+      } catch (e: any) {
+        const raw = (e?.stderr ?? e?.stdout ?? "").split("\n")[0].trim().slice(0, 80);
+        if (raw) { version = raw; break; }
+      }
+    }
+    return { ...tool, available: true, path, version };
+  }
+
+  // Deduplicate by binary name before checking
+  const seen = new Set<string>();
+  const unique = TOOLS.filter(t => { if (seen.has(t.binary)) return false; seen.add(t.binary); return true; });
+
+  const results = await Promise.all(unique.map(checkTool));
+  const available = results.filter(r => r.available).length;
+
+  res.json({
+    tools: results,
+    summary: { total: results.length, available, missing: results.length - available },
+    checkedAt: new Date().toISOString(),
+  });
+});
+
 router.get("/tool-runs/:runId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const p = GetToolRunParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, and, ilike, inArray, desc, isNotNull } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
-import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable } from "@workspace/db";
+import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable, scanSuppressionsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
   ListFindingsQueryParams, ListFindingCommentsParams,
@@ -481,6 +481,64 @@ router.post("/findings/:findingId/comments", requireAuth, async (req: Authentica
     authorName: user ? `${user.firstName} ${user.lastName}` : "Unknown",
     content: comment.content, createdAt: comment.createdAt.toISOString(),
   });
+});
+
+// ── Confirm false positive + add to suppression list ─────────────────────────
+// POST /findings/:findingId/suppress
+// Body: { matchType: "cve_id"|"title_contains"|"url_exact"|"url_pattern", note?: string, applyToAsset?: boolean }
+// Effect: marks finding as false_positive + creates a suppression rule so future
+// scans skip matching findings automatically.
+router.post("/findings/:findingId/suppress", requireAuth, async (req, res) => {
+  const { tenantId, userId } = (req as AuthenticatedRequest).user;
+  const findingId = parseInt(req.params.findingId, 10);
+  if (isNaN(findingId)) { res.status(400).json({ error: "Invalid findingId" }); return; }
+
+  const [finding] = await db.select()
+    .from(findingsTable)
+    .where(and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, tenantId)));
+  if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
+
+  const { matchType = "cve_id", note, applyToAsset = true } = req.body as {
+    matchType?: string; note?: string; applyToAsset?: boolean;
+  };
+
+  // Derive the suppression pattern from the finding
+  let pattern: string;
+  if (matchType === "cve_id" && finding.cve) {
+    pattern = finding.cve;
+  } else if (matchType === "title_contains") {
+    pattern = finding.title.slice(0, 200);
+  } else if (matchType === "url_exact" || matchType === "url_pattern") {
+    // Try to parse a URL from the evidence blob
+    let url = "";
+    try { const ev = JSON.parse(finding.evidence ?? "{}"); url = ev.url ?? ev.matched_at ?? ""; } catch {}
+    pattern = url || finding.cve || finding.title.slice(0, 200);
+  } else {
+    pattern = finding.cve ?? finding.title.slice(0, 200);
+  }
+
+  // Create suppression rule
+  const [suppression] = await db.insert(scanSuppressionsTable).values({
+    tenantId,
+    assetId: applyToAsset ? finding.assetId : null,
+    matchType,
+    pattern,
+    note: note ?? `Suppressed from finding #${findingId}`,
+    createdByUserId: userId as any,
+  }).returning();
+
+  // Mark finding as false positive
+  await db.update(findingsTable).set({ status: "false_positive" })
+    .where(eq(findingsTable.id, findingId));
+
+  await logAudit(db, {
+    tenantId, userId: userId as any, action: "finding.suppress",
+    resourceType: "finding", resourceId: String(findingId),
+    metadata: { suppressionId: suppression.id, matchType, pattern, applyToAsset },
+    ip: req.ip ?? "",
+  });
+
+  res.status(201).json({ success: true, suppressionId: suppression.id, matchType, pattern, applyToAsset });
 });
 
 export default router;

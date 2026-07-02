@@ -33,6 +33,7 @@ import graphRouter from "./graph";
 import cdnWhitelistRouter from "./cdnWhitelist";
 import aiMapperRouter from "./aiMapper";
 import customToolsRouter from "./customTools";
+import suppressionsRouter from "./suppressions";
 
 const router: IRouter = Router();
 
@@ -70,5 +71,6 @@ router.use(graphRouter);
 router.use(cdnWhitelistRouter);
 router.use(aiMapperRouter);
 router.use(customToolsRouter);
+router.use(suppressionsRouter);
 
 export default router;

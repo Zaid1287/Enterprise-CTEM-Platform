@@ -354,3 +354,18 @@ export function closeBrowser(): void {
   _browser?.close().catch(() => {});
   _browser = null;
 }
+
+/**
+ * Pre-warm the browser instance so the first scan doesn't pay
+ * the cold-start cost. Called at server startup.
+ */
+export async function warmBrowser(): Promise<void> {
+  try {
+    const b = await getBrowser();
+    // Open and immediately close a blank page to fully initialize the renderer
+    const p = await b.newPage();
+    await p.close();
+  } catch {
+    // Non-fatal — browser will be lazy-started on first scan
+  }
+}
