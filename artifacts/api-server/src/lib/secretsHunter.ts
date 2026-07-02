@@ -323,6 +323,100 @@ async function runGitHubScanning(company: string): Promise<{ org: GitHubOrgInfo 
   return { org: orgInfo, secrets: deduped, stats };
 }
 
+// ── GitLab exposure ───────────────────────────────────────────────────────────
+
+export interface GitLabFinding {
+  projectId: number;
+  projectName: string;
+  projectUrl: string;
+  namespace: string;
+  visibility: "public" | "internal" | "private";
+  stars: number;
+  description: string;
+  topics: string[];
+  lastActivity: string;
+  codeMatches?: number;
+}
+
+export interface GitLabExposureResult {
+  status: "ok" | "error" | "skipped";
+  data?: {
+    totalProjects: number;
+    projects: GitLabFinding[];
+    codeHits: number;
+  };
+  error?: string;
+}
+
+export async function runGitlabExposure(domain: string, apiKey: string | null): Promise<GitLabExposureResult> {
+  const company = domain.replace(/^www\./, "").split(".")[0].toLowerCase();
+  const headers: Record<string, string> = { "User-Agent": "CTEM-Scanner/1.0" };
+  if (apiKey) headers["PRIVATE-TOKEN"] = apiKey;
+
+  const BASE = "https://gitlab.com/api/v4";
+
+  // Search for public projects by domain and company name
+  const queries = [...new Set([domain.split(".")[0], company])].filter(q => q.length >= 3);
+  const allProjects: GitLabFinding[] = [];
+  let codeHits = 0;
+
+  for (const q of queries.slice(0, 2)) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10_000);
+      const res = await fetch(
+        `${BASE}/projects?search=${encodeURIComponent(q)}&visibility=public&order_by=last_activity_at&per_page=10`,
+        { headers, signal: ctrl.signal }
+      );
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const projects = await res.json() as any[];
+      for (const p of projects) {
+        // Only include projects that clearly relate to the target (name or description contains domain or company)
+        const rel = (p.name_with_namespace ?? "").toLowerCase() + " " + (p.description ?? "").toLowerCase();
+        if (!rel.includes(company) && !rel.includes(domain.split(".")[0])) continue;
+        allProjects.push({
+          projectId: p.id,
+          projectName: p.name_with_namespace ?? p.name,
+          projectUrl: p.web_url,
+          namespace: p.namespace?.name ?? "",
+          visibility: p.visibility ?? "public",
+          stars: p.star_count ?? 0,
+          description: (p.description ?? "").slice(0, 200),
+          topics: p.topics ?? [],
+          lastActivity: p.last_activity_at ?? "",
+        });
+      }
+    } catch { continue; }
+  }
+
+  // Code search for domain exposure in GitLab public code (requires auth for reliable results)
+  if (apiKey) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10_000);
+      const res = await fetch(
+        `${BASE}/search?scope=blobs&search=${encodeURIComponent(domain)}&per_page=5`,
+        { headers, signal: ctrl.signal }
+      );
+      clearTimeout(t);
+      if (res.ok) {
+        const blobs = await res.json() as any[];
+        codeHits = blobs.length;
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // Deduplicate by projectId
+  const seen = new Set<number>();
+  const unique = allProjects.filter(p => seen.has(p.projectId) ? false : (seen.add(p.projectId), true));
+
+  return {
+    status: "ok",
+    data: { totalProjects: unique.length, projects: unique, codeHits },
+  };
+}
+
 // ── .git directory exposure ───────────────────────────────────────────────────
 
 async function checkGitDir(baseUrl: string): Promise<GitDirExposure> {

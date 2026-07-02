@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { bootstrapNucleiTemplates } from "./lib/nucleiScanner";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
 import { getRedis, setRuntimeRedisUrl } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
@@ -108,6 +109,9 @@ const server = app.listen(port, (err) => {
 
   // Beat scheduler handles asset-frequency and schedule-based scans
   startBeatScheduler(port).catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
+
+  // Download official nuclei-templates in the background (non-blocking)
+  bootstrapNucleiTemplates().catch(() => {});
 });
 
 // ── WebSocket server for AI Mapper real-time scan/attack streams ──────────────

@@ -73,8 +73,7 @@ function extractCompanyName(target: string): string {
   }
 }
 
-function generateBucketNames(company: string): string[] {
-  const c = company;
+function generateBucketNames(company: string, extraHints: string[] = []): string[] {
   const suffixes = [
     "", "-dev", "-prod", "-staging", "-test", "-uat", "-qa",
     "-assets", "-static", "-media", "-images", "-uploads", "-files",
@@ -85,15 +84,18 @@ function generateBucketNames(company: string): string[] {
   ];
   const prefixes = ["", "dev-", "prod-", "staging-", "assets-", "static-", "media-", "backup-"];
 
-  const names = new Set<string>();
-  for (const sfx of suffixes) names.add(`${c}${sfx}`);
-  for (const pfx of prefixes) if (pfx) names.add(`${pfx}${c}`);
+  // Normalize all seeds: primary company name + any extra hints (tags, product names, subsidiaries)
+  const seeds = [
+    company,
+    ...extraHints
+      .map(h => h.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/--+/g, "-").replace(/^-|-$/g, ""))
+      .filter(h => h.length >= 3 && h.length <= 30),
+  ];
 
-  // Dash/dot variants
-  for (const n of [...names]) {
-    if (!n.includes("-")) {
-      names.add(`${n.slice(0, 1)}-${n.slice(1)}`); // skip — just keep core names
-    }
+  const names = new Set<string>();
+  for (const seed of seeds) {
+    for (const sfx of suffixes) names.add(`${seed}${sfx}`);
+    for (const pfx of prefixes) if (pfx) names.add(`${pfx}${seed}`);
   }
 
   return [...names].filter(n => n.length >= 3 && n.length <= 63);
@@ -103,23 +105,37 @@ function generateBucketNames(company: string): string[] {
 
 const UA = "Mozilla/5.0 (compatible; CTEM-CloudRecon/1.0; +https://sentinelware.io)";
 
-async function probeUrl(url: string, timeoutMs = 8000): Promise<{ status: number; body: string; contentType: string }> {
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, {
-      method: "GET",
-      signal: ctrl.signal,
-      headers: { "User-Agent": UA },
-      redirect: "follow",
-    });
-    clearTimeout(t);
-    const ct = res.headers.get("content-type") ?? "";
-    const body = await res.text().catch(() => "");
-    return { status: res.status, body: body.slice(0, 4096), contentType: ct };
-  } catch {
-    return { status: 0, body: "", contentType: "" };
+async function probeUrl(url: string, timeoutMs = 8000, retries = 2): Promise<{ status: number; body: string; contentType: string }> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(url, {
+        method: "GET",
+        signal: ctrl.signal,
+        headers: { "User-Agent": UA },
+        redirect: "follow",
+      });
+      clearTimeout(t);
+      // Rate limited — back off and retry
+      if (res.status === 429 && attempt < retries) {
+        const retryAfter = parseInt(res.headers.get("retry-after") ?? "5", 10);
+        const delay = Math.min((retryAfter || 5) * 1000, 15_000) * (attempt + 1);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      const ct = res.headers.get("content-type") ?? "";
+      const body = await res.text().catch(() => "");
+      return { status: res.status, body: body.slice(0, 4096), contentType: ct };
+    } catch {
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      return { status: 0, body: "", contentType: "" };
+    }
   }
+  return { status: 0, body: "", contentType: "" };
 }
 
 // ── S3 Bucket probing ─────────────────────────────────────────────────────────
@@ -222,19 +238,24 @@ async function probeGCSBucket(name: string): Promise<CloudBucketResult> {
   let isListable = false;
   let sampleFiles: string[] | undefined;
 
-  if (status === 200 && (body.includes("<ListBucketResult") || body.includes("<?xml"))) {
+  if (status === 200 && body.includes("<ListBucketResult")) {
+    // Confirmed public listable GCS bucket
     bucketStatus = "public_listable";
     isPublic = true;
     isListable = true;
     sampleFiles = parseGCSFiles(body);
-  } else if (status === 200) {
+  } else if (status === 200 && (body.includes('"kind": "storage#') || body.includes("storage.googleapis.com"))) {
+    // GCS JSON API response — bucket exists and is readable
     bucketStatus = "public_exists";
     isPublic = true;
-  } else if (status === 403) {
-    // Bucket exists but access denied
-    bucketStatus = body.includes("AccessDenied") ? "private" : "private";
-  } else if (status === 404 && body.includes("NoSuchBucket")) {
+  } else if (status === 200) {
+    // Status 200 but body doesn't have GCS-specific markers — likely CDN false positive
     bucketStatus = "not_found";
+  } else if (status === 403) {
+    // Bucket exists but access denied — only mark private if GCS-specific error XML present
+    const isGcsError = body.includes("AccessDenied") || body.includes("BucketNotPublic") ||
+      (body.includes("<?xml") && body.includes("Error"));
+    bucketStatus = isGcsError ? "private" : "not_found";
   } else if (status === 404) {
     bucketStatus = "not_found";
   } else if (status === 0) {
@@ -304,8 +325,9 @@ async function probeAzureAccount(accountName: string): Promise<CloudBucketResult
     })
   );
 
-  // If no containers found but account exists, add a generic entry
-  if (results.length === 0 && (svcStatus === 200 || svcStatus === 403 || svcStatus === 400)) {
+  // Only add a generic "account exists" entry if the service URL returned a genuine Azure XML
+  // error (400 with StorageErrorCode) — avoids CDN false positives on 200/403
+  if (results.length === 0 && svcStatus === 400 && svcBody.includes("InvalidQueryParameterValue")) {
     results.push({
       provider: "azure",
       name: accountName,
@@ -470,7 +492,7 @@ function buildSsrfEndpoints(): SsrfEndpoint[] {
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
-export async function runCloudRecon(target: string): Promise<CloudReconResult> {
+export async function runCloudRecon(target: string, additionalNames: string[] = []): Promise<CloudReconResult> {
   const empty: CloudReconResult = {
     buckets: [], firebase: [], ssrfEndpoints: [], testedNames: [],
     stats: { totalTested: 0, publicBuckets: 0, privateBuckets: 0, existingBuckets: 0, publicFirebase: 0, restrictedFirebase: 0, ssrfEndpoints: 0, awsFound: 0, gcsFound: 0, azureFound: 0 },
@@ -479,7 +501,7 @@ export async function runCloudRecon(target: string): Promise<CloudReconResult> {
   const company = extractCompanyName(target);
   if (!company || company.length < 2) return empty;
 
-  const names = generateBucketNames(company);
+  const names = generateBucketNames(company, additionalNames);
   logger.info({ target, company, nameCount: names.length }, "Cloud recon starting");
 
   const ssrfEndpoints = buildSsrfEndpoints();

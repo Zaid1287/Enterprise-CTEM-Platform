@@ -7,6 +7,21 @@ import { logger } from "./logger";
 
 const execAsync = promisify(exec);
 
+// ── Nuclei template bootstrap ─────────────────────────────────────────────────
+// Downloads the official nuclei-templates repo once at startup. Subsequent
+// calls are no-ops (nuclei skips download if templates already exist).
+export async function bootstrapNucleiTemplates(): Promise<void> {
+  try {
+    const { stdout } = await execAsync(
+      "nuclei -update-templates -silent 2>&1 || true",
+      { timeout: 120_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+    );
+    logger.info({ output: stdout.slice(0, 200) }, "Nuclei templates bootstrap complete");
+  } catch (err) {
+    logger.warn({ err }, "Nuclei template bootstrap failed (non-fatal — using built-in checks)");
+  }
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type VulnSeverity = "critical" | "high" | "medium" | "low" | "info";
@@ -430,7 +445,7 @@ async function runNucleiBinary(target: string): Promise<NucleiVuln[]> {
   try {
     const safeTarget = target.replace(/"/g, "").replace(/`/g, "").slice(0, 500);
     const { stdout } = await execAsync(
-      `nuclei -u "${safeTarget}" -severity critical,high,medium -json -timeout 15 -rate-limit 100 -no-interactsh -silent -no-update-check 2>/dev/null`,
+      `nuclei -u "${safeTarget}" -severity critical,high,medium -json -timeout 15 -rate-limit 100 -no-interactsh -silent 2>/dev/null`,
       { timeout: 120000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
     );
     return stdout.trim().split("\n")

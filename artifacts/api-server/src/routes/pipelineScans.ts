@@ -13,7 +13,7 @@ import { runEndpointDiscovery } from "../lib/endpointDiscovery";
 import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
 import { runCloudRecon, type CloudReconResult } from "../lib/cloudRecon";
-import { runSecretsHunt, type SecretsHuntResult } from "../lib/secretsHunter";
+import { runSecretsHunt, runGitlabExposure, type SecretsHuntResult } from "../lib/secretsHunter";
 import {
   runPassiveDiscovery,
   runDkimCheck, runGithubExposure,
@@ -1500,7 +1500,7 @@ async function executePipeline(
     .where(and(eq(assetsTable.tenantId, tenantId), inArray(assetsTable.id, assetIds)));
 
   // ── Load platform API keys for this run ──────────────────────────────────
-  const [nvdKey, shodanKey, vtKey, hunterKey, githubToken, fofaEmail, fofaApiKey, censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey, securityTrailsKey] = await Promise.all([
+  const [nvdKey, shodanKey, vtKey, hunterKey, githubToken, fofaEmail, fofaApiKey, censysApiId, censysApiSecret, intelxApiKey, criminalIpApiKey, securityTrailsKey, gitlabApiKey] = await Promise.all([
     getPlatformSetting("nvd_api_key"),
     getPlatformSetting("shodan_api_key"),
     getPlatformSetting("virustotal_api_key"),
@@ -1513,6 +1513,7 @@ async function executePipeline(
     getPlatformSetting("intelx_api_key"),
     getPlatformSetting("criminalip_api_key"),
     getPlatformSetting("securitytrails_api_key"),
+    getPlatformSetting("gitlab_api_key"),
   ]);
   if (nvdKey) setNvdApiKey(nvdKey);
   if (securityTrailsKey) _platformSecurityTrailsKey = securityTrailsKey;
@@ -1839,6 +1840,23 @@ async function executePipeline(
         } catch (err) { logger.warn({ err, domain }, "GitHub exposure scan failed (non-fatal)"); }
       })(),
 
+      // ── GitLab code & repo exposure ──────────────────────────────────────────
+      domain && !isIp(domain) && (async () => {
+        try {
+          const result = await runGitlabExposure(domain, gitlabApiKey ?? null);
+          if (result.status === "ok" && result.data) {
+            const d = result.data;
+            if (d.totalProjects > 0)
+              geoIntel.push({ type: "GitLab", key: "Public projects found",  value: String(d.totalProjects) });
+            if (d.codeHits > 0)
+              geoIntel.push({ type: "GitLab", key: "Code blob hits",          value: String(d.codeHits) });
+            if (d.projects.length > 0)
+              geoIntel.push({ type: "GitLab", key: "Top project",             value: d.projects[0].projectName });
+            logger.info({ domain, projects: d.totalProjects, codeHits: d.codeHits }, "GitLab exposure scan complete");
+          }
+        } catch (err) { logger.warn({ err, domain }, "GitLab exposure scan failed (non-fatal)"); }
+      })(),
+
       // ── Fofa internet scanner (commercial intel) ──────────────────────────────
       fofaEmail && fofaApiKey && domain && !isIp(domain) && (async () => {
         try {
@@ -2051,7 +2069,7 @@ async function executePipeline(
           ? (async () => { paramDiscovery = await runParamDiscovery(target); })()
           : Promise.resolve(),
         isWebAsset
-          ? (async () => { cloudRecon = await runCloudRecon(target); })()
+          ? (async () => { cloudRecon = await runCloudRecon(target, (asset.tags ?? []).filter(t => t.length >= 3 && t.length <= 30)); })()
           : Promise.resolve(),
         isWebAsset
           ? (async () => { secretsHunt = await runSecretsHunt(target, githubToken); })()
