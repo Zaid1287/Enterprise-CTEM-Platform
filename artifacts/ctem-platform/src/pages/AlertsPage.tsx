@@ -102,9 +102,17 @@ export default function AlertsPage() {
   const updateRule = useUpdateAlertRule();
   const deleteRule = useDeleteAlertRule();
 
+  const invalidateDashboards = () => {
+    queryClient.invalidateQueries({ queryKey: ["platform-overview"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+    queryClient.invalidateQueries({ queryKey: ["am-overview"] });
+    queryClient.invalidateQueries({ queryKey: ["dash-overview"] });
+  };
+
   const markRead = async (id: number) => {
     await updateAlert.mutateAsync({ alertId: id, data: { isRead: true } });
     queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
+    invalidateDashboards();
   };
 
   const markAllRead = async () => {
@@ -112,6 +120,7 @@ export default function AlertsPage() {
       await updateAlert.mutateAsync({ alertId: a.id, data: { isRead: true } });
     }
     queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
+    invalidateDashboards();
   };
 
   const handleCreateRule = async (e: React.FormEvent) => {

@@ -243,6 +243,8 @@ function SuperAdminDashboard() {
           sub="across all tenants" />
       </div>
 
+      <AiMapperBanner adminLink />
+
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-card border border-border rounded-xl p-4">
@@ -674,7 +676,6 @@ function SuperAdminDashboard() {
           </table>
         </div>
       </div>
-      <AiMapperBanner adminLink />
     </div>
   );
 }
@@ -800,6 +801,8 @@ function AccountManagerDashboard() {
         <StatCard label="Portfolio Risk Score"  value={riskScore}              icon={Activity}     color={riskColor} sub="avg / 100" />
         <StatCard label="Active Scans"          value={data?.activeScans}      icon={Radar}        color="text-cyan-400" />
       </div>
+
+      <AiMapperBanner adminLink />
 
       {/* ── Charts row ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1193,7 +1196,6 @@ function AccountManagerDashboard() {
         )}
       </div>
 
-      <AiMapperBanner />
     </div>
   );
 }
@@ -1348,6 +1350,8 @@ function AdminDashboard() {
         <StatCard label="Takedown Requests" value={d.takedownsCount} icon={Shield} color="text-cyan-400" />
         <StatCard label="Team Members" value={d.userCount} icon={Users2} color="text-violet-400" />
       </div>
+
+      <AiMapperBanner />
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1807,8 +1811,6 @@ function AdminDashboard() {
           </BarChart>
         </ResponsiveContainer>
       </div>
-
-      <AiMapperBanner />
     </div>
   );
 }

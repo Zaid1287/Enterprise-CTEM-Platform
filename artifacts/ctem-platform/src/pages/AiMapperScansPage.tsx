@@ -113,12 +113,11 @@ export default function AiMapperScansPage() {
     queryFn: () => apiFetch("/api/ai-mapper/query-presets"),
   });
 
-  const { data: assetsResp } = useQuery<{ data: Asset[] }>({
+  const { data: assetsResp } = useQuery<Asset[]>({
     queryKey: ["assets-brief"],
     queryFn: () => apiFetch("/api/assets?limit=200"),
-    enabled: showNew,
   });
-  const assets = assetsResp?.data ?? [];
+  const assets: Asset[] = assetsResp ?? [];
 
   function buildCidrScope(): string | undefined {
     const lines: string[] = cidrText

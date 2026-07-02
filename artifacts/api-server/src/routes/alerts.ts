@@ -10,6 +10,7 @@ import {
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest, verifyToken } from "../lib/auth";
 import { addSseClient, removeSseClient } from "../lib/sseManager";
 import { sendChannelNotification } from "../lib/notifier";
+import { cacheDelete, ck } from "../lib/cache";
 import type { NotificationEvent } from "../lib/notifier";
 import { getPlatformSetting } from "./platformSettings";
 import { logger } from "../lib/logger";
@@ -440,6 +441,8 @@ router.patch("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, 
     .where(patchAlertWhere)
     .returning();
   if (!alert) { res.status(404).json({ error: "Alert not found" }); return; }
+  // Invalidate the dashboard overview cache so Open Alerts count is immediately accurate
+  await cacheDelete(ck("dash:overview", alert.tenantId));
   res.json(toAlertResponse(alert));
 });
 
