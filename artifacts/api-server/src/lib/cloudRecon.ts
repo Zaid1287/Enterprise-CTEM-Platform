@@ -168,16 +168,21 @@ async function probeS3Bucket(name: string): Promise<CloudBucketResult> {
   let fileCount: number | undefined;
   let region: string | undefined;
 
-  if (status === 200 && body.includes("<ListBucketResult")) {
+  if (status === 200 && body.includes("<ListBucketResult") &&
+      (contentType.includes("xml") || contentType.includes("application/xml") || contentType.includes("text/xml")) &&
+      body.includes(name)) {
+    // Confirmed S3 public-listable: body is real XML listing AND bucket name appears in body
     bucketStatus = "public_listable";
     isPublic = true;
     isListable = true;
     sampleFiles = parseS3Files(body);
     const countMatch = body.match(/<KeyCount>(\d+)<\/KeyCount>/);
     if (countMatch) fileCount = parseInt(countMatch[1], 10);
-    // Try region from body
     const regionM = body.match(/\.s3\.([^.]+)\.amazonaws\.com/);
     if (regionM) region = regionM[1];
+  } else if (status === 200 && body.includes("<ListBucketResult")) {
+    // Has XML listing structure but content-type or name check failed — treat as not found
+    bucketStatus = "not_found";
   } else if (status === 403) {
     // Bucket exists but access denied (could still be interesting)
     const isAuthErr = body.includes("AccessDenied") || body.includes("AllAccessDisabled");

@@ -54,6 +54,7 @@ const PLATFORM_KEYS: PlatformKeyDef[] = [
   { key: "twitter_x_bearer_token",       label: "Twitter/X Bearer Token",        description: "Twitter/X API v2 Bearer Token — monitors tweets, accounts, and trending topics for brand impersonation (scanning enabled when approved).", category: "brand_intelligence", comingSoon: true },
   { key: "instagram_graph_api_token",    label: "Instagram Graph API Token",     description: "Instagram Graph API access token — tracks fake Instagram accounts and posts impersonating your brand (scanning enabled when approved).", category: "brand_intelligence", comingSoon: true },
   { key: "tiktok_research_api_token",    label: "TikTok Research API Token",     description: "TikTok Research API access token — scans TikTok for scam videos and impersonating accounts targeting your brand (scanning enabled when approved).", category: "brand_intelligence", comingSoon: true },
+  { key: "auto_mitigate_threshold",      label: "Auto-Mitigate Threshold (Scans)", description: "Number of consecutive scans in which a finding must be absent before it is automatically marked as 'auto_mitigated'. Default: 3. Set to 0 to disable auto-mitigation.", category: "scanning" },
 ];
 
 function isSuperAdmin(req: AuthenticatedRequest): boolean {

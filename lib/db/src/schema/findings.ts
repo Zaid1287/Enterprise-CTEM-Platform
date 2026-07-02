@@ -23,7 +23,12 @@ export const findingsTable = pgTable("findings", {
   evidence: text("evidence"),
   riskScore: real("risk_score"),
   isFalsePositive: boolean("is_false_positive").notNull().default(false),
-  falsePositiveStatus: text("false_positive_status").default("none"), // "none" | "submitted" | "confirmed" | "rejected"
+  falsePositiveStatus: text("false_positive_status").default("none"),
+  // Re-scan delta tracking
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  consecutiveMissedScans: integer("consecutive_missed_scans").notNull().default(0),
+  previousScanId: integer("previous_scan_id"),
+  firstSeenScanId: integer("first_seen_scan_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

@@ -955,7 +955,9 @@ export const ListFindingsQueryParams = zod.object({
   "status": zod.coerce.string().optional(),
   "severity": zod.coerce.string().optional(),
   "assetId": zod.coerce.number().optional(),
-  "search": zod.coerce.string().optional()
+  "search": zod.coerce.string().optional(),
+  "newSinceScanId": zod.coerce.number().optional(),
+  "isStale": zod.coerce.string().optional()
 })
 
 export const ListFindingsResponseItem = zod.object({
@@ -981,6 +983,11 @@ export const ListFindingsResponseItem = zod.object({
   "remediation": zod.string().nullish(),
   "evidence": zod.string().nullish(),
   "riskScore": zod.number().nullish(),
+  "lastSeenAt": zod.string().nullish(),
+  "consecutiveMissedScans": zod.number().optional(),
+  "previousScanId": zod.number().nullish(),
+  "firstSeenScanId": zod.number().nullish(),
+  "isNewSinceLastScan": zod.boolean().optional(),
   "createdAt": zod.string(),
   "updatedAt": zod.string().optional()
 })

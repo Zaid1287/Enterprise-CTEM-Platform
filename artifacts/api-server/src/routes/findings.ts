@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, ilike, inArray, desc } from "drizzle-orm";
+import { eq, and, ilike, inArray, desc, isNotNull } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
 import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable } from "@workspace/db";
@@ -27,6 +27,8 @@ function toFindingResponse(
 ) {
   const SEV_RISK: Record<string, number> = { critical: 90, high: 70, medium: 45, low: 20, info: 10 };
   const riskScore = assetRiskScore ?? f.riskScore ?? SEV_RISK[f.severity ?? "medium"] ?? 45;
+  // A finding is "new since last scan" when it was first seen in its current scan
+  const isNewSinceLastScan = f.firstSeenScanId !== null && f.firstSeenScanId === f.scanId && f.previousScanId === null;
   return {
     id: f.id, tenantId: f.tenantId, tenantName: tenantName ?? null, assetId: f.assetId,
     assetName: assetName ?? null,
@@ -39,8 +41,22 @@ function toFindingResponse(
     title: f.title, description: f.description, severity: f.severity, status: f.status,
     cve: f.cve, cvss: f.cvss, epss: f.epss, cwe: f.cwe, isKev: f.isKev,
     remediation: f.remediation, evidence: f.evidence, riskScore,
+    lastSeenAt: f.lastSeenAt ? f.lastSeenAt.toISOString() : null,
+    consecutiveMissedScans: f.consecutiveMissedScans,
+    previousScanId: f.previousScanId ?? null,
+    firstSeenScanId: f.firstSeenScanId ?? null,
+    isNewSinceLastScan,
     createdAt: f.createdAt.toISOString(), updatedAt: f.updatedAt.toISOString(),
   };
+}
+
+// Shared helper: add delta / stale filters when query params are present
+function applyDeltaFilters(filters: any[], q: ReturnType<typeof ListFindingsQueryParams.safeParse>) {
+  if (!q.success) return;
+  // ?newSinceScanId=N → only findings first discovered in scan N
+  if (q.data.newSinceScanId) filters.push(eq(findingsTable.firstSeenScanId, q.data.newSinceScanId));
+  // ?isStale=true → findings that have been missed in at least 1 consecutive scan
+  if (q.data.isStale === "true") filters.push(isNotNull(findingsTable.lastSeenAt));
 }
 
 router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -60,6 +76,7 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       if (q.data.severity) extFilters.push(eq(findingsTable.severity, q.data.severity));
       if (q.data.assetId) extFilters.push(eq(findingsTable.assetId, q.data.assetId));
       if (q.data.search) extFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
+      applyDeltaFilters(extFilters, q);
     }
     const extFindings = await db.select({
       finding: findingsTable,
@@ -94,6 +111,7 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       if (q.data.severity) amFilters.push(eq(findingsTable.severity, q.data.severity));
       if (q.data.assetId) amFilters.push(eq(findingsTable.assetId, q.data.assetId));
       if (q.data.search) amFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
+      applyDeltaFilters(amFilters, q);
     }
     const amFindings = await db.select({
       finding: findingsTable,
@@ -126,6 +144,7 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       if (q.data.severity) saFilters.push(eq(findingsTable.severity, q.data.severity));
       if (q.data.assetId) saFilters.push(eq(findingsTable.assetId, q.data.assetId));
       if (q.data.search) saFilters.push(ilike(findingsTable.title, `%${q.data.search}%`));
+      applyDeltaFilters(saFilters, q);
     }
     const saFindings = await db.select({
       finding: findingsTable,
@@ -168,6 +187,7 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     if (q.data.severity) filters.push(eq(findingsTable.severity, q.data.severity));
     if (q.data.assetId) filters.push(eq(findingsTable.assetId, q.data.assetId));
     if (q.data.search) filters.push(ilike(findingsTable.title, `%${q.data.search}%`));
+    applyDeltaFilters(filters, q);
   }
   const findings = await db.select({
     finding: findingsTable,

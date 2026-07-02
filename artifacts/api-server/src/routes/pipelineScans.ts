@@ -4,7 +4,7 @@ import { writeFile, unlink } from "fs/promises";
 import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
-import { eq, and, inArray, lt } from "drizzle-orm";
+import { eq, and, inArray, lt, sql, not, gte, or, isNull } from "drizzle-orm";
 import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
@@ -3240,7 +3240,7 @@ async function executePipeline(
     // Deduplicate by CVE+asset, enrich with EPSS/KEV, then insert
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {
-      const key = `${f.cve ?? ""}-${f.assetId}`;
+      const key = f.cve ? `cve:${f.cve}:${f.assetId}` : `title:${f.title}:${f.assetId}`;
       if (!uniqueFindings.has(key)) uniqueFindings.set(key, f);
     }
     const deduped = Array.from(uniqueFindings.values());
@@ -3250,10 +3250,93 @@ async function executePipeline(
     } catch (err) {
       logger.warn({ err }, "EPSS/KEV enrichment failed — inserting without enrichment (non-fatal)");
     }
-    for (let i = 0; i < enriched.length; i += 50) {
-      await db.insert(findingsTable).values(enriched.slice(i, i + 50));
+
+    // ── Re-scan upsert: update seen-again findings, insert genuinely new ones ──
+    const scanSeenAt = new Date();
+    const terminalStatuses = ["mitigated", "accepted_risk", "false_positive", "auto_mitigated"];
+
+    // Fetch all current findings for this asset so we can diff against them
+    const existingFindings = await db.select({
+      id: findingsTable.id,
+      cve: findingsTable.cve,
+      title: findingsTable.title,
+      scanId: findingsTable.scanId,
+    }).from(findingsTable).where(and(
+      eq(findingsTable.assetId, asset.id),
+      eq(findingsTable.tenantId, tenantId),
+    ));
+
+    // Build fingerprint → existing finding map
+    const existingMap = new Map<string, typeof existingFindings[0]>();
+    for (const ef of existingFindings) {
+      const k = ef.cve ? `cve:${ef.cve}` : `title:${ef.title}`;
+      if (!existingMap.has(k)) existingMap.set(k, ef);
     }
-    findingTotals.push(enriched.length);
+
+    // Split enriched findings into updates (already in DB) and inserts (brand new)
+    const toInsert: typeof enriched = [];
+    // Group "seen again" findings by their previous scanId so we can batch-update
+    const updateGroupsByPrev = new Map<number | null, number[]>();
+    for (const f of enriched) {
+      const k = f.cve ? `cve:${f.cve}` : `title:${f.title}`;
+      const existing = existingMap.get(k);
+      if (existing) {
+        const prev = existing.scanId ?? null;
+        if (!updateGroupsByPrev.has(prev)) updateGroupsByPrev.set(prev, []);
+        updateGroupsByPrev.get(prev)!.push(existing.id);
+      } else {
+        toInsert.push({ ...f, firstSeenScanId: scanId, lastSeenAt: scanSeenAt });
+      }
+    }
+
+    // Batch-update seen-again findings (reset miss counter, stamp lastSeenAt)
+    for (const [prevScanId, ids] of updateGroupsByPrev) {
+      for (let i = 0; i < ids.length; i += 50) {
+        await db.update(findingsTable).set({
+          lastSeenAt: scanSeenAt,
+          consecutiveMissedScans: 0,
+          scanId,
+          previousScanId: prevScanId,
+        }).where(inArray(findingsTable.id, ids.slice(i, i + 50)));
+      }
+    }
+
+    // Insert genuinely new findings in batches
+    for (let i = 0; i < toInsert.length; i += 50) {
+      await db.insert(findingsTable).values(toInsert.slice(i, i + 50));
+    }
+    findingTotals.push(updateGroupsByPrev.size > 0 ? Array.from(updateGroupsByPrev.values()).flat().length + toInsert.length : toInsert.length);
+
+    // ── Stale finding tracking + auto-mitigation ──────────────────────────────
+    // Increment consecutiveMissedScans for findings NOT seen in this scan run.
+    // Auto-mitigate those that exceed the configured threshold.
+    try {
+      const thresholdStr = await getPlatformSetting("auto_mitigate_threshold");
+      const threshold = thresholdStr !== null ? parseInt(thresholdStr, 10) : 3;
+      if (!isNaN(threshold) && threshold > 0) {
+        // Increment missed counter for all stale open findings on this asset
+        await db.update(findingsTable)
+          .set({ consecutiveMissedScans: sql`consecutive_missed_scans + 1` })
+          .where(and(
+            eq(findingsTable.assetId, asset.id),
+            eq(findingsTable.tenantId, tenantId),
+            or(isNull(findingsTable.lastSeenAt), lt(findingsTable.lastSeenAt, scanSeenAt)),
+            not(inArray(findingsTable.status, terminalStatuses)),
+          ));
+        // Auto-mitigate findings that have exceeded the threshold
+        await db.update(findingsTable)
+          .set({ status: "auto_mitigated" })
+          .where(and(
+            eq(findingsTable.assetId, asset.id),
+            eq(findingsTable.tenantId, tenantId),
+            gte(findingsTable.consecutiveMissedScans, threshold),
+            eq(findingsTable.status, "open"),
+          ));
+        logger.info({ assetId: asset.id, threshold }, "Stale finding check complete");
+      }
+    } catch (err) {
+      logger.warn({ err, assetId: asset.id }, "Stale finding auto-mitigate failed (non-fatal)");
+    }
 
     // ── Passive discovery: save results to history (non-blocking) ─────────────
     // Runs free tools + any configured commercial API tools in the background
@@ -3315,6 +3398,8 @@ async function executePipeline(
             const interpreter = interpreters[script.language] ?? "bash";
             const { stdout, stderr } = await execAsync(`${interpreter} "${tmpScript}"`, {
               timeout: (script.timeout || 60) * 1000,
+              killSignal: "SIGKILL",
+              maxBuffer: 10 * 1024 * 1024, // 10 MB — prevent memory exhaustion from verbose scripts
               env: {
                 ...process.env,
                 TARGET: target,
