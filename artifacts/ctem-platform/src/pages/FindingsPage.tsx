@@ -115,12 +115,11 @@ function SuppressModal({ finding, onClose, onDone }: { finding: any; onClose: ()
   async function submit() {
     setLoading(true); setErr("");
     try {
-      const res = await apiFetch(`/api/findings/${finding.id}/suppress`, {
+      await apiFetch(`/api/findings/${finding.id}/suppress`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ matchType, note, applyToAsset }),
       });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error ?? "Failed"); }
       onDone();
       onClose();
     } catch (e: any) {
@@ -193,8 +192,8 @@ function SuppressModal({ finding, onClose, onDone }: { finding: any; onClose: ()
 
 function CommentsPanel({ findingId }: { findingId: number }) {
   const qc = useQueryClient();
-  const { data: comments, isLoading } = useListFindingComments({ findingId }, {
-    query: { queryKey: getListFindingCommentsQueryKey({ findingId }), staleTime: 0 },
+  const { data: comments, isLoading } = useListFindingComments(findingId, {
+    query: { queryKey: getListFindingCommentsQueryKey(findingId), staleTime: 0 },
   });
   const createComment = useCreateFindingComment();
   const [text, setText] = useState("");
@@ -209,7 +208,7 @@ function CommentsPanel({ findingId }: { findingId: number }) {
     if (!text.trim()) return;
     await createComment.mutateAsync({ findingId, data: { content: text.trim() } as any });
     setText("");
-    qc.invalidateQueries({ queryKey: getListFindingCommentsQueryKey({ findingId }) });
+    qc.invalidateQueries({ queryKey: getListFindingCommentsQueryKey(findingId) });
   }
 
   return (

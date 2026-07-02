@@ -122,23 +122,23 @@ export default function SecurityToolsPage() {
   // Fetch helpers
   const fetchScripts = useCallback(async () => {
     setScriptsLoading(true);
-    try { const d = await apiFetch("/custom-scripts"); setScripts(d); } finally { setScriptsLoading(false); }
+    try { const d = await apiFetch<any>("/custom-scripts"); setScripts(d); } finally { setScriptsLoading(false); }
   }, []);
   const fetchNucleiTemplates = useCallback(async () => {
     setNucleiLoading(true);
-    try { const d = await apiFetch("/custom-nuclei-templates"); setNucleiTemplates(d); } finally { setNucleiLoading(false); }
+    try { const d = await apiFetch<any>("/custom-nuclei-templates"); setNucleiTemplates(d); } finally { setNucleiLoading(false); }
   }, []);
   const fetchScriptRuns = useCallback(async (scriptId: number) => {
     setScriptRunsLoading(true);
-    try { const d = await apiFetch(`/custom-scripts/${scriptId}/runs`); setScriptRuns(d.data ?? []); } finally { setScriptRunsLoading(false); }
+    try { const d = await apiFetch<any>(`/custom-scripts/${scriptId}/runs`); setScriptRuns(d.data ?? []); } finally { setScriptRunsLoading(false); }
   }, []);
   const fetchScriptAssignments = useCallback(async (scriptId: number) => {
     setScriptAssetsLoading(true);
-    try { const d = await apiFetch(`/custom-scripts/${scriptId}/assignments`); setScriptAssignments(d); } finally { setScriptAssetsLoading(false); }
+    try { const d = await apiFetch<any>(`/custom-scripts/${scriptId}/assignments`); setScriptAssignments(d); } finally { setScriptAssetsLoading(false); }
   }, []);
   const fetchNucleiAssignments = useCallback(async (templateId: number) => {
     setNucleiAssetsLoading(true);
-    try { const d = await apiFetch(`/custom-nuclei-templates/${templateId}/assignments`); setNucleiAssignments(d); } finally { setNucleiAssetsLoading(false); }
+    try { const d = await apiFetch<any>(`/custom-nuclei-templates/${templateId}/assignments`); setNucleiAssignments(d); } finally { setNucleiAssetsLoading(false); }
   }, []);
 
   useEffect(() => { if (tab === "scripts") fetchScripts(); }, [tab, fetchScripts]);
