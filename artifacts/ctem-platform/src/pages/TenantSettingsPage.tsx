@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -120,21 +121,15 @@ function AiMapperModuleCard({ tenantId, userRole }: { tenantId: number; userRole
             <Badge className="mt-2 text-xs bg-green-500/20 text-green-400 border-green-500/30">Active</Badge>
           )}
         </div>
-        {canToggle && (
-          <Button
-            variant={enabled ? "outline" : "default"}
-            size="sm"
-            onClick={() => toggle.mutate(!enabled)}
-            disabled={toggle.isPending || isLoading}
-            className="shrink-0"
-          >
-            {toggle.isPending
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : enabled ? <ToggleRight className="w-3.5 h-3.5 mr-1.5 text-green-400" /> : <ToggleLeft className="w-3.5 h-3.5 mr-1.5" />
-            }
-            {enabled ? "Disable" : "Enable"}
-          </Button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {toggle.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+          <Switch
+            checked={enabled}
+            onCheckedChange={(val) => canToggle && toggle.mutate(val)}
+            disabled={!canToggle || toggle.isPending || isLoading}
+            aria-label={enabled ? "Disable AI Mapper module" : "Enable AI Mapper module"}
+          />
+        </div>
       </div>
     </div>
   );

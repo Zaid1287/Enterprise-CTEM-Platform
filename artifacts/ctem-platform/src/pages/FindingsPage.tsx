@@ -18,8 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, severityBgColor, capitalize, formatDate } from "@/lib/utils";
-import apiFetch from "@/lib/apiFetch";
+import { cn, capitalize, formatDate } from "@/lib/utils";
+import { apiFetch } from "@/lib/apiFetch";
 
 const STATUSES = ["open", "in_progress", "accepted_risk", "false_positive", "mitigated", "auto_mitigated"];
 const SEVERITIES = ["critical", "high", "medium", "low", "info"];
