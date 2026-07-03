@@ -1,17 +1,23 @@
 /**
  * Queue monitor API — BullMQ stats, in-process queue, worker health,
- * throughput chart, upcoming schedules, pause/resume, and job kill.
+ * throughput chart, upcoming schedules, pause/resume (both modes), job kill, DLQ.
  */
 import { Router } from "express";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { getScanQueue } from "../queues/scanQueue";
 import { getAlertQueue } from "../queues/alertQueue";
 import { isRedisAvailable } from "../lib/redis";
-import { db, scansTable, scanSchedulesTable } from "@workspace/db";
-import { count, sql, desc, eq, and, isNotNull, asc } from "drizzle-orm";
-import { getInProcessQueueStats } from "./pipelineScans";
+import { db, scansTable, scanSchedulesTable, assetsTable, alertsTable } from "@workspace/db";
+import { count, sql, desc, eq, and, isNotNull, asc, inArray, gte, lt } from "drizzle-orm";
+import {
+  getInProcessQueueStats,
+  pauseInProcessQueue,
+  resumeInProcessQueue,
+  isInProcessQueuePaused,
+} from "./pipelineScans";
 import { getScanWorkerHealth } from "../workers/scanWorker";
 import { getAlertWorkerHealth } from "../workers/alertWorker";
+import { logger } from "../lib/logger";
 
 const router = Router();
 router.use(denyExternalMembers);
@@ -53,7 +59,8 @@ async function getActiveScans() {
   const rows = await db
     .select({
       id: scansTable.id, name: scansTable.name, type: scansTable.type,
-      status: scansTable.status, startedAt: scansTable.startedAt, assetIds: scansTable.assetIds,
+      status: scansTable.status, startedAt: scansTable.startedAt,
+      assetIds: scansTable.assetIds, bullmqJobId: scansTable.bullmqJobId,
     })
     .from(scansTable)
     .where(sql`${scansTable.status} IN ('running','pending')`)
@@ -63,6 +70,7 @@ async function getActiveScans() {
     id: s.id, name: s.name, type: s.type, status: s.status,
     startedAt: s.startedAt?.toISOString() ?? null,
     assetCount: s.assetIds?.length ?? 0,
+    bullmqJobId: s.bullmqJobId ?? null,
   }));
 }
 
@@ -72,6 +80,7 @@ async function getRecentScans() {
       id: scansTable.id, name: scansTable.name, type: scansTable.type,
       status: scansTable.status, startedAt: scansTable.startedAt,
       completedAt: scansTable.completedAt, assetIds: scansTable.assetIds,
+      bullmqJobId: scansTable.bullmqJobId,
     })
     .from(scansTable)
     .where(sql`${scansTable.status} IN ('completed','failed','cancelled')`)
@@ -82,6 +91,7 @@ async function getRecentScans() {
     startedAt: s.startedAt?.toISOString() ?? null,
     completedAt: s.completedAt?.toISOString() ?? null,
     assetCount: s.assetIds?.length ?? 0,
+    bullmqJobId: s.bullmqJobId ?? null,
   }));
 }
 
@@ -93,21 +103,79 @@ async function getUpcomingSchedules() {
       frequency: scanSchedulesTable.frequency,
       nextRunAt: scanSchedulesTable.nextRunAt,
       lastRunAt: scanSchedulesTable.lastRunAt,
-      status: scanSchedulesTable.status,
+      assetToolConfig: scanSchedulesTable.assetToolConfig,
     })
     .from(scanSchedulesTable)
     .where(and(eq(scanSchedulesTable.status, "active"), isNotNull(scanSchedulesTable.nextRunAt)))
     .orderBy(asc(scanSchedulesTable.nextRunAt))
     .limit(10);
 
-  return rows.map(r => ({
-    id: r.id,
-    name: r.name,
-    frequency: r.frequency,
-    nextRunAt: r.nextRunAt?.toISOString() ?? null,
-    lastRunAt: r.lastRunAt?.toISOString() ?? null,
-    assetName: null as string | null,
-  }));
+  // Extract assetIds from assetToolConfig jsonb, then batch-fetch asset names
+  const assetIdSet = new Set<number>();
+  for (const r of rows) {
+    const cfg = r.assetToolConfig as { assetId?: number }[] | null;
+    if (Array.isArray(cfg) && cfg[0]?.assetId) {
+      assetIdSet.add(Number(cfg[0].assetId));
+    }
+  }
+
+  const assetMap = new Map<number, string>();
+  if (assetIdSet.size > 0) {
+    const assetRows = await db
+      .select({ id: assetsTable.id, name: assetsTable.name })
+      .from(assetsTable)
+      .where(inArray(assetsTable.id, [...assetIdSet]));
+    for (const a of assetRows) assetMap.set(a.id, a.name);
+  }
+
+  return rows.map(r => {
+    const cfg = r.assetToolConfig as { assetId?: number }[] | null;
+    const firstAssetId = Array.isArray(cfg) && cfg[0]?.assetId ? Number(cfg[0].assetId) : null;
+    const assetCount = Array.isArray(cfg) ? cfg.length : 0;
+    return {
+      id: r.id,
+      name: r.name ?? `Schedule #${r.id}`,
+      frequency: r.frequency,
+      nextRunAt: r.nextRunAt?.toISOString() ?? null,
+      lastRunAt: r.lastRunAt?.toISOString() ?? null,
+      assetName: firstAssetId ? (assetMap.get(firstAssetId) ?? null) : null,
+      assetCount,
+    };
+  });
+}
+
+// Debounce queue depth DB alerts — max one per hour
+let _lastDepthAlertAt = 0;
+
+/** Insert a queue depth alert into the DB for all admin tenants with active scans. */
+async function fireQueueDepthAlert(waiting: number): Promise<void> {
+  const now = Date.now();
+  if (now - _lastDepthAlertAt < 60 * 60 * 1000) return; // once per hour max
+  _lastDepthAlertAt = now;
+
+  try {
+    // Find all tenant IDs with currently pending/running scans
+    const activeRows = await db
+      .select({ tenantId: scansTable.tenantId })
+      .from(scansTable)
+      .where(sql`${scansTable.status} IN ('pending', 'running')`);
+    const tenantIds = [...new Set(activeRows.map(r => r.tenantId))];
+    if (tenantIds.length === 0) return;
+
+    await db.insert(alertsTable).values(
+      tenantIds.map(tenantId => ({
+        tenantId,
+        title: `Queue depth alert — ${waiting} jobs waiting`,
+        message: `The scan queue has ${waiting} waiting jobs which exceeds the threshold of 20. Consider investigating stuck scans or increasing capacity.`,
+        type: "queue_depth",
+        severity: "high",
+        isRead: false,
+      })),
+    );
+    logger.warn({ waiting, tenantCount: tenantIds.length }, "Queue depth alert fired — inserted DB alerts for admin tenants");
+  } catch (err) {
+    logger.error({ err }, "Failed to insert queue depth alert");
+  }
 }
 
 // ── GET /queues/status ─────────────────────────────────────────────────────
@@ -125,13 +193,23 @@ router.get("/queues/status", requireAuth, async (req: AuthenticatedRequest, res)
     getUpcomingSchedules(),
   ]);
 
-  const depthWarning =
+  // depthWarning: in Redis mode use BullMQ waiting; in-memory use FIFO pending
+  const bullmqWaiting = redisOk ? scanStats.waiting : 0;
+  const inMemWaiting  = inProcess.pendingCount;
+  const totalWaiting  = bullmqWaiting + inMemWaiting;
+
+  const depthWarning  = totalWaiting > 20 ||
     inProcess.activeScans + inProcess.pendingCount > inProcess.maxConcurrent * 2;
+
+  // Fire DB alert if threshold exceeded (non-blocking, fire-and-forget)
+  if (totalWaiting > 20) {
+    fireQueueDepthAlert(totalWaiting).catch(() => {});
+  }
 
   res.json({
     redis: { connected: redisOk, url: process.env.REDIS_URL ? "configured" : "not configured" },
     queues: {
-      scans:  { name: "ctem:scans",  ...scanStats },
+      scans:  { name: "ctem:scans",  ...scanStats, paused: scanStats.paused || (redisOk ? false : inProcess.paused) },
       alerts: { name: "ctem:alerts", ...alertStats },
     },
     mode: process.env.REDIS_URL ? "redis" : "in-memory",
@@ -163,21 +241,89 @@ router.get("/queues/jobs", requireAuth, async (req: AuthenticatedRequest, res): 
     jobs: jobs.map(j => ({
       id: j.id, name: j.name, data: j.data, progress: j.progress,
       attemptsMade: j.attemptsMade, failedReason: j.failedReason,
+      opts: { attempts: (j.opts as any)?.attempts ?? 3 },
       timestamp: j.timestamp, processedOn: j.processedOn, finishedOn: j.finishedOn,
     })),
     redis: true,
   });
 });
 
+// ── GET /queues/dlq ─────────────────────────────────────────────────────────
+// Dead Letter Queue: failed jobs that exhausted all retries.
+router.get("/queues/dlq", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isAdmin(req)) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const q = getScanQueue();
+  if (!q) { res.json({ jobs: [], redis: false, total: 0 }); return; }
+
+  const failed = await q.getFailed(0, 200);
+  const dlqJobs = failed.filter(j => j.attemptsMade >= ((j.opts as any)?.attempts ?? 3));
+
+  res.json({
+    redis: true,
+    total: dlqJobs.length,
+    jobs: dlqJobs.map(j => ({
+      id: j.id,
+      name: j.name,
+      data: j.data,
+      attemptsMade: j.attemptsMade,
+      maxAttempts: (j.opts as any)?.attempts ?? 3,
+      failedReason: j.failedReason,
+      timestamp: j.timestamp,
+      finishedOn: j.finishedOn,
+    })),
+  });
+});
+
+// ── POST /queues/dlq/:jobId/retry ─────────────────────────────────────────
+router.post("/queues/dlq/:jobId/retry", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isAdmin(req)) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const q = getScanQueue();
+  if (!q) { res.status(503).json({ error: "Redis not available" }); return; }
+
+  const jobId = String(req.params.jobId);
+  const job = await q.getJob(jobId);
+  if (!job) { res.status(404).json({ error: "Job not found in DLQ" }); return; }
+
+  await job.retry();
+  res.json({ ok: true, jobId });
+});
+
+// ── DELETE /queues/dlq/:jobId ─────────────────────────────────────────────
+router.delete("/queues/dlq/:jobId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (!isAdmin(req)) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const q = getScanQueue();
+  if (!q) { res.status(503).json({ error: "Redis not available" }); return; }
+
+  const job = await q.getJob(String(req.params.jobId));
+  if (!job) { res.status(404).json({ error: "Job not found" }); return; }
+
+  await job.remove();
+  res.json({ ok: true });
+});
+
 // ── POST /queues/pause ──────────────────────────────────────────────────────
+// Works in both Redis mode (pauses BullMQ queue) and in-memory mode (pauses FIFO drainQueue).
 router.post("/queues/pause", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (!isAdmin(req)) { res.status(403).json({ error: "Forbidden" }); return; }
 
   const queueName = (req.body.queue as string) ?? "scans";
-  const queue = queueName === "alerts" ? getAlertQueue() : getScanQueue();
-  if (!queue) { res.status(503).json({ error: "Redis not available" }); return; }
 
-  await queue.pause();
+  if (queueName === "scans") {
+    const queue = getScanQueue();
+    if (queue) {
+      await queue.pause();
+    } else {
+      pauseInProcessQueue();
+    }
+  } else if (queueName === "alerts") {
+    const queue = getAlertQueue();
+    if (!queue) { res.status(503).json({ error: "Redis not available for alerts queue" }); return; }
+    await queue.pause();
+  }
+
   res.json({ ok: true, queue: queueName, paused: true });
 });
 
@@ -186,18 +332,29 @@ router.post("/queues/resume", requireAuth, async (req: AuthenticatedRequest, res
   if (!isAdmin(req)) { res.status(403).json({ error: "Forbidden" }); return; }
 
   const queueName = (req.body.queue as string) ?? "scans";
-  const queue = queueName === "alerts" ? getAlertQueue() : getScanQueue();
-  if (!queue) { res.status(503).json({ error: "Redis not available" }); return; }
 
-  await queue.resume();
+  if (queueName === "scans") {
+    const queue = getScanQueue();
+    if (queue) {
+      await queue.resume();
+    } else {
+      resumeInProcessQueue();
+    }
+  } else if (queueName === "alerts") {
+    const queue = getAlertQueue();
+    if (!queue) { res.status(503).json({ error: "Redis not available for alerts queue" }); return; }
+    await queue.resume();
+  }
+
   res.json({ ok: true, queue: queueName, paused: false });
 });
 
 // ── DELETE /queues/jobs/:jobId ──────────────────────────────────────────────
+// Kill a waiting job (remove) or signal an active job to abort.
 router.delete("/queues/jobs/:jobId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (!isAdmin(req)) { res.status(403).json({ error: "Forbidden" }); return; }
 
-  const { jobId } = req.params;
+  const jobId = String(req.params.jobId);
   const queueName = (req.query.queue as string) ?? "scans";
   const queue = queueName === "alerts" ? getAlertQueue() : getScanQueue();
   if (!queue) { res.status(503).json({ error: "Redis not available" }); return; }
@@ -207,8 +364,14 @@ router.delete("/queues/jobs/:jobId", requireAuth, async (req: AuthenticatedReque
 
   const state = await job.getState();
   if (state === "active") {
-    // Can't truly kill a running worker thread, but we can move to failed
-    await job.moveToFailed(new Error("Killed by admin"), "0", true);
+    // Signal the worker to abort its pipeline HTTP call via AbortController
+    const scanId = (job.data as any)?.scanId;
+    if (scanId) {
+      const { abortActiveScanJob } = await import("../workers/scanWorker");
+      abortActiveScanJob(Number(scanId));
+    }
+    // Also move to failed so BullMQ stops tracking it as active
+    await job.moveToFailed(new Error("Killed by admin"), job.token ?? "0", true).catch(() => {});
   } else {
     await job.remove();
   }
@@ -224,8 +387,10 @@ router.post("/queues/retry-failed", requireAuth, async (req: AuthenticatedReques
   if (!queue) { res.status(503).json({ error: "Redis not available" }); return; }
 
   const failedJobs = await queue.getJobs(["failed"], 0, 100);
-  await Promise.all(failedJobs.map(j => j.retry()));
-  res.json({ retried: failedJobs.length });
+  // Only retry jobs that haven't exhausted all attempts (exclude DLQ)
+  const retryable = failedJobs.filter(j => j.attemptsMade < ((j.opts as any)?.attempts ?? 3));
+  await Promise.all(retryable.map(j => j.retry()));
+  res.json({ retried: retryable.length });
 });
 
 // ── GET /queues/worker-health ───────────────────────────────────────────────
@@ -236,6 +401,7 @@ router.get("/queues/worker-health", requireAuth, async (req: AuthenticatedReques
     scanWorker:  getScanWorkerHealth(),
     alertWorker: getAlertWorkerHealth(),
     redis: isRedisAvailable(),
+    inProcessPaused: isInProcessQueuePaused(),
   });
 });
 

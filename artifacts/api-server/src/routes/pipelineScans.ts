@@ -96,6 +96,13 @@ interface QueueEntry {
 const scanQueue: QueueEntry[] = [];
 let activeScans = 0;
 
+// ── In-process pause state ─────────────────────────────────────────────────────
+let _inProcessPaused = false;
+
+export function pauseInProcessQueue(): void  { _inProcessPaused = true;  logger.info("In-process scan queue paused"); }
+export function resumeInProcessQueue(): void { _inProcessPaused = false; logger.info("In-process scan queue resumed"); }
+export function isInProcessQueuePaused(): boolean { return _inProcessPaused; }
+
 // ── In-process cancellation registry ─────────────────────────────────────────
 // Populated immediately when a scan is cancelled so phase checks don't need
 // a DB round-trip.  Cleaned up in the enqueueAndRun finally block.
@@ -107,6 +114,7 @@ export function getInProcessQueueStats() {
     pendingCount: scanQueue.length,
     maxConcurrent: MAX_CONCURRENT_SCANS,
     pendingScanIds: scanQueue.map(e => e.scanId),
+    paused: _inProcessPaused,
   };
 }
 
@@ -127,6 +135,7 @@ export function queuePosition(scanId: number): number {
 }
 
 function drainQueue() {
+  if (_inProcessPaused) return;
   while (activeScans < MAX_CONCURRENT_SCANS && scanQueue.length > 0) {
     const entry = scanQueue.shift()!;
     activeScans++;

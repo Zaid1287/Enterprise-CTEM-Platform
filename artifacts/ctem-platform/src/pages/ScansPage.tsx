@@ -10,7 +10,7 @@ import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock,
-  ShieldAlert, ShieldCheck, Calendar, History, Layers,
+  ShieldAlert, ShieldCheck, Calendar, History, Layers, Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -330,6 +330,16 @@ export default function ScansPage() {
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
                     #{(scan as any).queuePosition} in queue
                   </span>
+                )}
+                {(scan as any).bullmqJobId && (
+                  <a
+                    href={`${import.meta.env.BASE_URL}queue-monitor`.replace(/\/\//g, "/")}
+                    title={`BullMQ job: ${(scan as any).bullmqJobId}`}
+                    className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors"
+                    onClick={e => { e.preventDefault(); window.location.href = `${import.meta.env.BASE_URL}queue-monitor`.replace(/\/\//g, "/"); }}
+                  >
+                    <Link2 className="w-2.5 h-2.5" /> Queue
+                  </a>
                 )}
                 {(scan.status === "pending" || scan.status === "running") && (
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleCancel(scan.id)}>

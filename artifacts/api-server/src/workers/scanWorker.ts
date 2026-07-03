@@ -8,6 +8,21 @@ import { eq } from "drizzle-orm";
 let _worker: Worker<ScanJobData> | null = null;
 let _port = 0;
 
+// Per-job AbortControllers so we can abort the pipeline HTTP request on demand
+const activeJobControllers = new Map<number, AbortController>();
+
+/** Abort the in-flight pipeline HTTP request for a scan (called by cancel route). */
+export function abortActiveScanJob(scanId: number): boolean {
+  const ctrl = activeJobControllers.get(scanId);
+  if (ctrl) {
+    ctrl.abort();
+    activeJobControllers.delete(scanId);
+    logger.info({ scanId }, "Scan worker: aborted active job fetch");
+    return true;
+  }
+  return false;
+}
+
 export function startScanWorker(port: number): void {
   _port = port;
   if (!getActiveRedisUrl()) {
@@ -26,12 +41,23 @@ export function startScanWorker(port: number): void {
 
       await job.updateProgress(5);
 
+      // Store the BullMQ job ID on the scan record for traceability
+      await db.update(scansTable)
+        .set({ bullmqJobId: job.id ?? null })
+        .where(eq(scansTable.id, scanId))
+        .catch(() => {});
+
+      const controller = new AbortController();
+      activeJobControllers.set(scanId, controller);
+
       try {
         const origin = `http://127.0.0.1:${_port}`;
         const { signAccessToken } = await import("../lib/auth");
         const token = signAccessToken({ userId: job.data.userId, tenantId, role: "admin", email: "" });
 
-        await db.update(scansTable).set({ status: "running", startedAt: new Date() }).where(eq(scansTable.id, scanId));
+        await db.update(scansTable)
+          .set({ status: "running", startedAt: new Date() })
+          .where(eq(scansTable.id, scanId));
         await job.updateProgress(10);
 
         const resp = await fetch(`${origin}/api/scans/pipeline-run`, {
@@ -41,6 +67,7 @@ export function startScanWorker(port: number): void {
             "Authorization": `Bearer ${token}`,
           },
           body: JSON.stringify({ scanId, assetIds }),
+          signal: controller.signal,
         });
 
         if (!resp.ok) {
@@ -50,10 +77,20 @@ export function startScanWorker(port: number): void {
 
         await job.updateProgress(100);
         logger.info({ scanId }, "Scan worker: job complete");
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          // Cancelled by admin — scan already marked cancelled in DB by cancel route
+          logger.info({ scanId }, "Scan worker: job aborted (scan cancelled)");
+          return; // Don't throw — let the job complete gracefully
+        }
         logger.error({ err, scanId }, "Scan worker: job failed");
-        await db.update(scansTable).set({ status: "failed" }).where(eq(scansTable.id, scanId)).catch(() => {});
+        await db.update(scansTable)
+          .set({ status: "failed" })
+          .where(eq(scansTable.id, scanId))
+          .catch(() => {});
         throw err;
+      } finally {
+        activeJobControllers.delete(scanId);
       }
     },
     {
@@ -64,7 +101,15 @@ export function startScanWorker(port: number): void {
   );
 
   _worker.on("completed", (job) => logger.info({ jobId: job.id, scanId: job.data.scanId }, "Scan job completed"));
-  _worker.on("failed", (job, err) => logger.error({ err, jobId: job?.id }, "Scan job failed"));
+  _worker.on("failed", (job, err) => {
+    if (!job) return;
+    const allAttemptsUsed = job.attemptsMade >= (job.opts?.attempts ?? 3);
+    if (allAttemptsUsed) {
+      logger.warn({ jobId: job.id, scanId: job.data?.scanId, reason: err?.message }, "Scan job moved to Dead Letter Queue (all retries exhausted)");
+    } else {
+      logger.error({ err, jobId: job?.id }, "Scan job failed (will retry)");
+    }
+  });
   _worker.on("error", (err) => logger.error({ err }, "Scan worker error"));
 
   logger.info("Scan worker started (BullMQ)");

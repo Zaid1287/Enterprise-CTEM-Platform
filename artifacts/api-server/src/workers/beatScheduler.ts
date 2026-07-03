@@ -817,17 +817,57 @@ async function dispatchToolUpdateCheck(): Promise<void> {
 }
 
 let _queueDepthAlertCount = 0; // consecutive over-threshold poll count
+let _lastQueueDepthAlertAt = 0; // epoch ms of last DB alert insertion
 
 async function checkQueueDepth(): Promise<void> {
   try {
     const { getInProcessQueueStats } = await import("../routes/pipelineScans");
     const { activeScans: active, pendingCount: pending, maxConcurrent } = getInProcessQueueStats();
-    const total = active + pending;
-    const threshold = maxConcurrent * 2;
-    if (total > threshold) {
+
+    // Also count BullMQ waiting jobs when Redis is available
+    let bullmqWaiting = 0;
+    try {
+      const { getScanQueue } = await import("../queues/scanQueue");
+      const q = getScanQueue();
+      if (q) bullmqWaiting = await q.getWaitingCount();
+    } catch { /* non-fatal */ }
+
+    const totalWaiting = pending + bullmqWaiting;
+    const total        = active + totalWaiting;
+    const threshold    = maxConcurrent * 2;
+
+    if (totalWaiting > 20 || total > threshold) {
       _queueDepthAlertCount++;
       if (_queueDepthAlertCount >= 2) {
-        logger.warn({ active, pending, total, threshold }, "Beat: scan queue depth alert — queue backing up");
+        logger.warn({ active, pending, bullmqWaiting, total, threshold }, "Beat: scan queue depth alert — queue backing up");
+
+        // Insert DB alert for all tenants with active/pending scans — max once per hour
+        const now = Date.now();
+        if (now - _lastQueueDepthAlertAt > 60 * 60 * 1000) {
+          _lastQueueDepthAlertAt = now;
+          try {
+            const activeRows = await db
+              .select({ tenantId: scansTable.tenantId })
+              .from(scansTable)
+              .where(sql`${scansTable.status} IN ('pending', 'running')`);
+            const tenantIds = [...new Set(activeRows.map(r => r.tenantId))];
+            if (tenantIds.length > 0) {
+              await db.insert(alertsTable).values(
+                tenantIds.map(tenantId => ({
+                  tenantId,
+                  title: `Queue depth alert — ${totalWaiting} jobs waiting`,
+                  message: `The scan queue has ${totalWaiting} waiting jobs (threshold: 20). Consider investigating stuck scans or increasing capacity.`,
+                  type: "queue_depth",
+                  severity: "high",
+                  isRead: false,
+                })),
+              );
+              logger.info({ tenantCount: tenantIds.length }, "Beat: queue depth DB alerts inserted");
+            }
+          } catch (alertErr) {
+            logger.error({ alertErr }, "Beat: failed to insert queue depth alerts");
+          }
+        }
         _queueDepthAlertCount = 0; // reset so we don't spam every 60s
       }
     } else {

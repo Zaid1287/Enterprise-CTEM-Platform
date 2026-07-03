@@ -21,6 +21,7 @@ function toScanResponse(s: typeof scansTable.$inferSelect) {
     completedAt: s.completedAt?.toISOString() ?? null,
     createdAt: s.createdAt.toISOString(),
     queuePosition: s.status === "pending" ? queuePosition(s.id) : null,
+    bullmqJobId: s.bullmqJobId ?? null,
   };
 }
 
@@ -404,6 +405,15 @@ router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedReque
     }
   } catch {
     // Non-fatal — best effort BullMQ cleanup
+  }
+
+  // 4. Abort the active scan worker's in-flight HTTP fetch (BullMQ mode)
+  //    This ensures the pipeline HTTP connection is torn down immediately.
+  try {
+    const { abortActiveScanJob } = await import("../workers/scanWorker");
+    abortActiveScanJob(params.data.scanId);
+  } catch {
+    // Non-fatal
   }
 
   res.json(toScanResponse(scan));

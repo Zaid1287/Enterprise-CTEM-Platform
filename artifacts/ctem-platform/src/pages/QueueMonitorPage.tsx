@@ -4,8 +4,9 @@ import {
   Activity, CheckCircle2, XCircle, Clock, RefreshCw, Layers,
   Wifi, WifiOff, AlertTriangle, RotateCcw, Zap, Server,
   BarChart3, TrendingUp, Play, Pause, Database, Hash,
-  Cpu, Radio, Calendar, Trash2, ChevronRight,
+  Cpu, Radio, Calendar, Trash2, ChevronRight, Skull, Link2,
 } from "lucide-react";
+import { useLocation } from "wouter";
 import { getToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,19 +20,25 @@ import {
 /* ─── Types ─────────────────────────────────────────────────────────────── */
 interface ActiveScan {
   id: number; name: string; type: string;
-  status: "running" | "pending"; startedAt: string | null; assetCount: number;
+  status: "running" | "pending"; startedAt: string | null;
+  assetCount: number; bullmqJobId: string | null;
 }
 interface RecentScan {
   id: number; name: string; type: string; status: string;
-  startedAt: string | null; completedAt: string | null; assetCount: number;
+  startedAt: string | null; completedAt: string | null;
+  assetCount: number; bullmqJobId: string | null;
 }
 interface DbStats { running: number; pending: number; completed: number; failed: number; cancelled: number; }
 interface QueueStat { name: string; active: number; waiting: number; completed: number; failed: number; delayed: number; paused: boolean; }
-interface InProcess { activeScans: number; pendingCount: number; maxConcurrent: number; pendingScanIds: number[]; }
+interface InProcess { activeScans: number; pendingCount: number; maxConcurrent: number; pendingScanIds: number[]; paused: boolean; }
 interface WorkerInfo { running: boolean; mode: string; status: string; concurrency: number; }
-interface WorkerHealth { scanWorker: WorkerInfo; alertWorker: WorkerInfo; redis: boolean; }
+interface WorkerHealth { scanWorker: WorkerInfo; alertWorker: WorkerInfo; redis: boolean; inProcessPaused: boolean; }
 interface ThroughputHour { hour: string | null; completed: number; failed: number; cancelled: number; }
-interface ScheduledScan { id: number; name: string; frequency: string; nextRunAt: string | null; lastRunAt: string | null; assetName: string | null; }
+interface ScheduledScan {
+  id: number; name: string; frequency: string;
+  nextRunAt: string | null; lastRunAt: string | null;
+  assetName: string | null; assetCount: number;
+}
 interface QueueStatus {
   redis: { connected: boolean; url: string };
   queues: { scans: QueueStat; alerts: QueueStat };
@@ -45,8 +52,13 @@ interface QueueStatus {
 }
 interface Job {
   id: string; name: string; data: Record<string, unknown>;
-  progress: number; attemptsMade: number; failedReason?: string;
+  progress: number; attemptsMade: number; opts?: { attempts?: number }; failedReason?: string;
   timestamp: number; processedOn?: number; finishedOn?: number;
+}
+interface DlqJob {
+  id: string; name: string; data: Record<string, unknown>;
+  attemptsMade: number; maxAttempts: number; failedReason?: string;
+  timestamp: number; finishedOn?: number;
 }
 
 /* ─── API helpers ────────────────────────────────────────────────────────── */
@@ -59,14 +71,17 @@ async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json();
 }
 
-const fetchStatus     = () => api<QueueStatus>("/api/queues/status");
+const fetchStatus       = () => api<QueueStatus>("/api/queues/status");
 const fetchWorkerHealth = () => api<WorkerHealth>("/api/queues/worker-health");
-const fetchThroughput = () => api<{ hourly: ThroughputHour[] }>("/api/queues/throughput");
-const fetchJobs = (q: string, t: string) => api<{ jobs: Job[]; redis: boolean }>(`/api/queues/jobs?queue=${q}&type=${t}`);
-const retryFailed = (q: string) => api<{ retried: number }>("/api/queues/retry-failed", { method: "POST", body: JSON.stringify({ queue: q }) });
-const pauseQueue  = (q: string) => api<any>("/api/queues/pause",  { method: "POST", body: JSON.stringify({ queue: q }) });
-const resumeQueue = (q: string) => api<any>("/api/queues/resume", { method: "POST", body: JSON.stringify({ queue: q }) });
-const killJob     = (jobId: string, q: string) => api<any>(`/api/queues/jobs/${jobId}?queue=${q}`, { method: "DELETE" });
+const fetchThroughput   = () => api<{ hourly: ThroughputHour[] }>("/api/queues/throughput");
+const fetchJobs         = (q: string, t: string) => api<{ jobs: Job[]; redis: boolean }>(`/api/queues/jobs?queue=${q}&type=${t}`);
+const fetchDlq          = () => api<{ jobs: DlqJob[]; redis: boolean; total: number }>("/api/queues/dlq");
+const retryFailed       = (q: string) => api<{ retried: number }>("/api/queues/retry-failed", { method: "POST", body: JSON.stringify({ queue: q }) });
+const pauseQueue        = (q: string) => api<any>("/api/queues/pause",  { method: "POST", body: JSON.stringify({ queue: q }) });
+const resumeQueue       = (q: string) => api<any>("/api/queues/resume", { method: "POST", body: JSON.stringify({ queue: q }) });
+const killJob           = (jobId: string, q: string) => api<any>(`/api/queues/jobs/${jobId}?queue=${q}`, { method: "DELETE" });
+const dlqRetryJob       = (jobId: string) => api<{ ok: boolean }>(`/api/queues/dlq/${jobId}/retry`, { method: "POST" });
+const dlqDeleteJob      = (jobId: string) => api<{ ok: boolean }>(`/api/queues/dlq/${jobId}`, { method: "DELETE" });
 
 /* ─── Small helpers ──────────────────────────────────────────────────────── */
 function elapsed(s: string | null) {
@@ -76,6 +91,17 @@ function elapsed(s: string | null) {
   if (sec < 60) return `${sec}s`;
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+}
+/** How long until a future ISO timestamp */
+function countdown(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "overdue";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `in ${sec}s`;
+  if (sec < 3600) return `in ${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `in ${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  return `in ${Math.floor(sec / 86400)}d`;
 }
 function duration(a: string | null, b: string | null) {
   if (!a || !b) return "—";
@@ -172,6 +198,7 @@ export default function QueueMonitorPage() {
   const [jobType, setJobType] = useState<"active" | "waiting" | "completed" | "failed" | "delayed">("active");
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const { data: status, isLoading, error } = useQuery({
     queryKey: ["queue-status"],
@@ -195,6 +222,12 @@ export default function QueueMonitorPage() {
     refetchInterval: 5000,
     enabled: !!status?.redis.connected,
   });
+  const { data: dlqData, isLoading: dlqLoading } = useQuery({
+    queryKey: ["queue-dlq"],
+    queryFn: fetchDlq,
+    refetchInterval: 15_000,
+    enabled: !!status?.redis.connected,
+  });
 
   const retryMut = useMutation({
     mutationFn: () => retryFailed(selectedQueue),
@@ -216,10 +249,25 @@ export default function QueueMonitorPage() {
     onSuccess: () => { toast({ title: "Job removed" }); invalidate(); },
     onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
   });
+  const dlqRetryMut = useMutation({
+    mutationFn: ({ jobId }: { jobId: string }) => dlqRetryJob(jobId),
+    onSuccess: () => { toast({ title: "DLQ job re-queued for retry" }); invalidateDlq(); },
+    onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
+  });
+  const dlqDeleteMut = useMutation({
+    mutationFn: ({ jobId }: { jobId: string }) => dlqDeleteJob(jobId),
+    onSuccess: () => { toast({ title: "DLQ job purged" }); invalidateDlq(); },
+    onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
+  });
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["queue-status"] });
     qc.invalidateQueries({ queryKey: ["queue-jobs"] });
+    qc.invalidateQueries({ queryKey: ["queue-dlq"] });
+  }
+  function invalidateDlq() {
+    qc.invalidateQueries({ queryKey: ["queue-dlq"] });
+    qc.invalidateQueries({ queryKey: ["queue-status"] });
   }
 
   const JOB_TYPES = ["active", "waiting", "completed", "failed", "delayed"] as const;
@@ -460,6 +508,11 @@ export default function QueueMonitorPage() {
                           <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                             <Hash className="w-2.5 h-2.5" />{s.assetCount} asset{s.assetCount !== 1 ? "s" : ""}
                           </span>
+                          {s.bullmqJobId && (
+                            <span className="text-[10px] font-mono bg-purple-500/10 border border-purple-500/20 text-purple-400 px-1 rounded flex items-center gap-0.5">
+                              <Link2 className="w-2 h-2" />{s.bullmqJobId.slice(0, 8)}…
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="text-right shrink-0">
@@ -532,7 +585,9 @@ export default function QueueMonitorPage() {
                     </div>
                     <Badge variant="outline" className="text-[10px] border-purple-500/30 text-purple-400 shrink-0">{fmtFreq(s.frequency)}</Badge>
                     <div className="text-right shrink-0">
-                      <p className="text-xs font-medium">{s.nextRunAt ? elapsed(s.nextRunAt) + " ago" : "—"}</p>
+                      <p className={cn("text-xs font-medium", s.nextRunAt && new Date(s.nextRunAt) < new Date() ? "text-amber-400" : "text-foreground")}>
+                        {countdown(s.nextRunAt)}
+                      </p>
                       <p className="text-[10px] text-muted-foreground">{s.nextRunAt ? new Date(s.nextRunAt).toLocaleString() : "—"}</p>
                     </div>
                     <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -671,19 +726,105 @@ export default function QueueMonitorPage() {
             </div>
           )}
 
-          {/* ── In-memory notice ─────────────────────────────────────────────── */}
+          {/* ── DLQ — Dead Letter Queue (Redis mode only) ────────────────────── */}
+          {status.redis.connected && (
+            <div className="bg-card border border-red-500/20 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-red-500/20 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Skull className="w-4 h-4 text-red-400" />
+                  <h3 className="text-sm font-semibold">Dead Letter Queue</h3>
+                  <span className="text-[10px] text-muted-foreground">— jobs that exhausted all retries</span>
+                  {(dlqData?.total ?? 0) > 0 && (
+                    <Badge variant="outline" className="text-[10px] border-red-500/30 text-red-400 ml-1">
+                      {dlqData!.total}
+                    </Badge>
+                  )}
+                </div>
+                {(dlqData?.total ?? 0) > 0 && (
+                  <span className="text-[10px] text-muted-foreground">Retry or purge exhausted jobs</span>
+                )}
+              </div>
+              <div className="divide-y divide-border/40 min-h-[60px]">
+                {dlqLoading && (
+                  <div className="p-4 space-y-2">{[...Array(2)].map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
+                )}
+                {!dlqLoading && (dlqData?.jobs.length ?? 0) === 0 && (
+                  <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-2">
+                    <CheckCircle2 className="w-7 h-7 opacity-25 text-green-400" />
+                    <p className="text-xs">No exhausted jobs — DLQ is clear</p>
+                  </div>
+                )}
+                {!dlqLoading && dlqData?.jobs.map(job => (
+                  <div key={job.id} className="flex items-start gap-3 px-4 py-3 hover:bg-red-500/5 transition-colors">
+                    <Skull className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium truncate">{job.name}</p>
+                        <span className="text-[10px] font-mono text-muted-foreground">#{job.id.slice(0, 8)}</span>
+                        <Badge variant="outline" className="text-[10px] border-red-500/30 text-red-400">
+                          {job.attemptsMade}/{job.maxAttempts} attempts
+                        </Badge>
+                      </div>
+                      {job.failedReason && (
+                        <p className="text-[10px] text-red-400/80 font-mono truncate mt-0.5 bg-red-500/5 px-1.5 py-0.5 rounded">
+                          {job.failedReason}
+                        </p>
+                      )}
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Failed: {job.finishedOn ? new Date(job.finishedOn).toLocaleString() : elapsed(new Date(job.timestamp).toISOString()) + " ago"}
+                        {(job.data as any)?.scanId && ` · Scan #${(job.data as any).scanId}`}
+                        {(job.data as any)?.assetIds && ` · ${((job.data as any).assetIds as number[]).length} assets`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button size="sm" variant="outline"
+                        className="h-6 text-[10px] px-2 border-blue-500/40 text-blue-400 hover:bg-blue-500/10"
+                        onClick={() => dlqRetryMut.mutate({ jobId: job.id })}
+                        disabled={dlqRetryMut.isPending}>
+                        <RotateCcw className="w-2.5 h-2.5 mr-1" /> Retry
+                      </Button>
+                      <Button size="sm" variant="ghost"
+                        className="h-6 w-6 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        onClick={() => dlqDeleteMut.mutate({ jobId: job.id })}
+                        disabled={dlqDeleteMut.isPending}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── In-memory notice + pause controls ────────────────────────────── */}
           {!status.redis.connected && (
             <div className="border border-border rounded-xl p-5 bg-muted/20">
               <div className="flex items-start gap-3">
                 <WifiOff className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div className="space-y-1 flex-1">
-                  <p className="text-sm font-medium">BullMQ job inspector not available in in-memory mode</p>
+                <div className="space-y-2 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">In-memory mode — BullMQ job inspector requires Redis</p>
+                    {/* Pause/Resume works in in-memory mode too */}
+                    <div className="flex gap-2 shrink-0">
+                      {inP?.paused ? (
+                        <Button size="sm" variant="outline" className="h-7 text-xs border-green-500/40 text-green-400 hover:bg-green-500/10"
+                          onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>
+                          <Play className="w-3 h-3 mr-1" /> Resume Queue
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" className="h-7 text-xs border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
+                          onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>
+                          <Pause className="w-3 h-3 mr-1" /> Pause Queue
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Individual job history requires Redis. Queue stats above reflect the in-process FIFO
-                    queue directly. Pause/Resume and Kill actions require Redis mode.
-                    Set <code className="font-mono bg-muted px-1 rounded">REDIS_URL</code> in environment secrets.
+                    Queue stats reflect the in-process FIFO queue. Individual job history and DLQ require Redis.
+                    Pause/Resume controls work in both modes.
+                    Set <code className="font-mono bg-muted px-1 rounded">REDIS_URL</code> to enable distributed queuing.
                   </p>
-                  <p className="text-xs font-mono bg-muted rounded-lg p-2.5 mt-2 text-muted-foreground">
+                  <p className="text-xs font-mono bg-muted rounded-lg p-2.5 text-muted-foreground">
                     REDIS_URL=redis://default:&lt;password&gt;@&lt;host&gt;:6379
                   </p>
                 </div>
