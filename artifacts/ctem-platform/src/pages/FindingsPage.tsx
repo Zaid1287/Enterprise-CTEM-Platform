@@ -1,5 +1,7 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useListFindings, useUpdateFinding, getListFindingsQueryKey,
   useListFindingComments, useCreateFindingComment, getListFindingCommentsQueryKey,
@@ -14,7 +16,7 @@ import {
   ShieldAlert, Globe, Network, Server, Cpu, Smartphone,
   FileText, Code2, Camera, AlignLeft, Tag, Info,
   CheckCircle2, Clock, AlertCircle, XCircle, Minus,
-  MessageSquare, Send, Loader2, Sparkles, RefreshCw, ShieldOff, Layers,
+  MessageSquare, Send, Loader2, Sparkles, RefreshCw, ShieldOff, Layers, Brain,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -247,7 +249,7 @@ function CommentsPanel({ findingId }: { findingId: number }) {
 }
 
 // ── Drawer Mode ─────────────────────────────────────────────────────────────
-type DrawerMode = "metadata" | "headers" | "screenshots" | "comments" | null;
+type DrawerMode = "metadata" | "headers" | "screenshots" | "comments" | "ai" | null;
 
 // ── Finding Drawer ──────────────────────────────────────────────────────────
 function FindingDrawer({
@@ -269,7 +271,62 @@ function FindingDrawer({
     { key: "headers",     label: "Headers",     icon: AlignLeft },
     { key: "screenshots", label: "Screenshots", icon: Camera },
     { key: "comments",    label: "Comments",    icon: MessageSquare },
+    { key: "ai",          label: "Ask AI",      icon: Brain },
   ];
+
+  // ── AI tab state ────────────────────────────────────────────────────────────
+  const [aiText, setAiText]       = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiNoKey, setAiNoKey]     = useState(false);
+  const [aiModel, setAiModel]     = useState<string | null>(null);
+  const [aiUsage, setAiUsage]     = useState<{ totalTokens: number } | null>(null);
+  const aiAbortRef                = useRef(false);
+
+  const BASE_AI = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const triggerAiExplain = useCallback(async () => {
+    if (aiLoading) return;
+    aiAbortRef.current = false;
+    setAiText(""); setAiLoading(true); setAiNoKey(false); setAiModel(null); setAiUsage(null);
+    const token = sessionStorage.getItem("ctem_token") ?? "";
+    let accumulated = "";
+    try {
+      const resp = await fetch(`${BASE_AI}/api/ai/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "explain-finding", findingId: finding.id }),
+      });
+      if (!resp.body) throw new Error("No stream");
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        if (aiAbortRef.current) { reader.cancel(); break; }
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n"); buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.noKey) setAiNoKey(true);
+            if (d.provider) setAiModel(d.provider);
+            if (d.text) { accumulated += d.text; setAiText(accumulated); }
+            if (d.usage) setAiUsage({ totalTokens: d.usage.totalTokens ?? 0 });
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { setAiText(accumulated || "Failed to load AI analysis. Please try again."); }
+    setAiLoading(false);
+  }, [finding.id, BASE_AI]);
+
+  // Auto-trigger on first visit to AI tab
+  useEffect(() => {
+    if (activeTab === "ai" && !aiText && !aiLoading) {
+      triggerAiExplain();
+    }
+  }, [activeTab]);
 
   const evidence = (() => {
     try { return JSON.parse(finding.evidence ?? "{}") as Record<string, unknown>; } catch { return {}; }
@@ -418,6 +475,112 @@ function FindingDrawer({
 
           {activeTab === "comments" && (
             <CommentsPanel findingId={finding.id} />
+          )}
+
+          {activeTab === "ai" && (
+            <div className="space-y-3">
+              {/* Header row */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5 text-primary" />
+                  <span className="text-[11px] font-semibold">AI Vulnerability Analysis</span>
+                  {aiModel && !aiLoading && (
+                    <span className="text-[9px] text-green-400/70 font-mono">⚡ {aiModel}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {aiUsage && !aiLoading && (
+                    <span className="text-[9px] text-muted-foreground/40">~{aiUsage.totalTokens.toLocaleString()} tokens</span>
+                  )}
+                  <Button
+                    size="sm" variant="ghost"
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => { setAiText(""); triggerAiExplain(); }}
+                    disabled={aiLoading}
+                    title="Regenerate"
+                  >
+                    <RefreshCw className={cn("w-3 h-3", aiLoading && "animate-spin")} />
+                  </Button>
+                  <a
+                    href={`/ai-copilot?findingId=${finding.id}&action=explain`}
+                    className="text-[9px] text-primary/70 hover:text-primary underline underline-offset-2 whitespace-nowrap"
+                  >
+                    Full view →
+                  </a>
+                </div>
+              </div>
+
+              {/* No-key warning */}
+              {aiNoKey && !aiLoading && (
+                <div className="flex items-center gap-2 text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
+                  <Sparkles className="w-3 h-3 shrink-0" />
+                  Template response — <a href="/settings/account" className="underline ml-0.5">add an API key</a> for real AI analysis.
+                </div>
+              )}
+
+              {/* Streaming content */}
+              <div className="bg-muted/20 border border-border/40 rounded-xl p-3 min-h-32">
+                {aiLoading && !aiText ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-3 w-3/4" />
+                    <Skeleton className="h-3 w-full" />
+                    <Skeleton className="h-3 w-5/6" />
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/50 mt-3">
+                      <Sparkles className="w-3 h-3 animate-pulse text-primary" />
+                      Analysing vulnerability…
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h2: ({ children }) => <h2 className="text-xs font-bold mt-3 mb-1.5 text-foreground">{children}</h2>,
+                        h3: ({ children }) => <h3 className="text-[11px] font-semibold mt-2 mb-1 text-foreground/90">{children}</h3>,
+                        p: ({ children }) => <p className="text-[11px] text-muted-foreground mb-1.5 leading-relaxed">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc pl-4 space-y-0.5 mb-1.5">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-4 space-y-0.5 mb-1.5">{children}</ol>,
+                        li: ({ children }) => <li className="text-[11px] text-muted-foreground">{children}</li>,
+                        strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                        code: ({ children }) => <code className="font-mono text-[10px] bg-muted/60 px-1 rounded text-primary">{children}</code>,
+                        blockquote: ({ children }) => <blockquote className="border-l-2 border-primary/30 pl-2 my-1.5 italic text-muted-foreground text-[11px]">{children}</blockquote>,
+                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 text-[11px]">{children}</a>,
+                      }}
+                    >
+                      {aiText}
+                    </ReactMarkdown>
+                    {aiLoading && <span className="inline-block w-1.5 h-3.5 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />}
+                  </>
+                )}
+              </div>
+
+              {/* Quick actions */}
+              {!aiLoading && aiText && (
+                <div className="flex flex-wrap gap-1.5">
+                  <a
+                    href={`/ai-copilot?findingId=${finding.id}&action=remediation`}
+                    className="text-[10px] border border-border/50 rounded-full px-2.5 py-0.5 hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                  >
+                    Get Remediation Plan →
+                  </a>
+                  <a
+                    href={`/ai-copilot?findingId=${finding.id}&action=chat`}
+                    className="text-[10px] border border-border/50 rounded-full px-2.5 py-0.5 hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                  >
+                    Chat about this finding →
+                  </a>
+                  {finding.cve && (
+                    <a
+                      href={`https://nvd.nist.gov/vuln/detail/${finding.cve}`}
+                      target="_blank" rel="noopener noreferrer"
+                      className="text-[10px] border border-border/50 rounded-full px-2.5 py-0.5 hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                    >
+                      NVD: {finding.cve} ↗
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
