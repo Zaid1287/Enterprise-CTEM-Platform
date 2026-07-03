@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import {
   Key, Save, Eye, EyeOff, CheckCircle2, AlertTriangle, Mail, Bell,
   Search, Globe, ShieldAlert, Database, ExternalLink, Trash2,
-  Wifi, WifiOff, RefreshCw, ChevronRight, Loader2, FlaskConical,
+  Wifi, WifiOff, RefreshCw, ChevronRight, Loader2, FlaskConical, Brain, Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -140,6 +140,7 @@ export default function PlatformSettingsPage() {
   const [testingKey, setTestingKey] = useState<string | null>(null);
   const [restartingWorkers, setRestartingWorkers] = useState(false);
   const [redisStatus, setRedisStatus] = useState<{ redisConfigured: boolean; redisConnected: boolean; bullmqActive: boolean } | null>(null);
+  const [aiStatus, setAiStatus] = useState<{ llmEnabled: boolean; provider: string | null; model: string; providersCount: number } | null>(null);
 
   const TESTABLE_KEYS = new Set(["shodan_api_key", "virustotal_api_key", "nvd_api_key", "censys_api_id", "redis_url"]);
 
@@ -172,12 +173,19 @@ export default function PlatformSettingsPage() {
       .catch(() => {});
   };
 
+  const loadAiStatus = () => {
+    apiFetch<{ llmEnabled: boolean; provider: string | null; model: string; providersCount: number }>(`${BASE}/api/ai/status`)
+      .then(data => setAiStatus(data))
+      .catch(() => {});
+  };
+
   const [selectedCat, setSelectedCat] = useState("scanning");
 
   useEffect(() => {
     if (user?.role !== "super_admin") { navigate("/dashboard"); return; }
     loadSettings();
     loadRedisStatus();
+    loadAiStatus();
   }, [user?.role]);
 
   const loadSettings = () => {
@@ -301,6 +309,44 @@ export default function PlatformSettingsPage() {
           Click the eye icon to reveal a stored value.
         </p>
       </div>
+
+      {/* AI Copilot status */}
+      {aiStatus !== null && (
+        <div className={cn(
+          "flex items-center justify-between gap-4 rounded-xl border px-4 py-3",
+          aiStatus.llmEnabled
+            ? "bg-emerald-500/8 border-emerald-500/25"
+            : "bg-muted/30 border-border/50",
+        )}>
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "w-8 h-8 rounded-lg flex items-center justify-center border",
+              aiStatus.llmEnabled ? "bg-emerald-500/15 border-emerald-500/30" : "bg-muted/50 border-border",
+            )}>
+              <Brain className={cn("w-4 h-4", aiStatus.llmEnabled ? "text-emerald-400" : "text-muted-foreground")} />
+            </div>
+            <div>
+              <p className="text-sm font-medium">AI Copilot</p>
+              {aiStatus.llmEnabled ? (
+                <p className="text-[11px] text-emerald-400/80">
+                  Active · {aiStatus.provider ?? "unknown"} · {aiStatus.model}
+                  {aiStatus.providersCount > 1 && <span className="text-muted-foreground ml-1">+{aiStatus.providersCount - 1} more</span>}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">No API key configured — running in template mode</p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {aiStatus.llmEnabled
+              ? <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              : <AlertTriangle className="w-4 h-4 text-muted-foreground/50" />}
+            <a href="/settings/account" className="text-[11px] text-primary/70 hover:text-primary underline underline-offset-2 whitespace-nowrap flex items-center gap-1">
+              <Activity className="w-3 h-3" /> Configure per-user keys
+            </a>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-[260px_1fr] gap-5">

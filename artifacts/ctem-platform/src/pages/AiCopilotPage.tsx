@@ -287,6 +287,15 @@ export default function AiCopilotPage() {
       .catch(() => setProvidersLoaded(true));
   }, []);
 
+  // ── Finding search
+  const [findingSearch, setFindingSearch] = useState("");
+  const filteredFindings = findingSearch
+    ? findingList.filter((f: any) =>
+        f.title?.toLowerCase().includes(findingSearch.toLowerCase()) ||
+        (f.cve ?? "").toLowerCase().includes(findingSearch.toLowerCase()) ||
+        (f.severity ?? "").toLowerCase().includes(findingSearch.toLowerCase()))
+    : findingList;
+
   // ── Compliance search
   const [controlSearch, setControlSearch] = useState("");
   const filteredControls = controlSearch
@@ -505,20 +514,34 @@ export default function AiCopilotPage() {
           <div className="bg-card border border-border rounded-xl p-4 space-y-3">
             <p className="text-xs text-muted-foreground">Get a detailed technical analysis of a vulnerability finding including CVE context, exploitability, and business impact.</p>
             <div className="flex gap-2">
-              <Select value={selectedFinding} onValueChange={v => { setSelectedFinding(v); explainStream.reset(); }}>
-                <SelectTrigger className="flex-1 h-8 text-xs">
-                  <SelectValue placeholder="Select a finding to analyse…" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {findingList.map((f: any) => (
-                    <SelectItem key={f.id} value={String(f.id)}>
-                      <span className={cn("text-[10px] font-mono mr-1.5", sevColor(f.severity))}>[{(f.severity ?? "").toUpperCase()}]</span>
-                      {f.title?.slice(0, 60)}
-                      {f.cve && <span className="text-muted-foreground/60 ml-1">{f.cve}</span>}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex-1 flex flex-col gap-1.5">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder="Search findings by title, CVE, or severity…"
+                    value={findingSearch}
+                    onChange={e => setFindingSearch(e.target.value)}
+                    className="pl-8 h-8 text-xs"
+                  />
+                </div>
+                <Select value={selectedFinding} onValueChange={v => { setSelectedFinding(v); explainStream.reset(); }}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Select a finding to analyse…" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {filteredFindings.length === 0 && (
+                      <div className="px-3 py-4 text-center text-xs text-muted-foreground">No findings match your search</div>
+                    )}
+                    {filteredFindings.map((f: any) => (
+                      <SelectItem key={f.id} value={String(f.id)}>
+                        <span className={cn("text-[10px] font-mono mr-1.5", sevColor(f.severity))}>[{(f.severity ?? "").toUpperCase()}]</span>
+                        {f.title?.slice(0, 60)}
+                        {f.cve && <span className="text-muted-foreground/60 ml-1">{f.cve}</span>}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <GenerateButton
                 label="Explain"
                 loadingLabel="Analysing…"
@@ -557,19 +580,33 @@ export default function AiCopilotPage() {
           <div className="bg-card border border-border rounded-xl p-4 space-y-3">
             <p className="text-xs text-muted-foreground">Step-by-step remediation plan with priority SLA, effort estimate, and reference links.</p>
             <div className="flex gap-2">
-              <Select value={selectedFinding} onValueChange={v => { setSelectedFinding(v); remediationStream.reset(); }}>
-                <SelectTrigger className="flex-1 h-8 text-xs">
-                  <SelectValue placeholder="Select a finding…" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {findingList.map((f: any) => (
-                    <SelectItem key={f.id} value={String(f.id)}>
-                      <span className={cn("text-[10px] font-mono mr-1.5", sevColor(f.severity))}>[{(f.severity ?? "").toUpperCase()}]</span>
-                      {f.title?.slice(0, 60)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex-1 flex flex-col gap-1.5">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder="Search findings by title, CVE, or severity…"
+                    value={findingSearch}
+                    onChange={e => setFindingSearch(e.target.value)}
+                    className="pl-8 h-8 text-xs"
+                  />
+                </div>
+                <Select value={selectedFinding} onValueChange={v => { setSelectedFinding(v); remediationStream.reset(); }}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Select a finding…" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {filteredFindings.length === 0 && (
+                      <div className="px-3 py-4 text-center text-xs text-muted-foreground">No findings match your search</div>
+                    )}
+                    {filteredFindings.map((f: any) => (
+                      <SelectItem key={f.id} value={String(f.id)}>
+                        <span className={cn("text-[10px] font-mono mr-1.5", sevColor(f.severity))}>[{(f.severity ?? "").toUpperCase()}]</span>
+                        {f.title?.slice(0, 60)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <GenerateButton
                 label="Generate Plan"
                 loadingLabel="Generating…"
