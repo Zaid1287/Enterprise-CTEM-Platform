@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useListReports, useCreateReport, useDeleteReport,
   getListReportsQueryKey,
@@ -7,7 +9,7 @@ import { useListAssets } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Download, Trash2, FileText, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Search } from "lucide-react";
+import { Plus, Download, Trash2, FileText, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Search, Brain, Sparkles, AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -67,6 +69,46 @@ export default function ReportsPage() {
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const { user } = useAuth();
   const queryClient = useQueryClient();
+
+  // ── AI Executive Summary state ─────────────────────────────────────────────
+  const [showAiSummary, setShowAiSummary] = useState(false);
+  const [aiSummaryText, setAiSummaryText] = useState("");
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryNoKey, setAiSummaryNoKey] = useState(false);
+  const BASE_REPORTS = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const triggerAiSummary = useCallback(async () => {
+    if (aiSummaryLoading) return;
+    setAiSummaryText(""); setAiSummaryLoading(true); setAiSummaryNoKey(false);
+    const token = sessionStorage.getItem("ctem_token") ?? "";
+    let accumulated = "";
+    try {
+      const resp = await fetch(`${BASE_REPORTS}/api/ai/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "executive-summary" }),
+      });
+      if (!resp.body) throw new Error("No stream");
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n"); buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.noKey) setAiSummaryNoKey(true);
+            if (d.text) { accumulated += d.text; setAiSummaryText(accumulated); }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { setAiSummaryText(accumulated || "Failed to generate executive summary. Please try again."); }
+    setAiSummaryLoading(false);
+  }, [aiSummaryLoading, BASE_REPORTS]);
 
   const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
   const { data: reports, isLoading } = useListReports({
@@ -204,11 +246,84 @@ export default function ReportsPage() {
         </div>
         <div className="flex items-center gap-2">
           {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}
+          <Button
+            variant="outline" size="sm"
+            className={cn("gap-1.5", showAiSummary && "border-primary/50 text-primary")}
+            onClick={() => {
+              const next = !showAiSummary;
+              setShowAiSummary(next);
+              if (next && !aiSummaryText) triggerAiSummary();
+            }}
+          >
+            {aiSummaryLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5" />}
+            AI Summary
+            {showAiSummary ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </Button>
           <Button size="sm" onClick={openCreate}>
             <Plus className="w-4 h-4 mr-1.5" /> Generate Report
           </Button>
         </div>
       </div>
+
+      {/* ── AI Executive Summary Panel ── */}
+      {showAiSummary && (
+        <div className="bg-muted/20 border border-primary/20 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-primary" />
+              <span className="text-sm font-semibold">AI Executive Summary</span>
+              <span className="text-[10px] text-muted-foreground/60">— Tenant-wide security posture analysis</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => { setAiSummaryText(""); triggerAiSummary(); }}
+                disabled={aiSummaryLoading}
+                title="Regenerate"
+              >
+                <RefreshCw className={cn("w-3.5 h-3.5", aiSummaryLoading && "animate-spin")} />
+              </button>
+              <a href="/ai-copilot" className="text-[10px] text-primary/70 hover:text-primary underline">Open AI Copilot →</a>
+            </div>
+          </div>
+          {aiSummaryNoKey && (
+            <div className="flex items-center gap-1.5 text-xs text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded px-2.5 py-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              Template response — <a href="/settings/account" className="underline ml-1">add an API key</a> in Account Settings for real AI analysis.
+            </div>
+          )}
+          <div className="text-sm text-muted-foreground">
+            {aiSummaryLoading && !aiSummaryText ? (
+              <div className="space-y-2">
+                <Skeleton className="h-3 w-3/4" />
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-5/6" />
+                <Skeleton className="h-3 w-2/3" />
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground/50 mt-3">
+                  <Sparkles className="w-3.5 h-3.5 animate-pulse text-primary" />
+                  Generating executive summary…
+                </div>
+              </div>
+            ) : (
+              <>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                  h2: ({ children }) => <h2 className="text-sm font-bold mt-3 mb-1.5 text-foreground">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-xs font-semibold mt-2 mb-1 text-foreground/90">{children}</h3>,
+                  p: ({ children }) => <p className="text-xs text-muted-foreground mb-2 leading-relaxed">{children}</p>,
+                  ul: ({ children }) => <ul className="list-disc pl-4 space-y-0.5 mb-2">{children}</ul>,
+                  li: ({ children }) => <li className="text-xs text-muted-foreground">{children}</li>,
+                  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                  table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-xs w-full border-collapse">{children}</table></div>,
+                  th: ({ children }) => <th className="px-3 py-1 text-left font-semibold text-foreground border border-border/40 bg-muted/40">{children}</th>,
+                  td: ({ children }) => <td className="px-3 py-1 text-muted-foreground border border-border/40">{children}</td>,
+                  blockquote: ({ children }) => <blockquote className="border-l-2 border-primary/40 pl-3 text-xs text-muted-foreground/70 italic my-2">{children}</blockquote>,
+                }}>{aiSummaryText}</ReactMarkdown>
+                {aiSummaryLoading && <span className="inline-block w-2 h-4 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-3">
         {isLoading && [...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}

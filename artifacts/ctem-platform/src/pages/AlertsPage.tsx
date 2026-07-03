@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useListAlerts, useUpdateAlert, useListAlertRules, useCreateAlertRule,
   useUpdateAlertRule, useDeleteAlertRule, useListAssetGroups,
@@ -8,7 +10,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox } from "lucide-react";
+import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox, Brain, Sparkles, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -60,6 +62,47 @@ export default function AlertsPage() {
   const [ruleForm, setRuleForm] = useState<{ name: string; triggerType: string; channel: string; destination: string; groupId: number | null }>({ name: "", triggerType: "new_finding", channel: "email", destination: "", groupId: null });
   const [testStates, setTestStates] = useState<Record<number, TestState>>({});
   const queryClient = useQueryClient();
+
+  // ── AI explain-alert state (per alert) ───────────────────────────────────
+  const [aiAlertOpen, setAiAlertOpen] = useState<Record<number, boolean>>({});
+  const [aiAlertText, setAiAlertText] = useState<Record<number, string>>({});
+  const [aiAlertLoading, setAiAlertLoading] = useState<Record<number, boolean>>({});
+  const [aiAlertNoKey, setAiAlertNoKey] = useState<Record<number, boolean>>({});
+
+  const triggerAlertExplain = useCallback(async (alertId: number) => {
+    if (aiAlertLoading[alertId]) return;
+    setAiAlertText(p => ({ ...p, [alertId]: "" }));
+    setAiAlertLoading(p => ({ ...p, [alertId]: true }));
+    setAiAlertNoKey(p => ({ ...p, [alertId]: false }));
+    const token = sessionStorage.getItem("ctem_token") ?? "";
+    let accumulated = "";
+    try {
+      const resp = await fetch(`${BASE}/api/ai/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "explain-alert", alertId }),
+      });
+      if (!resp.body) throw new Error("No stream");
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n"); buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.noKey) setAiAlertNoKey(p => ({ ...p, [alertId]: true }));
+            if (d.text) { accumulated += d.text; setAiAlertText(p => ({ ...p, [alertId]: accumulated })); }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { setAiAlertText(p => ({ ...p, [alertId]: accumulated || "Failed to generate analysis. Please try again." })); }
+    setAiAlertLoading(p => ({ ...p, [alertId]: false }));
+  }, [aiAlertLoading, BASE]);
 
   const sseRef = useRef<EventSource | null>(null);
 
@@ -245,10 +288,12 @@ export default function AlertsPage() {
           {!isLoading && filteredUnread.map((alert: any) => (
             <div
               key={alert.id}
-              className="bg-card border border-primary/30 rounded-xl p-4 transition-all cursor-pointer hover:border-primary/50 hover:bg-accent/10 group"
-              onClick={() => { markRead(alert.id); navigate(`/alerts/${alert.id}`); }}
+              className="bg-card border border-primary/30 rounded-xl p-4 transition-all hover:border-primary/50 hover:bg-accent/10 group"
             >
-              <div className="flex items-start justify-between gap-3">
+              <div
+                className="flex items-start justify-between gap-3 cursor-pointer"
+                onClick={() => { markRead(alert.id); navigate(`/alerts/${alert.id}`); }}
+              >
                 <div className="flex items-start gap-2.5 flex-1 min-w-0">
                   <AlertTypeIcon type={alert.type} className="w-4 h-4 shrink-0 mt-0.5" />
                   <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />
@@ -275,9 +320,79 @@ export default function AlertsPage() {
                   >
                     <Archive className="w-3.5 h-3.5" />
                   </Button>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+                  <Button
+                    variant="ghost" size="icon" className="h-7 w-7"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const isOpen = !aiAlertOpen[alert.id];
+                      setAiAlertOpen(p => ({ ...p, [alert.id]: isOpen }));
+                      if (isOpen && !aiAlertText[alert.id]) triggerAlertExplain(alert.id);
+                    }}
+                    title="AI Explain Alert"
+                  >
+                    <Brain className={cn("w-3.5 h-3.5", aiAlertOpen[alert.id] ? "text-primary" : "text-muted-foreground/60")} />
+                  </Button>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors cursor-pointer" onClick={() => { markRead(alert.id); navigate(`/alerts/${alert.id}`); }} />
                 </div>
               </div>
+              {/* AI Explain Panel */}
+              {aiAlertOpen[alert.id] && (
+                <div className="mt-3 bg-muted/20 border border-primary/20 rounded-lg p-3 space-y-2" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Brain className="w-3.5 h-3.5 text-primary" />
+                      <span className="text-xs font-semibold">AI Alert Analysis</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={() => { setAiAlertText(p => ({ ...p, [alert.id]: "" })); triggerAlertExplain(alert.id); }}
+                        disabled={aiAlertLoading[alert.id]}
+                        title="Regenerate"
+                      >
+                        <RefreshCw className={cn("w-3 h-3", aiAlertLoading[alert.id] && "animate-spin")} />
+                      </button>
+                      <button
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={() => setAiAlertOpen(p => ({ ...p, [alert.id]: false }))}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                  {aiAlertNoKey[alert.id] && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      Template response — <a href="/settings/account" className="underline ml-0.5">add an API key</a> for real AI analysis.
+                    </div>
+                  )}
+                  <div className="text-xs text-muted-foreground">
+                    {aiAlertLoading[alert.id] && !aiAlertText[alert.id] ? (
+                      <div className="space-y-1.5">
+                        <Skeleton className="h-2.5 w-3/4" />
+                        <Skeleton className="h-2.5 w-full" />
+                        <Skeleton className="h-2.5 w-5/6" />
+                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50 mt-2">
+                          <Sparkles className="w-3 h-3 animate-pulse text-primary" />
+                          Analysing alert…
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                          h2: ({ children }) => <h2 className="text-xs font-bold mt-2 mb-1 text-foreground">{children}</h2>,
+                          h3: ({ children }) => <h3 className="text-[11px] font-semibold mt-1.5 mb-0.5 text-foreground/90">{children}</h3>,
+                          p: ({ children }) => <p className="text-[11px] text-muted-foreground mb-1.5 leading-relaxed">{children}</p>,
+                          ul: ({ children }) => <ul className="list-disc pl-4 space-y-0.5 mb-1.5">{children}</ul>,
+                          li: ({ children }) => <li className="text-[11px] text-muted-foreground">{children}</li>,
+                          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                        }}>{aiAlertText[alert.id]}</ReactMarkdown>
+                        {aiAlertLoading[alert.id] && <span className="inline-block w-1.5 h-3 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
 

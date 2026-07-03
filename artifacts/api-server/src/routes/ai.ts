@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and } from "drizzle-orm";
-import { db, findingsTable, complianceControlsTable, complianceFrameworksTable, assetsTable, riskScoresTable, scansTable } from "@workspace/db";
+import { db, findingsTable, complianceControlsTable, complianceFrameworksTable, assetsTable, riskScoresTable, scansTable, alertsTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import {
   llmComplete, llmStream, isLLMAvailable, resolveProviderConfig,
@@ -153,6 +153,13 @@ function buildRiskScoreMessages(asset: any, risk: any, findings: any[]): LLMMess
   ];
 }
 
+function buildAlertExplainMessages(alert: any, asset: any | null, finding: any | null): LLMMessage[] {
+  return [
+    { role: "system", content: `You are a security operations analyst for an enterprise CTEM platform. Explain security alerts clearly and provide actionable guidance. Use Markdown:\n## Alert Analysis: <title>\n### What Happened\n### Why It Matters\n### Affected Asset\n### Immediate Actions\n### Long-term Remediation` },
+    { role: "user", content: `Explain this security alert:\n\n**Alert:** ${alert.title}\n**Severity:** ${alert.severity?.toUpperCase()}\n**Type:** ${alert.type}\n**Message:** ${alert.message ?? "No details provided"}\n${asset ? `**Asset:** ${asset.name} (${asset.type})` : ""}\n${finding ? `**Related Finding:** ${finding.title} (${finding.severity}, ${finding.cve ?? "no CVE"})` : ""}\n**Time:** ${new Date(alert.createdAt).toLocaleDateString()}\n\nExplain what happened, why it matters, and what the security team should do right now.` },
+  ];
+}
+
 function buildScanSummaryMessages(scan: any, asset: any, findings: any[]): LLMMessage[] {
   const bySev = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const f of findings) bySev[f.severity as keyof typeof bySev] = (bySev[f.severity as keyof typeof bySev] ?? 0) + 1;
@@ -194,6 +201,7 @@ router.post("/ai/stream", requireAuth, async (req: AuthenticatedRequest, res): P
     controlId,
     assetId,
     scanId,
+    alertId,
     provider: preferredProvider,
     messages: chatMessages,
   } = req.body as {
@@ -202,6 +210,7 @@ router.post("/ai/stream", requireAuth, async (req: AuthenticatedRequest, res): P
     controlId?: number;
     assetId?: number;
     scanId?: number;
+    alertId?: number;
     provider?: Provider;
     messages?: LLMMessage[];
   };
@@ -282,6 +291,16 @@ router.post("/ai/stream", requireAuth, async (req: AuthenticatedRequest, res): P
         const findings = await db.select().from(findingsTable).where(and(eq(findingsTable.scanId, scanId), eq(findingsTable.tenantId, req.user!.tenantId)));
         messages = buildScanSummaryMessages(scan, asset ?? { name: `Scan #${scan.id}`, type: "unknown" }, findings);
         templateFallback = () => `## Scan Triage: ${asset?.name ?? `Scan #${scan.id}`}\n\n**Scan #${scan.id}** — ${findings.length} findings detected\n\nCritical: ${findings.filter(f => f.severity === "critical").length} | High: ${findings.filter(f => f.severity === "high").length} | KEV: ${findings.filter(f => f.isKev).length}\n\n> Configure an AI provider in Account Settings for detailed AI triage analysis.`;
+        break;
+      }
+      case "explain-alert": {
+        if (!alertId) { send({ error: "alertId required", done: true }); if (!closed) res.end(); return; }
+        const [alert] = await db.select().from(alertsTable).where(and(eq(alertsTable.id, alertId), eq(alertsTable.tenantId, req.user!.tenantId)));
+        if (!alert) { send({ error: "Alert not found", done: true }); if (!closed) res.end(); return; }
+        const [relatedAsset] = alert.relatedAssetId ? await db.select().from(assetsTable).where(eq(assetsTable.id, alert.relatedAssetId)) : [undefined];
+        const [relatedFinding] = alert.relatedFindingId ? await db.select({ title: findingsTable.title, severity: findingsTable.severity, cve: findingsTable.cve }).from(findingsTable).where(eq(findingsTable.id, alert.relatedFindingId)) : [undefined];
+        messages = buildAlertExplainMessages(alert, relatedAsset ?? null, relatedFinding ?? null);
+        templateFallback = () => `## Alert Analysis: ${alert.title}\n\n**Severity:** ${alert.severity?.toUpperCase()} | **Type:** ${alert.type}\n\n${alert.message ?? "No additional details."}\n\n### Immediate Actions\n1. Review the alert details and assess impact\n2. Investigate the related asset and findings\n3. Escalate if severity is critical or high\n4. Document response actions in your incident log\n\n> Add an AI provider key in Account Settings for detailed AI-powered alert analysis.`;
         break;
       }
       case "chat": {

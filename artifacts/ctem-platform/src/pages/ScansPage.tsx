@@ -1,4 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useListScans, useCreateScan, useCancelScan,
   useListAssets, useListScanJobs, useListAssetGroups, useGetAssetGroupMembers,
@@ -11,6 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock,
   ShieldAlert, ShieldCheck, Calendar, History, Layers, Link2,
+  Brain, Sparkles, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -113,6 +116,48 @@ export default function ScansPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  // ── AI triage state (per scan) ────────────────────────────────────────────
+  const [aiScanOpen, setAiScanOpen] = useState<Record<number, boolean>>({});
+  const [aiScanText, setAiScanText] = useState<Record<number, string>>({});
+  const [aiScanLoading, setAiScanLoading] = useState<Record<number, boolean>>({});
+  const [aiScanNoKey, setAiScanNoKey] = useState<Record<number, boolean>>({});
+  const BASE_SCAN = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const triggerScanTriage = useCallback(async (scanId: number) => {
+    if (aiScanLoading[scanId]) return;
+    setAiScanText(p => ({ ...p, [scanId]: "" }));
+    setAiScanLoading(p => ({ ...p, [scanId]: true }));
+    setAiScanNoKey(p => ({ ...p, [scanId]: false }));
+    const token = sessionStorage.getItem("ctem_token") ?? "";
+    let accumulated = "";
+    try {
+      const resp = await fetch(`${BASE_SCAN}/api/ai/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "summarize-scan", scanId }),
+      });
+      if (!resp.body) throw new Error("No stream");
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n"); buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.noKey) setAiScanNoKey(p => ({ ...p, [scanId]: true }));
+            if (d.text) { accumulated += d.text; setAiScanText(p => ({ ...p, [scanId]: accumulated })); }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { setAiScanText(p => ({ ...p, [scanId]: accumulated || "Failed to generate triage summary. Please try again." })); }
+    setAiScanLoading(p => ({ ...p, [scanId]: false }));
+  }, [aiScanLoading, BASE_SCAN]);
 
   const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
   const scanParams = isPrivileged && tenantFilter ? { tenantId: tenantFilter } : {};
@@ -346,6 +391,20 @@ export default function ScansPage() {
                     <X className="w-3 h-3 mr-1" /> Cancel
                   </Button>
                 )}
+                {scan.status === "completed" && (
+                  <Button
+                    variant="outline" size="sm"
+                    className={cn("h-7 text-xs", aiScanOpen[scan.id] && "border-primary/50 text-primary")}
+                    onClick={() => {
+                      const isOpen = !aiScanOpen[scan.id];
+                      setAiScanOpen(p => ({ ...p, [scan.id]: isOpen }));
+                      if (isOpen && !aiScanText[scan.id]) triggerScanTriage(scan.id);
+                    }}
+                  >
+                    {aiScanLoading[scan.id] ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Brain className="w-3 h-3 mr-1" />}
+                    AI Triage
+                  </Button>
+                )}
               </div>
             </div>
             {(scan.status === "running" || scan.status === "pending") && (
@@ -361,6 +420,57 @@ export default function ScansPage() {
                 return <span className="text-foreground font-medium">Duration: {dur}</span>;
               })()}
             </div>
+            {/* AI Triage Panel */}
+            {aiScanOpen[scan.id] && (
+              <div className="mt-3 bg-muted/20 border border-primary/20 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Brain className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-xs font-semibold">AI Triage Summary</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => { setAiScanText(p => ({ ...p, [scan.id]: "" })); triggerScanTriage(scan.id); }}
+                      disabled={aiScanLoading[scan.id]}
+                    >
+                      <RefreshCw className={cn("w-3 h-3", aiScanLoading[scan.id] && "animate-spin")} />
+                    </button>
+                    <button className="text-muted-foreground hover:text-foreground" onClick={() => setAiScanOpen(p => ({ ...p, [scan.id]: false }))}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                {aiScanNoKey[scan.id] && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    Template response — <a href="/settings/account" className="underline ml-0.5">add an API key</a> for real AI triage.
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground">
+                  {aiScanLoading[scan.id] && !aiScanText[scan.id] ? (
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-2.5 w-3/4" /><Skeleton className="h-2.5 w-full" /><Skeleton className="h-2.5 w-5/6" />
+                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50 mt-2">
+                        <Sparkles className="w-3 h-3 animate-pulse text-primary" /> Triaging scan results…
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                        h2: ({ children }) => <h2 className="text-xs font-bold mt-2 mb-1 text-foreground">{children}</h2>,
+                        h3: ({ children }) => <h3 className="text-[11px] font-semibold mt-1.5 mb-0.5 text-foreground/90">{children}</h3>,
+                        p: ({ children }) => <p className="text-[11px] text-muted-foreground mb-1.5 leading-relaxed">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc pl-4 space-y-0.5 mb-1.5">{children}</ul>,
+                        li: ({ children }) => <li className="text-[11px] text-muted-foreground">{children}</li>,
+                        strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                      }}>{aiScanText[scan.id]}</ReactMarkdown>
+                      {aiScanLoading[scan.id] && <span className="inline-block w-1.5 h-3 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ))}
         {!isLoading && allScans.length === 0 && (
