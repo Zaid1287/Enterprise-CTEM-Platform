@@ -79,6 +79,8 @@
     "@clerk/clerk-react": "^5.61.3",
     "d3": "^7.9.0",
     "globe.gl": "^2.46.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "three": "^0.185.0",
     "zustand": "^5.0.14"
   }
