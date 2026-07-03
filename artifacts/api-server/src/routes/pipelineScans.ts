@@ -96,6 +96,31 @@ interface QueueEntry {
 const scanQueue: QueueEntry[] = [];
 let activeScans = 0;
 
+// ── In-process cancellation registry ─────────────────────────────────────────
+// Populated immediately when a scan is cancelled so phase checks don't need
+// a DB round-trip.  Cleaned up in the enqueueAndRun finally block.
+export const cancelledScanIds = new Set<number>();
+
+export function getInProcessQueueStats() {
+  return {
+    activeScans,
+    pendingCount: scanQueue.length,
+    maxConcurrent: MAX_CONCURRENT_SCANS,
+    pendingScanIds: scanQueue.map(e => e.scanId),
+  };
+}
+
+/** Remove a scan from the in-process FIFO queue before it starts. Returns true if removed. */
+export function removeScanFromInProcessQueue(scanId: number): boolean {
+  const idx = scanQueue.findIndex(e => e.scanId === scanId);
+  if (idx !== -1) {
+    scanQueue.splice(idx, 1);
+    logger.info({ scanId }, "Scan removed from in-process queue (cancelled before start)");
+    return true;
+  }
+  return false;
+}
+
 export function queuePosition(scanId: number): number {
   const idx = scanQueue.findIndex(e => e.scanId === scanId);
   return idx === -1 ? 0 : idx + 1;
@@ -216,6 +241,7 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
     } finally {
       activeScans--;
       scanProgressMap.delete(entry.scanId);
+      cancelledScanIds.delete(entry.scanId); // cleanup registry
       drainQueue();
     }
   });
@@ -1545,7 +1571,7 @@ async function executePipeline(
   async function processAsset(config: AssetToolConfigItem): Promise<void> {
     const currentScan = await db.select({ status: scansTable.status }).from(scansTable)
       .where(eq(scansTable.id, scanId)).then(r => r[0]);
-    if (currentScan?.status === "cancelled") return;
+    if (cancelledScanIds.has(scanId) || currentScan?.status === "cancelled") return;
 
     const asset = assets.find(a => a.id === config.assetId);
     if (!asset) return;
@@ -1981,6 +2007,7 @@ async function executePipeline(
     }
 
     // ── PHASE 2: Port Scanning — always runs (Naabu + Nmap + Shodan) ──────────
+    if (cancelledScanIds.has(scanId)) return;
     let realPorts: PortFinding[] = [];
     let nmapRaw = "";
     let portScanReport: PortScanReport | null = null;
@@ -2036,6 +2063,7 @@ async function executePipeline(
     }
 
     // ── PHASE 3: Web Recon ────────────────────────────────────────────────────
+    if (cancelledScanIds.has(scanId)) return;
     let httpInfo: HttpInfo | null = null;
     let endpoints: EndpointFinding[] = [];
     let detectedTechs: DetectedTechnology[] = [];
@@ -2265,6 +2293,7 @@ async function executePipeline(
     }
 
     // ── PHASE 4: Vuln & Secrets Scanning ─────────────────────────────────────
+    if (cancelledScanIds.has(scanId)) return;
     let secretFindings: VulnFinding[] = [];
     let cveFindings: VulnFinding[] = [];
     let headerVulnFindings: VulnFinding[] = [];
@@ -2439,6 +2468,7 @@ async function executePipeline(
     }
 
     // ── PHASE 5: SSL/TLS ──────────────────────────────────────────────────────
+    if (cancelledScanIds.has(scanId)) return;
     let sslIntel: IntelItem[] = [];
     let sslVulns: VulnFinding[] = [];
     if (needsSsl) {

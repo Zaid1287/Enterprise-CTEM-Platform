@@ -816,6 +816,28 @@ async function dispatchToolUpdateCheck(): Promise<void> {
   }
 }
 
+let _queueDepthAlertCount = 0; // consecutive over-threshold poll count
+
+async function checkQueueDepth(): Promise<void> {
+  try {
+    const { getInProcessQueueStats } = await import("../routes/pipelineScans");
+    const { activeScans: active, pendingCount: pending, maxConcurrent } = getInProcessQueueStats();
+    const total = active + pending;
+    const threshold = maxConcurrent * 2;
+    if (total > threshold) {
+      _queueDepthAlertCount++;
+      if (_queueDepthAlertCount >= 2) {
+        logger.warn({ active, pending, total, threshold }, "Beat: scan queue depth alert — queue backing up");
+        _queueDepthAlertCount = 0; // reset so we don't spam every 60s
+      }
+    } else {
+      _queueDepthAlertCount = 0;
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
 async function dispatchDueScans(): Promise<void> {
   try {
     await Promise.all([
@@ -825,6 +847,7 @@ async function dispatchDueScans(): Promise<void> {
       dispatchDueBrandThreatSchedules(),
       dispatchDueWatchlistNonDomainItems(),
       dispatchToolUpdateCheck(),
+      checkQueueDepth(),
     ]);
   } catch (err) {
     logger.error({ err }, "Beat scheduler error");

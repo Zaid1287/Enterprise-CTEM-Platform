@@ -3,7 +3,7 @@ import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable, externalMemberAssetsTable } from "@workspace/db";
-import { enqueueAndRun, queuePosition, type AssetToolConfigItem } from "./pipelineScans";
+import { enqueueAndRun, queuePosition, cancelledScanIds, removeScanFromInProcessQueue, type AssetToolConfigItem } from "./pipelineScans";
 import {
   CreateScanBody, GetScanParams, DeleteScanParams, CancelScanParams,
   ListScansQueryParams, ListScanJobsParams,
@@ -381,6 +381,31 @@ router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedReque
   const [scan] = await db.update(scansTable).set({ status: "cancelled", completedAt: new Date() })
     .where(cancelWhere).returning();
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+
+  // 1. Register in-process cancellation so pipeline phase checks abort immediately
+  cancelledScanIds.add(params.data.scanId);
+  // Auto-clean after 15 min in case the pipeline never sees it (already done by finally block normally)
+  setTimeout(() => cancelledScanIds.delete(params.data.scanId), 15 * 60 * 1000);
+
+  // 2. Remove from in-process FIFO queue if the scan hasn't started yet
+  removeScanFromInProcessQueue(params.data.scanId);
+
+  // 3. Remove from BullMQ waiting queue if running in Redis mode
+  try {
+    const { getScanQueue } = await import("../queues/scanQueue");
+    const q = getScanQueue();
+    if (q) {
+      const waiting = await q.getWaiting(0, 200);
+      for (const job of waiting) {
+        if (Number(job.data?.scanId) === params.data.scanId) {
+          await job.remove().catch(() => {});
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — best effort BullMQ cleanup
+  }
+
   res.json(toScanResponse(scan));
 });
 

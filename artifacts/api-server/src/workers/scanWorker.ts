@@ -81,3 +81,14 @@ export async function restartScanWorker(): Promise<void> {
   await stopScanWorker();
   startScanWorker(_port);
 }
+
+export function getScanWorkerHealth() {
+  return {
+    running: _worker !== null,
+    mode: _worker ? "redis" : "inline",
+    status: _worker
+      ? (_worker.isRunning() ? "active" : "idle")
+      : "disabled",
+    concurrency: _worker ? 5 : 0,
+  };
+}

@@ -142,6 +142,69 @@ function FpStatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium border", s.cls)}>{s.label}</span>;
 }
 
+/* ─── Queue Health Widget (shown on admin dashboard) ──────────────────────── */
+function QueueHealthWidget() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["queue-status-widget"],
+    queryFn: () => apiFetch<any>(`${BASE}/api/queues/status`),
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+  });
+
+  if (isLoading || !data) return null;
+
+  const db = data.dbStats ?? {};
+  const inP = data.inProcess ?? {};
+  const totalFinished = (db.completed ?? 0) + (db.failed ?? 0) + (db.cancelled ?? 0);
+  const successRate = totalFinished > 0 ? Math.round(((db.completed ?? 0) / totalFinished) * 100) : null;
+  const isRedis = data.mode === "redis";
+  const depthWarning = data.depthWarning;
+
+  return (
+    <div className={cn(
+      "rounded-xl border p-4",
+      depthWarning ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-card",
+    )}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          {depthWarning && <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />}
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scan Queue Health</p>
+          <span className={cn(
+            "text-[10px] px-1.5 py-0.5 rounded font-medium border",
+            isRedis ? "border-green-500/30 bg-green-500/10 text-green-400" : "border-blue-500/30 bg-blue-500/10 text-blue-400",
+          )}>
+            {isRedis ? "Redis" : "In-memory"}
+          </span>
+        </div>
+        <Link href="/queue-monitor" className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5 transition-colors">
+          View monitor <ArrowRight className="w-2.5 h-2.5" />
+        </Link>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "Running",     value: inP.activeScans ?? db.running ?? 0,  icon: Activity,     color: (inP.activeScans ?? 0) > 0 ? "text-blue-400" : "text-muted-foreground" },
+          { label: "In Queue",    value: inP.pendingCount ?? db.pending ?? 0, icon: Clock,         color: (inP.pendingCount ?? 0) > 0 ? "text-yellow-400" : "text-muted-foreground" },
+          { label: "Success Rate",value: successRate !== null ? `${successRate}%` : "—", icon: CheckCircle2, color: successRate !== null && successRate >= 90 ? "text-green-400" : "text-amber-400" },
+          { label: "Failed",      value: db.failed ?? 0,  icon: XCircle, color: (db.failed ?? 0) > 0 ? "text-red-400" : "text-muted-foreground" },
+        ].map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="bg-black/20 rounded-lg px-3 py-2.5 border border-white/5">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <Icon className={cn("w-3 h-3", color)} />
+              <p className="text-[10px] text-muted-foreground">{label}</p>
+            </div>
+            <p className={cn("text-xl font-bold tabular-nums", color)}>{value}</p>
+          </div>
+        ))}
+      </div>
+      {depthWarning && (
+        <p className="text-[10px] text-amber-400 mt-2">
+          Queue backing up — {(inP.activeScans ?? 0)} active + {(inP.pendingCount ?? 0)} pending exceeds threshold
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ─── Super Admin Dashboard ─────────────────────────── */
 function SuperAdminDashboard() {
   const { user } = useAuth();
@@ -1350,6 +1413,9 @@ function AdminDashboard() {
       </div>
 
       <AiMapperBanner />
+
+      {/* Queue Health Widget */}
+      <QueueHealthWidget />
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

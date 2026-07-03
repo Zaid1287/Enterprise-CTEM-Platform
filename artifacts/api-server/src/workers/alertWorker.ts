@@ -45,3 +45,14 @@ export async function restartAlertWorker(): Promise<void> {
   await stopAlertWorker();
   startAlertWorker();
 }
+
+export function getAlertWorkerHealth() {
+  return {
+    running: _worker !== null,
+    mode: _worker ? "redis" : "inline",
+    status: _worker
+      ? (_worker.isRunning() ? "active" : "idle")
+      : "disabled",
+    concurrency: _worker ? 10 : 0,
+  };
+}
