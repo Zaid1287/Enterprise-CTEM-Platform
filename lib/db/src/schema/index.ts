@@ -9,6 +9,7 @@ export * from "./compliance";
 export * from "./reports";
 export * from "./alerts";
 export * from "./riskScores";
+export * from "./riskScoreHistory";
 export * from "./auditLogs";
 export * from "./securityTools";
 export * from "./packages";

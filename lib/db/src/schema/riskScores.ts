@@ -13,6 +13,7 @@ export const riskScoresTable = pgTable("risk_scores", {
   kevBonus: real("kev_bonus").notNull().default(0),
   criticalityBonus: real("criticality_bonus").notNull().default(0),
   exposureBonus: real("exposure_bonus").notNull().default(0),
+  businessImpactComponent: real("business_impact_component").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 

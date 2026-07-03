@@ -4,8 +4,13 @@
  *
  * EPSS: https://api.first.org/data/v1/epss
  * KEV:  https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+ *
+ * Issue 6: EPSS partial-failure logging + enrichedCount tracking
+ * Issue 7: DB-backed KEV cache (persists across server restarts)
  */
 
+import { eq, sql } from "drizzle-orm";
+import { db, platformSettingsTable } from "@workspace/db";
 import { logger } from "./logger";
 
 const EPSS_BATCH_SIZE  = 100;
@@ -13,16 +18,74 @@ const EPSS_API         = "https://api.first.org/data/v1/epss";
 const KEV_URL          = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 const KEV_TTL_MS       = 24 * 60 * 60 * 1000; // 24 hours
 
+// Platform settings keys for DB-backed KEV cache (Issue 7)
+const KEV_CACHE_KEY    = "cisa_kev_cache";
+const KEV_CACHE_AT_KEY = "cisa_kev_cache_at";
+
 interface EpssEntry {
   cve:        string;
   epss:       number;   // 0-1 probability of exploitation
   percentile: number;   // 0-1 rank among all CVEs
 }
 
-// Module-level in-process cache (refreshed each deployment restart)
+// Module-level in-process cache (fast layer)
 let kevCache: Set<string> | null = null;
 let kevCacheTs = 0;
 const epssCache = new Map<string, EpssEntry>();
+
+// ── DB-backed KEV cache helpers (Issue 7) ─────────────────────────────────────
+
+async function readKevFromDb(): Promise<{ data: Set<string>; ts: number } | null> {
+  try {
+    const [dataRow] = await db.select({ value: platformSettingsTable.value })
+      .from(platformSettingsTable)
+      .where(eq(platformSettingsTable.key, KEV_CACHE_KEY));
+    const [atRow] = await db.select({ value: platformSettingsTable.value })
+      .from(platformSettingsTable)
+      .where(eq(platformSettingsTable.key, KEV_CACHE_AT_KEY));
+
+    if (!dataRow?.value || !atRow?.value) return null;
+
+    const ts = Date.parse(atRow.value);
+    if (isNaN(ts)) return null;
+
+    const ids: string[] = JSON.parse(dataRow.value);
+    return { data: new Set(ids), ts };
+  } catch {
+    return null;
+  }
+}
+
+async function writeKevToDb(kevSet: Set<string>): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    const json = JSON.stringify(Array.from(kevSet));
+
+    await db.insert(platformSettingsTable).values({
+      key: KEV_CACHE_KEY,
+      value: json,
+      label: "CISA KEV Cache",
+      description: "Cached CISA Known Exploited Vulnerabilities catalog (auto-updated every 24h)",
+      category: "cache",
+    }).onConflictDoUpdate({
+      target: platformSettingsTable.key,
+      set: { value: json },
+    });
+
+    await db.insert(platformSettingsTable).values({
+      key: KEV_CACHE_AT_KEY,
+      value: now,
+      label: "CISA KEV Cache Timestamp",
+      description: "Timestamp of last CISA KEV cache update",
+      category: "cache",
+    }).onConflictDoUpdate({
+      target: platformSettingsTable.key,
+      set: { value: now },
+    });
+  } catch (err) {
+    logger.warn({ err }, "Failed to persist KEV cache to DB (non-fatal)");
+  }
+}
 
 // ── EPSS ─────────────────────────────────────────────────────────────────────
 
@@ -43,6 +106,9 @@ export async function fetchEpssScores(cveIds: string[]): Promise<Map<string, Eps
   }
   if (uncached.length === 0) return result;
 
+  let fetchedCount = 0;
+  let failedBatches = 0;
+
   for (let i = 0; i < uncached.length; i += EPSS_BATCH_SIZE) {
     const batch = uncached.slice(i, i + EPSS_BATCH_SIZE);
     try {
@@ -53,7 +119,11 @@ export async function fetchEpssScores(cveIds: string[]): Promise<Map<string, Eps
         headers: { Accept: "application/json" },
       });
       clearTimeout(t);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        failedBatches++;
+        logger.warn({ status: res.status, batchSize: batch.length }, "EPSS batch returned non-OK status");
+        continue;
+      }
       const data: any = await res.json().catch(() => null);
       for (const entry of data?.data ?? []) {
         const cveUp: string = String(entry.cve ?? "").toUpperCase();
@@ -64,11 +134,23 @@ export async function fetchEpssScores(cveIds: string[]): Promise<Map<string, Eps
         };
         epssCache.set(cveUp, e);
         result.set(cveUp, e);
+        fetchedCount++;
       }
     } catch (err) {
+      failedBatches++;
       logger.warn({ err, batch: batch.slice(0, 5) }, "EPSS batch fetch failed (non-fatal)");
     }
   }
+
+  // Issue 6: warn when enrichment is significantly incomplete
+  const expectedFromApi = uncached.length;
+  if (failedBatches > 0 || fetchedCount < expectedFromApi * 0.5) {
+    logger.warn(
+      { requested: expectedFromApi, fetched: fetchedCount, failedBatches, missing: expectedFromApi - fetchedCount },
+      "EPSS enrichment partially failed — missing CVEs will use epss=0, understating risk",
+    );
+  }
+
   return result;
 }
 
@@ -76,8 +158,22 @@ export async function fetchEpssScores(cveIds: string[]): Promise<Map<string, Eps
 
 export async function fetchKevSet(): Promise<Set<string>> {
   const now = Date.now();
+
+  // In-memory cache is fresh
   if (kevCache && now - kevCacheTs < KEV_TTL_MS) return kevCache;
 
+  // Issue 7: Try DB-backed cache before hitting CISA API
+  if (!kevCache) {
+    const dbCache = await readKevFromDb();
+    if (dbCache && now - dbCache.ts < KEV_TTL_MS) {
+      logger.info({ count: dbCache.data.size, source: "db" }, "KEV catalog loaded from DB cache");
+      kevCache   = dbCache.data;
+      kevCacheTs = dbCache.ts;
+      return kevCache;
+    }
+  }
+
+  // Fetch fresh from CISA
   try {
     const ctrl = new AbortController();
     const t    = setTimeout(() => ctrl.abort(), 20000);
@@ -91,12 +187,28 @@ export async function fetchKevSet(): Promise<Set<string>> {
     const kev = new Set<string>(
       (data?.vulnerabilities ?? []).map((v: any) => String(v.cveID ?? "").toUpperCase()).filter(Boolean)
     );
-    logger.info({ count: kev.size }, "KEV catalog refreshed");
+    logger.info({ count: kev.size, source: "cisa" }, "KEV catalog refreshed from CISA");
     kevCache   = kev;
     kevCacheTs = now;
+
+    // Issue 7: persist to DB so next restart gets it without a CISA round-trip
+    await writeKevToDb(kev);
+
     return kev;
   } catch (err) {
-    logger.warn({ err }, "KEV fetch failed — using cached/empty set (non-fatal)");
+    logger.warn({ err }, "KEV fetch from CISA failed — trying DB cache as fallback");
+
+    // Fallback: try DB cache even if stale
+    const dbCache = await readKevFromDb();
+    if (dbCache) {
+      const ageHours = Math.round((now - dbCache.ts) / 3600000);
+      logger.warn({ count: dbCache.data.size, ageHours }, "Using stale DB KEV cache as fallback");
+      kevCache   = dbCache.data;
+      kevCacheTs = dbCache.ts;
+      return kevCache;
+    }
+
+    logger.warn("No KEV data available (no memory cache, no DB cache, CISA fetch failed) — KEV bonus will be 0");
     return kevCache ?? new Set();
   }
 }
@@ -110,9 +222,18 @@ type FindingLike = {
   [key: string]: unknown;
 };
 
+export interface EnrichmentResult<T> {
+  findings: T[];
+  totalCveFindigs: number;
+  enrichedWithEpss: number;
+  epssEnriched: boolean; // Issue 6: flag for callers to detect partial failure
+}
+
 /**
  * Enriches a list of findings with real EPSS scores and KEV status.
- * Non-CVE findings (synthetic IDs like VT-*, CLOUD-*, SEC-*) are returned unchanged.
+ * Non-CVE findings (synthetic IDs like VT-*, CLOUD-*, EXP-PORT-*) are returned unchanged.
+ *
+ * Returns enrichment stats so callers can detect and surface partial failures.
  */
 export async function enrichFindingsWithEpssKev<T extends FindingLike>(findings: T[]): Promise<T[]> {
   const realCveFindings = findings.filter(f => f.cve && /^CVE-\d{4}-\d+$/i.test(f.cve));
@@ -136,6 +257,15 @@ export async function enrichFindingsWithEpssKev<T extends FindingLike>(findings:
     return { ...f, epss: epssVal, isKev };
   });
 
-  logger.info({ total: findings.length, realCves: realCveFindings.length, enriched: enrichedCount }, "EPSS+KEV enrichment complete");
+  const epssEnriched = enrichedCount > 0 || realCveFindings.length === 0;
+  if (!epssEnriched) {
+    logger.warn({ totalCves: realCveFindings.length }, "EPSS enrichment returned no data for any CVE — epss=0 will be used for all findings");
+  } else {
+    logger.info(
+      { total: findings.length, realCves: realCveFindings.length, enriched: enrichedCount, epssEnriched },
+      "EPSS+KEV enrichment complete",
+    );
+  }
+
   return enriched;
 }

@@ -10,6 +10,8 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
+import { finalizeScannedAssets } from "../lib/scanScheduler";
+import { logger } from "../lib/logger";
 
 const router = Router();
 
@@ -408,6 +410,14 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
   if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
   await logAudit(req.user!, "update_finding", "finding", finding.id, `status: ${parsed.data.status ?? "unchanged"}`);
   res.json(toFindingResponse(finding));
+
+  // Issue 4: Recalculate risk score whenever a finding is updated (status change, etc.)
+  // Fire-and-forget — does not block the response
+  if (finding.assetId) {
+    finalizeScannedAssets([finding.assetId], { updateLastScannedAt: false }).catch(err =>
+      logger.warn({ err, assetId: finding.assetId }, "Risk recalculation after finding update failed (non-fatal)"),
+    );
+  }
 });
 
 router.get("/findings/:findingId/comments", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
