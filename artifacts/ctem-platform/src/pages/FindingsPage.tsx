@@ -3,6 +3,8 @@ import { Link, useLocation, useSearch } from "wouter";
 import {
   useListFindings, useUpdateFinding, getListFindingsQueryKey,
   useListFindingComments, useCreateFindingComment, getListFindingCommentsQueryKey,
+  useListAssetGroups, useGetAssetGroupMembers,
+  getListAssetGroupsQueryKey, getGetAssetGroupMembersQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
@@ -12,7 +14,7 @@ import {
   ShieldAlert, Globe, Network, Server, Cpu, Smartphone,
   FileText, Code2, Camera, AlignLeft, Tag, Info,
   CheckCircle2, Clock, AlertCircle, XCircle, Minus,
-  MessageSquare, Send, Loader2, Sparkles, RefreshCw, ShieldOff,
+  MessageSquare, Send, Loader2, Sparkles, RefreshCw, ShieldOff, Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -441,7 +443,24 @@ export default function FindingsPage() {
   const [staleOnly, setStaleOnly] = useState(false);   // filter: consecutiveMissedScans > 0
   const [page, setPage]       = useState(1);
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const [groupFilter, setGroupFilter]   = useState<number | null>(null);
   const { user } = useAuth();
+
+  const { data: allGroups } = useListAssetGroups({
+    query: { queryKey: getListAssetGroupsQueryKey() },
+  });
+  const { data: groupMembersRaw } = useGetAssetGroupMembers(groupFilter ?? 0, {
+    query: {
+      queryKey: getGetAssetGroupMembersQueryKey(groupFilter ?? 0),
+      enabled: groupFilter !== null,
+    },
+  });
+  const groupMemberIdSet = useMemo(() => {
+    if (groupFilter === null || !groupMembersRaw) return null;
+    return new Set((groupMembersRaw as any[]).map((m: any) => m.assetId ?? m.id));
+  }, [groupFilter, groupMembersRaw]);
+
+  const groupList = (allGroups as any[]) ?? [];
 
   const [drawerFinding, setDrawerFinding] = useState<any>(null);
   const [drawerMode, setDrawerMode]       = useState<DrawerMode>(null);
@@ -482,13 +501,14 @@ export default function FindingsPage() {
 
   const allList = (findings as any[]) ?? [];
 
-  // Client-side delta filters (applied after server fetch)
+  // Client-side delta + group filters (applied after server fetch)
   const list = useMemo(() => {
     let l = allList;
-    if (newOnly)   l = l.filter((f: any) => f.isNewSinceLastScan);
-    if (staleOnly) l = l.filter((f: any) => (f.consecutiveMissedScans ?? 0) > 0);
+    if (groupMemberIdSet) l = l.filter((f: any) => groupMemberIdSet.has(f.assetId));
+    if (newOnly)          l = l.filter((f: any) => f.isNewSinceLastScan);
+    if (staleOnly)        l = l.filter((f: any) => (f.consecutiveMissedScans ?? 0) > 0);
     return l;
-  }, [allList, newOnly, staleOnly]);
+  }, [allList, groupMemberIdSet, newOnly, staleOnly]);
 
   const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   const paginated  = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -618,16 +638,43 @@ export default function FindingsPage() {
           <RefreshCw className="w-3.5 h-3.5" />
           Missed Scans
         </Button>
-        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); setNewOnly(false); setStaleOnly(false); resetPage(); }}>
+        {/* Group filter */}
+        {groupList.length > 0 && (
+          <Select
+            value={groupFilter !== null ? String(groupFilter) : "_all_"}
+            onValueChange={v => { setGroupFilter(v === "_all_" ? null : Number(v)); resetPage(); }}
+          >
+            <SelectTrigger className="w-44 h-8 text-sm gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="All Groups" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_all_">All Groups</SelectItem>
+              {groupList.map((g: any) => (
+                <SelectItem key={g.id} value={String(g.id)}>
+                  {g.name}
+                  <span className="ml-1.5 text-muted-foreground text-xs">({g.assetCount})</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); setGroupFilter(null); setNewOnly(false); setStaleOnly(false); resetPage(); }}>
           Clear
         </Button>
         {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); resetPage(); }} />}
       </div>
 
       {/* Active filter hint */}
-      {(newOnly || staleOnly) && (
-        <div className="flex items-center gap-2 text-xs">
+      {(newOnly || staleOnly || groupFilter !== null) && (
+        <div className="flex items-center gap-2 text-xs flex-wrap">
           <span className="text-muted-foreground">Showing:</span>
+          {groupFilter !== null && (
+            <span className="inline-flex items-center gap-1 text-primary font-medium">
+              <Layers className="w-3 h-3" />
+              {groupList.find((g: any) => g.id === groupFilter)?.name ?? "Group"}
+            </span>
+          )}
           {newOnly   && <span className="text-emerald-400 font-medium">✦ new findings from latest scan</span>}
           {staleOnly && <span className="text-amber-400 font-medium">⚠ findings missed in recent scans</span>}
           <span className="text-muted-foreground">({list.length} result{list.length !== 1 ? "s" : ""})</span>

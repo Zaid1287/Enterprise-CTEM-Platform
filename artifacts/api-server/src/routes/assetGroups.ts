@@ -15,6 +15,7 @@ function toAssetResponse(a: typeof assetsTable.$inferSelect) {
   return {
     id: a.id, tenantId: a.tenantId, name: a.name, type: a.type, value: a.value,
     status: a.status, riskScore: a.riskScore, ipAddress: a.ipAddress,
+    verificationStatus: a.verificationStatus,
     createdAt: a.createdAt.toISOString(),
     lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
   };
