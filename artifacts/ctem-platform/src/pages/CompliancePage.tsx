@@ -1,12 +1,12 @@
 import { useState, useRef } from "react";
 import {
-  useListComplianceControls, useUpdateComplianceControl,
-  getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey,
+  useListComplianceControls, useUpdateComplianceControl, useListAssetGroups,
+  getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey, getListAssetGroupsQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { Paperclip, Upload, FileText, X, Download, Trash2, Bot, Loader2 } from "lucide-react";
+import { Paperclip, Upload, FileText, X, Download, Trash2, Bot, Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -102,6 +102,7 @@ export default function CompliancePage() {
   const [selectedFramework, setSelectedFramework] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const [groupFilter, setGroupFilter] = useState<number | null>(null);
   const { user } = useAuth();
   const [uploadingId, setUploadingId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -147,6 +148,10 @@ export default function CompliancePage() {
   });
   const updateControl = useUpdateComplianceControl();
 
+  const { data: groups } = useListAssetGroups({ query: { queryKey: getListAssetGroupsQueryKey() } });
+  const groupList = (groups as any[]) ?? [];
+  const selectedGroupObj = groupFilter ? groupList.find((g: any) => g.id === groupFilter) : null;
+
   const handleStatusChange = async (controlId: number, status: string) => {
     await updateControl.mutateAsync({ controlId, data: { status } });
     queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() });
@@ -178,13 +183,39 @@ export default function CompliancePage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <h1 className="text-lg font-semibold">Compliance Management</h1>
           <p className="text-sm text-muted-foreground">Track compliance across security frameworks</p>
         </div>
-        {isPrivileged && <TenantFilter value={tenantFilter} onChange={setTenantFilter} />}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Group scope filter */}
+          {groupList.length > 0 && (
+            <div className="relative">
+              <select
+                value={groupFilter ?? ""}
+                onChange={e => setGroupFilter(e.target.value ? Number(e.target.value) : null)}
+                className="h-8 pl-7 pr-3 text-xs border border-border rounded-md bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors"
+              >
+                <option value="">All Assets</option>
+                {groupList.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+              <Layers className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            </div>
+          )}
+          {isPrivileged && <TenantFilter value={tenantFilter} onChange={setTenantFilter} />}
+        </div>
       </div>
+      {/* Group context banner */}
+      {selectedGroupObj && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-xs text-primary">
+          <Layers className="w-3.5 h-3.5 shrink-0" />
+          <span>Showing compliance in the context of group <span className="font-semibold">{selectedGroupObj.name}</span> ({selectedGroupObj.assetCount} assets)</span>
+          <button className="ml-auto text-muted-foreground hover:text-foreground" onClick={() => setGroupFilter(null)}>✕</button>
+        </div>
+      )}
 
       {/* Hidden file input */}
       <input

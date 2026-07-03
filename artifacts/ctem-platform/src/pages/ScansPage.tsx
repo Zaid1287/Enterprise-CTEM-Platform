@@ -1,14 +1,16 @@
 import { useState, useMemo } from "react";
 import {
   useListScans, useCreateScan, useCancelScan,
-  useListAssets, useListScanJobs, getListScansQueryKey, getListAssetsQueryKey, getListScanJobsQueryKey,
+  useListAssets, useListScanJobs, useListAssetGroups, useGetAssetGroupMembers,
+  getListScansQueryKey, getListAssetsQueryKey, getListScanJobsQueryKey, getListAssetGroupsQueryKey,
+  getGetAssetGroupMembersQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock,
-  ShieldAlert, ShieldCheck, Calendar, History,
+  ShieldAlert, ShieldCheck, Calendar, History, Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -107,6 +109,7 @@ export default function ScansPage() {
   const [createError, setCreateError] = useState<{ message: string; unverified?: { id: number; name: string }[] } | null>(null);
   const [page, setPage] = useState(1);
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const [groupFilter, setGroupFilter] = useState<number | null>(null);
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -132,7 +135,35 @@ export default function ScansPage() {
   const cancelScan = useCancelScan();
 
   const assetsList = (assets as any[]) ?? [];
-  const allScans = (scans as any[]) ?? [];
+
+  const { data: groups } = useListAssetGroups({
+    query: { queryKey: getListAssetGroupsQueryKey() },
+  });
+  const groupList = (groups as any[]) ?? [];
+
+  const selectedGroup = groupFilter ? groupList.find((g: any) => g.id === groupFilter) : null;
+
+  // Fetch members for the selected group (disabled when no group selected)
+  const { data: groupMembersRaw } = useGetAssetGroupMembers(groupFilter ?? 0, {
+    query: {
+      queryKey: getGetAssetGroupMembersQueryKey(groupFilter ?? 0),
+      enabled: !!groupFilter,
+    },
+  });
+  const groupMemberIds = useMemo(() => {
+    if (!groupFilter) return null;
+    const members = (groupMembersRaw as any[]) ?? [];
+    return new Set(members.map((m: any) => m.id));
+  }, [groupFilter, groupMembersRaw]);
+
+  const allScans = useMemo(() => {
+    const raw = (scans as any[]) ?? [];
+    if (!groupFilter || !groupMemberIds) return raw;
+    // Show scans that include at least one asset from the selected group
+    return raw.filter((scan: any) =>
+      Array.isArray(scan.assetIds) && scan.assetIds.some((id: number) => groupMemberIds.has(id))
+    );
+  }, [scans, groupFilter, groupMemberIds]);
 
   const autoName = useMemo(
     () => buildScanName(form.assetIds, assetsList),
@@ -206,7 +237,23 @@ export default function ScansPage() {
           <h1 className="text-lg font-semibold">Scan Management</h1>
           <p className="text-sm text-muted-foreground">{allScans.length} total scans</p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
+          {/* Group filter */}
+          {activeTab === "history" && groupList.length > 0 && (
+            <div className="relative">
+              <select
+                value={groupFilter ?? ""}
+                onChange={e => { setGroupFilter(e.target.value ? Number(e.target.value) : null); setPage(1); }}
+                className="h-8 pl-7 pr-3 text-xs border border-border rounded-md bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors"
+              >
+                <option value="">All Groups</option>
+                {groupList.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+              <Layers className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            </div>
+          )}
           {isPrivileged && activeTab === "history" && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}
           <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: getListScansQueryKey() })}>
             <RefreshCw className="w-3.5 h-3.5" />

@@ -63,6 +63,7 @@ export const scanSchedulesTable = pgTable("scan_schedules", {
   tenantId: integer("tenant_id").notNull().references(() => tenantsTable.id),
   name: text("name").notNull(),
   assetToolConfig: jsonb("asset_tool_config").notNull(),
+  groupId: integer("group_id"),
   frequency: text("frequency").notNull().default("once"),
   runTime: text("run_time").notNull().default("09:00"),
   dayOfWeek: integer("day_of_week"),

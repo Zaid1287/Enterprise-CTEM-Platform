@@ -9,6 +9,7 @@ export const assetGroupsTable = pgTable("asset_groups", {
   tenantId: integer("tenant_id").notNull().references(() => tenantsTable.id),
   name: text("name").notNull(),
   description: text("description"),
+  color: text("color").notNull().default("slate"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

@@ -25,6 +25,7 @@ export const alertRulesTable = pgTable("alert_rules", {
   channel: text("channel").notNull(),
   destination: text("destination"),
   isActive: boolean("is_active").notNull().default(true),
+  groupId: integer("group_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

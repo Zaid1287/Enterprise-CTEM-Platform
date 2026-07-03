@@ -1,16 +1,16 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import {
-  useListAssets, useCreateAsset, useUpdateAsset, useDeleteAsset,
+  useListAssets, useCreateAsset, useUpdateAsset, useDeleteAsset, useListAssetGroups,
   useCheckAssetVerification, useVerifyAsset, useListUsers, useGetToolPipeline,
   useListScans, useStopScan, useRunPipelineScan, useCreateScanSchedule,
-  getListAssetsQueryKey, getGetToolPipelineQueryKey, getListScansQueryKey,
+  getListAssetsQueryKey, getGetToolPipelineQueryKey, getListScansQueryKey, getListAssetGroupsQueryKey,
 } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, Trash2, ExternalLink, RefreshCw, ShieldCheck,
   Zap, Square, Loader2, Pencil, Copy, CheckCircle2, XCircle, AlertTriangle, Globe,
-  Shield, Server, Filter, Cloud, Lock, Smartphone, Network, Code2, Cpu, ShieldAlert, UserCheck,
+  Shield, Server, Filter, Cloud, Lock, Smartphone, Network, Code2, Cpu, ShieldAlert, UserCheck, Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,6 +83,13 @@ export default function AssetsPage() {
   const isClient = user?.role === "client";
   const isAdminOrSuperAdmin = user?.role === "admin" || user?.role === "super_admin";
   const canAssignClients = isAdminOrSuperAdmin || user?.role === "account_manager";
+
+  // "Add to Group" state
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [groupTargetAsset, setGroupTargetAsset] = useState<any | null>(null);
+  const [addingToGroup, setAddingToGroup] = useState(false);
+
+  const { data: assetGroupsList } = useListAssetGroups({ query: { queryKey: getListAssetGroupsQueryKey() } });
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -341,6 +348,25 @@ export default function AssetsPage() {
     await deleteAsset.mutateAsync({ assetId: id });
     queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
     toast({ title: "Asset deleted" });
+  };
+
+  const handleAddToGroup = async (groupId: number) => {
+    if (!groupTargetAsset) return;
+    setAddingToGroup(true);
+    try {
+      await apiFetch(`${BASE}/api/asset-groups/${groupId}/assets`, {
+        method: "POST",
+        body: JSON.stringify({ assetId: groupTargetAsset.id }),
+      });
+      queryClient.invalidateQueries({ queryKey: ["asset-groups"] });
+      toast({ title: "Added to group", description: `${groupTargetAsset.name} added to group.` });
+      setShowGroupPicker(false);
+      setGroupTargetAsset(null);
+    } catch {
+      toast({ title: "Failed to add to group", variant: "destructive" });
+    } finally {
+      setAddingToGroup(false);
+    }
   };
 
   const handleInlineVerify = (asset: any) => {
@@ -801,6 +827,15 @@ export default function AssetsPage() {
                           <ExternalLink className="w-3.5 h-3.5" />
                         </Button>
                       </Link>
+                      {(assetGroupsList as any[] ?? []).length > 0 && (
+                        <Button
+                          variant="ghost" size="icon" className="h-7 w-7"
+                          title="Add to group"
+                          onClick={() => { setGroupTargetAsset(asset); setShowGroupPicker(true); }}
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive/80"
                         onClick={() => handleDelete(asset.id)} title="Delete"
@@ -1297,6 +1332,40 @@ export default function AssetsPage() {
             <Button onClick={() => scanAssetId && triggerScan(scanAssetId)} disabled={enabledTools.length === 0}>
               <Zap className="w-4 h-4 mr-1.5" /> Start Scan
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add to Group picker */}
+      <Dialog open={showGroupPicker} onOpenChange={v => { if (!v) { setShowGroupPicker(false); setGroupTargetAsset(null); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add to Group</DialogTitle>
+            <DialogDescription>
+              Select a group to add <span className="font-semibold">{groupTargetAsset?.name}</span> to.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 py-2">
+            {(assetGroupsList as any[] ?? []).map((g: any) => (
+              <button
+                key={g.id}
+                disabled={addingToGroup}
+                onClick={() => handleAddToGroup(g.id)}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-border hover:bg-accent hover:border-primary/30 transition-colors text-left disabled:opacity-50"
+              >
+                <div className="w-7 h-7 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                  <Layers className="w-3.5 h-3.5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{g.name}</p>
+                  <p className="text-xs text-muted-foreground">{g.assetCount ?? 0} assets</p>
+                </div>
+                {addingToGroup && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => { setShowGroupPicker(false); setGroupTargetAsset(null); }}>Cancel</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

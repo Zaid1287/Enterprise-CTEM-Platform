@@ -8,7 +8,7 @@
  */
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
-import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable, aiMapperScanSchedulesTable, aiMapperScansTable } from "@workspace/db";
+import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable, aiMapperScanSchedulesTable, aiMapperScansTable, assetGroupMembersTable } from "@workspace/db";
 import { and, eq, sql, lt, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
@@ -259,10 +259,26 @@ async function dispatchDueSchedules(): Promise<void> {
 
   for (const schedule of dueSchedules) {
     try {
-      const config = schedule.assetToolConfig as { assetId: number }[] | null;
-      if (!config || !Array.isArray(config) || config.length === 0) continue;
-      const rawIds = config.map((c) => c.assetId).filter(Boolean);
-      if (rawIds.length === 0) continue;
+      let rawIds: number[];
+
+      // If schedule is group-scoped, expand current group members dynamically
+      const scheduleGroupId = (schedule as any).groupId as number | null;
+      if (scheduleGroupId) {
+        const groupMembers = await db
+          .select({ assetId: assetGroupMembersTable.assetId })
+          .from(assetGroupMembersTable)
+          .where(eq(assetGroupMembersTable.groupId, scheduleGroupId));
+        rawIds = groupMembers.map((m) => m.assetId);
+        if (rawIds.length === 0) {
+          logger.warn({ scheduleId: schedule.id, groupId: scheduleGroupId }, "Beat: group schedule skipped — group has no members");
+          continue;
+        }
+      } else {
+        const config = schedule.assetToolConfig as { assetId: number }[] | null;
+        if (!config || !Array.isArray(config) || config.length === 0) continue;
+        rawIds = config.map((c) => c.assetId).filter(Boolean);
+        if (rawIds.length === 0) continue;
+      }
 
       // Only scan assets that have been verified — avoids 422 from pipeline-run
       const verifiedRows = await db
@@ -272,10 +288,10 @@ async function dispatchDueSchedules(): Promise<void> {
           and(
             eq(assetsTable.verificationStatus, "verified"),
             eq(assetsTable.tenantId, schedule.tenantId),
+            inArray(assetsTable.id, rawIds),
           ),
         );
-      const verifiedSet = new Set(verifiedRows.map((r) => r.id));
-      const assetIds = rawIds.filter((id) => verifiedSet.has(id));
+      const assetIds = verifiedRows.map((r) => r.id);
       if (assetIds.length === 0) {
         logger.warn({ scheduleId: schedule.id }, "Beat: schedule skipped — no verified assets");
         continue;

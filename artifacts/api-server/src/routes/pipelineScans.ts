@@ -3584,6 +3584,7 @@ function computeNextRunAt(frequency: string, runTime: string, dayOfWeek?: number
 function toScheduleResponse(s: typeof scanSchedulesTable.$inferSelect) {
   return {
     id: s.id, name: s.name, assetToolConfig: s.assetToolConfig,
+    groupId: (s as any).groupId ?? null,
     frequency: s.frequency, runTime: s.runTime,
     dayOfWeek: s.dayOfWeek, dayOfMonth: s.dayOfMonth,
     timezone: (s as any).timezone ?? "+00:00",
@@ -3866,10 +3867,12 @@ router.post("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, r
   const userId   = req.user!.userId;
   const { name, assetToolConfig, frequency, runTime, dayOfWeek, dayOfMonth } = parsed.data as any;
   const timezone = typeof req.body.timezone === "string" ? req.body.timezone : "+00:00";
+  const groupId = typeof req.body.groupId === "number" ? req.body.groupId : null;
   const nextRunAt = computeNextRunAt(frequency ?? "once", runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone);
   const [schedule] = await db.insert(scanSchedulesTable).values({
     tenantId, name, assetToolConfig, frequency: frequency ?? "once",
-    runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone, status: "active", nextRunAt, createdBy: userId as any,
+    runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone, status: "active", nextRunAt,
+    createdBy: userId as any, ...(groupId ? { groupId } : {}),
   } as any).returning();
   await logAudit(tenantId, userId as any, "schedule.create", "scan_schedule", schedule.id, { name });
   res.status(201).json(toScheduleResponse(schedule));

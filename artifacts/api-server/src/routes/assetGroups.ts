@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { eq, and, count, inArray } from "drizzle-orm";
+import { eq, and, count, inArray, avg, max } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { db, assetGroupsTable, assetGroupMembersTable, assetsTable } from "@workspace/db";
+import { db, assetGroupsTable, assetGroupMembersTable, assetsTable, riskScoresTable } from "@workspace/db";
 import {
   CreateAssetGroupBody, GetAssetGroupParams, UpdateAssetGroupParams,
   UpdateAssetGroupBody, DeleteAssetGroupParams,
@@ -36,23 +36,62 @@ router.get("/asset-groups", requireAuth, async (req: AuthenticatedRequest, res):
     cnt: count(),
   }).from(assetGroupMembersTable).groupBy(assetGroupMembersTable.groupId);
   const countMap = Object.fromEntries(memberCounts.map(m => [m.groupId, Number(m.cnt)]));
-  res.json(groups.map(g => ({
-    id: g.id, tenantId: g.tenantId, name: g.name, description: g.description,
-    assetCount: countMap[g.id] ?? 0, createdAt: g.createdAt.toISOString(),
-  })));
+
+  // Aggregate risk scores per group via member assets
+  const allMembers = await db.select({
+    groupId: assetGroupMembersTable.groupId,
+    assetId: assetGroupMembersTable.assetId,
+  }).from(assetGroupMembersTable);
+  const memberAssetIds = [...new Set(allMembers.map(m => m.assetId))];
+  const riskRows = memberAssetIds.length > 0
+    ? await db.select({ assetId: riskScoresTable.assetId, score: riskScoresTable.score, level: riskScoresTable.level })
+        .from(riskScoresTable).where(inArray(riskScoresTable.assetId, memberAssetIds))
+    : [];
+  const riskByAsset = new Map(riskRows.map(r => [r.assetId, r]));
+
+  // Build per-group risk stats
+  const groupRiskMap = new Map<number, { scores: number[]; levels: string[] }>();
+  for (const m of allMembers) {
+    const r = riskByAsset.get(m.assetId);
+    if (!r) continue;
+    const existing = groupRiskMap.get(m.groupId) ?? { scores: [], levels: [] };
+    existing.scores.push(r.score);
+    existing.levels.push(r.level);
+    groupRiskMap.set(m.groupId, existing);
+  }
+
+  res.json(groups.map(g => {
+    const riskInfo = groupRiskMap.get(g.id);
+    const avgRisk = riskInfo && riskInfo.scores.length > 0
+      ? Math.round(riskInfo.scores.reduce((a, b) => a + b, 0) / riskInfo.scores.length)
+      : null;
+    const maxRisk = riskInfo && riskInfo.scores.length > 0
+      ? Math.max(...riskInfo.scores)
+      : null;
+    // Highest severity level in group
+    const LEVEL_ORDER = ["critical", "high", "medium", "low", "none"];
+    const worstLevel = riskInfo ? LEVEL_ORDER.find(l => riskInfo.levels.includes(l)) ?? null : null;
+    return {
+      id: g.id, tenantId: g.tenantId, name: g.name, description: g.description,
+      color: g.color ?? "slate",
+      assetCount: countMap[g.id] ?? 0,
+      avgRisk, maxRisk, worstLevel,
+      createdAt: g.createdAt.toISOString(),
+    };
+  }));
 });
 
 router.post("/asset-groups", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateAssetGroupBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { assetIds, ...groupData } = parsed.data as any;
+  const { assetIds, color, ...groupData } = parsed.data as any;
   const [group] = await db.insert(assetGroupsTable).values({
-    ...groupData, tenantId: req.user!.tenantId,
+    ...groupData, color: color ?? "slate", tenantId: req.user!.tenantId,
   }).returning();
   if (assetIds?.length) {
     await db.insert(assetGroupMembersTable).values(assetIds.map((id: number) => ({ groupId: group.id, assetId: id })));
   }
-  res.status(201).json({ ...group, assetCount: assetIds?.length ?? 0, createdAt: group.createdAt.toISOString() });
+  res.status(201).json({ ...group, color: group.color ?? "slate", assetCount: assetIds?.length ?? 0, createdAt: group.createdAt.toISOString() });
 });
 
 router.get("/asset-groups/:groupId/members", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -98,7 +137,21 @@ router.get("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedReque
   if (!group) { res.status(404).json({ error: "Asset group not found" }); return; }
   const [{ cnt }] = await db.select({ cnt: count() }).from(assetGroupMembersTable)
     .where(eq(assetGroupMembersTable.groupId, group.id));
-  res.json({ ...group, assetCount: Number(cnt), createdAt: group.createdAt.toISOString() });
+  // Compute aggregate risk for this group
+  const members = await db.select({ assetId: assetGroupMembersTable.assetId })
+    .from(assetGroupMembersTable).where(eq(assetGroupMembersTable.groupId, group.id));
+  const memberIds = members.map(m => m.assetId);
+  const riskRows = memberIds.length > 0
+    ? await db.select({ score: riskScoresTable.score, level: riskScoresTable.level })
+        .from(riskScoresTable).where(inArray(riskScoresTable.assetId, memberIds))
+    : [];
+  const scores = riskRows.map(r => r.score);
+  const avgRisk = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  const maxRisk = scores.length > 0 ? Math.max(...scores) : null;
+  const LEVEL_ORDER = ["critical", "high", "medium", "low", "none"];
+  const levels = riskRows.map(r => r.level);
+  const worstLevel = levels.length > 0 ? LEVEL_ORDER.find(l => levels.includes(l)) ?? null : null;
+  res.json({ ...group, color: group.color ?? "slate", assetCount: Number(cnt), avgRisk, maxRisk, worstLevel, createdAt: group.createdAt.toISOString() });
 });
 
 router.patch("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -107,7 +160,8 @@ router.patch("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedReq
   const parsed = UpdateAssetGroupBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
-  const { assetIds, ...updates } = parsed.data as any;
+  const { assetIds, color, ...updates } = parsed.data as any;
+  if (color !== undefined) (updates as any).color = color;
   const [group] = await db.update(assetGroupsTable).set(updates)
     .where(and(eq(assetGroupsTable.id, params.data.groupId), eq(assetGroupsTable.tenantId, req.user!.tenantId)))
     .returning();
@@ -122,7 +176,7 @@ router.patch("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedReq
 
   const [{ cnt }] = await db.select({ cnt: count() }).from(assetGroupMembersTable)
     .where(eq(assetGroupMembersTable.groupId, group.id));
-  res.json({ ...group, assetCount: Number(cnt), createdAt: group.createdAt.toISOString() });
+  res.json({ ...group, color: group.color ?? "slate", assetCount: Number(cnt), createdAt: group.createdAt.toISOString() });
 });
 
 router.delete("/asset-groups/:groupId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

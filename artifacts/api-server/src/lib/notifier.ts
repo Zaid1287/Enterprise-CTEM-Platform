@@ -1,5 +1,5 @@
-import { db, alertRulesTable, alertsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { db, alertRulesTable, alertsTable, assetGroupMembersTable } from "@workspace/db";
+import { eq, and, inArray } from "drizzle-orm";
 import { sendEmail, alertEmailHtml } from "./email";
 import { getPlatformSetting } from "../routes/platformSettings";
 import { logger } from "./logger";
@@ -173,9 +173,28 @@ async function fireTenantRules(event: NotificationEvent): Promise<void> {
   const rules = await db.select().from(alertRulesTable)
     .where(and(eq(alertRulesTable.tenantId, event.tenantId), eq(alertRulesTable.isActive, true)));
 
+  // Pre-load group memberships for any rules that have a groupId filter
+  const groupIds = [...new Set(rules.map(r => (r as any).groupId).filter(Boolean) as number[])];
+  const groupMemberMap = new Map<number, Set<number>>();
+  if (groupIds.length > 0) {
+    const memberRows = await db.select({ groupId: assetGroupMembersTable.groupId, assetId: assetGroupMembersTable.assetId })
+      .from(assetGroupMembersTable).where(inArray(assetGroupMembersTable.groupId, groupIds));
+    for (const row of memberRows) {
+      const s = groupMemberMap.get(row.groupId) ?? new Set<number>();
+      s.add(row.assetId);
+      groupMemberMap.set(row.groupId, s);
+    }
+  }
+
   const firedKeys = new Set<string>();
   for (const rule of rules) {
     if (!shouldRuleFire(rule.triggerType, event)) continue;
+    // If the rule is scoped to a group, only fire when the event's asset is in that group
+    const ruleGroupId = (rule as any).groupId as number | null;
+    if (ruleGroupId && event.relatedAssetId) {
+      const members = groupMemberMap.get(ruleGroupId);
+      if (!members || !members.has(event.relatedAssetId)) continue;
+    }
 
     const dest = rule.destination ||
       await getPlatformSetting(

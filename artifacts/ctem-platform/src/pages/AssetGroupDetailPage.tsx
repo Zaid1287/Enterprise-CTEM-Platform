@@ -2,9 +2,9 @@ import { useState, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
 import {
   useGetAssetGroup, useUpdateAssetGroup, useGetAssetGroupMembers, useSetAssetGroupMembers,
-  useListAssets, useListFindings, useGetToolPipeline,
+  useListAssets, useListFindings, useGetToolPipeline, useCreateScanSchedule,
   getGetAssetGroupQueryKey, getGetAssetGroupMembersQueryKey, getListAssetGroupsQueryKey,
-  getGetToolPipelineQueryKey, getListFindingsQueryKey,
+  getGetToolPipelineQueryKey, getListFindingsQueryKey, getListScanSchedulesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
@@ -12,11 +12,14 @@ import RunScanDialog from "@/components/scan/RunScanDialog";
 import {
   ArrowLeft, Layers, Save, Users, Plus, X, Globe, Server, Database, Code2, Wifi, Shield, FileText,
   Play, Loader2, RefreshCw, Search, ShieldAlert, Smartphone, Network, AlertCircle, CheckCircle2,
-  Clock, Info, Minus, ExternalLink,
+  Clock, Info, Minus, ExternalLink, Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn, formatDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -56,12 +59,14 @@ export default function AssetGroupDetailPage() {
   const { toast } = useToast();
 
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ name: "", description: "" });
+  const [form, setForm] = useState({ name: "", description: "", color: "slate" });
   const [saving, setSaving] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
   const [showScanDialog, setShowScanDialog] = useState(false);
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
+  const [schedForm, setSchedForm] = useState({ name: "", frequency: "daily", runTime: "09:00", dayOfWeek: 1, dayOfMonth: 1, timezone: "+00:00" });
   const [refreshingRisk, setRefreshingRisk] = useState(false);
   const [activeTab, setActiveTab] = useState<"members" | "findings">("members");
 
@@ -130,13 +135,13 @@ export default function AssetGroupDetailPage() {
   }), [groupFindings]);
 
   function startEdit() {
-    setForm({ name: g?.name ?? "", description: g?.description ?? "" });
+    setForm({ name: g?.name ?? "", description: g?.description ?? "", color: g?.color ?? "slate" });
     setEditing(true);
   }
 
   async function saveEdit() {
     setSaving(true);
-    await updateGroup.mutateAsync({ groupId, data: form });
+    await updateGroup.mutateAsync({ groupId, data: form } as any);
     qc.invalidateQueries({ queryKey: getGetAssetGroupQueryKey(groupId) });
     qc.invalidateQueries({ queryKey: getListAssetGroupsQueryKey() });
     setSaving(false);
@@ -186,6 +191,33 @@ export default function AssetGroupDetailPage() {
     setShowScanDialog(true);
   }
 
+  const createScheduleMutation = useCreateScanSchedule();
+
+  function openScheduleDialog() {
+    setSchedForm({ name: `${g?.name ?? "Group"} Schedule`, frequency: "daily", runTime: "09:00", dayOfWeek: 1, dayOfMonth: 1, timezone: "+00:00" });
+    setShowScheduleDialog(true);
+  }
+
+  async function handleCreateSchedule() {
+    const payload: Record<string, unknown> = {
+      name: schedForm.name,
+      frequency: schedForm.frequency,
+      runTime: schedForm.runTime,
+      timezone: schedForm.timezone,
+      groupId,
+    };
+    if (schedForm.frequency === "weekly") payload.dayOfWeek = schedForm.dayOfWeek;
+    if (schedForm.frequency === "monthly") payload.dayOfMonth = schedForm.dayOfMonth;
+    try {
+      await createScheduleMutation.mutateAsync({ data: payload as any });
+      qc.invalidateQueries({ queryKey: getListScanSchedulesQueryKey() });
+      toast({ title: "Schedule created", description: "All verified assets in this group will be scanned on schedule." });
+      setShowScheduleDialog(false);
+    } catch {
+      toast({ title: "Failed to create schedule", variant: "destructive" });
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -214,6 +246,18 @@ export default function AssetGroupDetailPage() {
               <div className="space-y-1">
                 <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="h-8 text-sm font-medium" />
                 <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="Description (optional)" className="h-7 text-xs" />
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <span className="text-[10px] text-muted-foreground mr-1">Color:</span>
+                  {["slate","rose","orange","amber","lime","teal","sky","violet"].map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setForm(p => ({ ...p, color: c }))}
+                      className={`w-4 h-4 rounded-full border-2 transition-all ${form.color === c ? "border-foreground scale-110" : "border-transparent hover:border-muted-foreground"}`}
+                      style={{ backgroundColor: { slate:"#64748b",rose:"#f43f5e",orange:"#f97316",amber:"#f59e0b",lime:"#84cc16",teal:"#14b8a6",sky:"#0ea5e9",violet:"#8b5cf6" }[c] }}
+                      title={c}
+                    />
+                  ))}
+                </div>
               </div>
             ) : (
               <div>
@@ -234,10 +278,19 @@ export default function AssetGroupDetailPage() {
               <Button
                 variant="outline" size="sm" className="h-7 text-xs gap-1"
                 disabled={memberList.length === 0}
+                onClick={openScheduleDialog}
+                title="Schedule recurring scans for this group"
+              >
+                <Calendar className="w-3 h-3" />
+                Schedule
+              </Button>
+              <Button
+                variant="outline" size="sm" className="h-7 text-xs gap-1"
+                disabled={memberList.length === 0}
                 onClick={handleScanGroup}
               >
                 <Play className="w-3 h-3" />
-                Scan Group
+                Scan Now
               </Button>
               <Button variant="outline" size="sm" className="h-7 text-xs" onClick={startEdit}>Edit</Button>
             </div>
@@ -621,6 +674,75 @@ export default function AssetGroupDetailPage() {
           navigate("/scans");
         }}
       />
+
+      {/* ── Schedule Group Dialog ── */}
+      <Dialog open={showScheduleDialog} onOpenChange={v => { if (!v) setShowScheduleDialog(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-primary" /> Schedule Group Scans
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div>
+              <Label className="text-xs mb-1.5 block">Schedule Name</Label>
+              <Input value={schedForm.name} onChange={e => setSchedForm(p => ({ ...p, name: e.target.value }))} className="text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1.5 block">Frequency</Label>
+                <Select value={schedForm.frequency} onValueChange={v => setSchedForm(p => ({ ...p, frequency: v }))}>
+                  <SelectTrigger className="text-sm h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs mb-1.5 block flex items-center gap-1"><Clock className="w-3 h-3" /> Time (UTC)</Label>
+                <Input type="time" value={schedForm.runTime} onChange={e => setSchedForm(p => ({ ...p, runTime: e.target.value }))} className="text-sm h-9" />
+              </div>
+            </div>
+            {schedForm.frequency === "weekly" && (
+              <div>
+                <Label className="text-xs mb-1.5 block">Day of Week</Label>
+                <Select value={String(schedForm.dayOfWeek)} onValueChange={v => setSchedForm(p => ({ ...p, dayOfWeek: Number(v) }))}>
+                  <SelectTrigger className="text-sm h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map((d, i) => (
+                      <SelectItem key={i} value={String(i)}>{d}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {schedForm.frequency === "monthly" && (
+              <div>
+                <Label className="text-xs mb-1.5 block">Day of Month</Label>
+                <Select value={String(schedForm.dayOfMonth)} onValueChange={v => setSchedForm(p => ({ ...p, dayOfMonth: Number(v) }))}>
+                  <SelectTrigger className="text-sm h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                      <SelectItem key={d} value={String(d)}>{d}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{memberList.length} assets</span> in this group will be scanned on schedule. Only verified assets will run.
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowScheduleDialog(false)}>Cancel</Button>
+            <Button onClick={handleCreateSchedule} disabled={createScheduleMutation.isPending || !schedForm.name.trim()}>
+              {createScheduleMutation.isPending ? "Creating…" : "Create Schedule"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

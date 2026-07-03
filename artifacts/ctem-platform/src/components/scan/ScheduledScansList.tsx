@@ -1,13 +1,13 @@
 import { useState } from "react";
 import {
   useListScanSchedules, useDeleteScanSchedule, useUpdateScanSchedule, useRunScheduleNow,
-  getListScanSchedulesQueryKey,
+  useListAssetGroups, getListScanSchedulesQueryKey, getListAssetGroupsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   Calendar, Play, Trash2, Pause, Play as Resume, Edit2, RefreshCw,
-  Clock, CheckCircle2, AlertTriangle,
+  Clock, CheckCircle2, AlertTriangle, Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +76,11 @@ export default function ScheduledScansList({ onRefetchNeeded }: { onRefetchNeede
     query: { queryKey: getListScanSchedulesQueryKey() },
   });
   const schedules = (schedulesData as any[]) ?? [];
+
+  const { data: groupsData } = useListAssetGroups({ query: { queryKey: getListAssetGroupsQueryKey() } });
+  const groupMap = new Map<number, string>(
+    ((groupsData as any[]) ?? []).map((g: any) => [g.id, g.name])
+  );
 
   const deleteMutation = useDeleteScanSchedule();
   const updateMutation = useUpdateScanSchedule();
@@ -160,7 +165,7 @@ export default function ScheduledScansList({ onRefetchNeeded }: { onRefetchNeede
                 <div className={cn("w-2 h-2 rounded-full shrink-0", schedule.status === "active" ? "bg-green-400" : "bg-muted-foreground")} />
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-medium truncate">{schedule.name}</p>
                     <span className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0",
                       schedule.status === "active"
@@ -168,13 +173,19 @@ export default function ScheduledScansList({ onRefetchNeeded }: { onRefetchNeede
                         : "bg-muted text-muted-foreground border-border")}>
                       {schedule.status}
                     </span>
+                    {schedule.groupId && groupMap.has(schedule.groupId) && (
+                      <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border bg-primary/10 text-primary border-primary/25 shrink-0">
+                        <Layers className="w-2.5 h-2.5" />
+                        {groupMap.get(schedule.groupId)}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 mt-0.5 text-[10px] text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Clock className="w-2.5 h-2.5" />
                       {frequencyLabel(schedule)}
                     </span>
-                    <span>{assetCount} asset{assetCount !== 1 ? "s" : ""}</span>
+                    {!schedule.groupId && <span>{assetCount} asset{assetCount !== 1 ? "s" : ""}</span>}
                     {schedule.nextRunAt && (
                       <span className="flex items-center gap-1 text-blue-400">
                         <CheckCircle2 className="w-2.5 h-2.5" />

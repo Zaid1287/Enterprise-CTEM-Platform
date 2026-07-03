@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import {
   useListAlerts, useUpdateAlert, useListAlertRules, useCreateAlertRule,
-  useUpdateAlertRule, useDeleteAlertRule,
-  getListAlertsQueryKey, getListAlertRulesQueryKey,
+  useUpdateAlertRule, useDeleteAlertRule, useListAssetGroups,
+  getListAlertsQueryKey, getListAlertRulesQueryKey, getListAssetGroupsQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
@@ -57,7 +57,7 @@ export default function AlertsPage() {
   const [archivePage, setArchivePage] = useState(0);
   const { user } = useAuth();
   const [showCreateRule, setShowCreateRule] = useState(false);
-  const [ruleForm, setRuleForm] = useState({ name: "", triggerType: "new_finding", channel: "email", destination: "" });
+  const [ruleForm, setRuleForm] = useState<{ name: string; triggerType: string; channel: string; destination: string; groupId: number | null }>({ name: "", triggerType: "new_finding", channel: "email", destination: "", groupId: null });
   const [testStates, setTestStates] = useState<Record<number, TestState>>({});
   const queryClient = useQueryClient();
 
@@ -97,6 +97,10 @@ export default function AlertsPage() {
   const { data: rules } = useListAlertRules({
     query: { queryKey: getListAlertRulesQueryKey() },
   });
+  const { data: groups } = useListAssetGroups({
+    query: { queryKey: getListAssetGroupsQueryKey() },
+  });
+  const groupList = (groups as any[]) ?? [];
   const updateAlert = useUpdateAlert();
   const createRule = useCreateAlertRule();
   const updateRule = useUpdateAlertRule();
@@ -128,7 +132,7 @@ export default function AlertsPage() {
     await createRule.mutateAsync({ data: ruleForm } as any);
     queryClient.invalidateQueries({ queryKey: getListAlertRulesQueryKey() });
     setShowCreateRule(false);
-    setRuleForm({ name: "", triggerType: "new_finding", channel: "email", destination: "" });
+    setRuleForm({ name: "", triggerType: "new_finding", channel: "email", destination: "", groupId: null });
   };
 
   const handleToggleRule = async (rule: any) => {
@@ -520,6 +524,25 @@ export default function AlertsPage() {
                 <p className="text-[11px] text-muted-foreground">Requires Resend API key or SMTP configured in Platform Settings.</p>
               )}
             </div>
+            {/* Group scope filter */}
+            {groupList.length > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Scope to Group (optional)</Label>
+                <Select value={ruleForm.groupId ? String(ruleForm.groupId) : ""} onValueChange={v => setRuleForm(p => ({ ...p, groupId: v ? Number(v) : null }))}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="All assets (no group filter)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">All assets</SelectItem>
+                    {groupList.map((g: any) => (
+                      <SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {ruleForm.groupId && (
+                  <p className="text-[10px] text-muted-foreground">Rule will only fire for assets in the selected group.</p>
+                )}
+              </div>
+            )}
+
             <DialogFooter className="mt-4">
               <Button variant="outline" type="button" onClick={() => setShowCreateRule(false)}>Cancel</Button>
               <Button type="submit" disabled={createRule.isPending}>

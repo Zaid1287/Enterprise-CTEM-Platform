@@ -39,6 +39,7 @@ function toRuleResponse(r: typeof alertRulesTable.$inferSelect) {
   return {
     id: r.id, tenantId: r.tenantId, name: r.name, triggerType: r.triggerType,
     channel: r.channel, destination: r.destination, isActive: r.isActive,
+    groupId: (r as any).groupId ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -81,9 +82,10 @@ router.get("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res):
 router.post("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateAlertRuleBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const groupId = typeof req.body.groupId === "number" ? req.body.groupId : null;
   const [rule] = await db.insert(alertRulesTable).values({
-    ...parsed.data, tenantId: req.user!.tenantId,
-  }).returning();
+    ...parsed.data, tenantId: req.user!.tenantId, ...(groupId ? { groupId } : {}),
+  } as any).returning();
   res.status(201).json(toRuleResponse(rule));
 });
 
