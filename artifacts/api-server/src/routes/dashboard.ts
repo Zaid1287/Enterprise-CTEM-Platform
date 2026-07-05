@@ -56,7 +56,8 @@ router.get("/dashboard/overview", requireAuth, async (req: AuthenticatedRequest,
     activeScans, complianceScore, riskScore: Math.round(avgRisk),
     unreadAlerts, assetsTrend, findingsTrend,
   };
-  await cacheSet(cKey, payload, 120);
+  // Short TTL so active scan counts stay near-real-time (previously 120s caused stale counts)
+  await cacheSet(cKey, payload, 10);
   res.json(payload);
 });
 

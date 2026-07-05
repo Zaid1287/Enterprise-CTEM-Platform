@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable, externalMemberAssetsTable } from "@workspace/db";
 import { enqueueAndRun, queuePosition, cancelledScanIds, removeScanFromInProcessQueue, type AssetToolConfigItem } from "./pipelineScans";
 import {
@@ -144,9 +144,13 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
 
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
-    if (privIds.length === 0) { res.json([]); return; }
+    // Always include the caller's own tenant so platform admins see their own scans
+    const allIds = [...new Set([...privIds, req.user!.tenantId])];
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+    const filtered = !isNaN(qTenantId)
+      ? (allIds.includes(qTenantId) ? [qTenantId] : [])
+      : allIds;
+    if (filtered.length === 0) { res.json([]); return; }
     const filters: any[] = [inArray(scansTable.tenantId, filtered)];
     if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
     const allScans = await db.select().from(scansTable)
@@ -315,8 +319,10 @@ router.get("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, res)
   let scan: typeof scansTable.$inferSelect | undefined;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
+    // Always include the caller's own tenant so platform admins can view their own scans
+    const searchIds = [...new Set([...privIds, req.user!.tenantId])];
     [scan] = await db.select().from(scansTable)
-      .where(buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds));
+      .where(and(eq(scansTable.id, params.data.scanId), inArray(scansTable.tenantId, searchIds)));
   } else if (role === "client") {
     // Client: tenant-scoped fetch first, then verify scan covers at least one assigned asset
     [scan] = await db.select().from(scansTable)
@@ -350,7 +356,8 @@ router.delete("/scans/:scanId", requireAuth, async (req: AuthenticatedRequest, r
   let authWhere;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
-    authWhere = buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds);
+    const searchIds = [...new Set([...privIds, req.user!.tenantId])];
+    authWhere = and(eq(scansTable.id, params.data.scanId), inArray(scansTable.tenantId, searchIds));
   } else {
     authWhere = and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
   }
@@ -375,7 +382,8 @@ router.post("/scans/:scanId/cancel", requireAuth, async (req: AuthenticatedReque
   let cancelWhere;
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
-    cancelWhere = buildRecordFilter(eq(scansTable.id, params.data.scanId), scansTable.tenantId, privIds);
+    const searchIds = [...new Set([...privIds, req.user!.tenantId])];
+    cancelWhere = and(eq(scansTable.id, params.data.scanId), inArray(scansTable.tenantId, searchIds));
   } else {
     cancelWhere = and(eq(scansTable.id, params.data.scanId), eq(scansTable.tenantId, req.user!.tenantId));
   }

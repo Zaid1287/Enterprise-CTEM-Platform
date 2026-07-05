@@ -257,12 +257,12 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
 }
 
 // ── On startup: recover any scans stuck as "running" from a previous crash ────
-// Only recover scans that started more than 30 min ago — a newly started scan
-// (< 30 min) is extremely unlikely to survive across a restart, but the threshold
-// provides a safety buffer for any edge case where a very recent scan record exists.
+// Recover scans that started more than 3 min ago and are not in the active in-process
+// queue. On server restart, all in-process state is lost so any "running" scan that
+// survived a restart is definitively stuck and must be failed immediately.
 setImmediate(async () => {
   try {
-    const runningCutoff = new Date(Date.now() - 30 * 60 * 1000);
+    const runningCutoff = new Date(Date.now() - 3 * 60 * 1000);
     const stuckScans = await db.select().from(scansTable)
       .where(and(
         eq(scansTable.status, "running" as string),
