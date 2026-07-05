@@ -3,12 +3,12 @@
  * scan_schedules table (nextRunAt-based).
  *
  * When Redis is available → enqueues to BullMQ (worker handles execution).
- * When Redis is absent   → runs inline via internal HTTP with exponential
- *                          back-off retry (up to 3 attempts per scan).
+ * When Redis is absent   → calls enqueueAndRun() directly in-process
+ *                          (no HTTP round-trip, no auth token needed).
  */
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
-import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable, aiMapperScanSchedulesTable, aiMapperScansTable, assetGroupMembersTable } from "@workspace/db";
+import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, toolPipelineStepsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable, aiMapperScanSchedulesTable, aiMapperScansTable, assetGroupMembersTable } from "@workspace/db";
 import { and, eq, sql, lt, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
@@ -87,49 +87,39 @@ export function computeNextRunAt(
   return new Date(next.getTime() - offsetMs);
 }
 
-async function runWithRetry(
+/**
+ * Runs a scheduled scan directly by calling enqueueAndRun() in-process.
+ * Avoids the old HTTP round-trip approach which required a synthetic JWT
+ * that requireAuth rejected (userId: 0 has no DB row → 401).
+ */
+async function runDirect(
   scanId: number,
   tenantId: number,
   assetIds: number[],
-  maxAttempts = 3,
 ): Promise<void> {
-  const { signAccessToken } = await import("../lib/auth");
-  const token = signAccessToken({ userId: 0, tenantId, role: "admin", email: "" });
-  const origin = `http://127.0.0.1:${_port}`;
+  try {
+    const { enqueueAndRun } = await import("../routes/pipelineScans");
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await db
-        .update(scansTable)
-        .set({ status: "running", startedAt: new Date() })
-        .where(eq(scansTable.id, scanId));
+    const [allTools, pipelineStepRows] = await Promise.all([
+      db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId)),
+      db.select({ tool: securityToolsTable })
+        .from(toolPipelineStepsTable)
+        .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
+        .where(and(eq(toolPipelineStepsTable.tenantId, tenantId), eq(toolPipelineStepsTable.isEnabled, true)))
+        .orderBy(toolPipelineStepsTable.stepOrder),
+    ]);
+    const enabledTools = pipelineStepRows.map(p => p.tool);
+    const configs = assetIds.map(assetId => ({ assetId, toolIds: [] as number[] }));
 
-      const resp = await fetch(`${origin}/api/scans/pipeline-run`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ scanId, assetIds }),
-      });
-
-      if (!resp.ok) throw new Error(`Pipeline HTTP ${resp.status}`);
-      logger.info({ scanId, attempt }, "Beat: inline scan started");
-      return;
-    } catch (err) {
-      if (attempt === maxAttempts) {
-        logger.error({ err, scanId }, "Beat: inline scan failed after retries");
-        await db
-          .update(scansTable)
-          .set({ status: "failed" })
-          .where(eq(scansTable.id, scanId))
-          .catch(() => {});
-      } else {
-        const delay = 5_000 * Math.pow(2, attempt - 1);
-        logger.warn({ err, attempt, scanId, delay }, "Beat: retrying inline scan");
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
+    logger.info({ scanId, tenantId, assetCount: configs.length }, "Beat: starting inline scan via direct enqueueAndRun");
+    await enqueueAndRun({ scanId, tenantId, userId: 0, configs, allTools, enabledTools });
+    logger.info({ scanId }, "Beat: inline scan completed");
+  } catch (err) {
+    logger.error({ err, scanId }, "Beat: inline scan failed");
+    await db.update(scansTable)
+      .set({ status: "failed", completedAt: new Date() })
+      .where(eq(scansTable.id, scanId))
+      .catch(() => {});
   }
 }
 
@@ -147,7 +137,7 @@ async function enqueueOrRun(
     );
     logger.info({ tenantId, scanId }, "Beat: scan enqueued to BullMQ");
   } else {
-    setImmediate(() => runWithRetry(scanId, tenantId, assetIds).catch(() => {}));
+    setImmediate(() => runDirect(scanId, tenantId, assetIds).catch(() => {}));
     logger.info({ tenantId, scanId }, "Beat: inline scan triggered");
   }
 }

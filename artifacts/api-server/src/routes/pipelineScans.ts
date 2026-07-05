@@ -257,12 +257,15 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
 }
 
 // ── On startup: recover any scans stuck as "running" from a previous crash ────
-// Recover scans that started more than 3 min ago and are not in the active in-process
-// queue. On server restart, all in-process state is lost so any "running" scan that
-// survived a restart is definitively stuck and must be failed immediately.
+// Since we use an in-process queue (no Redis), ALL in-process state is lost on
+// server restart. Any scan still "running" at this point is definitively orphaned.
+// Use a 30-second lookback to avoid a theoretical race where the new process and
+// the dying old process briefly overlap (Replit SIGKILL ensures this can't happen,
+// but the guard is cheap insurance).
+const _serverBootTime = new Date();
 setImmediate(async () => {
   try {
-    const runningCutoff = new Date(Date.now() - 3 * 60 * 1000);
+    const runningCutoff = new Date(_serverBootTime.getTime() - 30_000);
     const stuckScans = await db.select().from(scansTable)
       .where(and(
         eq(scansTable.status, "running" as string),
