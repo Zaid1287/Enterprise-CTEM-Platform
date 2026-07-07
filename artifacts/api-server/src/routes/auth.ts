@@ -733,7 +733,7 @@ router.post("/auth/accept-invitation", async (req, res): Promise<void> => {
 // ── Seed compliance frameworks + tools for new tenant (no fake assets/findings) ──
 
 export async function seedNewTenantData(tenantId: number): Promise<void> {
-  const { complianceFrameworksTable, securityToolsTable } = await import("@workspace/db");
+  const { complianceFrameworksTable, securityToolsTable, orchestratorConfigTable: orchCfgTable } = await import("@workspace/db");
 
   // Ensure compliance frameworks exist (shared across all tenants — idempotent)
   let frameworks = await db.select().from(complianceFrameworksTable);
@@ -759,6 +759,36 @@ export async function seedNewTenantData(tenantId: number): Promise<void> {
     { tenantId, name: "naabu", description: "Fast port scanner", githubUrl: "https://github.com/projectdiscovery/naabu", category: "port_scan", installCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", updateCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", runCommand: "naabu -host {target} -top-ports 1000 -json", outputFormat: "json", isActive: true },
     { tenantId, name: "nuclei", description: "Fast and customizable vulnerability scanner", githubUrl: "https://github.com/projectdiscovery/nuclei", category: "vuln_scan", installCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", updateCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", runCommand: "nuclei -u {target} -json", outputFormat: "json", isActive: true },
   ]).onConflictDoNothing();
+
+  // Seed per-tenant orchestrator config defaults
+  const ORCH_DEFAULTS = [
+    { key: "enabled",                       value: "true"                },
+    { key: "use_proxies",                   value: "false"               },
+    { key: "rotate_fingerprints",           value: "true"                },
+    { key: "adaptive_rate_limit",           value: "true"                },
+    { key: "proxy_health_scoring",          value: "true"                },
+    { key: "circuit_breaker_enabled",       value: "true"                },
+    { key: "log_all_requests",              value: "true"                },
+    { key: "proxy_rotation_strategy",       value: "round-robin"         },
+    { key: "resolver_rotation_strategy",    value: "round-robin"         },
+    { key: "fingerprint_rotation_strategy", value: "round-robin"         },
+    { key: "scan_delay_intensity",          value: "endpoint-discovery"  },
+    { key: "max_requests_per_host",         value: "2000"                },
+    { key: "max_requests_per_proxy",        value: "500"                 },
+    { key: "max_concurrent_requests",       value: "20"                  },
+    { key: "proxy_health_threshold",        value: "60"                  },
+    { key: "proxy_cooldown_minutes",        value: "15"                  },
+    { key: "scan_delay_multiplier",         value: "1.0"                 },
+    { key: "waf_bypass_strategy",           value: "rotate"              },
+    { key: "retry_base_delay_ms",           value: "1000"                },
+    { key: "max_retries",                   value: "4"                   },
+    { key: "max_backoff_ms",                value: "30000"               },
+  ];
+  for (const row of ORCH_DEFAULTS) {
+    await db.insert(orchCfgTable)
+      .values({ tenantId, key: row.key, value: row.value })
+      .onConflictDoNothing();
+  }
 }
 
 // ── Request for Access (public — no account created) ──────────────────────────

@@ -10,7 +10,7 @@ import { getRedis, setRuntimeRedisUrl } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startBeatScheduler } from "./workers/beatScheduler";
-import { db, platformSettingsTable, brandThreatScansTable, orchestratorConfigTable, scanFingerprintProfilesTable } from "@workspace/db";
+import { db, platformSettingsTable, brandThreatScansTable, orchestratorConfigTable, scanFingerprintProfilesTable, tenantsTable } from "@workspace/db";
 import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { runBrandThreatScan, PermResult } from "./lib/brandThreatRunner";
@@ -101,8 +101,17 @@ async function seedOrchestratorDefaults(): Promise<void> {
       { key: "max_retries",                   value: "4"           },
       { key: "max_backoff_ms",                value: "30000"       },
     ];
+    // Scope defaults to the platform tenant (first registered tenant)
+    const [platTenant] = await db.select({ id: tenantsTable.id }).from(tenantsTable).orderBy(tenantsTable.id).limit(1);
+    const platTenantId = platTenant?.id ?? 1;
+
     for (const row of DEFAULT_CONFIG) {
-      await db.insert(orchestratorConfigTable).values(row).onConflictDoNothing();
+      await db.insert(orchestratorConfigTable)
+        .values({ ...row, tenantId: platTenantId })
+        .onConflictDoUpdate({
+          target: [orchestratorConfigTable.tenantId, orchestratorConfigTable.key],
+          set:    { value: row.value },
+        });
     }
 
     const existing = await db.select({ id: scanFingerprintProfilesTable.id }).from(scanFingerprintProfilesTable).limit(1);

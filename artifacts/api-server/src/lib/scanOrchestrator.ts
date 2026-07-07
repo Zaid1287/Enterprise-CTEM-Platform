@@ -1,5 +1,6 @@
 import { db, scanFingerprintProfilesTable, scanRequestTelemetryTable, orchestratorConfigTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { getCurrentTenantId } from "./tenantContext.js";
 import { selectHealthiestProxy, recordProxyOutcome, type ProxyOutcome } from "./proxyManager.js";
 import { waitForRateLimitToken, recordRateLimitSuccess, recordRateLimitFailure } from "./adaptiveRateLimiter.js";
 import { getCircuitState, isCircuitOpen, recordCircuitResult } from "./circuitBreaker.js";
@@ -36,8 +37,8 @@ interface OrchConfig {
   defaultIntensity: ScanIntensity;
 }
 
-let _config: OrchConfig | null = null;
-let _configLoadedAt = 0;
+// Per-tenant config cache: key = tenantId
+const _configCache = new Map<number, { config: OrchConfig; loadedAt: number }>();
 const CONFIG_TTL_MS = 60_000;
 
 // ── Issue 7: per-module alert debounce state ───────────────────────────────────
@@ -52,13 +53,15 @@ const _hostWafRates          = new Map<string, WafRateEntry>();
 const WAF_RATE_WINDOW            = 20;
 const WAF_RATE_ALERT_COOLDOWN_MS = 30 * 60_000;
 
-async function loadConfig(): Promise<OrchConfig> {
-  if (_config && Date.now() - _configLoadedAt < CONFIG_TTL_MS) return _config;
+async function loadConfig(tenantId: number): Promise<OrchConfig> {
+  const cached = _configCache.get(tenantId);
+  if (cached && Date.now() - cached.loadedAt < CONFIG_TTL_MS) return cached.config;
   try {
-    const rows = await db.select().from(orchestratorConfigTable);
+    const rows = await db.select().from(orchestratorConfigTable)
+      .where(eq(orchestratorConfigTable.tenantId, tenantId));
     const map: Record<string, string> = {};
     for (const r of rows) map[r.key] = r.value;
-    _config = {
+    const config: OrchConfig = {
       enabled:                  map["enabled"]               !== "false",
       useProxies:               map["use_proxies"]            !== "false",
       rotateFingerprints:       map["rotate_fingerprints"]    !== "false",
@@ -74,9 +77,9 @@ async function loadConfig(): Promise<OrchConfig> {
       defaultIntensity:          toScanIntensity(map["scan_delay_intensity"]),
     };
     // propagate multiplier to delayEngine immediately after each config load
-    setDelayMultiplier(_config.delayMultiplier);
-    _configLoadedAt = Date.now();
-    return _config;
+    setDelayMultiplier(config.delayMultiplier);
+    _configCache.set(tenantId, { config, loadedAt: Date.now() });
+    return config;
   } catch {
     return {
       enabled: true, useProxies: false, rotateFingerprints: true,
@@ -124,53 +127,66 @@ async function loadProfiles(): Promise<Array<{ id: number; headers: Record<strin
 // next request to that host, WAF-bypass mode is pre-activated from attempt 1
 // (instead of waiting for the first detection), and the state survives restarts.
 
-const wafHostCache = new Map<string, number>(); // hostname → markedAt epoch ms
+// Key format: "{tenantId}:{hostname}" — WAF detections are per-tenant
+const wafHostCache = new Map<string, number>();
 const WAF_HOST_TTL_MS      = 24 * 60 * 60_000; // 24 h
 const WAF_CACHE_REFRESH_MS =  5 * 60_000;       // re-read DB every 5 min
-let _wafCacheLoadedAt      = 0;
+// Per-tenant refresh timestamps
+const _wafCacheLoadedAt = new Map<number, number>();
 
-async function refreshWafHostCache(): Promise<void> {
+async function refreshWafHostCache(tenantId: number): Promise<void> {
   try {
     const rows = await db.select({ key: orchestratorConfigTable.key, updatedAt: orchestratorConfigTable.updatedAt })
-      .from(orchestratorConfigTable);
+      .from(orchestratorConfigTable)
+      .where(and(eq(orchestratorConfigTable.tenantId, tenantId)));
     const now = Date.now();
-    wafHostCache.clear();
+    // Clear existing entries for this tenant
+    for (const k of [...wafHostCache.keys()]) {
+      if (k.startsWith(`${tenantId}:`)) wafHostCache.delete(k);
+    }
     for (const row of rows) {
       if (!row.key.startsWith("waf_host:")) continue;
       const markedAt = row.updatedAt.getTime();
-      if (now - markedAt < WAF_HOST_TTL_MS) wafHostCache.set(row.key.slice(9), markedAt);
+      if (now - markedAt < WAF_HOST_TTL_MS) {
+        wafHostCache.set(`${tenantId}:${row.key.slice(9)}`, markedAt);
+      }
     }
-    _wafCacheLoadedAt = now;
+    _wafCacheLoadedAt.set(tenantId, now);
   } catch { /* non-fatal */ }
 }
 
-async function isHostWafProtected(hostname: string): Promise<boolean> {
-  if (Date.now() - _wafCacheLoadedAt > WAF_CACHE_REFRESH_MS) {
-    await refreshWafHostCache();
+async function isHostWafProtected(tenantId: number, hostname: string): Promise<boolean> {
+  const loadedAt = _wafCacheLoadedAt.get(tenantId) ?? 0;
+  if (Date.now() - loadedAt > WAF_CACHE_REFRESH_MS) {
+    await refreshWafHostCache(tenantId);
   }
-  const markedAt = wafHostCache.get(hostname);
+  const markedAt = wafHostCache.get(`${tenantId}:${hostname}`);
   return !!markedAt && (Date.now() - markedAt < WAF_HOST_TTL_MS);
 }
 
-export async function markHostWafProtected(hostname: string): Promise<void> {
+export async function markHostWafProtected(hostname: string, tenantId: number): Promise<void> {
   const key   = `waf_host:${hostname}`;
   const value = JSON.stringify({ hostname, markedAt: new Date().toISOString(), source: "auto_detection" });
   try {
     await db.insert(orchestratorConfigTable)
-      .values({ key, value, description: `Auto-detected WAF for ${hostname}` })
-      .onConflictDoUpdate({ target: orchestratorConfigTable.key, set: { value, updatedAt: new Date() } });
-    wafHostCache.set(hostname, Date.now());
-    logger.warn({ hostname }, "Orchestrator: host marked as WAF-protected in DB (24h TTL)");
+      .values({ tenantId, key, value, description: `Auto-detected WAF for ${hostname}` } as any)
+      .onConflictDoUpdate({
+        target: [orchestratorConfigTable.tenantId, orchestratorConfigTable.key],
+        set:    { value, updatedAt: new Date() },
+      });
+    wafHostCache.set(`${tenantId}:${hostname}`, Date.now());
+    logger.warn({ tenantId, hostname }, "Orchestrator: host marked as WAF-protected in DB (24h TTL)");
   } catch (err) {
-    logger.warn({ err, hostname }, "Orchestrator: failed to persist WAF host flag");
+    logger.warn({ err, tenantId, hostname }, "Orchestrator: failed to persist WAF host flag");
   }
 }
 
-export function getWafProtectedHosts(): Array<{ hostname: string; markedAt: number }> {
+export function getWafProtectedHosts(tenantId: number): Array<{ hostname: string; markedAt: number }> {
+  const prefix = `${tenantId}:`;
   const now = Date.now();
   return [...wafHostCache.entries()]
-    .filter(([, t]) => now - t < WAF_HOST_TTL_MS)
-    .map(([hostname, markedAt]) => ({ hostname, markedAt }));
+    .filter(([k, t]) => k.startsWith(prefix) && now - t < WAF_HOST_TTL_MS)
+    .map(([k, markedAt]) => ({ hostname: k.slice(prefix.length), markedAt }));
 }
 
 // ── Issue 6: Fingerprint crash guard ─────────────────────────────────────────
@@ -301,8 +317,9 @@ export async function orchestratedFetch(
   let profiles: Array<{ id: number; headers: Record<string, string> }>;
 
   // Bootstrap with safe fallbacks so orchestration errors never kill the scan
+  const tenantId = ctx.tenantId ?? getCurrentTenantId() ?? 0;
   try {
-    config = await loadConfig();
+    config = await loadConfig(tenantId);
   } catch {
     config = {
       enabled: true, useProxies: false, rotateFingerprints: false,
@@ -310,6 +327,7 @@ export async function orchestratedFetch(
       logAllRequests: false, wafBypassEnabled: false,
       adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
       proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
+      defaultIntensity: "endpoint-discovery" as const,
     };
   }
   try {
@@ -322,8 +340,8 @@ export async function orchestratedFetch(
   const intensity = ctx.intensity ?? config.defaultIntensity;
   const method = (init.method ?? "GET").toUpperCase();
 
-  if (config.circuitBreakerEnabled && isCircuitOpen(hostname)) {
-    throw new Error(`Circuit breaker OPEN for ${hostname} (state: ${getCircuitState(hostname)})`);
+  if (config.circuitBreakerEnabled && isCircuitOpen(tenantId, hostname)) {
+    throw new Error(`Circuit breaker OPEN for ${hostname} (state: ${getCircuitState(tenantId, hostname)})`);
   }
 
   // Select proxy — only when orchestrator is enabled and use_proxies is true.
@@ -365,7 +383,7 @@ export async function orchestratedFetch(
   const baseDelay = getDelay(intensity);
 
   if (config.adaptiveRateLimitEnabled) {
-    await waitForRateLimitToken(url);
+    await waitForRateLimitToken(tenantId, url);
   }
   await sleep(baseDelay);
 
@@ -380,7 +398,7 @@ export async function orchestratedFetch(
   // ── Issue 4: WAF bypass state — pre-activate if host is known WAF-protected ──
   // If a previous scan already exhausted all retries with WAF detections, we skip
   // the "cold" first attempt and go straight to bypass mode on retry 1.
-  let lastWafDetected = await isHostWafProtected(hostname);
+  let lastWafDetected = await isHostWafProtected(tenantId, hostname);
   let wafHitCount     = 0; // tracks how many attempts triggered WAF in this call
 
   while (attemptNumber <= maxRetries) {
@@ -539,7 +557,7 @@ export async function orchestratedFetch(
           delayAppliedMs: baseDelay,
           backoffAppliedMs: backoffMs,
           healthScoreAtDispatch: proxy?.healthScore,
-          circuitBreakerState: getCircuitState(hostname),
+          circuitBreakerState: getCircuitState(tenantId, hostname),
           wafDetected,
           captchaDetected,
           bytesDownloaded,
@@ -547,14 +565,14 @@ export async function orchestratedFetch(
       }
 
       if (analysis.isSuccess) {
-        if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(url);
-        if (config.circuitBreakerEnabled) recordCircuitResult(hostname, true);
+        if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(tenantId, url);
+        if (config.circuitBreakerEnabled) await recordCircuitResult(tenantId, hostname, true);
         return response;
       }
 
       // Issue 9: trip circuit breaker and alert when it just opened
       if (config.circuitBreakerEnabled && CIRCUIT_TRIP_CLASSES.has(analysis.classification)) {
-        const cbResult = recordCircuitResult(hostname, false);
+        const cbResult = await recordCircuitResult(tenantId, hostname, false);
         if (cbResult.justTripped && ctx.tenantId) {
           dispatchNotifications({
             tenantId: ctx.tenantId,
@@ -576,7 +594,7 @@ export async function orchestratedFetch(
       }
 
       if (config.adaptiveRateLimitEnabled) {
-        recordRateLimitFailure(url, analysis.retryAfterMs);
+        recordRateLimitFailure(tenantId, url, analysis.retryAfterMs);
       }
 
       attemptNumber++;
@@ -595,7 +613,7 @@ export async function orchestratedFetch(
 
       // Issue 9: catch-path circuit breaker trip alert
       if (config.circuitBreakerEnabled) {
-        const cbResult = recordCircuitResult(hostname, false);
+        const cbResult = await recordCircuitResult(tenantId, hostname, false);
         if (cbResult.justTripped && ctx.tenantId) {
           dispatchNotifications({
             tenantId: ctx.tenantId,
@@ -649,7 +667,7 @@ export async function orchestratedFetch(
           delayAppliedMs: baseDelay,
           backoffAppliedMs: backoffMs,
           healthScoreAtDispatch: proxy?.healthScore,
-          circuitBreakerState: getCircuitState(hostname),
+          circuitBreakerState: getCircuitState(tenantId, hostname),
           wafDetected: false,
           captchaDetected: false,
         }).catch(() => {});
@@ -671,7 +689,7 @@ export async function orchestratedFetch(
   // Note: host marking happens regardless of wafBypassEnabled so the DB record
   //       is always current — bypass reads it on the NEXT request.
   if (wafHitCount >= 2 && wafHitCount > attemptNumber / 2) {
-    markHostWafProtected(hostname).catch(() => {});
+    markHostWafProtected(hostname, tenantId).catch(() => {});
   }
 
   throw lastError ?? new Error(`orchestratedFetch exhausted ${maxRetries + 1} attempts: ${url}`);
@@ -679,7 +697,11 @@ export async function orchestratedFetch(
 
 export { resolveWithRotation as orchestratedDnsResolve };
 
-export function invalidateConfigCache(): void {
-  _config = null;
+export function invalidateConfigCache(tenantId?: number): void {
+  if (tenantId != null) {
+    _configCache.delete(tenantId);
+  } else {
+    _configCache.clear();
+  }
   _profiles = [];
 }

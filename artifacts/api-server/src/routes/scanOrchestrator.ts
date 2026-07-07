@@ -247,9 +247,12 @@ router.post("/api/scan-proxies/bulk", requireAuth, requireSuperAdmin, async (req
 
 // ── Orchestrator Config ────────────────────────────────────────────────────────
 
-router.get("/api/orchestrator-config", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/orchestrator-config", requireAuth, requireAdmin, async (req: any, res) => {
   try {
-    const rows = await db.select().from(orchestratorConfigTable).orderBy(orchestratorConfigTable.key);
+    const tenantId = req.user!.tenantId as number;
+    const rows = await db.select().from(orchestratorConfigTable)
+      .where(eq(orchestratorConfigTable.tenantId, tenantId))
+      .orderBy(orchestratorConfigTable.key);
     const config: Record<string, string> = {};
     for (const row of rows) config[row.key] = row.value;
     res.json({ config, rows });
@@ -259,8 +262,9 @@ router.get("/api/orchestrator-config", requireAuth, requireSuperAdmin, async (re
   }
 });
 
-router.patch("/api/orchestrator-config", requireAuth, requireSuperAdmin, async (req, res) => {
+router.patch("/api/orchestrator-config", requireAuth, requireAdmin, async (req: any, res) => {
   try {
+    const tenantId = req.user!.tenantId as number;
     const updates: Record<string, string> = req.body;
     if (typeof updates !== "object" || Array.isArray(updates)) {
       res.status(400).json({ error: "Body must be an object of key→value pairs" }); return;
@@ -270,13 +274,16 @@ router.patch("/api/orchestrator-config", requireAuth, requireSuperAdmin, async (
     for (const [key, value] of Object.entries(updates)) {
       const [row] = await db
         .insert(orchestratorConfigTable)
-        .values({ key, value, updatedAt: new Date() } as any)
-        .onConflictDoUpdate({ target: orchestratorConfigTable.key, set: { value, updatedAt: new Date() } })
+        .values({ tenantId, key, value, updatedAt: new Date() } as any)
+        .onConflictDoUpdate({
+          target: [orchestratorConfigTable.tenantId, orchestratorConfigTable.key],
+          set:    { value, updatedAt: new Date() },
+        })
         .returning();
       results.push(row);
     }
 
-    invalidateConfigCache();
+    invalidateConfigCache(tenantId);
     res.json({ updated: results });
   } catch (err) {
     logger.error({ err }, "PATCH /api/orchestrator-config error");
@@ -488,9 +495,10 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
       })
       .from(scanProxiesTable);
 
-    const circuits         = getAllCircuits();
+    const tenantId         = (req as any).user!.tenantId as number;
+    const circuits         = getAllCircuits(tenantId);
     const openCircuits     = circuits.filter(c => c.state === "open").length;
-    const rateLimiterStats = getAllRateLimiterStats();
+    const rateLimiterStats = getAllRateLimiterStats(tenantId);
     const dnsStats         = getDnsResolverStats();
 
     // Retry queue size — count requests still being retried (retries > 0 in last 5 min)
@@ -530,7 +538,7 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
       rateLimiters: rateLimiterStats.slice(0, 20),
       dnsResolvers: dnsStats,
       hostStats,
-      wafProtectedHosts: getWafProtectedHosts().slice(0, 50),
+      wafProtectedHosts: getWafProtectedHosts(tenantId).slice(0, 50),
     });
   } catch (err) {
     logger.error({ err }, "GET /api/scan-telemetry/stats error");

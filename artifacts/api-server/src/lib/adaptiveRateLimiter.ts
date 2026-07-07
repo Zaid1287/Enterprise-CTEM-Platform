@@ -10,19 +10,21 @@ interface TargetState {
   recentRequests: number[];
 }
 
-const MIN_INTERVAL_MS =  200;
-const MAX_INTERVAL_MS = 10_000;
-const INITIAL_INTERVAL_MS = 2_000;
-const SUCCESS_THRESHOLD  = 5;
-const WINDOW_MS = 60_000;
+const MIN_INTERVAL_MS     =   200;
+const MAX_INTERVAL_MS     = 10_000;
+const INITIAL_INTERVAL_MS =  2_000;
+const SUCCESS_THRESHOLD   = 5;
+const WINDOW_MS           = 60_000;
 
+// Key format: "{tenantId}:{hostname}" — rate-limit state is fully per-tenant.
+// Tenant A hitting a 429 on api.github.com does not slow Tenant B.
 const states = new Map<string, TargetState>();
 
 const STATE_KEY         = "rate_limiter_state";
 const FLUSH_INTERVAL_MS = 30_000;
 const STATE_TTL_MS      = 4 * 60 * 60_000; // 4 h — rate-limit state is transient
 
-// ── Persistence helpers ───────────────────────────────────────────────────────
+// ── Persistence ───────────────────────────────────────────────────────────────
 
 interface PersistedState {
   intervalMs: number;
@@ -32,25 +34,37 @@ interface PersistedState {
 
 async function saveRateLimiterStates(): Promise<void> {
   try {
-    const payload: Record<string, PersistedState> = {};
+    const byTenant = new Map<number, Record<string, PersistedState>>();
     const now = new Date().toISOString();
-    for (const [target, state] of states) {
-      // Only persist if interval differs from default or there's an active Retry-After
+
+    for (const [compoundKey, state] of states) {
+      // Only persist if non-default or active Retry-After
       if (state.intervalMs === INITIAL_INTERVAL_MS && state.retryAfterUntil <= Date.now()) continue;
-      payload[target] = {
+
+      const colonIdx = compoundKey.indexOf(":");
+      if (colonIdx < 0) continue;
+      const tenantId = parseInt(compoundKey.slice(0, colonIdx), 10);
+      const target   = compoundKey.slice(colonIdx + 1);
+      if (isNaN(tenantId)) continue;
+
+      if (!byTenant.has(tenantId)) byTenant.set(tenantId, {});
+      byTenant.get(tenantId)![target] = {
         intervalMs:      state.intervalMs,
         retryAfterUntil: state.retryAfterUntil,
         savedAt:         now,
       };
     }
-    if (Object.keys(payload).length === 0) return; // nothing worth persisting
-    const value = JSON.stringify(payload);
-    await db.insert(orchestratorConfigTable)
-      .values({ key: STATE_KEY, value, description: "Adaptive rate limiter per-host state" })
-      .onConflictDoUpdate({
-        target: orchestratorConfigTable.key,
-        set: { value, updatedAt: new Date() },
-      });
+
+    for (const [tenantId, payload] of byTenant) {
+      if (Object.keys(payload).length === 0) continue;
+      const value = JSON.stringify(payload);
+      await db.insert(orchestratorConfigTable)
+        .values({ tenantId, key: STATE_KEY, value, description: "Adaptive rate limiter per-host state" } as any)
+        .onConflictDoUpdate({
+          target: [orchestratorConfigTable.tenantId, orchestratorConfigTable.key],
+          set:    { value, updatedAt: new Date() },
+        });
+    }
   } catch (err) {
     logger.warn({ err }, "Rate limiter: failed to persist state (non-fatal)");
   }
@@ -58,83 +72,83 @@ async function saveRateLimiterStates(): Promise<void> {
 
 export async function initRateLimiter(): Promise<void> {
   try {
-    const [row] = await db
-      .select({ value: orchestratorConfigTable.value })
+    const rows = await db
+      .select({ tenantId: orchestratorConfigTable.tenantId, value: orchestratorConfigTable.value })
       .from(orchestratorConfigTable)
       .where(eq(orchestratorConfigTable.key, STATE_KEY));
 
-    if (row) {
+    let count = 0;
+    for (const row of rows) {
+      if (!row.tenantId) continue;
       const cutoff = Date.now() - STATE_TTL_MS;
-      const payload: Record<string, PersistedState> = JSON.parse(row.value);
-      for (const [target, entry] of Object.entries(payload)) {
-        if (new Date(entry.savedAt).getTime() < cutoff) continue; // skip stale
-        states.set(target, {
-          intervalMs:           entry.intervalMs,
-          lastRequestAt:        0,
-          consecutiveSuccesses: 0,
-          retryAfterUntil:      entry.retryAfterUntil,
-          recentRequests:       [],
-        });
-      }
-      logger.info({ count: states.size }, "Rate limiter: state restored from DB");
+      try {
+        const payload: Record<string, PersistedState> = JSON.parse(row.value);
+        for (const [target, entry] of Object.entries(payload)) {
+          if (new Date(entry.savedAt).getTime() < cutoff) continue;
+          states.set(`${row.tenantId}:${target}`, {
+            intervalMs:           entry.intervalMs,
+            lastRequestAt:        0,
+            consecutiveSuccesses: 0,
+            retryAfterUntil:      entry.retryAfterUntil,
+            recentRequests:       [],
+          });
+          count++;
+        }
+      } catch { /* skip malformed row */ }
     }
+    logger.info({ count }, "Rate limiter: state restored from DB");
   } catch (err) {
     logger.warn({ err }, "Rate limiter: failed to load state from DB (non-fatal, starting fresh)");
   }
 
-  // Periodic flush every 30 s
   setInterval(() => { saveRateLimiterStates().catch(() => {}); }, FLUSH_INTERVAL_MS);
 }
 
-// ── Core logic ────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function normalizeTarget(url: string): string {
+function makeKey(tenantId: number, url: string): string {
   try {
-    const u = new URL(url);
-    return u.hostname;
+    return `${tenantId}:${new URL(url).hostname}`;
   } catch {
-    return url;
+    return `${tenantId}:${url}`;
   }
 }
 
-function getState(target: string): TargetState {
-  const key = normalizeTarget(target);
+function getState(tenantId: number, url: string): TargetState {
+  const key = makeKey(tenantId, url);
   if (!states.has(key)) {
     states.set(key, {
-      intervalMs: INITIAL_INTERVAL_MS,
-      lastRequestAt: 0,
-      consecutiveSuccesses: 0,
-      retryAfterUntil: 0,
-      recentRequests: [],
+      intervalMs: INITIAL_INTERVAL_MS, lastRequestAt: 0,
+      consecutiveSuccesses: 0, retryAfterUntil: 0, recentRequests: [],
     });
   }
   return states.get(key)!;
 }
 
-export async function waitForRateLimitToken(url: string): Promise<void> {
-  const state = getState(url);
+// ── Public API ────────────────────────────────────────────────────────────────
+
+export async function waitForRateLimitToken(tenantId: number, url: string): Promise<void> {
+  const state = getState(tenantId, url);
   const now = Date.now();
 
   if (now < state.retryAfterUntil) {
     const wait = state.retryAfterUntil - now;
-    logger.debug({ url, waitMs: wait }, "Rate limiter honoring Retry-After");
+    logger.debug({ tenantId, url, waitMs: wait }, "Rate limiter honoring Retry-After");
     await new Promise(r => setTimeout(r, wait));
   }
 
   const elapsed = Date.now() - state.lastRequestAt;
   if (elapsed < state.intervalMs) {
-    const delay = state.intervalMs - elapsed;
-    await new Promise(r => setTimeout(r, delay));
+    await new Promise(r => setTimeout(r, state.intervalMs - elapsed));
   }
 
   state.lastRequestAt = Date.now();
-
   state.recentRequests = state.recentRequests.filter(t => Date.now() - t < WINDOW_MS);
   state.recentRequests.push(Date.now());
 }
 
-export function recordRateLimitSuccess(url: string): void {
-  const state = getState(url);
+export function recordRateLimitSuccess(tenantId: number, url: string): void {
+  const state = getState(tenantId, url);
   state.consecutiveSuccesses++;
   if (state.consecutiveSuccesses >= SUCCESS_THRESHOLD) {
     state.intervalMs = Math.max(MIN_INTERVAL_MS, Math.round(state.intervalMs * 0.9));
@@ -142,33 +156,41 @@ export function recordRateLimitSuccess(url: string): void {
   }
 }
 
-export function recordRateLimitFailure(url: string, retryAfterMs?: number): void {
-  const state = getState(url);
+export function recordRateLimitFailure(tenantId: number, url: string, retryAfterMs?: number): void {
+  const state = getState(tenantId, url);
   state.consecutiveSuccesses = 0;
   state.intervalMs = Math.min(MAX_INTERVAL_MS, state.intervalMs * 2);
 
   if (retryAfterMs != null && retryAfterMs > 0) {
     state.retryAfterUntil = Date.now() + retryAfterMs;
-    logger.debug({ url, retryAfterMs }, "Rate limiter: Retry-After set");
+    logger.debug({ tenantId, url, retryAfterMs }, "Rate limiter: Retry-After set");
   }
 
-  logger.debug({ url, newIntervalMs: state.intervalMs }, "Rate limiter: interval doubled after 429");
-  // Persist immediately when a 429 is recorded — restart should honour it
+  logger.debug({ tenantId, url, newIntervalMs: state.intervalMs }, "Rate limiter: interval doubled after 429");
   saveRateLimiterStates().catch(() => {});
 }
 
-export function getRecentRequestCount(url: string): number {
-  const state = getState(url);
+export function getRecentRequestCount(tenantId: number, url: string): number {
+  const state = getState(tenantId, url);
   state.recentRequests = state.recentRequests.filter(t => Date.now() - t < WINDOW_MS);
   return state.recentRequests.length;
 }
 
-export function getAllRateLimiterStats(): Array<{ target: string; intervalMs: number; recentRequestsPerMinute: number; retryAfterUntil: number }> {
+export function getAllRateLimiterStats(tenantId: number): Array<{
+  target: string; intervalMs: number; recentRequestsPerMinute: number; retryAfterUntil: number;
+}> {
+  const prefix = `${tenantId}:`;
   const now = Date.now();
-  return [...states.entries()].map(([target, state]) => ({
-    target,
-    intervalMs: state.intervalMs,
-    recentRequestsPerMinute: state.recentRequests.filter(t => now - t < WINDOW_MS).length,
-    retryAfterUntil: state.retryAfterUntil,
-  }));
+  const result = [];
+  for (const [compoundKey, state] of states) {
+    if (!compoundKey.startsWith(prefix)) continue;
+    const target = compoundKey.slice(prefix.length);
+    result.push({
+      target,
+      intervalMs:               state.intervalMs,
+      recentRequestsPerMinute:  state.recentRequests.filter(t => now - t < WINDOW_MS).length,
+      retryAfterUntil:          state.retryAfterUntil,
+    });
+  }
+  return result;
 }

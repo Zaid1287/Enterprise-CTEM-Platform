@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { runWithTenant } from "../lib/tenantContext";
 import { exec } from "child_process";
 import { writeFile, unlink } from "fs/promises";
 import { promisify } from "util";
@@ -249,9 +250,9 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
         }
       });
 
-      const { findingsCount } = await executePipeline(
+      const { findingsCount } = await runWithTenant(entry.tenantId, () => executePipeline(
         entry.tenantId, entry.scanId, entry.configs, entry.allTools, entry.enabledTools,
-      );
+      ));
       const current = await db.select({ status: scansTable.status }).from(scansTable)
         .where(eq(scansTable.id, entry.scanId)).then(r => r[0]);
       if (current?.status !== "cancelled") {

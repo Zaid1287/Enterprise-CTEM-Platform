@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, real, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, real, boolean, timestamp, jsonb, unique } from "drizzle-orm/pg-core";
 
 export const scanProxiesTable = pgTable("scan_proxies", {
   id:                 serial("id").primaryKey(),
@@ -26,11 +26,12 @@ export const scanProxiesTable = pgTable("scan_proxies", {
 
 export const orchestratorConfigTable = pgTable("orchestrator_config", {
   id:          serial("id").primaryKey(),
-  key:         text("key").notNull().unique(),
+  tenantId:    integer("tenant_id").notNull(),
+  key:         text("key").notNull(),
   value:       text("value").notNull(),
   description: text("description"),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [unique("orchestrator_config_tenant_key_unique").on(t.tenantId, t.key)]);
 
 export const scanFingerprintProfilesTable = pgTable("scan_fingerprint_profiles", {
   id:        serial("id").primaryKey(),

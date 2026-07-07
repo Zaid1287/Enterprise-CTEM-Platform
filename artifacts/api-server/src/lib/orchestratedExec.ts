@@ -2,9 +2,11 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import type { ExecOptions } from "child_process";
 import { db, orchestratorConfigTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
 import { isCircuitOpen, getCircuitState, recordCircuitResult } from "./circuitBreaker.js";
 import { waitForRateLimitToken, recordRateLimitSuccess, recordRateLimitFailure } from "./adaptiveRateLimiter.js";
 import { selectHealthiestProxy } from "./proxyManager.js";
+import { getCurrentTenantId } from "./tenantContext.js";
 import { logger } from "./logger.js";
 
 const execAsync = promisify(exec);
@@ -16,24 +18,26 @@ interface ExecOrchConfig {
   useProxies: boolean;
 }
 
-let _execConfig: ExecOrchConfig | null = null;
-let _execConfigLoadedAt = 0;
+// Per-tenant config cache — TTL 60 s
+const _execConfigCache = new Map<number, { config: ExecOrchConfig; loadedAt: number }>();
 const EXEC_CONFIG_TTL_MS = 60_000;
 
-async function getExecConfig(): Promise<ExecOrchConfig> {
-  if (_execConfig && Date.now() - _execConfigLoadedAt < EXEC_CONFIG_TTL_MS) return _execConfig;
+async function getExecConfig(tenantId: number): Promise<ExecOrchConfig> {
+  const cached = _execConfigCache.get(tenantId);
+  if (cached && Date.now() - cached.loadedAt < EXEC_CONFIG_TTL_MS) return cached.config;
   try {
-    const rows = await db.select().from(orchestratorConfigTable);
+    const rows = await db.select().from(orchestratorConfigTable)
+      .where(eq(orchestratorConfigTable.tenantId, tenantId));
     const map: Record<string, string> = {};
     for (const r of rows) map[r.key] = r.value;
-    _execConfig = {
+    const config: ExecOrchConfig = {
       enabled:                  map["enabled"]                !== "false",
       circuitBreakerEnabled:    map["circuit_breaker_enabled"] !== "false",
       adaptiveRateLimitEnabled: map["adaptive_rate_limit"]     !== "false",
       useProxies:               map["use_proxies"]             !== "false",
     };
-    _execConfigLoadedAt = Date.now();
-    return _execConfig;
+    _execConfigCache.set(tenantId, { config, loadedAt: Date.now() });
+    return config;
   } catch {
     return { enabled: true, circuitBreakerEnabled: true, adaptiveRateLimitEnabled: true, useProxies: false };
   }
@@ -42,6 +46,7 @@ async function getExecConfig(): Promise<ExecOrchConfig> {
 export interface OrchestratedExecOptions extends ExecOptions {
   timeout?: number;
   targetHost?: string;
+  tenantId?: number;
 }
 
 export interface OrchestratedExecResult {
@@ -67,20 +72,22 @@ export async function orchestratedExec(
   cmd: string | ((proxyUrl: string | null) => string),
   options: OrchestratedExecOptions = {},
 ): Promise<OrchestratedExecResult> {
-  const config = await getExecConfig();
-  const { targetHost, timeout = 120_000, ...execOpts } = options;
+  const { targetHost, timeout = 120_000, tenantId: optTenantId, ...execOpts } = options;
+  const tenantId = optTenantId ?? getCurrentTenantId() ?? 0;
+
+  const config = await getExecConfig(tenantId);
 
   // ── Circuit breaker check ────────────────────────────────────────────────────
   if (config.circuitBreakerEnabled && targetHost) {
-    if (isCircuitOpen(targetHost)) {
-      const state = getCircuitState(targetHost);
+    if (isCircuitOpen(tenantId, targetHost)) {
+      const state = getCircuitState(tenantId, targetHost);
       throw new Error(`orchestratedExec: circuit breaker OPEN for ${targetHost} (${state}) — skipping`);
     }
   }
 
   // ── Rate limiter ─────────────────────────────────────────────────────────────
   if (config.adaptiveRateLimitEnabled && targetHost) {
-    await waitForRateLimitToken(`https://${targetHost}`);
+    await waitForRateLimitToken(tenantId, `https://${targetHost}`);
   }
 
   // ── Proxy selection (returned for callers to inject into tool flags) ─────────
@@ -104,16 +111,16 @@ export async function orchestratedExec(
     const { stdout, stderr } = await execAsync(finalCmd, { ...execOpts, timeout });
     const latencyMs = Date.now() - start;
 
-    if (config.circuitBreakerEnabled && targetHost) recordCircuitResult(targetHost, true);
-    if (config.adaptiveRateLimitEnabled && targetHost) recordRateLimitSuccess(`https://${targetHost}`);
+    if (config.circuitBreakerEnabled && targetHost) await recordCircuitResult(tenantId, targetHost, true);
+    if (config.adaptiveRateLimitEnabled && targetHost) recordRateLimitSuccess(tenantId, `https://${targetHost}`);
 
     logger.debug({ cmd: finalCmd.slice(0, 100), targetHost, latencyMs }, "orchestratedExec success");
-    return { stdout, stderr, proxyUrl };
+    return { stdout: String(stdout), stderr: String(stderr), proxyUrl };
   } catch (err: any) {
     const latencyMs = Date.now() - start;
 
-    if (config.circuitBreakerEnabled && targetHost) recordCircuitResult(targetHost, false);
-    if (config.adaptiveRateLimitEnabled && targetHost) recordRateLimitFailure(`https://${targetHost}`);
+    if (config.circuitBreakerEnabled && targetHost) await recordCircuitResult(tenantId, targetHost, false);
+    if (config.adaptiveRateLimitEnabled && targetHost) recordRateLimitFailure(tenantId, `https://${targetHost}`);
 
     logger.debug({ cmd: finalCmd.slice(0, 100), targetHost, latencyMs, err: err?.message }, "orchestratedExec failed");
     throw err;
