@@ -89,7 +89,7 @@ async function seedOrchestratorDefaults(): Promise<void> {
       { key: "proxy_rotation_strategy",       value: "round-robin" },
       { key: "resolver_rotation_strategy",    value: "round-robin" },
       { key: "fingerprint_rotation_strategy", value: "round-robin" },
-      { key: "scan_delay_intensity",          value: "discovery"   },
+      { key: "scan_delay_intensity",          value: "endpoint-discovery" },
       { key: "max_requests_per_host",         value: "2000"        },
       { key: "max_requests_per_proxy",        value: "500"         },
       { key: "max_concurrent_requests",       value: "20"          },

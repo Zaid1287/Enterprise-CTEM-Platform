@@ -33,6 +33,7 @@ interface OrchConfig {
   circuitBreakerEnabled: boolean;
   proxyHealthScoringEnabled: boolean;
   delayMultiplier: number;
+  defaultIntensity: ScanIntensity;
 }
 
 let _config: OrchConfig | null = null;
@@ -70,8 +71,9 @@ async function loadConfig(): Promise<OrchConfig> {
       circuitBreakerEnabled:     map["circuit_breaker_enabled"] !== "false",
       proxyHealthScoringEnabled: map["proxy_health_scoring"]   !== "false",
       delayMultiplier:           parseFloat(map["scan_delay_multiplier"] ?? "1.0"),
+      defaultIntensity:          toScanIntensity(map["scan_delay_intensity"]),
     };
-    // Issue 9: propagate multiplier to delayEngine immediately after each config load
+    // propagate multiplier to delayEngine immediately after each config load
     setDelayMultiplier(_config.delayMultiplier);
     _configLoadedAt = Date.now();
     return _config;
@@ -82,8 +84,17 @@ async function loadConfig(): Promise<OrchConfig> {
       logAllRequests: true, wafBypassEnabled: false,
       adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
       proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
+      defaultIntensity: "endpoint-discovery",
     };
   }
+}
+
+const VALID_INTENSITIES: ReadonlyArray<ScanIntensity> = [
+  "passive", "endpoint-discovery", "dir-fuzzing", "heavy-enumeration", "vuln-scan",
+];
+function toScanIntensity(raw: string | undefined): ScanIntensity {
+  if (raw && VALID_INTENSITIES.includes(raw as ScanIntensity)) return raw as ScanIntensity;
+  return "endpoint-discovery";
 }
 
 let _profiles: Array<{ id: number; headers: Record<string, string> }> = [];
@@ -308,7 +319,7 @@ export async function orchestratedFetch(
   }
 
   const hostname = extractHostname(url);
-  const intensity = ctx.intensity ?? "endpoint-discovery";
+  const intensity = ctx.intensity ?? config.defaultIntensity;
   const method = (init.method ?? "GET").toUpperCase();
 
   if (config.circuitBreakerEnabled && isCircuitOpen(hostname)) {
