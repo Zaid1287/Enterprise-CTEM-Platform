@@ -196,16 +196,28 @@ async function dispatchDueAssets(): Promise<void> {
       continue;
     }
 
-    // Duplicate-run guard: filter out any assets already covered by a running/pending scan
+    // Duplicate-run guard: filter out assets already covered by an active scan.
+    // "Running" scans older than 10 minutes are considered stuck (server restarted
+    // before startup recovery ran) and are NOT treated as blocking — a new scan
+    // will be created and the stuck one will be cleaned up on next restart.
+    const STUCK_THRESHOLD_MS = 10 * 60 * 1000;
     const activeScans = await db
-      .select({ assetIds: scansTable.assetIds })
+      .select({ assetIds: scansTable.assetIds, status: scansTable.status, startedAt: scansTable.startedAt })
       .from(scansTable)
       .where(and(
         eq(scansTable.tenantId, tenantId),
         inArray(scansTable.status, ["running", "pending"]),
       ));
     const busyAssetIds = new Set<number>(
-      activeScans.flatMap(s => Array.isArray(s.assetIds) ? (s.assetIds as number[]) : []),
+      activeScans
+        .filter(s => {
+          if (s.status === "running" && s.startedAt) {
+            const ageMs = Date.now() - new Date(s.startedAt).getTime();
+            if (ageMs > STUCK_THRESHOLD_MS) return false; // treat as not blocking
+          }
+          return true;
+        })
+        .flatMap(s => Array.isArray(s.assetIds) ? (s.assetIds as number[]) : []),
     );
     const freeAssetIds = assetIds.filter(id => !busyAssetIds.has(id));
     if (freeAssetIds.length === 0) {

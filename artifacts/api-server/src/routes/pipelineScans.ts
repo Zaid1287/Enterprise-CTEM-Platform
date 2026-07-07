@@ -8,7 +8,7 @@ import { eq, and, inArray, lt, sql, not, gte, or, isNull } from "drizzle-orm";
 import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable, scanSuppressionsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
-import { captureScreenshots, type PageScreenshot } from "../lib/screenshotEngine";
+import { captureScreenshots, closeBrowser, type PageScreenshot } from "../lib/screenshotEngine";
 import { runEndpointDiscovery } from "../lib/endpointDiscovery";
 import { runJsAnalysis, type JsAnalysisResult } from "../lib/jsAnalyzer";
 import { runParamDiscovery, type ParamDiscoveryResult } from "../lib/paramDiscovery";
@@ -79,8 +79,8 @@ const scanProgressMap = new Map<number, AssetProgress[]>();
 // MAX_CONCURRENT_SCANS: max number of scans running simultaneously across all tenants.
 // MAX_PARALLEL_ASSETS:  max number of assets scanned in parallel within a single scan.
 // Raise these only if the host has enough CPU/RAM — each asset spawns multiple child processes.
-const MAX_CONCURRENT_SCANS = 5;
-const MAX_PARALLEL_ASSETS   = 3;
+const MAX_CONCURRENT_SCANS = 2;
+const MAX_PARALLEL_ASSETS   = 1;
 
 interface QueueEntry {
   scanId: number;
@@ -2017,6 +2017,28 @@ async function executePipeline(
       else                        detail = `${subs} subdomains, ${recs} DNS records`;
       doneTool(t.name, subs + recs, detail, p1Start);
     }
+
+    // ── Phase 1 incremental save ──────────────────────────────────────────────
+    // Save recon data NOW so results are preserved even if port scanning crashes
+    // the server (OOM from naabu/nmap/masscan + Chromium coexisting in RAM).
+    try {
+      await db.insert(scanAssetResultsTable).values({
+        tenantId, scanId, assetId: asset.id,
+        toolName: "passive_recon",
+        toolCategory: "recon",
+        rawOutput: JSON.stringify({ geoIntel, whoisIntel, cloudIntel, subdomainCount: dnsResult.subdomains.length }),
+        subdomains: dnsResult.subdomains as any,
+        dnsRecords: dnsResult.dnsRecords as any,
+        intelligence: [...geoIntel, ...whoisIntel, ...cloudIntel] as any,
+      } as any);
+      logger.info({ scanId, assetId: asset.id }, "Phase 1 recon results saved incrementally");
+    } catch (p1SaveErr) {
+      logger.warn({ err: p1SaveErr, scanId }, "Phase 1 incremental save failed (non-fatal — continuing)");
+    }
+
+    // Close browser before port scanning to free ~300 MB of RAM that Chromium holds.
+    // It will be lazily reopened when Phase 3 screenshots run.
+    closeBrowser();
 
     // ── PHASE 2: Port Scanning — always runs (Naabu + Nmap + Shodan) ──────────
     if (cancelledScanIds.has(scanId)) return;
