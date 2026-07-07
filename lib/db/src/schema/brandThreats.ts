@@ -32,6 +32,9 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   darkWebCount:      integer("dark_web_count").notNull().default(0),
   progress:          integer("progress").notNull().default(0),
 
+  checkpoint:        text("checkpoint"),
+  permutationsCache: jsonb("permutations_cache"),
+
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:       timestamp("completed_at", { withTimezone: true }),
 });

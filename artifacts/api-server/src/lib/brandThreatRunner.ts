@@ -78,7 +78,7 @@ async function runFaviHunter(domain: string): Promise<FaviHunterResult | null> {
 
 // ── dnstwist binary runner ─────────────────────────────────────────────────────
 
-interface PermResult {
+export interface PermResult {
   permutation: string;
   fuzzer: string;
   dnsA: string[];
@@ -498,14 +498,8 @@ async function captureHighRiskScreenshots(
   logger.info({ scanId, count: targets.length }, "brand threat screenshots captured");
 }
 
-export async function runBrandThreatScan(scanId: number, domain: string): Promise<void> {
+export async function runBrandThreatScan(scanId: number, domain: string, resumeFromPhase1Cache?: PermResult[]): Promise<void> {
   try {
-    await db.update(brandThreatScansTable)
-      .set({ status: "running", favihunterStatus: "running" })
-      .where(eq(brandThreatScansTable.id, scanId));
-
-    logger.info({ scanId, domain }, "Starting advanced brand threat scan");
-
     const [vtApiKey, gsbKey, hibpKey, phishTankKey, shodanKey, cdnRanges] = await Promise.all([
       getPlatformSetting("virustotal_api_key"),
       getPlatformSetting("google_safe_browsing_key"),
@@ -518,53 +512,116 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
     // Propagate PhishTank API key to feed client (invalidates cache if key changed)
     setPhishTankKey(phishTankKey ?? null);
 
-    // ── Phase 1: Permutations + favihunter in parallel ────────────────────────
-    const [permResults, faviResult] = await Promise.all([
-      scanPermutations(domain),
-      runFaviHunter(domain).then(async result => {
-        if (result) {
-          await db.update(brandThreatScansTable).set({
-            favihunterStatus: "done",
-            faviconUrl: result.faviconUrl,
-            faviconMmh3: result.hashes.mmh3,
-            faviconMmh3Hex: result.hashes.mmh3Hex,
-            faviconMd5: result.hashes.md5,
-            faviconSha256: result.hashes.sha256,
-            faviconSearchUrls: result.searchUrls as unknown as Record<string, unknown>,
-          }).where(eq(brandThreatScansTable.id, scanId));
-        } else {
-          await db.update(brandThreatScansTable).set({
-            favihunterStatus: "skipped",
-          }).where(eq(brandThreatScansTable.id, scanId));
-        }
-        return result;
-      }).catch(async (err: unknown) => {
-        await db.update(brandThreatScansTable).set({
-          favihunterStatus: "error",
-          favihunterError: String(err),
-        }).where(eq(brandThreatScansTable.id, scanId));
-        return null;
-      }),
-    ]);
+    let permResults: PermResult[];
+    let faviResult: FaviHunterResult | null = null;
 
-    // ── Phase 1b: Shodan favicon clone detection ──────────────────────────────
-    if (faviResult && shodanKey && faviResult.hashes.mmh3) {
-      try {
-        const shodanMatches = await searchShodanByFaviconHash(faviResult.hashes.mmh3, shodanKey, 20);
-        if (shodanMatches.length > 0) {
-          await db.update(brandThreatScansTable)
-            .set({ faviconShodanMatches: shodanMatches as unknown as Record<string, unknown>[] })
-            .where(eq(brandThreatScansTable.id, scanId));
-          logger.info({ scanId, domain, shodanCount: shodanMatches.length }, "Shodan favicon clone hosts found");
-        }
-      } catch (err) {
-        logger.warn({ err, scanId }, "Shodan favicon search failed (non-fatal)");
+    if (resumeFromPhase1Cache) {
+      // ── RESUME: Phase 1 completed before restart — use cached permutations ───
+      permResults = resumeFromPhase1Cache;
+      logger.info({ scanId, domain, count: permResults.length }, "Resuming brand threat scan from Phase 1 checkpoint");
+
+      // Recover favicon data from DB (was persisted before server restarted)
+      const [scanRow] = await db.select({
+        faviconMd5:        brandThreatScansTable.faviconMd5,
+        faviconUrl:        brandThreatScansTable.faviconUrl,
+        faviconMmh3:       brandThreatScansTable.faviconMmh3,
+        faviconMmh3Hex:    brandThreatScansTable.faviconMmh3Hex,
+        faviconSha256:     brandThreatScansTable.faviconSha256,
+        faviconSearchUrls: brandThreatScansTable.faviconSearchUrls,
+      }).from(brandThreatScansTable).where(eq(brandThreatScansTable.id, scanId));
+      if (scanRow?.faviconMd5) {
+        faviResult = {
+          faviconUrl:  scanRow.faviconUrl ?? "",
+          hashes: {
+            mmh3:    scanRow.faviconMmh3 ?? 0,
+            mmh3Hex: scanRow.faviconMmh3Hex ?? "",
+            md5:     scanRow.faviconMd5,
+            sha256:  scanRow.faviconSha256 ?? "",
+          },
+          searchUrls: (scanRow.faviconSearchUrls ?? {}) as FaviHunterResult["searchUrls"],
+        };
       }
-    }
 
-    await db.update(brandThreatScansTable)
-      .set({ totalPermutations: permResults.length, progress: 20 })
-      .where(eq(brandThreatScansTable.id, scanId));
+      // Reset status + progress to Phase 1 completion level
+      await db.update(brandThreatScansTable)
+        .set({ status: "running", progress: 20 })
+        .where(eq(brandThreatScansTable.id, scanId));
+
+      // Clear any partial secondary data written before the server was restarted
+      await Promise.all([
+        db.delete(brandThreatResultsTable).where(eq(brandThreatResultsTable.scanId, scanId)),
+        db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, scanId)),
+        db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, scanId)),
+        db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, scanId)),
+        db.delete(adMonitoringResultsTable).where(eq(adMonitoringResultsTable.scanId, scanId)),
+      ]);
+    } else {
+      // ── FRESH START ────────────────────────────────────────────────────────────
+      await db.update(brandThreatScansTable)
+        .set({ status: "running", favihunterStatus: "running" })
+        .where(eq(brandThreatScansTable.id, scanId));
+
+      logger.info({ scanId, domain }, "Starting advanced brand threat scan");
+
+      // ── Phase 1: Permutations + favihunter in parallel ────────────────────────
+      const [permRes, faviRes] = await Promise.all([
+        scanPermutations(domain),
+        runFaviHunter(domain).then(async result => {
+          if (result) {
+            await db.update(brandThreatScansTable).set({
+              favihunterStatus: "done",
+              faviconUrl: result.faviconUrl,
+              faviconMmh3: result.hashes.mmh3,
+              faviconMmh3Hex: result.hashes.mmh3Hex,
+              faviconMd5: result.hashes.md5,
+              faviconSha256: result.hashes.sha256,
+              faviconSearchUrls: result.searchUrls as unknown as Record<string, unknown>,
+            }).where(eq(brandThreatScansTable.id, scanId));
+          } else {
+            await db.update(brandThreatScansTable).set({
+              favihunterStatus: "skipped",
+            }).where(eq(brandThreatScansTable.id, scanId));
+          }
+          return result;
+        }).catch(async (err: unknown) => {
+          await db.update(brandThreatScansTable).set({
+            favihunterStatus: "error",
+            favihunterError: String(err),
+          }).where(eq(brandThreatScansTable.id, scanId));
+          return null;
+        }),
+      ]);
+
+      permResults = permRes;
+      faviResult = faviRes;
+
+      // ── Phase 1b: Shodan favicon clone detection ──────────────────────────────
+      if (faviResult && shodanKey && faviResult.hashes.mmh3) {
+        try {
+          const shodanMatches = await searchShodanByFaviconHash(faviResult.hashes.mmh3, shodanKey, 20);
+          if (shodanMatches.length > 0) {
+            await db.update(brandThreatScansTable)
+              .set({ faviconShodanMatches: shodanMatches as unknown as Record<string, unknown>[] })
+              .where(eq(brandThreatScansTable.id, scanId));
+            logger.info({ scanId, domain, shodanCount: shodanMatches.length }, "Shodan favicon clone hosts found");
+          }
+        } catch (err) {
+          logger.warn({ err, scanId }, "Shodan favicon search failed (non-fatal)");
+        }
+      }
+
+      // ── Phase 1 checkpoint ─────────────────────────────────────────────────────
+      // Persist permutations to DB so a server restart can resume from Phase 2
+      // instead of re-running the full ~60s dnstwist scan.
+      await db.update(brandThreatScansTable)
+        .set({
+          totalPermutations: permResults.length,
+          progress: 20,
+          checkpoint: "phase1_done",
+          permutationsCache: permResults as unknown as Record<string, unknown>[],
+        })
+        .where(eq(brandThreatScansTable.id, scanId));
+    }
 
     // Separate live (A-record) results for enrichment that needs IPs
     const liveResults = permResults.filter(r => r.dnsA.length > 0);
@@ -1072,6 +1129,8 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
       phishingCount,
       brandAbuseCount: brandAbuseCount + adMonitoringCount,
       completedAt: new Date(),
+      checkpoint: null,
+      permutationsCache: null,
     }).where(eq(brandThreatScansTable.id, scanId));
 
     // ── Scan completion notification (fires alert rules with triggerType "brand_threat") ──

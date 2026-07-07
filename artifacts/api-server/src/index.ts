@@ -10,6 +10,7 @@ import { startBeatScheduler } from "./workers/beatScheduler";
 import { db, platformSettingsTable, brandThreatScansTable } from "@workspace/db";
 import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
+import { runBrandThreatScan, PermResult } from "./lib/brandThreatRunner";
 import { WebSocketServer } from "ws";
 import { scanProgressSockets, attackRunSockets } from "./routes/aiMapper";
 import { verifyToken } from "./lib/auth";
@@ -26,22 +27,48 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-/** On startup: reset any brand threat scans left in running/pending state by a prior process. */
-async function resetStuckBrandThreatScans(): Promise<void> {
+/**
+ * On startup: resume any brand threat scans that were interrupted by a server restart.
+ *
+ * - Scans that completed Phase 1 (checkpoint = "phase1_done") resume from Phase 2
+ *   using the permutations already cached in DB — no re-running of dnstwist.
+ * - Scans that hadn't finished Phase 1 restart from scratch (dnstwist re-runs).
+ * - Scans marked "pending" (never started) also start fresh.
+ */
+async function resumeOrResetStuckBrandThreatScans(): Promise<void> {
   try {
-    const updated = await db.update(brandThreatScansTable)
-      .set({
-        status: "error",
-        error: "Server restarted while scan was in progress. Please start a new scan.",
-        completedAt: new Date(),
-      })
-      .where(inArray(brandThreatScansTable.status, ["running", "pending"]))
-      .returning({ id: brandThreatScansTable.id });
-    if (updated.length > 0) {
-      logger.warn({ ids: updated.map(r => r.id) }, "Startup: reset stuck brand threat scans to error");
+    const stuckScans = await db.select({
+      id:                brandThreatScansTable.id,
+      domain:            brandThreatScansTable.domain,
+      checkpoint:        brandThreatScansTable.checkpoint,
+      permutationsCache: brandThreatScansTable.permutationsCache,
+    }).from(brandThreatScansTable)
+      .where(inArray(brandThreatScansTable.status, ["running", "pending"]));
+
+    if (stuckScans.length === 0) return;
+
+    logger.warn({ count: stuckScans.length }, "Startup: found interrupted brand threat scans — resuming");
+
+    for (const scan of stuckScans) {
+      if (scan.checkpoint === "phase1_done" && scan.permutationsCache) {
+        // Phase 1 was already complete — resume from Phase 2 using cached permutations
+        const cachedPerms = scan.permutationsCache as PermResult[];
+        logger.info({ scanId: scan.id, domain: scan.domain, permCount: cachedPerms.length },
+          "Startup: resuming brand threat scan from Phase 1 checkpoint");
+        setImmediate(() => { void runBrandThreatScan(scan.id, scan.domain, cachedPerms); });
+      } else {
+        // Phase 1 never completed (or no cache) — restart from scratch
+        logger.info({ scanId: scan.id, domain: scan.domain },
+          "Startup: restarting brand threat scan from Phase 1 (no checkpoint)");
+        // Reset status so runBrandThreatScan fresh-start path can set it to "running"
+        await db.update(brandThreatScansTable)
+          .set({ status: "pending", progress: 0, checkpoint: null })
+          .where(eq(brandThreatScansTable.id, scan.id));
+        setImmediate(() => { void runBrandThreatScan(scan.id, scan.domain); });
+      }
     }
   } catch (err) {
-    logger.warn({ err }, "Could not reset stuck brand threat scans on startup (non-fatal)");
+    logger.warn({ err }, "Could not resume stuck brand threat scans on startup (non-fatal)");
   }
 }
 
@@ -113,7 +140,7 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-  resetStuckBrandThreatScans().catch(e => logger.error({ err: e }, "Stuck scan reset error"));
+  resumeOrResetStuckBrandThreatScans().catch(e => logger.error({ err: e }, "Scan resume error"));
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
   initStripe().catch(e => logger.error({ err: e }, "Stripe init error"));
 
