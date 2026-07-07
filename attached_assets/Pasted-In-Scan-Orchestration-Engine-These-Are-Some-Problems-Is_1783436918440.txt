@@ -1,0 +1,41 @@
+In Scan Orchestration Engine These Are Some Problems & Issues. I Want It To Be Fixed And Should Be Working 100%
+
+1. Config knobs don't gate subsystems — adaptive_rate_limit=false doesn't actually disable the rate limiter; same for circuit_breaker_enabled, proxy_health_scoring: Operators think they're turning features off, but they're not
+- Solution: In orchestratedFetch, read each bool flag from config and wrap the subsystem call: if (config.adaptive_rate_limit) await rateLimiter.acquire(host)
+
+2. DNS rotation not called — dnsResolverPool.ts exists but orchestratedFetch uses system DNS: No DNS-level stealth or redundancy
+- Solution: Pass custom resolver to undici: new Agent({ connect: { lookup: orchestratedDnsResolve } })
+
+3. Rate limiter / circuit breaker lost on restart: Every server restart resets all per-host state; a freshly restarted server will hammer a target site that had been slowing down
+- Solution: Store circuit states in orchestrator_config with a TTL, or use Redis with SET host:circuit OPEN EX 900
+
+4. ~80% of pipeline bypasses the orchestrator: Port scans, subdomain enum, WHOIS, dir fuzzing, JS analysis, cloud recon — none go through proxies or rate limiting
+- Solutions: Audit every fetch() / net.createConnection() in lib/ scan modules; replace with orchestratedFetch where it makes sense (HTTP only — TCP tools like Nmap cannot be proxied this way)
+
+5. Proxy health never decays: A dead proxy keeps a high score indefinitely
+- Solution: Add a BullMQ job (or beat scheduler entry) every 6h: run TCP ping on all proxies; if no response, set health_score = Math.max(0, score - 20)
+
+6. WAF detected → no action: Detection is purely observational
+- Solution: On wafDetected=true: rotate fingerprint profile, increase delay multiplier by 2x for that host, try next proxy; if 3+ consecutive WAF hits → mark host as waf_protected in DB; surface in the topology graph
+
+7. No alerting on orchestrator events: Proxy going to cooldown, circuit opening, 100% WAF rate — these never notify anyone
+- Solution: Wire dispatchNotifications() for: circuit breaker trips, proxy pool <2 active proxies, WAF rate >50% in last 30 min
+
+8. proxy_cooldown_minutes knob not read: The circuit breaker hard-codes 15 min / 60 min cooldown; the config knob exists but is never consumed
+- Solution: Read proxy_cooldown_minutes from config inside circuitBreaker.ts transition logic
+
+9. scan_delay_intensity knob not read: The delay engine has hard-coded values per intensity level; it doesn't read the active config
+- Solution: Pass config.scan_delay_intensity into the delay function
+
+Make Sure All The Issues Are Fixed & Working 100%.
+
+Ask questions if required.
+
+All the flow should be real and not stimulated.
+
+All data should be real and no dumy or stimulated data should be there.
+
+Once Completed, Check If All 9 Issues are been fixed & Confirm If These Are Fixed & Implemented And Working 100%..
+
+Tell Me What Is Implemented & What Is Not & Why?
+

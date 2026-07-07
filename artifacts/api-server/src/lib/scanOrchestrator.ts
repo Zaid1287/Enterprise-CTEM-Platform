@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { selectHealthiestProxy, recordProxyOutcome, type ProxyOutcome } from "./proxyManager.js";
 import { waitForRateLimitToken, recordRateLimitSuccess, recordRateLimitFailure } from "./adaptiveRateLimiter.js";
 import { getCircuitState, isCircuitOpen, recordCircuitResult } from "./circuitBreaker.js";
-import { getDelay, sleep, type ScanIntensity } from "./delayEngine.js";
+import { getDelay, sleep, setDelayMultiplier, type ScanIntensity } from "./delayEngine.js";
 import { storeCookies, getCookieHeader } from "./cookieJar.js";
 import { analyzeResponse, type ResponseClassification } from "./responseAnalyzer.js";
 import { resolveWithRotation } from "./dnsResolverPool.js";
@@ -32,11 +32,24 @@ interface OrchConfig {
   adaptiveRateLimitEnabled: boolean;
   circuitBreakerEnabled: boolean;
   proxyHealthScoringEnabled: boolean;
+  delayMultiplier: number;
 }
 
 let _config: OrchConfig | null = null;
 let _configLoadedAt = 0;
 const CONFIG_TTL_MS = 60_000;
+
+// ── Issue 7: per-module alert debounce state ───────────────────────────────────
+// Proxy pool exhausted alert — debounced to 30 min to avoid flooding operators.
+let _lastLowProxyAlertAt = 0;
+const LOW_PROXY_ALERT_COOLDOWN_MS = 30 * 60_000;
+
+// WAF rate rolling-window alert — fires when >50% of the last WAF_RATE_WINDOW
+// requests to a hostname were WAF-blocked, debounced per-host at 30 min.
+interface WafRateEntry { outcomes: boolean[]; lastAlertAt: number; }
+const _hostWafRates          = new Map<string, WafRateEntry>();
+const WAF_RATE_WINDOW            = 20;
+const WAF_RATE_ALERT_COOLDOWN_MS = 30 * 60_000;
 
 async function loadConfig(): Promise<OrchConfig> {
   if (_config && Date.now() - _configLoadedAt < CONFIG_TTL_MS) return _config;
@@ -56,7 +69,10 @@ async function loadConfig(): Promise<OrchConfig> {
       adaptiveRateLimitEnabled:  map["adaptive_rate_limit"]    !== "false",
       circuitBreakerEnabled:     map["circuit_breaker_enabled"] !== "false",
       proxyHealthScoringEnabled: map["proxy_health_scoring"]   !== "false",
+      delayMultiplier:           parseFloat(map["scan_delay_multiplier"] ?? "1.0"),
     };
+    // Issue 9: propagate multiplier to delayEngine immediately after each config load
+    setDelayMultiplier(_config.delayMultiplier);
     _configLoadedAt = Date.now();
     return _config;
   } catch {
@@ -65,7 +81,7 @@ async function loadConfig(): Promise<OrchConfig> {
       maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
       logAllRequests: true, wafBypassEnabled: false,
       adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
-      proxyHealthScoringEnabled: true,
+      proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
     };
   }
 }
@@ -282,6 +298,7 @@ export async function orchestratedFetch(
       maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
       logAllRequests: false, wafBypassEnabled: false,
       adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
+      proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
     };
   }
   try {
@@ -312,6 +329,26 @@ export async function orchestratedFetch(
   };
 
   let { proxy, proxyAgent } = await pickProxy();
+
+  // Issue 7: alert when proxy pool is exhausted (operator has proxies enabled but
+  // none are healthy/active).  Debounced per-process to 30 min.
+  if (config.useProxies && config.enabled && !proxy) {
+    const now = Date.now();
+    if (ctx.tenantId && now - _lastLowProxyAlertAt > LOW_PROXY_ALERT_COOLDOWN_MS) {
+      _lastLowProxyAlertAt = now;
+      dispatchNotifications({
+        tenantId:       ctx.tenantId,
+        eventType:      "orchestrator_event",
+        title:          "Proxy Pool Exhausted",
+        message:        "No healthy proxies are available for scan traffic. All proxies may be in cooldown or unreachable — requests will proceed without a proxy until the pool recovers.",
+        severity:       "high",
+        relatedAssetId: ctx.assetId,
+        scanId:         ctx.scanId,
+        assetName:      ctx.target ?? hostname,
+        domain:         hostname,
+      }).catch(() => {});
+    }
+  }
 
   let profile = pickRandomProfile(profiles);
   const baseDelay = getDelay(intensity);
@@ -406,6 +443,35 @@ export async function orchestratedFetch(
             assetName: ctx.target ?? hostname,
             domain: hostname,
           }).catch(() => {});
+        }
+      }
+
+      // Issue 7: rolling WAF-rate alert — fire when >50% of the last WAF_RATE_WINDOW
+      // requests to this hostname were WAF-blocked (debounced 30 min per host).
+      {
+        const rateEntry = _hostWafRates.get(hostname) ?? { outcomes: [], lastAlertAt: 0 };
+        rateEntry.outcomes.push(wafDetected);
+        if (rateEntry.outcomes.length > WAF_RATE_WINDOW) rateEntry.outcomes.shift();
+        _hostWafRates.set(hostname, rateEntry);
+
+        if (rateEntry.outcomes.length >= 10 && ctx.tenantId) {
+          const wafHits = rateEntry.outcomes.filter(Boolean).length;
+          const wafRate = wafHits / rateEntry.outcomes.length;
+          const now = Date.now();
+          if (wafRate > 0.5 && now - rateEntry.lastAlertAt > WAF_RATE_ALERT_COOLDOWN_MS) {
+            rateEntry.lastAlertAt = now;
+            dispatchNotifications({
+              tenantId:       ctx.tenantId,
+              eventType:      "orchestrator_event",
+              title:          `High WAF Rate: ${hostname}`,
+              message:        `${Math.round(wafRate * 100)}% of recent requests to ${hostname} triggered WAF detection (${wafHits}/${rateEntry.outcomes.length}). Consider pausing scans or rotating source IPs.`,
+              severity:       "high",
+              relatedAssetId: ctx.assetId,
+              scanId:         ctx.scanId,
+              assetName:      ctx.target ?? hostname,
+              domain:         hostname,
+            }).catch(() => {});
+          }
         }
       }
 

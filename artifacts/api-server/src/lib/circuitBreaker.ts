@@ -15,8 +15,33 @@ interface CircuitEntry {
 const circuits = new Map<string, CircuitEntry>();
 
 const FAILURE_THRESHOLD = 5;
-const INITIAL_COOLDOWN_MS  = 15 * 60 * 1_000;
-const ESCALATED_COOLDOWN_MS = 60 * 60 * 1_000;
+
+// Mutable cooldown durations — read from `proxy_cooldown_minutes` in orchestrator_config.
+// Default: 15 min initial, 60 min escalated (4× initial for repeated trippers).
+// refreshCooldownConfig() is called on init and every 60 s so operator changes
+// take effect without a server restart.
+let _initialCooldownMs   = 15 * 60 * 1_000;
+let _escalatedCooldownMs = 60 * 60 * 1_000;
+
+async function refreshCooldownConfig(): Promise<void> {
+  try {
+    const [row] = await db
+      .select({ value: orchestratorConfigTable.value })
+      .from(orchestratorConfigTable)
+      .where(eq(orchestratorConfigTable.key, "proxy_cooldown_minutes"));
+    if (row) {
+      const minutes = parseInt(row.value, 10);
+      if (!isNaN(minutes) && minutes > 0) {
+        _initialCooldownMs   = minutes * 60 * 1_000;
+        _escalatedCooldownMs = minutes * 4 * 60 * 1_000;
+        logger.info(
+          { initialMs: _initialCooldownMs, escalatedMs: _escalatedCooldownMs },
+          "Circuit breaker: cooldown config refreshed from proxy_cooldown_minutes",
+        );
+      }
+    }
+  } catch { /* non-fatal — keep current values */ }
+}
 
 const STATE_KEY   = "circuit_breaker_state";
 const FLUSH_INTERVAL_MS = 30_000;
@@ -85,6 +110,11 @@ export async function initCircuitBreaker(): Promise<void> {
     logger.warn({ err }, "Circuit breaker: failed to load state from DB (non-fatal, starting fresh)");
   }
 
+  // Read proxy_cooldown_minutes from orchestrator_config; refresh every 60 s
+  // so operator changes take effect without a server restart.
+  await refreshCooldownConfig();
+  setInterval(() => { refreshCooldownConfig().catch(() => {}); }, 60_000);
+
   // Periodic flush — captures all incremental changes every 30 s
   setInterval(() => { saveCircuitStates().catch(() => {}); }, FLUSH_INTERVAL_MS);
 }
@@ -96,7 +126,7 @@ function getEntry(target: string): CircuitEntry {
     circuits.set(target, {
       state: "closed",
       consecutiveFailures: 0,
-      cooldownMs: INITIAL_COOLDOWN_MS,
+      cooldownMs: _initialCooldownMs,
       tripCount: 0,
     });
   }
@@ -126,7 +156,7 @@ export function recordCircuitResult(target: string, success: boolean): { justTri
     entry.consecutiveFailures = 0;
     if (entry.state === "half-open") {
       entry.state = "closed";
-      entry.cooldownMs = INITIAL_COOLDOWN_MS;
+      entry.cooldownMs = _initialCooldownMs;
       logger.info({ target }, "Circuit breaker closed after successful probe");
       saveCircuitStates().catch(() => {}); // persist on close
     }
@@ -137,7 +167,7 @@ export function recordCircuitResult(target: string, success: boolean): { justTri
 
   if (entry.state === "half-open") {
     entry.tripCount++;
-    entry.cooldownMs = entry.tripCount >= 2 ? ESCALATED_COOLDOWN_MS : INITIAL_COOLDOWN_MS;
+    entry.cooldownMs = entry.tripCount >= 2 ? _escalatedCooldownMs : _initialCooldownMs;
     entry.state = "open";
     entry.openedAt = new Date();
     logger.warn({ target, cooldownMs: entry.cooldownMs }, "Circuit breaker re-opened after failed half-open probe");
@@ -147,7 +177,7 @@ export function recordCircuitResult(target: string, success: boolean): { justTri
 
   if (entry.consecutiveFailures >= FAILURE_THRESHOLD && entry.state === "closed") {
     entry.tripCount++;
-    entry.cooldownMs = entry.tripCount >= 2 ? ESCALATED_COOLDOWN_MS : INITIAL_COOLDOWN_MS;
+    entry.cooldownMs = entry.tripCount >= 2 ? _escalatedCooldownMs : _initialCooldownMs;
     entry.state = "open";
     entry.openedAt = new Date();
     logger.warn({ target, trips: entry.tripCount, cooldownMs: entry.cooldownMs }, "Circuit breaker opened");
