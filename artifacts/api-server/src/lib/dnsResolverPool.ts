@@ -44,13 +44,25 @@ function pickNextResolver(): ResolverStats {
 
 function resolveWithResolver(hostname: string, resolverIp: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const resolver = new dns.Resolver();
-    resolver.setServers([resolverIp]);
+    const r = new dns.Resolver();
+    r.setServers([resolverIp]);
     const timer = setTimeout(() => reject(new Error("timeout")), TIMEOUT_MS);
-    resolver.resolve4(hostname, (err, addresses) => {
-      clearTimeout(timer);
-      if (err) reject(err);
-      else resolve(addresses);
+    r.resolve4(hostname, (err4, addrs4) => {
+      if (!err4 && addrs4 && addrs4.length > 0) {
+        clearTimeout(timer);
+        resolve(addrs4);
+        return;
+      }
+      // IPv4 lookup failed — try IPv6 before giving up.  Many CDN-fronted and
+      // dual-stack hosts respond on AAAA even when A records are absent or filtered.
+      r.resolve6(hostname, (err6, addrs6) => {
+        clearTimeout(timer);
+        if (!err6 && addrs6 && addrs6.length > 0) {
+          resolve(addrs6);
+        } else {
+          reject(err4 ?? err6 ?? new Error(`no addresses for ${hostname}`));
+        }
+      });
     });
   });
 }

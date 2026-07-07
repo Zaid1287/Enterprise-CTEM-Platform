@@ -22,7 +22,7 @@ const STALE_TEST_THRESHOLD_MS = 60 * 60 * 1_000; // 1 hour
 
 export async function selectHealthiestProxy(
   excludeProxyId?: number,
-): Promise<{ id: number; ip: string; port: number; healthScore: number; username: string | null; password: string | null } | null> {
+): Promise<{ id: number; ip: string; port: number; type: string; healthScore: number; username: string | null; password: string | null } | null> {
   try {
     const now = new Date();
     const proxies = await db
@@ -30,6 +30,7 @@ export async function selectHealthiestProxy(
         id:          scanProxiesTable.id,
         ip:          scanProxiesTable.ip,
         port:        scanProxiesTable.port,
+        type:        scanProxiesTable.type,
         healthScore: scanProxiesTable.healthScore,
         username:    scanProxiesTable.username,
         password:    scanProxiesTable.password,
@@ -86,11 +87,11 @@ export async function selectHealthiestProxy(
         // Fall back to next candidate
         const fallback = candidates.find(p => p.id !== best.id);
         if (!fallback) return null;
-        return { id: fallback.id, ip: fallback.ip, port: fallback.port, healthScore: fallback.healthScore, username: fallback.username, password: fallback.password };
+        return { id: fallback.id, ip: fallback.ip, port: fallback.port, type: fallback.type ?? "http", healthScore: fallback.healthScore, username: fallback.username, password: fallback.password };
       }
     }
 
-    return { id: best.id, ip: best.ip, port: best.port, healthScore: best.healthScore, username: best.username, password: best.password };
+    return { id: best.id, ip: best.ip, port: best.port, type: best.type ?? "http", healthScore: best.healthScore, username: best.username, password: best.password };
   } catch (err) {
     logger.warn({ err }, "proxyManager: selectHealthiestProxy failed");
     return null;

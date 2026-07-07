@@ -94,7 +94,7 @@ async function loadConfig(tenantId: number): Promise<OrchConfig> {
     return {
       enabled: true, useProxies: false, rotateFingerprints: true,
       maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
-      logAllRequests: true, wafBypassEnabled: false,
+      logAllRequests: true, wafBypassEnabled: true,
       adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
       proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
       defaultIntensity: "endpoint-discovery",
@@ -304,18 +304,26 @@ interface ActiveProxy {
   id: number;
   ip: string;
   port: number;
+  type: string;
   healthScore: number;
   username: string | null;
   password: string | null;
 }
 
 function buildProxyUrl(proxy: ActiveProxy): string {
+  // undici ProxyAgent natively supports http/https CONNECT proxies.
+  // SOCKS4/SOCKS5 proxies require the `socks` package which is not bundled;
+  // we still emit the correct URI scheme so a future socks dispatcher can use it,
+  // and callers that cannot handle socks will catch and fall back to direct fetch.
+  const scheme = proxy.type === "socks5" ? "socks5"
+    : proxy.type === "socks4" ? "socks4"
+    : "http";
   if (proxy.username) {
     const user = encodeURIComponent(proxy.username);
     const pass = encodeURIComponent(proxy.password ?? "");
-    return `http://${user}:${pass}@${proxy.ip}:${proxy.port}`;
+    return `${scheme}://${user}:${pass}@${proxy.ip}:${proxy.port}`;
   }
-  return `http://${proxy.ip}:${proxy.port}`;
+  return `${scheme}://${proxy.ip}:${proxy.port}`;
 }
 
 export async function orchestratedFetch(
@@ -334,7 +342,7 @@ export async function orchestratedFetch(
     config = {
       enabled: true, useProxies: false, rotateFingerprints: false,
       maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
-      logAllRequests: false, wafBypassEnabled: false,
+      logAllRequests: false, wafBypassEnabled: true,
       adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
       proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
       defaultIntensity: "endpoint-discovery" as const,
@@ -601,7 +609,31 @@ export async function orchestratedFetch(
         }
       }
 
-      // Only retry for explicitly transient, recoverable classes (not 403/WAF/permanent)
+      // WAF challenges and CAPTCHA responses: if WAF bypass is enabled, continue
+      // the retry loop so the bypass rotation (fingerprint + proxy swap) can fire
+      // at the top of the next iteration.  Previously this returned immediately,
+      // which meant bypass rotation never actually activated — a critical bug.
+      if (config.wafBypassEnabled && (wafDetected || captchaDetected)) {
+        attemptNumber++;
+        if (attemptNumber > maxRetries) break;
+        backoffMs = Math.min(backoffMs * 2 || baseDelay * 2, config.maxBackoffMs);
+        logger.debug({ url, attemptNumber, backoffMs, wafDetected, captchaDetected }, "Orchestrator: WAF/CAPTCHA — looping with bypass rotation");
+        await sleep(backoffMs);
+        continue;
+      }
+
+      // For plain 403s (no WAF headers, no CAPTCHA) also try one bypass rotation
+      // pass — many CDNs and anti-bot systems return 403 without WAF signatures.
+      if (analysis.classification === "Forbidden" && config.wafBypassEnabled && attemptNumber === 0) {
+        lastWafDetected = true; // triggers bypass rotation on next iteration
+        attemptNumber++;
+        if (attemptNumber > maxRetries) break;
+        backoffMs = Math.min(baseDelay * 1.5, config.maxBackoffMs);
+        await sleep(backoffMs);
+        continue;
+      }
+
+      // All other non-retryable classes (permanent errors, auth failures): return immediately.
       if (!RETRYABLE_CLASSES.has(analysis.classification)) {
         return response;
       }
