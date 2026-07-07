@@ -34,38 +34,36 @@ interface KnobDef {
 }
 
 const KNOBS: KnobDef[] = [
-  /* ── Master switches (4 booleans) ─────────────────────────────────────── */
-  { key: "enabled",             type: "boolean", label: "Enable Orchestration Engine",   description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
-  { key: "use_proxies",         type: "boolean", label: "Use Proxy Pool",                description: "Route outbound scan requests through the configured proxy/IP pool." },
-  { key: "rotate_fingerprints", type: "boolean", label: "Rotate Browser Fingerprints",   description: "Cycle through active fingerprint profiles on each request." },
-  { key: "log_all_requests",    type: "boolean", label: "Log All Requests to Telemetry", description: "Write every HTTP request to the telemetry table. Disable to reduce DB writes." },
+  /* ── Master switches (7 booleans) ─────────────────────────────────────── */
+  { key: "enabled",                type: "boolean", label: "Enable Orchestration Engine",   description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
+  { key: "use_proxies",            type: "boolean", label: "Use Proxy Pool",                description: "Route outbound scan requests through the configured proxy/IP pool." },
+  { key: "rotate_fingerprints",    type: "boolean", label: "Rotate Browser Fingerprints",   description: "Cycle through active fingerprint profiles on each request." },
+  { key: "adaptive_rate_limit",    type: "boolean", label: "Adaptive Rate Limiting",        description: "Dynamically throttle per-host request rate when 429/503 responses are observed." },
+  { key: "proxy_health_scoring",   type: "boolean", label: "Proxy Health Scoring",          description: "Track and weight proxy selection by real-time health score (success rate, latency)." },
+  { key: "circuit_breaker_enabled",type: "boolean", label: "Circuit Breaker",               description: "Open circuit for a host after repeated failures; auto-closes after cool-down period." },
+  { key: "log_all_requests",       type: "boolean", label: "Log All Requests to Telemetry", description: "Write every HTTP request to the telemetry table. Disable to reduce DB writes." },
   /* ── Rotation & delay strategies (4 selects) ───────────────────────────── */
   { key: "proxy_rotation_strategy",
     type: "select", label: "Proxy Rotation Strategy",
     description: "Algorithm used to pick the next proxy from the pool.",
-    options: ["round-robin", "random", "weighted", "least-used"] },
+    options: ["round-robin", "healthiest-first", "random"] },
   { key: "resolver_rotation_strategy",
     type: "select", label: "DNS Resolver Rotation",
     description: "Algorithm used to select a DNS resolver from the pool.",
     options: ["round-robin", "random", "failover"] },
   { key: "fingerprint_rotation_strategy",
-    type: "select", label: "Fingerprint Rotation Strategy",
+    type: "select", label: "Browser Profile Rotation",
     description: "How browser fingerprint profiles are cycled across requests.",
-    options: ["round-robin", "random", "per-target"] },
+    options: ["round-robin", "random"] },
   { key: "scan_delay_intensity",
     type: "select", label: "Scan Delay Intensity",
-    description: "Controls inter-request delay profile: passive = slowest / stealthiest, heavy = fastest / most aggressive.",
+    description: "Inter-request delay profile — passive is slowest/stealthiest, heavy is fastest/most aggressive.",
     options: ["passive", "discovery", "fuzzing", "heavy"] },
-  /* ── Request throttling & concurrency (3 integers) ─────────────────────── */
-  { key: "max_requests_per_host",  type: "integer", label: "Max Requests per Host",          description: "Total request cap per target hostname per scan run.",                      min: 1,   max: 100000 },
-  { key: "max_requests_per_proxy", type: "integer", label: "Max Requests per Proxy",          description: "Maximum requests routed through one proxy before rotating to the next.",  min: 1,   max: 10000 },
-  { key: "max_concurrent_requests",type: "integer", label: "Max Concurrent Requests",         description: "Global concurrency cap across all proxies and target hosts.",              min: 1,   max: 200 },
-  /* ── Proxy pool management (2 integers) ──────────────────────────────────── */
-  { key: "proxy_cooldown_minutes", type: "integer", label: "Proxy Cooldown (min)",            description: "Minutes a proxy stays in cooldown after exceeding its error threshold.",  min: 1,   max: 1440 },
-  { key: "proxy_health_threshold", type: "integer", label: "Proxy Health Score Threshold",    description: "Minimum health score (0–100) required for a proxy to remain active.",     min: 0,   max: 100 },
-  /* ── Retry & backoff (2 integers) ─────────────────────────────────────────── */
-  { key: "max_retries",            type: "integer", label: "Max Retries per Request",         description: "Number of retry attempts before giving up on a request.",                 min: 0,   max: 10 },
-  { key: "backoff_base_ms",        type: "integer", label: "Retry Base Backoff (ms)",         description: "Initial delay for exponential backoff; doubles each retry up to max cap.", min: 100, max: 30000 },
+  /* ── Throttling, cooldown & backoff (4 integers) ─────────────────────── */
+  { key: "max_requests_per_proxy", type: "integer", label: "Max Requests per Proxy",   description: "Maximum requests routed through one proxy before rotating to the next.", min: 1,   max: 10000 },
+  { key: "proxy_cooldown_minutes", type: "integer", label: "Proxy Cooldown (min)",     description: "Minutes a proxy stays in cooldown after exceeding its error threshold.",  min: 1,   max: 1440 },
+  { key: "max_retries",            type: "integer", label: "Max Retries per Request",  description: "Number of retry attempts before giving up on a request.",                 min: 0,   max: 10 },
+  { key: "max_backoff_ms",         type: "integer", label: "Max Backoff (ms)",          description: "Upper bound on exponential retry backoff delay.",                         min: 500, max: 60000 },
 ];
 
 /* ─── Main Page ───────────────────────────────────────────────────────── */

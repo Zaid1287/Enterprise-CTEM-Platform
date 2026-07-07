@@ -2430,6 +2430,26 @@ paths:
           schema:
             type: integer
             default: 50
+        - name: waf
+          in: query
+          schema:
+            type: string
+        - name: captcha
+          in: query
+          schema:
+            type: string
+        - name: proxyId
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: integer
+        - name: host
+          in: query
+          schema:
+            type: string
       responses:
         "200":
           description: Telemetry rows

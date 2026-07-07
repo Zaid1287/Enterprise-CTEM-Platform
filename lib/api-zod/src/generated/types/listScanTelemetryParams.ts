@@ -9,4 +9,9 @@
 export type ListScanTelemetryParams = {
 page?: number;
 limit?: number;
+waf?: string;
+captcha?: string;
+proxyId?: number;
+status?: number;
+host?: string;
 };

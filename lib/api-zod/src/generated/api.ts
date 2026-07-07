@@ -2452,7 +2452,12 @@ export const listScanTelemetryQueryLimitDefault = 50;
 
 export const ListScanTelemetryQueryParams = zod.object({
   "page": zod.coerce.number().default(listScanTelemetryQueryPageDefault),
-  "limit": zod.coerce.number().default(listScanTelemetryQueryLimitDefault)
+  "limit": zod.coerce.number().default(listScanTelemetryQueryLimitDefault),
+  "waf": zod.coerce.string().optional(),
+  "captcha": zod.coerce.string().optional(),
+  "proxyId": zod.coerce.number().optional(),
+  "status": zod.coerce.number().optional(),
+  "host": zod.coerce.string().optional()
 })
 
 export const ListScanTelemetryResponse = zod.object({

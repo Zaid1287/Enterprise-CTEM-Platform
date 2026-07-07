@@ -28,7 +28,7 @@ function parseId(param: string | string[] | undefined): number {
 
 // ── Proxy CRUD ─────────────────────────────────────────────────────────────────
 
-router.get("/api/scan-proxies", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/scan-proxies", requireAuth, requireAdmin, async (req, res) => {
   try {
     const proxies = await db
       .select()
@@ -128,7 +128,7 @@ router.delete("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (re
   }
 });
 
-router.get("/api/scan-proxies/:id/health", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/scan-proxies/:id/health", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -255,7 +255,7 @@ router.patch("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async
 
 // ── Telemetry ──────────────────────────────────────────────────────────────────
 
-router.get("/api/scan-telemetry", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) => {
   try {
     const page   = Math.max(1, parseInt(req.query.page  as string ?? "1",  10));
     const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit as string ?? "50", 10)));
@@ -310,7 +310,7 @@ router.get("/api/scan-telemetry", requireAuth, requireSuperAdmin, async (req, re
   }
 });
 
-router.get("/api/scan-telemetry/stats", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, res) => {
   try {
     const now = Date.now();
     const since30m = new Date(now - 30 * 60_000);

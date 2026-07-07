@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
 import {
   Activity, Server, AlertTriangle, Zap, Clock, RefreshCw,
   ShieldX, Wifi, WifiOff, RotateCcw, TrendingDown, Timer,
@@ -113,6 +114,41 @@ export default function ScanOrchestrationPage() {
 
   const r = stats?.requests;
   const p = stats?.proxies;
+
+  /* ── Proxy table sort state ────────────────────────────────────────────── */
+  type ProxySortKey = "healthScore" | "successPct" | "count429" | "count403" | "avgLatencyMs" | "requestsToday";
+  const [proxySort, setProxySort] = useState<{ key: ProxySortKey; dir: "asc" | "desc" }>({ key: "healthScore", dir: "desc" });
+
+  const sortedProxies = useMemo(() => {
+    if (!proxies) return [];
+    const arr = [...proxies];
+    arr.sort((a, b) => {
+      let av: number, bv: number;
+      if (proxySort.key === "successPct") {
+        const ta = (a.successCount ?? 0) + (a.failCount ?? 0);
+        const tb = (b.successCount ?? 0) + (b.failCount ?? 0);
+        av = ta > 0 ? a.successCount / ta : -1;
+        bv = tb > 0 ? b.successCount / tb : -1;
+      } else {
+        av = (a[proxySort.key] as number | null) ?? -1;
+        bv = (b[proxySort.key] as number | null) ?? -1;
+      }
+      return proxySort.dir === "asc" ? av - bv : bv - av;
+    });
+    return arr;
+  }, [proxies, proxySort]);
+
+  const toggleSort = (key: ProxySortKey) =>
+    setProxySort(s => s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" });
+
+  const SortTh = ({ col, label, align = "right" }: { col: ProxySortKey; label: string; align?: "left" | "right" }) => (
+    <th
+      className={`px-4 py-2 text-${align} font-medium cursor-pointer select-none hover:text-foreground`}
+      onClick={() => toggleSort(col)}
+    >
+      {label}{proxySort.key === col ? (proxySort.dir === "desc" ? " ↓" : " ↑") : ""}
+    </th>
+  );
 
   /* Build a "Target Blocking Health" table from rate limiters + circuit details + hostStats */
   interface TargetHealth {
@@ -282,12 +318,12 @@ export default function ScanOrchestrationPage() {
                 <th className="px-4 py-2 text-left font-medium">Label</th>
                 <th className="px-4 py-2 text-left font-medium">Class</th>
                 <th className="px-4 py-2 text-left font-medium">Country</th>
-                <th className="px-4 py-2 text-right font-medium">Health</th>
-                <th className="px-4 py-2 text-right font-medium">Success %</th>
-                <th className="px-4 py-2 text-right font-medium">429s</th>
-                <th className="px-4 py-2 text-right font-medium">403s</th>
-                <th className="px-4 py-2 text-right font-medium">Avg Latency</th>
-                <th className="px-4 py-2 text-right font-medium">Requests Today</th>
+                <SortTh col="healthScore"    label="Health" />
+                <SortTh col="successPct"     label="Success %" />
+                <SortTh col="count429"       label="429s" />
+                <SortTh col="count403"       label="403s" />
+                <SortTh col="avgLatencyMs"   label="Avg Latency" />
+                <SortTh col="requestsToday"  label="Requests Today" />
                 <th className="px-4 py-2 text-left font-medium">Last Used</th>
                 <th className="px-4 py-2 text-left font-medium">Status</th>
               </tr>
@@ -295,7 +331,7 @@ export default function ScanOrchestrationPage() {
             <tbody>
               {!proxies || proxies.length === 0 ? (
                 <tr><td colSpan={12} className="px-4 py-8 text-center text-xs text-muted-foreground">No proxies configured. Add proxies in Settings → Proxy Pool.</td></tr>
-              ) : proxies.slice(0, 20).map(proxy => {
+              ) : sortedProxies.slice(0, 20).map(proxy => {
                 const total = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
                 const successPct = total > 0 ? Math.round(proxy.successCount / total * 100) : null;
                 return (
