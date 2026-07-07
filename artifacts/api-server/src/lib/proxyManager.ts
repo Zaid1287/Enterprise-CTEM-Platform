@@ -200,6 +200,42 @@ export async function scheduleRetestCoolingProxies(): Promise<void> {
           logger.debug({ ip: proxy.ip }, "Cooled proxy still unreachable — extending cooldown");
         }
       }
+
+      // Proactively re-ping active proxies not tested in the last 2 hours.
+      // Catches silently-dead proxies before they fail during a live scan.
+      const staleThreshold = new Date(Date.now() - 2 * 60 * 60_000);
+      const activeStale = await db
+        .select({ id: scanProxiesTable.id, ip: scanProxiesTable.ip, port: scanProxiesTable.port })
+        .from(scanProxiesTable)
+        .where(
+          and(
+            eq(scanProxiesTable.status, "active"),
+            sql`coalesce(last_tested_at, created_at) < ${staleThreshold}`,
+          )
+        );
+
+      for (const proxy of activeStale) {
+        const result = await healthCheckProxy(proxy.ip, proxy.port ?? 8080);
+        if (result.reachable) {
+          await db.update(scanProxiesTable)
+            .set({ lastTestedAt: new Date(), avgLatencyMs: result.latencyMs })
+            .where(eq(scanProxiesTable.id, proxy.id));
+          logger.debug({ ip: proxy.ip, latencyMs: result.latencyMs }, "Active proxy retest: still reachable");
+        } else {
+          await db.update(scanProxiesTable)
+            .set({
+              status:              "cooldown",
+              consecutiveFailures: 1,
+              cooldownUntil:       new Date(Date.now() + COOLDOWN_DURATION_MS),
+              lastTestedAt:        new Date(),
+            })
+            .where(eq(scanProxiesTable.id, proxy.id));
+          logger.info({ ip: proxy.ip }, "Active proxy retest: failed proactive ping — entering cooldown");
+        }
+      }
+      if (activeStale.length > 0) {
+        logger.info({ count: activeStale.length }, "Proxy retest: proactive re-ping of stale active proxies complete");
+      }
     } catch (err) {
       logger.warn({ err }, "proxyManager: retest cycle failed");
     }

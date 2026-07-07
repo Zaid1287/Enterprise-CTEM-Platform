@@ -35,6 +35,7 @@ function shouldRuleFire(triggerType: string, event: NotificationEvent): boolean 
     case "data_leak_found":    return event.eventType === "data_leak_found";
     case "brand_abuse_found":  return event.eventType === "brand_abuse_found";
     case "queue_full":         return event.eventType === "queue_full";
+    case "orchestrator_event": return event.eventType === "orchestrator_event";
     case "any":                return true;
     default:                   return event.eventType === "scan_complete";
   }

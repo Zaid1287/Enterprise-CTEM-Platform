@@ -65,7 +65,7 @@ async function loadConfig(): Promise<OrchConfig> {
       backoffBaseMs:            parseInt(map["retry_base_delay_ms"] ?? "1000", 10),
       maxBackoffMs:             parseInt(map["max_backoff_ms"]      ?? "30000", 10),
       logAllRequests:           map["log_all_requests"]       !== "false",
-      wafBypassEnabled:          map["waf_bypass_strategy"]    !== "none" && !!map["waf_bypass_strategy"],
+      wafBypassEnabled:          (map["waf_bypass_strategy"] ?? "rotate") !== "none",
       adaptiveRateLimitEnabled:  map["adaptive_rate_limit"]    !== "false",
       circuitBreakerEnabled:     map["circuit_breaker_enabled"] !== "false",
       proxyHealthScoringEnabled: map["proxy_health_scoring"]   !== "false",
@@ -654,10 +654,12 @@ export async function orchestratedFetch(
     }
   }
 
-  // ── Issue 4: Mark host as WAF-protected when all retries consistently hit WAF ──
+  // ── Mark host as WAF-protected when retries consistently hit WAF ──────────────
   // Threshold: WAF detected on ≥ 2 attempts AND > half of total attempts.
   // Stored in orchestrator_config with 24h TTL so bypass pre-activates next time.
-  if (wafHitCount >= 2 && wafHitCount > attemptNumber / 2 && config.wafBypassEnabled) {
+  // Note: host marking happens regardless of wafBypassEnabled so the DB record
+  //       is always current — bypass reads it on the NEXT request.
+  if (wafHitCount >= 2 && wafHitCount > attemptNumber / 2) {
     markHostWafProtected(hostname).catch(() => {});
   }
 

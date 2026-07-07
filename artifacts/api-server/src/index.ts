@@ -95,6 +95,8 @@ async function seedOrchestratorDefaults(): Promise<void> {
       { key: "max_concurrent_requests",       value: "20"          },
       { key: "proxy_health_threshold",        value: "60"          },
       { key: "proxy_cooldown_minutes",        value: "15"          },
+      { key: "scan_delay_multiplier",         value: "1.0"         },
+      { key: "waf_bypass_strategy",           value: "rotate"      },
       { key: "retry_base_delay_ms",           value: "1000"        },
       { key: "max_retries",                   value: "4"           },
       { key: "max_backoff_ms",                value: "30000"       },

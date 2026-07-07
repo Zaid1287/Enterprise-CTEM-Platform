@@ -1,12 +1,11 @@
-import { exec } from "child_process";
-import { promisify } from "util";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import tls from "tls";
 import { logger } from "./logger";
+import { orchestratedDnsResolve } from "./scanOrchestrator";
+import { orchestratedExec } from "./orchestratedExec";
 
-const execAsync = promisify(exec);
 const TESTSSL_BIN = "/tmp/security-tools/testssl.sh";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -44,11 +43,21 @@ export interface SslTestResult {
 
 // ── Node.js TLS fallback ───────────────────────────────────────────────────────
 
-function nodeJsTlsCheck(host: string, port: number): Promise<Partial<SslTestResult>> {
+async function nodeJsTlsCheck(host: string, port: number): Promise<Partial<SslTestResult>> {
+  // Resolve via DNS rotation pool first so we bypass the system resolver.
+  // Keep original hostname as servername (SNI) so TLS certificates are validated correctly.
+  let connectHost = host;
+  try {
+    const ips = await orchestratedDnsResolve(host);
+    if (ips.length > 0) connectHost = ips[0];
+  } catch {
+    connectHost = host;
+  }
+
   return new Promise(resolve => {
     const timeout = setTimeout(() => resolve({}), 10000);
     try {
-      const socket = tls.connect({ host, port, rejectUnauthorized: false, timeout: 8000 }, () => {
+      const socket = tls.connect({ host: connectHost, port, servername: host, rejectUnauthorized: false, timeout: 8000 }, () => {
         clearTimeout(timeout);
         const cert = socket.getPeerCertificate(true);
         const proto = socket.getProtocol() ?? "";
@@ -135,9 +144,9 @@ async function runTestssl(host: string, port: number): Promise<Partial<SslTestRe
   }
   const outFile = path.join(os.tmpdir(), `testssl-${host.replace(/\W/g, "_")}-${Date.now()}.json`);
   try {
-    await execAsync(
+    await orchestratedExec(
       `bash "${TESTSSL_BIN}" --jsonfile "${outFile}" --quiet --fast --color 0 --no-dns --nodns none ${host}:${port} 2>/dev/null`,
-      { timeout: 120_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+      { targetHost: host, timeout: 120_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
     );
     if (!fs.existsSync(outFile)) return {};
     const raw = fs.readFileSync(outFile, "utf8").trim();
