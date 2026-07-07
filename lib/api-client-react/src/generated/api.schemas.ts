@@ -1073,6 +1073,163 @@ export interface AssetScanReport {
   toolResults: AssetScanReportToolResultsItem[];
 }
 
+export type ScanProxyStatus = typeof ScanProxyStatus[keyof typeof ScanProxyStatus];
+
+
+export const ScanProxyStatus = {
+  active: 'active',
+  cooldown: 'cooldown',
+  inactive: 'inactive',
+} as const;
+
+export interface ScanProxy {
+  id: number;
+  ip: string;
+  port: number;
+  label?: string | null;
+  type: string;
+  country?: string | null;
+  asn?: string | null;
+  healthScore: number;
+  successCount?: number;
+  failCount?: number;
+  count429?: number;
+  count403?: number;
+  avgLatencyMs?: number | null;
+  status: ScanProxyStatus;
+  lastTestedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ScanProxyInput {
+  ip: string;
+  port?: number;
+  label?: string;
+  type?: string;
+  country?: string;
+  asn?: string;
+  status?: string;
+}
+
+export interface ProxyHealthResult {
+  proxyId: number;
+  reachable: boolean;
+  latencyMs?: number | null;
+  error?: string | null;
+}
+
+export interface OrchestratorConfigRow {
+  id?: number;
+  key: string;
+  value: string;
+  updatedAt?: string | null;
+}
+
+export interface OrchestratorConfigPatch {[key: string]: string}
+
+export type OrchestratorConfigResponseConfig = {[key: string]: string};
+
+export interface OrchestratorConfigResponse {
+  config: OrchestratorConfigResponseConfig;
+  rows: OrchestratorConfigRow[];
+}
+
+export type FingerprintProfileHeaders = {[key: string]: string};
+
+export interface FingerprintProfile {
+  id: number;
+  name: string;
+  headers: FingerprintProfileHeaders;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type FingerprintProfileInputHeaders = {[key: string]: string};
+
+export interface FingerprintProfileInput {
+  name?: string;
+  headers?: FingerprintProfileInputHeaders;
+  isActive?: boolean;
+}
+
+export interface ScanTelemetryRow {
+  id: number;
+  url: string;
+  method: string;
+  proxyIp?: string | null;
+  fingerprintProfileId?: number | null;
+  statusCode?: number | null;
+  latencyMs?: number | null;
+  retries: number;
+  delayMs?: number | null;
+  backoffMs?: number | null;
+  wafDetected: boolean;
+  captchaDetected: boolean;
+  bytesDownloaded?: number | null;
+  createdAt: string;
+}
+
+export interface ScanTelemetryPage {
+  rows: ScanTelemetryRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface ScanTelemetryTrendPoint {
+  minute?: string;
+  requests?: number;
+  avgLatencyMs?: number;
+  wafCount?: number;
+  retryCount?: number;
+}
+
+export type ScanTelemetryStatsRequests = {
+  totalRequests?: number;
+  avgLatencyMs?: number;
+  p95LatencyMs?: number;
+  count429?: number;
+  count403?: number;
+  countWaf?: number;
+  countCaptcha?: number;
+  totalRetries?: number;
+  avgBytesDownloaded?: number;
+  reqPerSecond?: number;
+};
+
+export type ScanTelemetryStatsProxies = {
+  activeProxies?: number;
+  coolingProxies?: number;
+  inactiveProxies?: number;
+  avgHealthScore?: number;
+};
+
+export type ScanTelemetryStatsCircuitsDetailsItem = { [key: string]: unknown };
+
+export type ScanTelemetryStatsCircuits = {
+  open?: number;
+  total?: number;
+  details?: ScanTelemetryStatsCircuitsDetailsItem[];
+};
+
+export type ScanTelemetryStatsRateLimitersItem = { [key: string]: unknown };
+
+export type ScanTelemetryStatsDnsResolversItem = { [key: string]: unknown };
+
+export interface ScanTelemetryStats {
+  window: string;
+  generatedAt: string;
+  requests: ScanTelemetryStatsRequests;
+  retryQueueSize?: number;
+  trend?: ScanTelemetryTrendPoint[];
+  proxies: ScanTelemetryStatsProxies;
+  circuits: ScanTelemetryStatsCircuits;
+  rateLimiters?: ScanTelemetryStatsRateLimitersItem[];
+  dnsResolvers?: ScanTelemetryStatsDnsResolversItem[];
+}
+
 export type ListAssetsParams = {
 type?: string;
 tag?: string;
@@ -1147,5 +1304,12 @@ pageSize?: number;
 
 export type DeleteBrandThreatScan200 = {
   success?: boolean;
+};
+
+export type UpdateOrchestratorConfig200 = { [key: string]: unknown };
+
+export type ListScanTelemetryParams = {
+page?: number;
+limit?: number;
 };
 

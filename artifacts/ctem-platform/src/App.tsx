@@ -58,6 +58,11 @@ const AiMapperAdminPage        = lazy(() => import("@/pages/AiMapperAdminPage"))
 const AiMapperAmClientsPage         = lazy(() => import("@/pages/AiMapperAmClientsPage"));
 const AiMapperClientViewPage        = lazy(() => import("@/pages/AiMapperClientViewPage"));
 const AiMapperScanSchedulesPage     = lazy(() => import("@/pages/AiMapperScanSchedulesPage"));
+const ScanOrchestrationPage  = lazy(() => import("@/pages/ScanOrchestrationPage"));
+const ScanProxiesPage        = lazy(() => import("@/pages/ScanProxiesPage"));
+const ScanFingerprintsPage   = lazy(() => import("@/pages/ScanFingerprintsPage"));
+const OrchestratorConfigPage = lazy(() => import("@/pages/OrchestratorConfigPage"));
+const ScanTelemetryPage      = lazy(() => import("@/pages/ScanTelemetryPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -230,6 +235,11 @@ function Router() {
       <Route path="/settings/cdn-whitelist" component={() => <ProtectedRoute component={CdnWhitelistPage} />} />
       <Route path="/discovery" component={() => <ProtectedRoute component={DiscoveryPage} />} />
       <Route path="/exposure" component={() => <ProtectedRoute component={ExposurePage} />} />
+      <Route path="/scan-orchestration" component={() => <ProtectedRoute component={ScanOrchestrationPage} />} />
+      <Route path="/settings/scan-proxies" component={() => <ProtectedRoute component={ScanProxiesPage} />} />
+      <Route path="/settings/scan-fingerprints" component={() => <ProtectedRoute component={ScanFingerprintsPage} />} />
+      <Route path="/settings/orchestrator-config" component={() => <ProtectedRoute component={OrchestratorConfigPage} />} />
+      <Route path="/scan-telemetry" component={() => <ProtectedRoute component={ScanTelemetryPage} />} />
 
       {/* Fallback */}
       <Route component={() => <Redirect to={defaultPath} />} />

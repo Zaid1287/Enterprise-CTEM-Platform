@@ -68,6 +68,8 @@ import type {
   FindingCommentInput,
   FindingScanData,
   FindingUpdate,
+  FingerprintProfile,
+  FingerprintProfileInput,
   GetRiskTrendParams,
   GetTopRiskyAssetsParams,
   HealthStatus,
@@ -77,12 +79,16 @@ import type {
   ListAuditLogsParams,
   ListComplianceControlsParams,
   ListFindingsParams,
+  ListScanTelemetryParams,
   ListScansParams,
   ListToolRunsParams,
   LoginInput,
   NewBrandThreatScan,
+  OrchestratorConfigPatch,
+  OrchestratorConfigResponse,
   PipelineScanCreated,
   PipelineScanInput,
+  ProxyHealthResult,
   RefreshTokenInput,
   RegisterInput,
   Report,
@@ -94,9 +100,13 @@ import type {
   Scan,
   ScanInput,
   ScanJob,
+  ScanProxy,
+  ScanProxyInput,
   ScanSchedule,
   ScanScheduleInput,
   ScanScheduleUpdate,
+  ScanTelemetryPage,
+  ScanTelemetryStats,
   Screenshot,
   SecurityTool,
   SecurityToolInput,
@@ -111,6 +121,7 @@ import type {
   ToolRun,
   ToolRunsPage,
   TrendPoint,
+  UpdateOrchestratorConfig200,
   User,
   UserInput,
   UserUpdate,
@@ -8334,4 +8345,906 @@ export const useAnalyzeAiMapperSurface = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getAnalyzeAiMapperSurfaceMutationOptions(options));
     }
+
+export const getListScanProxiesUrl = () => {
+
+
+
+
+  return `/api/scan-proxies`
+}
+
+/**
+ * @summary List all configured scan proxies
+ */
+export const listScanProxies = async ( options?: RequestInit): Promise<ScanProxy[]> => {
+
+  return customFetch<ScanProxy[]>(getListScanProxiesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListScanProxiesQueryKey = () => {
+    return [
+    `/api/scan-proxies`
+    ] as const;
+    }
+
+
+export const getListScanProxiesQueryOptions = <TData = Awaited<ReturnType<typeof listScanProxies>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanProxies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListScanProxiesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listScanProxies>>> = ({ signal }) => listScanProxies({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listScanProxies>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListScanProxiesQueryResult = NonNullable<Awaited<ReturnType<typeof listScanProxies>>>
+export type ListScanProxiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all configured scan proxies
+ */
+
+export function useListScanProxies<TData = Awaited<ReturnType<typeof listScanProxies>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanProxies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListScanProxiesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateScanProxyUrl = () => {
+
+
+
+
+  return `/api/scan-proxies`
+}
+
+/**
+ * @summary Add a proxy and run a live TCP health check
+ */
+export const createScanProxy = async (scanProxyInput: ScanProxyInput, options?: RequestInit): Promise<ScanProxy> => {
+
+  return customFetch<ScanProxy>(getCreateScanProxyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scanProxyInput,)
+  }
+);}
+
+
+
+
+export const getCreateScanProxyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createScanProxy>>, TError,{data: BodyType<ScanProxyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createScanProxy>>, TError,{data: BodyType<ScanProxyInput>}, TContext> => {
+
+const mutationKey = ['createScanProxy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createScanProxy>>, {data: BodyType<ScanProxyInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createScanProxy(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateScanProxyMutationResult = NonNullable<Awaited<ReturnType<typeof createScanProxy>>>
+    export type CreateScanProxyMutationBody = BodyType<ScanProxyInput>
+    export type CreateScanProxyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Add a proxy and run a live TCP health check
+ */
+export const useCreateScanProxy = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createScanProxy>>, TError,{data: BodyType<ScanProxyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createScanProxy>>,
+        TError,
+        {data: BodyType<ScanProxyInput>},
+        TContext
+      > => {
+      return useMutation(getCreateScanProxyMutationOptions(options));
+    }
+
+export const getUpdateScanProxyUrl = (id: number,) => {
+
+
+
+
+  return `/api/scan-proxies/${id}`
+}
+
+/**
+ * @summary Update proxy fields
+ */
+export const updateScanProxy = async (id: number,
+    scanProxyInput: ScanProxyInput, options?: RequestInit): Promise<ScanProxy> => {
+
+  return customFetch<ScanProxy>(getUpdateScanProxyUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scanProxyInput,)
+  }
+);}
+
+
+
+
+export const getUpdateScanProxyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScanProxy>>, TError,{id: number;data: BodyType<ScanProxyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateScanProxy>>, TError,{id: number;data: BodyType<ScanProxyInput>}, TContext> => {
+
+const mutationKey = ['updateScanProxy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateScanProxy>>, {id: number;data: BodyType<ScanProxyInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateScanProxy(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateScanProxyMutationResult = NonNullable<Awaited<ReturnType<typeof updateScanProxy>>>
+    export type UpdateScanProxyMutationBody = BodyType<ScanProxyInput>
+    export type UpdateScanProxyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update proxy fields
+ */
+export const useUpdateScanProxy = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScanProxy>>, TError,{id: number;data: BodyType<ScanProxyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateScanProxy>>,
+        TError,
+        {id: number;data: BodyType<ScanProxyInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateScanProxyMutationOptions(options));
+    }
+
+export const getDeleteScanProxyUrl = (id: number,) => {
+
+
+
+
+  return `/api/scan-proxies/${id}`
+}
+
+/**
+ * @summary Delete a proxy
+ */
+export const deleteScanProxy = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteScanProxyUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteScanProxyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteScanProxy>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteScanProxy>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteScanProxy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteScanProxy>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteScanProxy(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteScanProxyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteScanProxy>>>
+
+    export type DeleteScanProxyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a proxy
+ */
+export const useDeleteScanProxy = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteScanProxy>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteScanProxy>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteScanProxyMutationOptions(options));
+    }
+
+export const getTestScanProxyHealthUrl = (id: number,) => {
+
+
+
+
+  return `/api/scan-proxies/${id}/health`
+}
+
+/**
+ * @summary Run live TCP health check for a proxy
+ */
+export const testScanProxyHealth = async (id: number, options?: RequestInit): Promise<ProxyHealthResult> => {
+
+  return customFetch<ProxyHealthResult>(getTestScanProxyHealthUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getTestScanProxyHealthQueryKey = (id: number,) => {
+    return [
+    `/api/scan-proxies/${id}/health`
+    ] as const;
+    }
+
+
+export const getTestScanProxyHealthQueryOptions = <TData = Awaited<ReturnType<typeof testScanProxyHealth>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof testScanProxyHealth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getTestScanProxyHealthQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof testScanProxyHealth>>> = ({ signal }) => testScanProxyHealth(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof testScanProxyHealth>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type TestScanProxyHealthQueryResult = NonNullable<Awaited<ReturnType<typeof testScanProxyHealth>>>
+export type TestScanProxyHealthQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Run live TCP health check for a proxy
+ */
+
+export function useTestScanProxyHealth<TData = Awaited<ReturnType<typeof testScanProxyHealth>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof testScanProxyHealth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getTestScanProxyHealthQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetOrchestratorConfigUrl = () => {
+
+
+
+
+  return `/api/orchestrator-config`
+}
+
+/**
+ * @summary Get all orchestrator configuration knobs
+ */
+export const getOrchestratorConfig = async ( options?: RequestInit): Promise<OrchestratorConfigResponse> => {
+
+  return customFetch<OrchestratorConfigResponse>(getGetOrchestratorConfigUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOrchestratorConfigQueryKey = () => {
+    return [
+    `/api/orchestrator-config`
+    ] as const;
+    }
+
+
+export const getGetOrchestratorConfigQueryOptions = <TData = Awaited<ReturnType<typeof getOrchestratorConfig>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOrchestratorConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOrchestratorConfigQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOrchestratorConfig>>> = ({ signal }) => getOrchestratorConfig({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOrchestratorConfig>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetOrchestratorConfigQueryResult = NonNullable<Awaited<ReturnType<typeof getOrchestratorConfig>>>
+export type GetOrchestratorConfigQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get all orchestrator configuration knobs
+ */
+
+export function useGetOrchestratorConfig<TData = Awaited<ReturnType<typeof getOrchestratorConfig>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOrchestratorConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetOrchestratorConfigQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateOrchestratorConfigUrl = () => {
+
+
+
+
+  return `/api/orchestrator-config`
+}
+
+/**
+ * @summary Update one or more orchestrator config values
+ */
+export const updateOrchestratorConfig = async (orchestratorConfigPatch: OrchestratorConfigPatch, options?: RequestInit): Promise<UpdateOrchestratorConfig200> => {
+
+  return customFetch<UpdateOrchestratorConfig200>(getUpdateOrchestratorConfigUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      orchestratorConfigPatch,)
+  }
+);}
+
+
+
+
+export const getUpdateOrchestratorConfigMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateOrchestratorConfig>>, TError,{data: BodyType<OrchestratorConfigPatch>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateOrchestratorConfig>>, TError,{data: BodyType<OrchestratorConfigPatch>}, TContext> => {
+
+const mutationKey = ['updateOrchestratorConfig'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateOrchestratorConfig>>, {data: BodyType<OrchestratorConfigPatch>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateOrchestratorConfig(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateOrchestratorConfigMutationResult = NonNullable<Awaited<ReturnType<typeof updateOrchestratorConfig>>>
+    export type UpdateOrchestratorConfigMutationBody = BodyType<OrchestratorConfigPatch>
+    export type UpdateOrchestratorConfigMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update one or more orchestrator config values
+ */
+export const useUpdateOrchestratorConfig = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateOrchestratorConfig>>, TError,{data: BodyType<OrchestratorConfigPatch>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateOrchestratorConfig>>,
+        TError,
+        {data: BodyType<OrchestratorConfigPatch>},
+        TContext
+      > => {
+      return useMutation(getUpdateOrchestratorConfigMutationOptions(options));
+    }
+
+export const getListScanFingerprintsUrl = () => {
+
+
+
+
+  return `/api/scan-fingerprints`
+}
+
+/**
+ * @summary List all browser fingerprint profiles
+ */
+export const listScanFingerprints = async ( options?: RequestInit): Promise<FingerprintProfile[]> => {
+
+  return customFetch<FingerprintProfile[]>(getListScanFingerprintsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListScanFingerprintsQueryKey = () => {
+    return [
+    `/api/scan-fingerprints`
+    ] as const;
+    }
+
+
+export const getListScanFingerprintsQueryOptions = <TData = Awaited<ReturnType<typeof listScanFingerprints>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanFingerprints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListScanFingerprintsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listScanFingerprints>>> = ({ signal }) => listScanFingerprints({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listScanFingerprints>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListScanFingerprintsQueryResult = NonNullable<Awaited<ReturnType<typeof listScanFingerprints>>>
+export type ListScanFingerprintsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all browser fingerprint profiles
+ */
+
+export function useListScanFingerprints<TData = Awaited<ReturnType<typeof listScanFingerprints>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanFingerprints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListScanFingerprintsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetScanFingerprintUrl = (id: number,) => {
+
+
+
+
+  return `/api/scan-fingerprints/${id}`
+}
+
+/**
+ * @summary Get a single fingerprint profile
+ */
+export const getScanFingerprint = async (id: number, options?: RequestInit): Promise<FingerprintProfile> => {
+
+  return customFetch<FingerprintProfile>(getGetScanFingerprintUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScanFingerprintQueryKey = (id: number,) => {
+    return [
+    `/api/scan-fingerprints/${id}`
+    ] as const;
+    }
+
+
+export const getGetScanFingerprintQueryOptions = <TData = Awaited<ReturnType<typeof getScanFingerprint>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanFingerprint>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScanFingerprintQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScanFingerprint>>> = ({ signal }) => getScanFingerprint(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScanFingerprint>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScanFingerprintQueryResult = NonNullable<Awaited<ReturnType<typeof getScanFingerprint>>>
+export type GetScanFingerprintQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get a single fingerprint profile
+ */
+
+export function useGetScanFingerprint<TData = Awaited<ReturnType<typeof getScanFingerprint>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanFingerprint>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetScanFingerprintQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateScanFingerprintUrl = (id: number,) => {
+
+
+
+
+  return `/api/scan-fingerprints/${id}`
+}
+
+/**
+ * @summary Update a fingerprint profile
+ */
+export const updateScanFingerprint = async (id: number,
+    fingerprintProfileInput: FingerprintProfileInput, options?: RequestInit): Promise<FingerprintProfile> => {
+
+  return customFetch<FingerprintProfile>(getUpdateScanFingerprintUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      fingerprintProfileInput,)
+  }
+);}
+
+
+
+
+export const getUpdateScanFingerprintMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScanFingerprint>>, TError,{id: number;data: BodyType<FingerprintProfileInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateScanFingerprint>>, TError,{id: number;data: BodyType<FingerprintProfileInput>}, TContext> => {
+
+const mutationKey = ['updateScanFingerprint'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateScanFingerprint>>, {id: number;data: BodyType<FingerprintProfileInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateScanFingerprint(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateScanFingerprintMutationResult = NonNullable<Awaited<ReturnType<typeof updateScanFingerprint>>>
+    export type UpdateScanFingerprintMutationBody = BodyType<FingerprintProfileInput>
+    export type UpdateScanFingerprintMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update a fingerprint profile
+ */
+export const useUpdateScanFingerprint = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScanFingerprint>>, TError,{id: number;data: BodyType<FingerprintProfileInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateScanFingerprint>>,
+        TError,
+        {id: number;data: BodyType<FingerprintProfileInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateScanFingerprintMutationOptions(options));
+    }
+
+export const getListScanTelemetryUrl = (params?: ListScanTelemetryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/scan-telemetry?${stringifiedParams}` : `/api/scan-telemetry`
+}
+
+/**
+ * @summary Paginated scan request telemetry log
+ */
+export const listScanTelemetry = async (params?: ListScanTelemetryParams, options?: RequestInit): Promise<ScanTelemetryPage> => {
+
+  return customFetch<ScanTelemetryPage>(getListScanTelemetryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListScanTelemetryQueryKey = (params?: ListScanTelemetryParams,) => {
+    return [
+    `/api/scan-telemetry`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListScanTelemetryQueryOptions = <TData = Awaited<ReturnType<typeof listScanTelemetry>>, TError = ErrorType<unknown>>(params?: ListScanTelemetryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanTelemetry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListScanTelemetryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listScanTelemetry>>> = ({ signal }) => listScanTelemetry(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listScanTelemetry>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListScanTelemetryQueryResult = NonNullable<Awaited<ReturnType<typeof listScanTelemetry>>>
+export type ListScanTelemetryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Paginated scan request telemetry log
+ */
+
+export function useListScanTelemetry<TData = Awaited<ReturnType<typeof listScanTelemetry>>, TError = ErrorType<unknown>>(
+ params?: ListScanTelemetryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScanTelemetry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListScanTelemetryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetScanTelemetryStatsUrl = () => {
+
+
+
+
+  return `/api/scan-telemetry/stats`
+}
+
+/**
+ * @summary Aggregated telemetry stats with per-minute trend
+ */
+export const getScanTelemetryStats = async ( options?: RequestInit): Promise<ScanTelemetryStats> => {
+
+  return customFetch<ScanTelemetryStats>(getGetScanTelemetryStatsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScanTelemetryStatsQueryKey = () => {
+    return [
+    `/api/scan-telemetry/stats`
+    ] as const;
+    }
+
+
+export const getGetScanTelemetryStatsQueryOptions = <TData = Awaited<ReturnType<typeof getScanTelemetryStats>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanTelemetryStats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScanTelemetryStatsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScanTelemetryStats>>> = ({ signal }) => getScanTelemetryStats({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScanTelemetryStats>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScanTelemetryStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getScanTelemetryStats>>>
+export type GetScanTelemetryStatsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Aggregated telemetry stats with per-minute trend
+ */
+
+export function useGetScanTelemetryStats<TData = Awaited<ReturnType<typeof getScanTelemetryStats>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScanTelemetryStats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetScanTelemetryStatsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 

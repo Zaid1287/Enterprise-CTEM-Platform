@@ -955,9 +955,7 @@ export const ListFindingsQueryParams = zod.object({
   "status": zod.coerce.string().optional(),
   "severity": zod.coerce.string().optional(),
   "assetId": zod.coerce.number().optional(),
-  "search": zod.coerce.string().optional(),
-  "newSinceScanId": zod.coerce.number().optional(),
-  "isStale": zod.coerce.string().optional()
+  "search": zod.coerce.string().optional()
 })
 
 export const ListFindingsResponseItem = zod.object({
@@ -983,11 +981,6 @@ export const ListFindingsResponseItem = zod.object({
   "remediation": zod.string().nullish(),
   "evidence": zod.string().nullish(),
   "riskScore": zod.number().nullish(),
-  "lastSeenAt": zod.string().nullish(),
-  "consecutiveMissedScans": zod.number().optional(),
-  "previousScanId": zod.number().nullish(),
-  "firstSeenScanId": zod.number().nullish(),
-  "isNewSinceLastScan": zod.boolean().optional(),
   "createdAt": zod.string(),
   "updatedAt": zod.string().optional()
 })
@@ -2268,6 +2261,266 @@ export const AnalyzeAiMapperSurfaceResponse = zod.object({
   "suggestions": zod.array(zod.string()),
   "riskLevel": zod.string(),
   "model": zod.string()
+})
+
+
+/**
+ * @summary List all configured scan proxies
+ */
+export const ListScanProxiesResponseItem = zod.object({
+  "id": zod.number(),
+  "ip": zod.string(),
+  "port": zod.number(),
+  "label": zod.string().nullish(),
+  "type": zod.string(),
+  "country": zod.string().nullish(),
+  "asn": zod.string().nullish(),
+  "healthScore": zod.number(),
+  "successCount": zod.number().optional(),
+  "failCount": zod.number().optional(),
+  "count429": zod.number().optional(),
+  "count403": zod.number().optional(),
+  "avgLatencyMs": zod.number().nullish(),
+  "status": zod.enum(['active', 'cooldown', 'inactive']),
+  "lastTestedAt": zod.string().nullish(),
+  "createdAt": zod.string().optional(),
+  "updatedAt": zod.string().optional()
+})
+export const ListScanProxiesResponse = zod.array(ListScanProxiesResponseItem)
+
+
+/**
+ * @summary Add a proxy and run a live TCP health check
+ */
+export const CreateScanProxyBody = zod.object({
+  "ip": zod.string(),
+  "port": zod.number().optional(),
+  "label": zod.string().optional(),
+  "type": zod.string().optional(),
+  "country": zod.string().optional(),
+  "asn": zod.string().optional(),
+  "status": zod.string().optional()
+})
+
+
+/**
+ * @summary Update proxy fields
+ */
+export const UpdateScanProxyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateScanProxyBody = zod.object({
+  "ip": zod.string(),
+  "port": zod.number().optional(),
+  "label": zod.string().optional(),
+  "type": zod.string().optional(),
+  "country": zod.string().optional(),
+  "asn": zod.string().optional(),
+  "status": zod.string().optional()
+})
+
+export const UpdateScanProxyResponse = zod.object({
+  "id": zod.number(),
+  "ip": zod.string(),
+  "port": zod.number(),
+  "label": zod.string().nullish(),
+  "type": zod.string(),
+  "country": zod.string().nullish(),
+  "asn": zod.string().nullish(),
+  "healthScore": zod.number(),
+  "successCount": zod.number().optional(),
+  "failCount": zod.number().optional(),
+  "count429": zod.number().optional(),
+  "count403": zod.number().optional(),
+  "avgLatencyMs": zod.number().nullish(),
+  "status": zod.enum(['active', 'cooldown', 'inactive']),
+  "lastTestedAt": zod.string().nullish(),
+  "createdAt": zod.string().optional(),
+  "updatedAt": zod.string().optional()
+})
+
+
+/**
+ * @summary Delete a proxy
+ */
+export const DeleteScanProxyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary Run live TCP health check for a proxy
+ */
+export const TestScanProxyHealthParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const TestScanProxyHealthResponse = zod.object({
+  "proxyId": zod.number(),
+  "reachable": zod.boolean(),
+  "latencyMs": zod.number().nullish(),
+  "error": zod.string().nullish()
+})
+
+
+/**
+ * @summary Get all orchestrator configuration knobs
+ */
+export const GetOrchestratorConfigResponse = zod.object({
+  "config": zod.record(zod.string(), zod.string()),
+  "rows": zod.array(zod.object({
+  "id": zod.number().optional(),
+  "key": zod.string(),
+  "value": zod.string(),
+  "updatedAt": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary Update one or more orchestrator config values
+ */
+export const UpdateOrchestratorConfigBody = zod.record(zod.string(), zod.string())
+
+export const UpdateOrchestratorConfigResponse = zod.object({
+
+}).passthrough()
+
+
+/**
+ * @summary List all browser fingerprint profiles
+ */
+export const ListScanFingerprintsResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "headers": zod.record(zod.string(), zod.string()),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string().optional(),
+  "updatedAt": zod.string().optional()
+})
+export const ListScanFingerprintsResponse = zod.array(ListScanFingerprintsResponseItem)
+
+
+/**
+ * @summary Get a single fingerprint profile
+ */
+export const GetScanFingerprintParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetScanFingerprintResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "headers": zod.record(zod.string(), zod.string()),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string().optional(),
+  "updatedAt": zod.string().optional()
+})
+
+
+/**
+ * @summary Update a fingerprint profile
+ */
+export const UpdateScanFingerprintParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateScanFingerprintBody = zod.object({
+  "name": zod.string().optional(),
+  "headers": zod.record(zod.string(), zod.string()).optional(),
+  "isActive": zod.boolean().optional()
+})
+
+export const UpdateScanFingerprintResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "headers": zod.record(zod.string(), zod.string()),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string().optional(),
+  "updatedAt": zod.string().optional()
+})
+
+
+/**
+ * @summary Paginated scan request telemetry log
+ */
+export const listScanTelemetryQueryPageDefault = 1;
+export const listScanTelemetryQueryLimitDefault = 50;
+
+export const ListScanTelemetryQueryParams = zod.object({
+  "page": zod.coerce.number().default(listScanTelemetryQueryPageDefault),
+  "limit": zod.coerce.number().default(listScanTelemetryQueryLimitDefault)
+})
+
+export const ListScanTelemetryResponse = zod.object({
+  "rows": zod.array(zod.object({
+  "id": zod.number(),
+  "url": zod.string(),
+  "method": zod.string(),
+  "proxyIp": zod.string().nullish(),
+  "fingerprintProfileId": zod.number().nullish(),
+  "statusCode": zod.number().nullish(),
+  "latencyMs": zod.number().nullish(),
+  "retries": zod.number(),
+  "delayMs": zod.number().nullish(),
+  "backoffMs": zod.number().nullish(),
+  "wafDetected": zod.boolean(),
+  "captchaDetected": zod.boolean(),
+  "bytesDownloaded": zod.number().nullish(),
+  "createdAt": zod.string()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "limit": zod.number()
+})
+
+
+/**
+ * @summary Aggregated telemetry stats with per-minute trend
+ */
+export const GetScanTelemetryStatsResponse = zod.object({
+  "window": zod.string(),
+  "generatedAt": zod.string(),
+  "requests": zod.object({
+  "totalRequests": zod.number().optional(),
+  "avgLatencyMs": zod.number().optional(),
+  "p95LatencyMs": zod.number().optional(),
+  "count429": zod.number().optional(),
+  "count403": zod.number().optional(),
+  "countWaf": zod.number().optional(),
+  "countCaptcha": zod.number().optional(),
+  "totalRetries": zod.number().optional(),
+  "avgBytesDownloaded": zod.number().optional(),
+  "reqPerSecond": zod.number().optional()
+}),
+  "retryQueueSize": zod.number().optional(),
+  "trend": zod.array(zod.object({
+  "minute": zod.string().optional(),
+  "requests": zod.number().optional(),
+  "avgLatencyMs": zod.number().optional(),
+  "wafCount": zod.number().optional(),
+  "retryCount": zod.number().optional()
+})).optional(),
+  "proxies": zod.object({
+  "activeProxies": zod.number().optional(),
+  "coolingProxies": zod.number().optional(),
+  "inactiveProxies": zod.number().optional(),
+  "avgHealthScore": zod.number().optional()
+}),
+  "circuits": zod.object({
+  "open": zod.number().optional(),
+  "total": zod.number().optional(),
+  "details": zod.array(zod.object({
+
+}).passthrough()).optional()
+}),
+  "rateLimiters": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "dnsResolvers": zod.array(zod.object({
+
+}).passthrough()).optional()
 })
 
 

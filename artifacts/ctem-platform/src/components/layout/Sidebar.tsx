@@ -6,7 +6,8 @@ import {
   FileBarChart2, Bell, TrendingUp, Brain, ClipboardList,
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
-  ShieldAlert, Network, Activity, Shield, MapPin, Globe2, Crosshair,
+  ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
+  Cpu, Radio, ScrollText, Fingerprint, Sliders,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -92,7 +93,18 @@ const navGroups: NavGroup[] = [
     title: "Infrastructure",
     onlyFor: ["admin", "super_admin"],
     items: [
-      { label: "Queue Monitor", href: "/queue-monitor", icon: Activity, onlyFor: ["admin", "super_admin"] },
+      { label: "Queue Monitor",    href: "/queue-monitor",           icon: Activity,     onlyFor: ["admin", "super_admin"] },
+    ],
+  },
+  {
+    title: "Scan Orchestration",
+    onlyFor: ["admin", "super_admin"],
+    items: [
+      { label: "Dashboard",        href: "/scan-orchestration",      icon: Cpu },
+      { label: "Proxy Pool",       href: "/settings/scan-proxies",   icon: Radio },
+      { label: "Fingerprints",     href: "/settings/scan-fingerprints", icon: Fingerprint },
+      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders, onlyFor: ["super_admin"] },
+      { label: "Telemetry Logs",   href: "/scan-telemetry",          icon: ScrollText },
     ],
   },
   {

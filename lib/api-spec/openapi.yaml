@@ -2205,6 +2205,246 @@ paths:
               schema:
                 $ref: "#/components/schemas/AiMapperAnalysis"
 
+  # ──────────────────────────────────────────────────────────
+  # SCAN ORCHESTRATION
+  # ──────────────────────────────────────────────────────────
+  /scan-proxies:
+    get:
+      operationId: listScanProxies
+      tags: [scan-orchestration]
+      summary: List all configured scan proxies
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of proxies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScanProxy"
+    post:
+      operationId: createScanProxy
+      tags: [scan-orchestration]
+      summary: Add a proxy and run a live TCP health check
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanProxyInput"
+      responses:
+        "201":
+          description: Proxy created with health check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanProxy"
+
+  /scan-proxies/{id}:
+    patch:
+      operationId: updateScanProxy
+      tags: [scan-orchestration]
+      summary: Update proxy fields
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanProxyInput"
+      responses:
+        "200":
+          description: Updated proxy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanProxy"
+    delete:
+      operationId: deleteScanProxy
+      tags: [scan-orchestration]
+      summary: Delete a proxy
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+
+  /scan-proxies/{id}/health:
+    get:
+      operationId: testScanProxyHealth
+      tags: [scan-orchestration]
+      summary: Run live TCP health check for a proxy
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyHealthResult"
+
+  /orchestrator-config:
+    get:
+      operationId: getOrchestratorConfig
+      tags: [scan-orchestration]
+      summary: Get all orchestrator configuration knobs
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Config map and rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrchestratorConfigResponse"
+    patch:
+      operationId: updateOrchestratorConfig
+      tags: [scan-orchestration]
+      summary: Update one or more orchestrator config values
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrchestratorConfigPatch"
+      responses:
+        "200":
+          description: Updated rows
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /scan-fingerprints:
+    get:
+      operationId: listScanFingerprints
+      tags: [scan-orchestration]
+      summary: List all browser fingerprint profiles
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FingerprintProfile"
+
+  /scan-fingerprints/{id}:
+    get:
+      operationId: getScanFingerprint
+      tags: [scan-orchestration]
+      summary: Get a single fingerprint profile
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Fingerprint profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FingerprintProfile"
+    patch:
+      operationId: updateScanFingerprint
+      tags: [scan-orchestration]
+      summary: Update a fingerprint profile
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FingerprintProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FingerprintProfile"
+
+  /scan-telemetry:
+    get:
+      operationId: listScanTelemetry
+      tags: [scan-orchestration]
+      summary: Paginated scan request telemetry log
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Telemetry rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanTelemetryPage"
+
+  /scan-telemetry/stats:
+    get:
+      operationId: getScanTelemetryStats
+      tags: [scan-orchestration]
+      summary: Aggregated telemetry stats with per-minute trend
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Stats and trend data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanTelemetryStats"
+
 components:
   schemas:
     AiMapperSummary:
@@ -4036,6 +4276,285 @@ components:
         summary:
           type: object
         toolResults:
+          type: array
+          items:
+            type: object
+
+    ScanProxy:
+      type: object
+      required: [id, ip, port, type, healthScore, status]
+      properties:
+        id:
+          type: integer
+        ip:
+          type: string
+        port:
+          type: integer
+        label:
+          type: string
+          nullable: true
+        type:
+          type: string
+        country:
+          type: string
+          nullable: true
+        asn:
+          type: string
+          nullable: true
+        healthScore:
+          type: integer
+        successCount:
+          type: integer
+        failCount:
+          type: integer
+        count429:
+          type: integer
+        count403:
+          type: integer
+        avgLatencyMs:
+          type: integer
+          nullable: true
+        status:
+          type: string
+          enum: [active, cooldown, inactive]
+        lastTestedAt:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    ScanProxyInput:
+      type: object
+      required: [ip]
+      properties:
+        ip:
+          type: string
+        port:
+          type: integer
+        label:
+          type: string
+        type:
+          type: string
+        country:
+          type: string
+        asn:
+          type: string
+        status:
+          type: string
+
+    ProxyHealthResult:
+      type: object
+      required: [proxyId, reachable]
+      properties:
+        proxyId:
+          type: integer
+        reachable:
+          type: boolean
+        latencyMs:
+          type: integer
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    OrchestratorConfigRow:
+      type: object
+      required: [key, value]
+      properties:
+        id:
+          type: integer
+        key:
+          type: string
+        value:
+          type: string
+        updatedAt:
+          type: string
+          nullable: true
+
+    OrchestratorConfigPatch:
+      type: object
+      additionalProperties:
+        type: string
+
+    OrchestratorConfigResponse:
+      type: object
+      required: [config, rows]
+      properties:
+        config:
+          type: object
+          additionalProperties:
+            type: string
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrchestratorConfigRow"
+
+    FingerprintProfile:
+      type: object
+      required: [id, name, headers, isActive]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    FingerprintProfileInput:
+      type: object
+      properties:
+        name:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        isActive:
+          type: boolean
+
+    ScanTelemetryRow:
+      type: object
+      required: [id, url, method, retries, wafDetected, captchaDetected, createdAt]
+      properties:
+        id:
+          type: integer
+        url:
+          type: string
+        method:
+          type: string
+        proxyIp:
+          type: string
+          nullable: true
+        fingerprintProfileId:
+          type: integer
+          nullable: true
+        statusCode:
+          type: integer
+          nullable: true
+        latencyMs:
+          type: integer
+          nullable: true
+        retries:
+          type: integer
+        delayMs:
+          type: integer
+          nullable: true
+        backoffMs:
+          type: integer
+          nullable: true
+        wafDetected:
+          type: boolean
+        captchaDetected:
+          type: boolean
+        bytesDownloaded:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+
+    ScanTelemetryPage:
+      type: object
+      required: [rows, total, page, limit]
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScanTelemetryRow"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    ScanTelemetryTrendPoint:
+      type: object
+      properties:
+        minute:
+          type: string
+        requests:
+          type: integer
+        avgLatencyMs:
+          type: integer
+        wafCount:
+          type: integer
+        retryCount:
+          type: integer
+
+    ScanTelemetryStats:
+      type: object
+      required: [window, generatedAt, requests, proxies, circuits]
+      properties:
+        window:
+          type: string
+        generatedAt:
+          type: string
+        requests:
+          type: object
+          properties:
+            totalRequests:
+              type: integer
+            avgLatencyMs:
+              type: integer
+            p95LatencyMs:
+              type: integer
+            count429:
+              type: integer
+            count403:
+              type: integer
+            countWaf:
+              type: integer
+            countCaptcha:
+              type: integer
+            totalRetries:
+              type: integer
+            avgBytesDownloaded:
+              type: integer
+            reqPerSecond:
+              type: number
+        retryQueueSize:
+          type: integer
+        trend:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScanTelemetryTrendPoint"
+        proxies:
+          type: object
+          properties:
+            activeProxies:
+              type: integer
+            coolingProxies:
+              type: integer
+            inactiveProxies:
+              type: integer
+            avgHealthScore:
+              type: integer
+        circuits:
+          type: object
+          properties:
+            open:
+              type: integer
+            total:
+              type: integer
+            details:
+              type: array
+              items:
+                type: object
+        rateLimiters:
+          type: array
+          items:
+            type: object
+        dnsResolvers:
           type: array
           items:
             type: object
