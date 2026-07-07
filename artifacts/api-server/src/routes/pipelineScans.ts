@@ -2722,7 +2722,7 @@ async function executePipeline(
           title: `Exposed ${info.service} (Port ${p.port}/${(p.protocol ?? "tcp")})`,
           cve: cveId,
           severity: info.risk,
-          cvssScore: String(info.cvss),
+          cvss: info.cvss,
           cwe: info.cwe,
           status: "open" as const,
           description: `Port ${p.port}/${(p.protocol ?? "tcp")} (${p.service || info.service}) is directly accessible from the internet on ${asset.name} (${asset.value}). ${info.reason}. Detected service version: ${p.version || "unknown"}.`,
@@ -2739,7 +2739,7 @@ async function executePipeline(
           tenantId, assetId: asset.id, scanId,
           title: v.title, cve: v.cve,
           severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-          cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+          cvss: v.cvss, cwe: v.cwe, status: "open",
           description: `${v.title} (${v.cve}) — CVSS ${v.cvss}. Detected on ${asset.name} (${asset.value}).`,
           remediation: v.remediation,
         });
@@ -2752,7 +2752,7 @@ async function executePipeline(
         tenantId, assetId: asset.id, scanId,
         title: v.title, cve: v.cve,
         severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-        cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+        cvss: v.cvss, cwe: v.cwe, status: "open",
         description: `${v.title}. Web server misconfiguration detected by Nikto. Scanned host: ${asset.value}.`,
         remediation: v.remediation,
       });
@@ -2764,7 +2764,7 @@ async function executePipeline(
         tenantId, assetId: asset.id, scanId,
         title: v.title, cve: v.cve,
         severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-        cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+        cvss: v.cvss, cwe: v.cwe, status: "open",
         description: `Dalfox detected a Cross-Site Scripting (XSS) vulnerability on ${asset.value}. XSS allows attackers to inject client-side scripts and steal sessions, credentials, or perform actions on behalf of users.`,
         remediation: v.remediation,
       });
@@ -2985,7 +2985,7 @@ async function executePipeline(
           title: `${s.type} exposed in JavaScript`,
           cve: `JSSEC-${s.type.replace(/[^A-Z0-9]/gi, "-").toUpperCase().slice(0, 20)}`,
           severity: s.severity as "critical" | "high" | "medium" | "low" | "info",
-          cvssScore: String(cvssMap[s.severity] ?? 5.0),
+          cvss: cvssMap[s.severity] ?? 5.0,
           cwe: s.cwe, status: "open",
           description: `${s.type} found in ${s.file.split("/").pop()}, line ${s.line}. Context: ${s.rawContext.slice(0, 300)}`,
           remediation: s.remediation,
@@ -3093,7 +3093,7 @@ async function executePipeline(
           title: v.title,
           cve: v.cve,
           severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-          cvssScore: String(v.cvss),
+          cvss: v.cvss,
           cwe: v.cwe,
           status: "open",
           description: `${v.title}. Resource URL: ${v.source}`,
@@ -3169,7 +3169,7 @@ async function executePipeline(
           tenantId, assetId: asset.id, scanId,
           title: v.title, cve: v.cve,
           severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-          cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+          cvss: v.cvss, cwe: v.cwe, status: "open",
           description: `${v.title}. Source: ${v.source}`,
           remediation: v.remediation,
         });
@@ -3238,7 +3238,7 @@ async function executePipeline(
           tenantId, assetId: asset.id, scanId,
           title: v.title, cve: v.cve,
           severity: v.severity as "critical" | "high" | "medium" | "low" | "info",
-          cvssScore: String(v.cvss), cwe: v.cwe, status: "open",
+          cvss: v.cvss, cwe: v.cwe, status: "open",
           description: `${v.title}. This was discovered by directory fuzzing. Immediate remediation is required.`,
           remediation: v.remediation,
         });
@@ -3282,7 +3282,7 @@ async function executePipeline(
           title: f.name,
           cve: f.cve ?? f.templateId,
           severity: f.severity,
-          cvssScore: f.cvss ? String(f.cvss) : f.severity === "critical" ? "9.0" : f.severity === "high" ? "7.5" : f.severity === "medium" ? "5.3" : "3.1",
+          cvss: f.cvss ?? (f.severity === "critical" ? 9.0 : f.severity === "high" ? 7.5 : f.severity === "medium" ? 5.3 : 3.1),
           cwe: f.cwe,
           status: "open" as const,
           description: `${f.description} URL: ${f.url}. Evidence: ${f.evidence.slice(0, 300)}`,
@@ -3297,7 +3297,7 @@ async function executePipeline(
           title: `CORS Misconfiguration (${c.variant}) — ${c.host}`,
           cve: `CORS-${c.variant.toUpperCase().replace(/-/g, "_")}-${c.host.replace(/[^A-Z0-9]/gi, "_").toUpperCase().slice(0, 20)}`,
           severity: c.severity,
-          cvssScore: c.severity === "high" ? "8.1" : "5.4",
+          cvss: c.severity === "high" ? 8.1 : 5.4,
           cwe: "CWE-942",
           status: "open" as const,
           description: c.description,
@@ -3305,15 +3305,15 @@ async function executePipeline(
         });
       }
 
-      // Header grade D/F → medium finding
+      // Header grade C/D/F → medium finding (score < 70)
       for (const h of vulnScan.headers) {
-        if (h.score < 50) {
+        if (h.score < 70) {
           findingInserts.push({
             tenantId, assetId: asset.id, scanId,
             title: `Weak Security Headers: ${h.host} (Grade ${h.grade}, ${h.score}/100)`,
             cve: `SEC-HEADERS-WEAK-${h.host.replace(/[^A-Z0-9]/gi, "_").toUpperCase().slice(0, 25)}`,
             severity: "medium" as const,
-            cvssScore: "5.3",
+            cvss: 5.3,
             cwe: "CWE-16",
             status: "open" as const,
             description: `Security header analysis scored ${h.score}/100 (Grade ${h.grade}) for ${h.host}. Missing/misconfigured: ${h.checks.filter(c => c.issue).map(c => c.name).join(", ")}.`,
