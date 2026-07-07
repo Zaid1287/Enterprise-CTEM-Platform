@@ -1,0 +1,34 @@
+In Scan Orchestration Engine These Are Not Wired. I Want It To Be Implement And Should Be Working 100%
+
+1. Port scanner → orchestratedFetch: portScanner.ts uses raw TCP sockets + child_process (Nmap/Naabu). These bypass everything. - Find The Issue & Fix It.
+
+2. Subdomain enum → orchestratedFetch: Uses child_process (subfinder/dnsx) + raw DNS queries. - Find The Issue & Fix It.
+
+3. Dir fuzzer → orchestratedFetch: dirFuzzer.ts uses raw fetch() calls, not the orchestrated wrapper. - Find The Issue & Fix It.
+
+4. JS analyzer → orchestratedFetch: jsAnalyzer.ts uses raw fetch() - - Find The Issue & Fix It.
+
+5. Cloud recon → orchestratedFetch: S3/GCS/Azure bucket probing uses raw fetch() - - Find The Issue & Fix It.
+
+6. Secrets hunter → orchestratedFetch: Uses raw fetch() for source file downloads. - Find The Issue & Fix It.
+
+7. Config knobs → actual orchestrator behavior: Knobs like proxy_health_scoring, circuit_breaker_enabled, adaptive_rate_limit are stored and displayed in the UI — but orchestratedFetch reads use_proxies and rotate_fingerprints from DB config. The other booleans (adaptive_rate_limit=false doesn't actually disable the rate limiter; circuit_breaker_enabled=false doesn't disable the circuit breaker) because those sub-systems don't read their own enable flag from the config table. - Find The Issue & Fix It.
+
+8. WAF detection → response strategy: Detection writes to telemetry; no adaptive logic fires afterward - Find The Issue & Fix It.
+
+9. Alert system → orchestrator events: Circuit breaker opening, proxy entering cooldown, WAF detection — none of these fire dispatchNotifications() - Find The Issue & Fix It.
+
+10. DNS rotation → orchestratedFetch: dnsResolverPool.ts exists and works, but orchestratedFetch does not call orchestratedDnsResolve — it lets undici use system DNS. - Find The Issue & Fix It.
+
+Make Sure All The Issues Are Fixed & Working 100%.
+
+Ask questions if required.
+
+All the flow should be real and not stimulated.
+
+All data should be real and no dumy or stimulated data should be there.
+
+Once Completed, Check If All 10 Issues are been fixed & Confirm If These Are Fixed & Implemented And Working 100%..
+
+Tell Me What Is Implemented & What Is Not & Why?
+

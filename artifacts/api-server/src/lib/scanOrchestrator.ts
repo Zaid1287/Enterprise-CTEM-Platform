@@ -9,7 +9,8 @@ import { analyzeResponse, type ResponseClassification } from "./responseAnalyzer
 import { resolveWithRotation } from "./dnsResolverPool.js";
 import { pushWaterfallEvent } from "./sseManager.js";
 import { logger } from "./logger.js";
-import { fetch as undiciFetch, ProxyAgent } from "undici";
+import { fetch as undiciFetch, ProxyAgent, Agent, buildConnector } from "undici";
+import { dispatchNotifications } from "./notifier.js";
 
 export interface OrchestratorContext {
   tenantId?: number;
@@ -30,6 +31,7 @@ interface OrchConfig {
   wafBypassEnabled: boolean;
   adaptiveRateLimitEnabled: boolean;
   circuitBreakerEnabled: boolean;
+  proxyHealthScoringEnabled: boolean;
 }
 
 let _config: OrchConfig | null = null;
@@ -50,9 +52,10 @@ async function loadConfig(): Promise<OrchConfig> {
       backoffBaseMs:            parseInt(map["retry_base_delay_ms"] ?? "1000", 10),
       maxBackoffMs:             parseInt(map["max_backoff_ms"]      ?? "30000", 10),
       logAllRequests:           map["log_all_requests"]       !== "false",
-      wafBypassEnabled:         map["waf_bypass_strategy"]    !== "none" && !!map["waf_bypass_strategy"],
-      adaptiveRateLimitEnabled: map["adaptive_rate_limit"]    !== "false",
-      circuitBreakerEnabled:    map["circuit_breaker_enabled"] !== "false",
+      wafBypassEnabled:          map["waf_bypass_strategy"]    !== "none" && !!map["waf_bypass_strategy"],
+      adaptiveRateLimitEnabled:  map["adaptive_rate_limit"]    !== "false",
+      circuitBreakerEnabled:     map["circuit_breaker_enabled"] !== "false",
+      proxyHealthScoringEnabled: map["proxy_health_scoring"]   !== "false",
     };
     _configLoadedAt = Date.now();
     return _config;
@@ -62,6 +65,7 @@ async function loadConfig(): Promise<OrchConfig> {
       maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
       logAllRequests: true, wafBypassEnabled: false,
       adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
+      proxyHealthScoringEnabled: true,
     };
   }
 }
@@ -207,7 +211,30 @@ async function writeTelemetry(data: {
   }
 }
 
-// Classifications that warrant tripping the circuit breaker (rate-limit or active block).
+// ── Issue 10: DNS rotation via custom undici Agent ────────────────────────────
+// Resolves hostnames through the rotating DNS pool (8.8.8.8/1.1.1.1/9.9.9.9/…)
+// instead of the Replit system resolver. Original hostname kept in opts.servername
+// so TLS SNI works correctly. Used as the default dispatcher when no proxy is set.
+const _defaultConnector = buildConnector({});
+const _dnsRotationAgent = new Agent({
+  connect: (opts: any, callback: any) => {
+    const originalHostname: string = opts.hostname ?? "";
+    if (!originalHostname || /^\d{1,3}(\.\d{1,3}){3}$/.test(originalHostname)) {
+      _defaultConnector(opts, callback);
+      return;
+    }
+    resolveWithRotation(originalHostname)
+      .then(ips => {
+        if (ips.length > 0) {
+          opts.servername = opts.servername || originalHostname;
+          opts.hostname   = ips[Math.floor(Math.random() * ips.length)];
+        }
+        _defaultConnector(opts, callback);
+      })
+      .catch(() => _defaultConnector(opts, callback));
+  },
+});
+
 const CIRCUIT_TRIP_CLASSES: Set<ResponseClassification> = new Set([
   "RateLimited", "Forbidden", "CloudflareChallenge", "AkamaiChallenge", "ImpervaBlock",
 ]);
@@ -341,11 +368,12 @@ export async function orchestratedFetch(
 
       // Use undici fetch with ProxyAgent when proxy is configured — this actually routes
       // the TCP connection through the proxy, changing the outbound IP seen by the target.
+      // Issue 10: always set dispatcher — proxy when available, DNS-rotation agent otherwise
       const response = await (undiciFetch as any)(url, {
         ...init,
         headers: mergedHeaders,
         signal: controller.signal,
-        ...(proxyAgent ? { dispatcher: proxyAgent } : {}),
+        dispatcher: proxyAgent ?? _dnsRotationAgent,
       }) as Response;
 
       clearTimeout(timeoutId);
@@ -363,7 +391,23 @@ export async function orchestratedFetch(
       wafDetected     = analysis.wafDetected;
       captchaDetected = analysis.captchaDetected;
       lastWafDetected = wafDetected;
-      if (wafDetected) wafHitCount++;
+      if (wafDetected) {
+        wafHitCount++;
+        // Issue 8: fire WAF alert on the very first detection for this request
+        if (wafHitCount === 1 && ctx.tenantId) {
+          dispatchNotifications({
+            tenantId: ctx.tenantId,
+            eventType: "orchestrator_event",
+            title: `WAF Detected: ${hostname}`,
+            message: `A Web Application Firewall was detected at ${hostname}. Activating bypass strategy: rotating request fingerprint and proxy.`,
+            severity: "medium",
+            relatedAssetId: ctx.assetId,
+            scanId: ctx.scanId,
+            assetName: ctx.target ?? hostname,
+            domain: hostname,
+          }).catch(() => {});
+        }
+      }
 
       const setCookieHeader = response.headers.get("set-cookie");
       if (setCookieHeader) storeCookies(url, [setCookieHeader]);
@@ -378,7 +422,27 @@ export async function orchestratedFetch(
           : analysis.classification === "Timeout" ? "timeout"
           : analysis.isSuccess ? "success"
           : "connection_error";
-        recordProxyOutcome(proxy.id, outcome, latencyMs).catch(() => {});
+        // Issue 7: gate proxy health scoring behind config flag; fire cooldown alert
+        if (config.proxyHealthScoringEnabled) {
+          const capturedProxy = proxy;
+          recordProxyOutcome(capturedProxy.id, outcome, latencyMs)
+            .then(r => {
+              if (r.enteredCooldown && ctx.tenantId) {
+                dispatchNotifications({
+                  tenantId: ctx.tenantId!,
+                  eventType: "orchestrator_event",
+                  title: `Proxy Entered Cooldown`,
+                  message: `Proxy ${capturedProxy.ip}:${capturedProxy.port} entered cooldown after repeated failures. Scan traffic will route via remaining healthy proxies.`,
+                  severity: "medium",
+                  relatedAssetId: ctx.assetId,
+                  scanId: ctx.scanId,
+                  assetName: ctx.target ?? hostname,
+                  domain: hostname,
+                }).catch(() => {});
+              }
+            })
+            .catch(() => {});
+        }
       }
 
       // Write per-attempt telemetry
@@ -411,9 +475,22 @@ export async function orchestratedFetch(
         return response;
       }
 
-      // Only trip circuit breaker for rate-limit or active block responses
+      // Issue 9: trip circuit breaker and alert when it just opened
       if (config.circuitBreakerEnabled && CIRCUIT_TRIP_CLASSES.has(analysis.classification)) {
-        recordCircuitResult(hostname, false);
+        const cbResult = recordCircuitResult(hostname, false);
+        if (cbResult.justTripped && ctx.tenantId) {
+          dispatchNotifications({
+            tenantId: ctx.tenantId,
+            eventType: "orchestrator_event",
+            title: `Circuit Breaker Opened: ${hostname}`,
+            message: `The circuit breaker for ${hostname} tripped after repeated ${analysis.classification} responses. Requests to this host are paused until it recovers.`,
+            severity: "high",
+            relatedAssetId: ctx.assetId,
+            scanId: ctx.scanId,
+            assetName: ctx.target ?? hostname,
+            domain: hostname,
+          }).catch(() => {});
+        }
       }
 
       // Only retry for explicitly transient, recoverable classes (not 403/WAF/permanent)
@@ -439,10 +516,44 @@ export async function orchestratedFetch(
       lastError = err;
       lastWafDetected = false;
 
-      if (config.circuitBreakerEnabled) recordCircuitResult(hostname, false);
-      if (proxy) {
-        const outcome: ProxyOutcome = err?.name === "AbortError" ? "timeout" : "connection_error";
-        recordProxyOutcome(proxy.id, outcome, latencyMs).catch(() => {});
+      // Issue 9: catch-path circuit breaker trip alert
+      if (config.circuitBreakerEnabled) {
+        const cbResult = recordCircuitResult(hostname, false);
+        if (cbResult.justTripped && ctx.tenantId) {
+          dispatchNotifications({
+            tenantId: ctx.tenantId,
+            eventType: "orchestrator_event",
+            title: `Circuit Breaker Opened: ${hostname}`,
+            message: `The circuit breaker for ${hostname} tripped after a connection error. Requests to this host are paused until it recovers.`,
+            severity: "high",
+            relatedAssetId: ctx.assetId,
+            scanId: ctx.scanId,
+            assetName: ctx.target ?? hostname,
+            domain: hostname,
+          }).catch(() => {});
+        }
+      }
+      // Issue 7: gate proxy health scoring behind config flag; fire cooldown alert
+      if (proxy && config.proxyHealthScoringEnabled) {
+        const capturedProxy = proxy;
+        const errOutcome: ProxyOutcome = err?.name === "AbortError" ? "timeout" : "connection_error";
+        recordProxyOutcome(capturedProxy.id, errOutcome, latencyMs)
+          .then(r => {
+            if (r.enteredCooldown && ctx.tenantId) {
+              dispatchNotifications({
+                tenantId: ctx.tenantId!,
+                eventType: "orchestrator_event",
+                title: `Proxy Entered Cooldown`,
+                message: `Proxy ${capturedProxy.ip}:${capturedProxy.port} entered cooldown after repeated failures. Scan traffic will route via remaining healthy proxies.`,
+                severity: "medium",
+                relatedAssetId: ctx.assetId,
+                scanId: ctx.scanId,
+                assetName: ctx.target ?? hostname,
+                domain: hostname,
+              }).catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
 
       // Write per-attempt telemetry for errors too

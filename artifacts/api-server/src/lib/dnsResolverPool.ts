@@ -87,6 +87,48 @@ export async function resolveWithRotation(hostname: string): Promise<string[]> {
   }
 }
 
+function resolveCnameWithResolver(hostname: string, resolverIp: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const resolver = new dns.Resolver();
+    resolver.setServers([resolverIp]);
+    const timer = setTimeout(() => reject(new Error("timeout")), TIMEOUT_MS);
+    resolver.resolveCname(hostname, (err, addresses) => {
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve(addresses);
+    });
+  });
+}
+
+/** Resolve CNAME records using the rotating DNS pool. Returns [] on failure (CNAME is optional). */
+export async function resolveCnameWithRotation(hostname: string): Promise<string[]> {
+  const resolver = pickNextResolver();
+  const start = Date.now();
+  resolver.totalRequests++;
+  try {
+    const addresses = await resolveCnameWithResolver(hostname, resolver.ip);
+    resolver.totalLatencyMs += Date.now() - start;
+    return addresses;
+  } catch {
+    resolver.failures++;
+    resolver.totalLatencyMs += Date.now() - start;
+    const fallbacks = RESOLVERS.filter(r => r.ip !== resolver.ip);
+    for (const fb of fallbacks) {
+      const fbStart = Date.now();
+      try {
+        fb.totalRequests++;
+        const addresses = await resolveCnameWithResolver(hostname, fb.ip);
+        fb.totalLatencyMs += Date.now() - fbStart;
+        return addresses;
+      } catch {
+        fb.failures++;
+        fb.totalLatencyMs += Date.now() - fbStart;
+      }
+    }
+    return [];
+  }
+}
+
 export function getDnsResolverStats(): Array<{ ip: string; totalRequests: number; failures: number; failureRate: number; avgLatencyMs: number; healthy: boolean }> {
   return RESOLVERS.map(r => {
     const failureRate = r.totalRequests > 0 ? r.failures / r.totalRequests : 0;

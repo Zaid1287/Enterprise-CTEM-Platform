@@ -1,12 +1,9 @@
-import { exec, execSync } from "child_process";
-import { promisify } from "util";
-import dns from "dns/promises";
+import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
-import { orchestratedFetch } from "./scanOrchestrator";
+import { orchestratedFetch, orchestratedDnsResolve } from "./scanOrchestrator";
+import { orchestratedExec } from "./orchestratedExec";
 import zlib from "zlib";
-
-const execAsync = promisify(exec);
 let NAABU_BIN     = "/tmp/naabu";   // may be overridden to system binary
 const MASSCAN_BIN = "/tmp/masscan-tool";
 const NAABU_ZIP   = path.resolve(__dirname, "../binaries/naabu.zip");
@@ -153,7 +150,7 @@ async function resolveToIp(target: string): Promise<string | null> {
   const host = extractTarget(target);
   if (isIp(host)) return host;
   try {
-    const ips = await dns.resolve4(host);
+    const ips = await orchestratedDnsResolve(host);
     return ips[0] ?? null;
   } catch { return null; }
 }
@@ -229,9 +226,9 @@ async function runNaabu(target: string): Promise<{ ports: number[]; raw: string 
   const cmd  = `${NAABU_BIN} -host ${host} -p 1-65535 -rate 3000 -timeout 5 -silent 2>/dev/null`;
   let stdout = "";
   try {
-    const r = await execAsync(cmd, { timeout: 90000 });
+    const r = await orchestratedExec(cmd, { timeout: 90000, targetHost: host });
     stdout = r.stdout.trim();
-  } catch (err: any) { stdout = err?.stdout?.trim() ?? ""; }
+  } catch (err: any) { stdout = (err as any)?.stdout?.trim() ?? ""; }
 
   const ports: number[] = [];
   for (const line of stdout.split("\n")) {
@@ -271,8 +268,8 @@ async function runMasscan(target: string, targetIp: string | null): Promise<Mass
 
   try {
     const [tcpResult, udpResult] = await Promise.allSettled([
-      execAsync(tcpCmd, { timeout: 120000 }),
-      execAsync(udpCmd, { timeout: 60000 }),
+      orchestratedExec(tcpCmd, { timeout: 120000, targetHost: scanTarget }),
+      orchestratedExec(udpCmd, { timeout: 60000,  targetHost: scanTarget }),
     ]);
     if (tcpResult.status === "fulfilled") tcpOut = tcpResult.value.stdout;
     else {
@@ -339,9 +336,9 @@ async function runNmapDetailed(target: string, ports: number[]): Promise<{ portD
 
   let stdout = "";
   try {
-    const r = await execAsync(cmd, { timeout: 150000 });
+    const r = await orchestratedExec(cmd, { timeout: 150000, targetHost: host });
     stdout = r.stdout;
-  } catch (err: any) { stdout = err?.stdout ?? String(err?.message ?? err); }
+  } catch (err: any) { stdout = (err as any)?.stdout ?? String((err as any)?.message ?? err); }
   return { portDetails: parseNmapOutput(stdout), raw: stdout };
 }
 
@@ -356,9 +353,9 @@ async function runRustscan(target: string): Promise<{ ports: number[]; raw: stri
     const cmd  = `rustscan -a ${host} --range 1-65535 --ulimit 5000 --no-nmap --timeout 3000 2>/dev/null`;
     let stdout = "";
     try {
-      const r = await execAsync(cmd, { timeout: 120000 });
+      const r = await orchestratedExec(cmd, { timeout: 120000, targetHost: host });
       stdout = r.stdout;
-    } catch (err: any) { stdout = err?.stdout?.trim() ?? ""; }
+    } catch (err: any) { stdout = (err as any)?.stdout?.trim() ?? ""; }
 
     const ports: number[] = [];
     for (const line of stdout.split("\n")) {

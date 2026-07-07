@@ -1,10 +1,7 @@
-import { exec } from "child_process";
-import { promisify } from "util";
 import * as fs from "fs";
 import { logger } from "./logger";
 import { orchestratedFetch } from "./scanOrchestrator";
-
-const execAsync = promisify(exec);
+import { orchestratedExec } from "./orchestratedExec";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -475,9 +472,9 @@ async function runGitDirChecks(target: string): Promise<GitDirExposure[]> {
 
 async function runTrufflehogOnGitUrl(repoUrl: string): Promise<GitHubSecretFinding[]> {
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `trufflehog git "${repoUrl}" --json --no-update --only-verified 2>/dev/null`,
-      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } },
     );
     return stdout.trim().split("\n")
       .filter(Boolean)
@@ -500,9 +497,9 @@ async function runTrufflehogOnGitUrl(repoUrl: string): Promise<GitHubSecretFindi
 async function runTrufflehogOnFilesystem(dir: string): Promise<GitHubSecretFinding[]> {
   if (!fs.existsSync(dir)) return [];
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `trufflehog filesystem "${dir}" --json --no-update 2>/dev/null`,
-      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } },
     );
     return stdout.trim().split("\n")
       .filter(Boolean)
@@ -524,14 +521,14 @@ async function runTrufflehogOnFilesystem(dir: string): Promise<GitHubSecretFindi
 async function runGitDumperAndScan(gitUrl: string): Promise<GitHubSecretFinding[]> {
   const tmpDir = `/tmp/gitdump-${Date.now()}`;
   try {
-    await execAsync(
+    await orchestratedExec(
       `python3 -m gitdumper "${gitUrl}" "${tmpDir}" 2>/dev/null`,
-      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+      { timeout: 60_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } },
     );
     return runTrufflehogOnFilesystem(tmpDir);
   } catch { return []; }
   finally {
-    try { await execAsync(`rm -rf "${tmpDir}"`, { timeout: 5000 }); } catch {}
+    try { await orchestratedExec(`rm -rf "${tmpDir}"`, { timeout: 5000 }); } catch {}
   }
 }
 

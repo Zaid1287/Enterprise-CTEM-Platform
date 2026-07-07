@@ -7,7 +7,7 @@ import { pushSseEvent } from "./sseManager";
 
 export interface NotificationEvent {
   tenantId: number;
-  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat" | "phishing_detected" | "data_leak_found" | "brand_abuse_found" | "queue_full";
+  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat" | "phishing_detected" | "data_leak_found" | "brand_abuse_found" | "queue_full" | "orchestrator_event";
   title: string;
   message: string;
   severity: string;

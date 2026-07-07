@@ -1,11 +1,8 @@
-import { exec } from "child_process";
-import { promisify } from "util";
 import fs from "fs";
 import path from "path";
-import dns from "dns/promises";
 import { orchestratedFetch, orchestratedDnsResolve } from "./scanOrchestrator";
-
-const execAsync = promisify(exec);
+import { orchestratedExec } from "./orchestratedExec";
+import { resolveCnameWithRotation } from "./dnsResolverPool";
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
 const BIN_DIR = "/tmp/subdomain-tools";
@@ -61,7 +58,7 @@ export interface SubdomainScanReport {
 async function ensureBinary(name: string): Promise<string | null> {
   // 0. System-installed binary via Nix PATH — fastest, most reliable
   try {
-    const r = await execAsync(`which ${name} 2>/dev/null`, { timeout: 3000 });
+    const r = await orchestratedExec(`which ${name} 2>/dev/null`, { timeout: 3000 });
     const sys = r.stdout.trim();
     if (sys) return sys;
   } catch {}
@@ -79,14 +76,14 @@ async function ensureBinary(name: string): Promise<string | null> {
 
   const zipFile = path.join(BIN_DIR, `${name}.zip`);
   try {
-    await execAsync(`curl -sL --max-time 120 -o "${zipFile}" "${info.url}"`);
+    await orchestratedExec(`curl -sL --max-time 120 -o "${zipFile}" "${info.url}"`);
 
     // Try extracting: tool name or alternate name in zip
     const binaryInZip = info.binaryName ?? name;
     const tryNames = [binaryInZip, name, `${name}_linux_amd64`];
     for (const tryName of tryNames) {
       try {
-        await execAsync(`unzip -o -j "${zipFile}" "${tryName}" -d "${BIN_DIR}" 2>/dev/null`);
+        await orchestratedExec(`unzip -o -j "${zipFile}" "${tryName}" -d "${BIN_DIR}" 2>/dev/null`);
         const extracted = path.join(BIN_DIR, tryName);
         if (fs.existsSync(extracted) && fs.statSync(extracted).size > 0) {
           if (extracted !== bin) fs.renameSync(extracted, bin);
@@ -98,7 +95,7 @@ async function ensureBinary(name: string): Promise<string | null> {
     }
 
     // Fallback: unzip everything and look for the binary
-    await execAsync(`unzip -o -j "${zipFile}" -d "${BIN_DIR}" 2>/dev/null`);
+    await orchestratedExec(`unzip -o -j "${zipFile}" -d "${BIN_DIR}" 2>/dev/null`);
     if (fs.existsSync(bin) && fs.statSync(bin).size > 0) {
       fs.chmodSync(bin, 0o755);
       try { fs.unlinkSync(zipFile); } catch {}
@@ -344,9 +341,9 @@ async function queryCommonCrawl(domain: string): Promise<string[]> {
 
 async function runSubfinder(domain: string, bin: string): Promise<string[]> {
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `"${bin}" -d "${domain}" -silent -all -timeout 30`,
-      { timeout: 90_000 },
+      { timeout: 90_000, targetHost: domain },
     );
     const subs = new Set<string>();
     for (const line of stdout.split("\n")) {
@@ -361,9 +358,9 @@ async function runSubfinder(domain: string, bin: string): Promise<string[]> {
 
 async function runFindomain(domain: string, bin: string): Promise<string[]> {
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `"${bin}" -t "${domain}" -q`,
-      { timeout: 90_000 },
+      { timeout: 90_000, targetHost: domain },
     );
     const subs = new Set<string>();
     for (const line of stdout.split("\n")) {
@@ -381,9 +378,9 @@ async function runAlterX(subdomains: string[], bin: string): Promise<string[]> {
   try {
     const inputFile = path.join(BIN_DIR, `alterx-input-${Date.now()}.txt`);
     fs.writeFileSync(inputFile, subdomains.slice(0, 500).join("\n"));
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `"${bin}" -l "${inputFile}" -silent -limit 10000`,
-      { timeout: 60_000, maxBuffer: 50 * 1024 * 1024 },
+      { timeout: 60_000, maxBuffer: 50 * 1024 * 1024 } as any,
     );
     try { fs.unlinkSync(inputFile); } catch {}
     const perms = new Set<string>();
@@ -404,9 +401,9 @@ async function runDnsx(candidates: string[], bin: string): Promise<Map<string, s
   try {
     const inputFile = path.join(BIN_DIR, `dnsx-input-${Date.now()}.txt`);
     fs.writeFileSync(inputFile, candidates.join("\n"));
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `"${bin}" -l "${inputFile}" -silent -a -resp-only -retry 1 -t 150`,
-      { timeout: 90_000, maxBuffer: 50 * 1024 * 1024 },
+      { timeout: 90_000, maxBuffer: 50 * 1024 * 1024 } as any,
     );
     try { fs.unlinkSync(inputFile); } catch {}
 
@@ -481,9 +478,9 @@ async function runHttpx(
   try {
     const inputFile = path.join(BIN_DIR, `httpx-input-${Date.now()}.txt`);
     fs.writeFileSync(inputFile, hosts.join("\n"));
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `"${bin}" -l "${inputFile}" -silent -status-code -title -web-server -location -tech-detect -threads 50 -timeout 8 -no-color -json`,
-      { timeout: 90_000, maxBuffer: 100 * 1024 * 1024 },
+      { timeout: 90_000, maxBuffer: 100 * 1024 * 1024 } as any,
     );
     try { fs.unlinkSync(inputFile); } catch {}
 
@@ -556,9 +553,9 @@ function ensureWordlist(): void {
 async function runAmass(domain: string): Promise<string[]> {
   const safeDomain = domain.replace(/[^a-zA-Z0-9.\-]/g, "").slice(0, 253);
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `amass enum -passive -d "${safeDomain}" -timeout 5 -nocolor -silent 2>/dev/null`,
-      { timeout: 90_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+      { timeout: 90_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" }, targetHost: safeDomain },
     );
     return stdout.trim().split("\n").filter(Boolean).map(l => l.trim().toLowerCase());
   } catch (err) {
@@ -608,9 +605,9 @@ async function runShuffleDns(domain: string): Promise<string[]> {
   if (!ensureShuffleDnsFiles()) return [];
   const outFile = `/tmp/shuffledns-${safeDomain.replace(/\W/g, "_")}-${Date.now()}.txt`;
   try {
-    await execAsync(
+    await orchestratedExec(
       `"${SHUFFLEDNS_BIN}" -d "${safeDomain}" -w "${SHUFFLEDNS_WORDLIST}" -r "${SHUFFLEDNS_RESOLVERS}" -o "${outFile}" -silent 2>/dev/null`,
-      { timeout: 120_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+      { timeout: 120_000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" }, targetHost: safeDomain },
     );
     if (!fs.existsSync(outFile)) return [];
     return fs.readFileSync(outFile, "utf8").trim().split("\n")
@@ -836,7 +833,7 @@ export async function scanSubdomains(domain: string): Promise<SubdomainScanRepor
     const ip = resolvedMap.get(sub) ?? "";
     const httpx = httpxResults.get(sub);
     let cname: string | null = null;
-    try { const cns = await dns.resolveCname(sub).catch(() => []); cname = cns[0] ?? null; } catch {}
+    try { const cns = await resolveCnameWithRotation(sub); cname = cns[0] ?? null; } catch {}
 
     const cdn = detectCdn(cname ?? ip);
     const status = ip ? (httpx ? "active" : "resolved") : "unresolved";

@@ -101,7 +101,7 @@ export async function recordProxyOutcome(
   proxyId: number,
   outcome: ProxyOutcome,
   latencyMs?: number,
-): Promise<void> {
+): Promise<{ enteredCooldown: boolean }> {
   try {
     const [current] = await db
       .select({
@@ -117,7 +117,7 @@ export async function recordProxyOutcome(
       .from(scanProxiesTable)
       .where(eq(scanProxiesTable.id, proxyId));
 
-    if (!current) return;
+    if (!current) return { enteredCooldown: false };
 
     let delta = SCORE_DELTAS[outcome];
     if (outcome === "success" && latencyMs != null && latencyMs < 300) delta += LATENCY_BONUS;
@@ -132,6 +132,8 @@ export async function recordProxyOutcome(
           : latencyMs)
       : current.avgLatencyMs;
 
+    const enteredCooldown = newConsecutive >= COOLDOWN_FAILURES;
+
     const updates: Partial<typeof scanProxiesTable.$inferInsert> = {
       healthScore:         newScore,
       consecutiveFailures: newConsecutive,
@@ -144,7 +146,7 @@ export async function recordProxyOutcome(
       timeoutCount:        outcome === "timeout"      ? (current.timeoutCount ?? 0) + 1 : current.timeoutCount ?? 0,
     };
 
-    if (newConsecutive >= COOLDOWN_FAILURES) {
+    if (enteredCooldown) {
       updates.cooldownUntil = new Date(Date.now() + COOLDOWN_DURATION_MS);
       updates.status = "cooldown";
       logger.warn({ proxyId, newConsecutive }, "Proxy entering cooldown after repeated failures");
@@ -153,8 +155,11 @@ export async function recordProxyOutcome(
     await db.update(scanProxiesTable)
       .set(updates as any)
       .where(eq(scanProxiesTable.id, proxyId));
+
+    return { enteredCooldown };
   } catch (err) {
     logger.warn({ err, proxyId }, "proxyManager: recordProxyOutcome failed");
+    return { enteredCooldown: false };
   }
 }
 

@@ -119,7 +119,7 @@ export function isCircuitOpen(target: string): boolean {
   return getCircuitState(target) === "open";
 }
 
-export function recordCircuitResult(target: string, success: boolean): void {
+export function recordCircuitResult(target: string, success: boolean): { justTripped: boolean } {
   const entry = getEntry(target);
 
   if (success) {
@@ -130,7 +130,7 @@ export function recordCircuitResult(target: string, success: boolean): void {
       logger.info({ target }, "Circuit breaker closed after successful probe");
       saveCircuitStates().catch(() => {}); // persist on close
     }
-    return;
+    return { justTripped: false };
   }
 
   entry.consecutiveFailures++;
@@ -142,7 +142,7 @@ export function recordCircuitResult(target: string, success: boolean): void {
     entry.openedAt = new Date();
     logger.warn({ target, cooldownMs: entry.cooldownMs }, "Circuit breaker re-opened after failed half-open probe");
     saveCircuitStates().catch(() => {}); // persist on trip
-    return;
+    return { justTripped: true };
   }
 
   if (entry.consecutiveFailures >= FAILURE_THRESHOLD && entry.state === "closed") {
@@ -152,7 +152,10 @@ export function recordCircuitResult(target: string, success: boolean): void {
     entry.openedAt = new Date();
     logger.warn({ target, trips: entry.tripCount, cooldownMs: entry.cooldownMs }, "Circuit breaker opened");
     saveCircuitStates().catch(() => {}); // persist on trip
+    return { justTripped: true };
   }
+
+  return { justTripped: false };
 }
 
 export function getAllCircuits(): Array<{ target: string; state: CircuitState; consecutiveFailures: number; openedAt?: Date; cooldownMs: number; tripCount: number }> {

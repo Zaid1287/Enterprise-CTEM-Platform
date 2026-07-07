@@ -1,12 +1,10 @@
-import { exec, execSync } from "child_process";
-import { promisify } from "util";
+import { execSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { logger } from "./logger";
 import { orchestratedFetch } from "./scanOrchestrator";
-
-const execAsync = promisify(exec);
+import { orchestratedExec } from "./orchestratedExec";
 
 const FFUF_WORDLIST = "/home/runner/workspace/wordlists/common.txt";
 const FFUF_BIN     = (() => { try { return execSync("which ffuf 2>/dev/null", { timeout: 3000 }).toString().trim(); } catch { return ""; } })();
@@ -415,7 +413,10 @@ async function runFfuf(baseUrl: string, host: string): Promise<FuzzedEndpoint[]>
       "-o", outFile,
       "-s",   // silent — no progress output
     ].join(" ");
-    await execAsync(cmd, { timeout: 90000 }).catch(() => null);
+    await orchestratedExec(
+      (proxyUrl) => proxyUrl ? `${cmd} -replay-proxy "${proxyUrl}"` : cmd,
+      { timeout: 90000, targetHost: host },
+    ).catch(() => null);
     if (!fs.existsSync(outFile)) return [];
     const raw = fs.readFileSync(outFile, "utf8");
     fs.unlinkSync(outFile);
@@ -448,9 +449,9 @@ async function runGobuster(baseUrl: string, host: string): Promise<FuzzedEndpoin
   const outFile = path.join(os.tmpdir(), `gobuster-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
   try {
     fs.writeFileSync(wlFile, [...WORDLIST, ...WORDLIST_MINI].filter((v, i, a) => a.indexOf(v) === i).join("\n"));
-    await execAsync(
-      `gobuster dir -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" -q -t 25 --timeout 10s --no-error 2>/dev/null`,
-      { timeout: 90_000 }
+    await orchestratedExec(
+      (proxyUrl) => `gobuster dir -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" -q -t 25 --timeout 10s --no-error${proxyUrl ? ` --proxy "${proxyUrl}"` : ""} 2>/dev/null`,
+      { timeout: 90_000, targetHost: host },
     ).catch(() => null);
     if (!fs.existsSync(outFile)) return [];
     return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {
@@ -476,9 +477,9 @@ async function runFeroxbuster(baseUrl: string, host: string): Promise<FuzzedEndp
   const outFile = path.join(os.tmpdir(), `ferox-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
   try {
     fs.writeFileSync(wlFile, WORDLIST.join("\n"));
-    await execAsync(
-      `feroxbuster -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" --no-state --silent -t 25 --timeout 10 -k 2>/dev/null`,
-      { timeout: 90_000 }
+    await orchestratedExec(
+      (proxyUrl) => `feroxbuster -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" --no-state --silent -t 25 --timeout 10 -k${proxyUrl ? ` --proxy "${proxyUrl}"` : ""} 2>/dev/null`,
+      { timeout: 90_000, targetHost: host },
     ).catch(() => null);
     if (!fs.existsSync(outFile)) return [];
     return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {
@@ -502,9 +503,9 @@ async function runFeroxbuster(baseUrl: string, host: string): Promise<FuzzedEndp
 async function runKatana(baseUrl: string, host: string): Promise<FuzzedEndpoint[]> {
   const outFile = path.join(os.tmpdir(), `katana-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
   try {
-    await execAsync(
-      `katana -u "${baseUrl}" -o "${outFile}" -silent -depth 3 -jc -kf all -timeout 10 -rl 50 -no-color 2>/dev/null`,
-      { timeout: 90_000 }
+    await orchestratedExec(
+      (proxyUrl) => `katana -u "${baseUrl}" -o "${outFile}" -silent -depth 3 -jc -kf all -timeout 10 -rl 50 -no-color${proxyUrl ? ` -proxy "${proxyUrl}"` : ""} 2>/dev/null`,
+      { timeout: 90_000, targetHost: host },
     ).catch(() => null);
     if (!fs.existsSync(outFile)) return [];
     return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {
@@ -527,9 +528,9 @@ const GAU_BIN = "/tmp/security-tools/gau";
 async function runGau(host: string): Promise<FuzzedEndpoint[]> {
   if (!fs.existsSync(GAU_BIN)) return [];
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `"${GAU_BIN}" --threads 5 --timeout 10 --retries 1 --blacklist png,jpg,gif,svg,ico,woff,woff2,ttf,eot,mp4,mp3 "${host}" 2>/dev/null`,
-      { timeout: 60_000 }
+      { timeout: 60_000, targetHost: host },
     );
     return stdout.trim().split("\n").filter(Boolean).flatMap(rawUrl => {
       try {
@@ -548,9 +549,9 @@ const WAYBACKURLS_BIN = "/tmp/security-tools/waybackurls";
 async function runWaybackurlsBin(host: string): Promise<FuzzedEndpoint[]> {
   if (!fs.existsSync(WAYBACKURLS_BIN)) return [];
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `echo "${host}" | "${WAYBACKURLS_BIN}" 2>/dev/null`,
-      { timeout: 60_000 }
+      { timeout: 60_000, targetHost: host },
     );
     return stdout.trim().split("\n").filter(Boolean).flatMap(rawUrl => {
       try {
@@ -569,9 +570,9 @@ const HAKRAWLER_BIN = path.join(process.env.HOME ?? "/home/runner", "go/bin/hakr
 async function runHakrawler(baseUrl: string, host: string): Promise<FuzzedEndpoint[]> {
   if (!fs.existsSync(HAKRAWLER_BIN)) return [];
   try {
-    const { stdout } = await execAsync(
+    const { stdout } = await orchestratedExec(
       `echo "${baseUrl}" | "${HAKRAWLER_BIN}" -depth 3 -insecure -subs 2>/dev/null`,
-      { timeout: 60_000 }
+      { timeout: 60_000, targetHost: host },
     );
     return stdout.trim().split("\n").filter(Boolean).flatMap(rawUrl => {
       try {
