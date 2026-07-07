@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity, Server, AlertTriangle, Zap, Clock, RefreshCw,
-  ShieldX, Wifi, WifiOff, CheckCircle2, XCircle, RotateCcw,
+  ShieldX, Wifi, WifiOff, RotateCcw, TrendingDown,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -14,6 +14,15 @@ import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/auth";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
+interface TrendPoint {
+  minute: string;
+  requests: number;
+  avgLatencyMs: number;
+  wafCount: number;
+  retryCount: number;
+  count429: number;
+  count403: number;
+}
 interface TelemetryStats {
   window: string;
   generatedAt: string;
@@ -23,7 +32,7 @@ interface TelemetryStats {
     totalRetries: number; avgBytesDownloaded: number; reqPerSecond: number;
   };
   retryQueueSize: number;
-  trend: Array<{ minute: string; requests: number; avgLatencyMs: number; wafCount: number; retryCount: number }>;
+  trend: TrendPoint[];
   proxies: { activeProxies: number; coolingProxies: number; inactiveProxies: number; avgHealthScore: number };
   circuits: { open: number; total: number; details: Array<{ host: string; state: string; failures: number; lastFailure: number }> };
   rateLimiters: Array<{ host: string; tokens: number; lastRefill: number }>;
@@ -92,15 +101,34 @@ export default function ScanOrchestrationPage() {
 
   const trendData = (stats?.trend ?? []).map(t => ({
     time: new Date(t.minute).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    "Requests": t.requests,
-    "429s": 0,
-    "WAF Hits": t.wafCount,
-    "Retries": t.retryCount,
-    "Avg Latency (ms)": t.avgLatencyMs,
+    "Requests":   t.requests,
+    "Retries":    t.retryCount,
+    "WAF Hits":   t.wafCount,
+    "429 Rate":   t.count429,
+    "403 Block":  t.count403,
+    "Latency ms": t.avgLatencyMs,
   }));
 
   const r = stats?.requests;
   const p = stats?.proxies;
+
+  /* Build a "Target Blocking Health" table from rate limiters + circuit details */
+  interface TargetHealth { host: string; circuitState: string; failures: number; limitTokens: number | null }
+  const targetHealth: TargetHealth[] = [];
+  const seenHosts = new Set<string>();
+  for (const c of (stats?.circuits?.details ?? [])) {
+    if (!seenHosts.has(c.host)) {
+      seenHosts.add(c.host);
+      const rl = (stats?.rateLimiters ?? []).find(r => r.host === c.host);
+      targetHealth.push({ host: c.host, circuitState: c.state, failures: c.failures, limitTokens: rl?.tokens ?? null });
+    }
+  }
+  for (const rl of (stats?.rateLimiters ?? [])) {
+    if (!seenHosts.has(rl.host)) {
+      seenHosts.add(rl.host);
+      targetHealth.push({ host: rl.host, circuitState: "closed", failures: 0, limitTokens: rl.tokens });
+    }
+  }
 
   return (
     <div className="p-6 space-y-6 max-w-screen-2xl mx-auto">
@@ -118,7 +146,6 @@ export default function ScanOrchestrationPage() {
         </Button>
       </div>
 
-      {/* Last updated */}
       {dataUpdatedAt > 0 && (
         <p className="text-xs text-muted-foreground">
           Last updated: {new Date(dataUpdatedAt).toLocaleTimeString()} · Auto-refreshes every 5s
@@ -126,27 +153,28 @@ export default function ScanOrchestrationPage() {
       )}
 
       {/* Stat widgets */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
         {isLoading ? (
-          Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
+          Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
         ) : (
           <>
-            <StatCard label="Healthy Proxies"   value={p?.activeProxies ?? 0}    icon={Wifi}         color="text-green-600" />
-            <StatCard label="Cooling Proxies"   value={p?.coolingProxies ?? 0}   icon={Clock}        color="text-amber-500" />
-            <StatCard label="Inactive Proxies"  value={p?.inactiveProxies ?? 0}  icon={WifiOff}      color="text-red-500" />
-            <StatCard label="Requests / sec"    value={r?.reqPerSecond ?? 0}     icon={Zap}          color="text-blue-500" sub="last 5 min" />
-            <StatCard label="Avg Latency"       value={r?.avgLatencyMs != null ? `${r.avgLatencyMs}ms` : "—"} icon={Activity}  color="text-purple-500" sub={r?.p95LatencyMs != null ? `p95: ${r.p95LatencyMs}ms` : undefined} />
-            <StatCard label="Open Circuits"     value={stats?.circuits?.open ?? 0} icon={ShieldX}    color={stats?.circuits?.open ? "text-red-500" : "text-green-600"} sub={`${stats?.circuits?.total ?? 0} total`} />
-            <StatCard label="Retry Queue"       value={stats?.retryQueueSize ?? 0} icon={RotateCcw}  color={stats?.retryQueueSize ? "text-amber-500" : "text-muted-foreground"} sub="last 5 min" />
+            <StatCard label="Healthy Proxies"   value={p?.activeProxies ?? 0}    icon={Wifi}        color="text-green-600" />
+            <StatCard label="Cooling Proxies"   value={p?.coolingProxies ?? 0}   icon={Clock}       color="text-amber-500" />
+            <StatCard label="Inactive Proxies"  value={p?.inactiveProxies ?? 0}  icon={WifiOff}     color="text-red-500" />
+            <StatCard label="Requests / sec"    value={r?.reqPerSecond ?? 0}     icon={Zap}         color="text-blue-500" sub="last 5 min" />
+            <StatCard label="429 Rate Limited"  value={r?.count429 ?? 0}         icon={TrendingDown} color={r?.count429 ? "text-amber-500" : "text-muted-foreground"} sub="last 60 min" />
+            <StatCard label="403 Blocked"       value={r?.count403 ?? 0}         icon={Server}      color={r?.count403 ? "text-red-500" : "text-muted-foreground"} sub="last 60 min" />
+            <StatCard label="Open Circuits"     value={stats?.circuits?.open ?? 0} icon={ShieldX}   color={stats?.circuits?.open ? "text-red-500" : "text-green-600"} sub={`${stats?.circuits?.total ?? 0} total`} />
+            <StatCard label="Retry Queue"       value={stats?.retryQueueSize ?? 0} icon={RotateCcw} color={stats?.retryQueueSize ? "text-amber-500" : "text-muted-foreground"} sub="last 5 min" />
           </>
         )}
       </div>
 
-      {/* Charts */}
+      {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Request trend */}
+        {/* Request trend (Requests / Retries / WAF) */}
         <div className="rounded-xl border bg-card p-4">
-          <h2 className="text-sm font-semibold mb-3">Request Trend (last 60 min)</h2>
+          <h2 className="text-sm font-semibold mb-3">Request Volume Trend (last 60 min)</h2>
           {trendData.length === 0 ? (
             <div className="h-48 flex items-center justify-center text-xs text-muted-foreground">No data yet — requests will appear here once scans run.</div>
           ) : (
@@ -157,17 +185,17 @@ export default function ScanOrchestrationPage() {
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip contentStyle={{ fontSize: 11 }} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="Requests"        stroke="#3b82f6" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Retries"         stroke="#f59e0b" strokeWidth={1.5} dot={false} />
-                <Line type="monotone" dataKey="WAF Hits"        stroke="#ef4444" strokeWidth={1.5} dot={false} />
+                <Line type="monotone" dataKey="Requests"  stroke="#3b82f6" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="Retries"   stroke="#f59e0b" strokeWidth={1.5} dot={false} />
+                <Line type="monotone" dataKey="WAF Hits"  stroke="#ef4444" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           )}
         </div>
 
-        {/* Latency trend */}
+        {/* Blocking trend (429 / 403) */}
         <div className="rounded-xl border bg-card p-4">
-          <h2 className="text-sm font-semibold mb-3">Avg Latency Trend (ms, last 60 min)</h2>
+          <h2 className="text-sm font-semibold mb-3">429 / 403 Blocking Trend (last 60 min)</h2>
           {trendData.length === 0 ? (
             <div className="h-48 flex items-center justify-center text-xs text-muted-foreground">No data yet.</div>
           ) : (
@@ -177,17 +205,53 @@ export default function ScanOrchestrationPage() {
                 <XAxis dataKey="time" tick={{ fontSize: 10 }} />
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip contentStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="Avg Latency (ms)" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="429 Rate"  stroke="#f59e0b" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="403 Block" stroke="#ef4444" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           )}
         </div>
       </div>
 
+      {/* Target Blocking Health table */}
+      {targetHealth.length > 0 && (
+        <div className="rounded-xl border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b">
+            <h2 className="text-sm font-semibold">Target Blocking Health</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Hosts with active circuit breakers or rate limiting — sourced from runtime state</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
+                  <th className="px-4 py-2 text-left font-medium">Target Host</th>
+                  <th className="px-4 py-2 text-left font-medium">Circuit State</th>
+                  <th className="px-4 py-2 text-right font-medium">Failures</th>
+                  <th className="px-4 py-2 text-right font-medium">Rate Limit Tokens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {targetHealth.map((t, i) => (
+                  <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                    <td className="px-4 py-2 font-mono text-xs">{t.host}</td>
+                    <td className="px-4 py-2"><StatusBadge status={t.circuitState} /></td>
+                    <td className="px-4 py-2 text-right text-xs">{t.failures}</td>
+                    <td className="px-4 py-2 text-right text-xs text-muted-foreground">
+                      {t.limitTokens != null ? t.limitTokens : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Proxy Health Table */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b">
-          <h2 className="text-sm font-semibold">Proxy Health Scores</h2>
+          <h2 className="text-sm font-semibold">Proxy Health Overview</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -195,37 +259,49 @@ export default function ScanOrchestrationPage() {
               <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <th className="px-4 py-2 text-left font-medium">IP Address</th>
                 <th className="px-4 py-2 text-left font-medium">Label</th>
-                <th className="px-4 py-2 text-left font-medium">Type</th>
+                <th className="px-4 py-2 text-left font-medium">Class</th>
                 <th className="px-4 py-2 text-left font-medium">Country</th>
-                <th className="px-4 py-2 text-right font-medium">Health Score</th>
+                <th className="px-4 py-2 text-right font-medium">Health</th>
+                <th className="px-4 py-2 text-right font-medium">Success %</th>
+                <th className="px-4 py-2 text-right font-medium">429s</th>
+                <th className="px-4 py-2 text-right font-medium">403s</th>
                 <th className="px-4 py-2 text-right font-medium">Avg Latency</th>
                 <th className="px-4 py-2 text-left font-medium">Status</th>
-                <th className="px-4 py-2 text-left font-medium">Last Tested</th>
               </tr>
             </thead>
             <tbody>
               {!proxies || proxies.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-xs text-muted-foreground">No proxies configured. Add proxies in Settings → Proxy Management.</td></tr>
-              ) : proxies.slice(0, 20).map(proxy => (
-                <tr key={proxy.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-2 font-mono text-xs">{proxy.ip}</td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{proxy.label ?? "—"}</td>
-                  <td className="px-4 py-2"><Badge variant="outline" className="text-xs">{proxy.type}</Badge></td>
-                  <td className="px-4 py-2 text-xs">{proxy.country ?? "—"}</td>
-                  <td className="px-4 py-2 text-right">
-                    <span className={cn("font-semibold", proxy.healthScore >= 70 ? "text-green-600" : proxy.healthScore >= 30 ? "text-amber-500" : "text-red-500")}>
-                      {proxy.healthScore}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right text-xs text-muted-foreground">
-                    {proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}
-                  </td>
-                  <td className="px-4 py-2"><StatusBadge status={proxy.status} /></td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {proxy.lastTestedAt ? new Date(proxy.lastTestedAt).toLocaleString() : "Never"}
-                  </td>
-                </tr>
-              ))}
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-xs text-muted-foreground">No proxies configured. Add proxies in Settings → Proxy Pool.</td></tr>
+              ) : proxies.slice(0, 20).map(proxy => {
+                const total = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
+                const successPct = total > 0 ? Math.round(proxy.successCount / total * 100) : null;
+                return (
+                  <tr key={proxy.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                    <td className="px-4 py-2 font-mono text-xs">{proxy.ip}</td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">{proxy.label ?? "—"}</td>
+                    <td className="px-4 py-2"><Badge variant="outline" className="text-xs">{proxy.type}</Badge></td>
+                    <td className="px-4 py-2 text-xs">{proxy.country ?? "—"}</td>
+                    <td className="px-4 py-2 text-right">
+                      <span className={cn("font-semibold", proxy.healthScore >= 70 ? "text-green-600" : proxy.healthScore >= 30 ? "text-amber-500" : "text-red-500")}>
+                        {proxy.healthScore}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs">
+                      {successPct != null ? (
+                        <span className={successPct >= 80 ? "text-green-600" : successPct >= 50 ? "text-amber-500" : "text-red-500"}>
+                          {successPct}%
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs">{proxy.count429 ?? 0}</td>
+                    <td className="px-4 py-2 text-right text-xs">{proxy.count403 ?? 0}</td>
+                    <td className="px-4 py-2 text-right text-xs text-muted-foreground">
+                      {proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}
+                    </td>
+                    <td className="px-4 py-2"><StatusBadge status={proxy.status} /></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -300,6 +300,8 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
         avgLatencyMs: sql<number>`round(avg(latency_ms))::int`,
         wafCount:     sql<number>`count(*) filter (where waf_detected)::int`,
         retryCount:   sql<number>`coalesce(sum(retries),0)::int`,
+        count429:     sql<number>`count(*) filter (where status_code = 429)::int`,
+        count403:     sql<number>`count(*) filter (where status_code = 403)::int`,
       })
       .from(scanRequestTelemetryTable)
       .where(gte(scanRequestTelemetryTable.createdAt, since60m))

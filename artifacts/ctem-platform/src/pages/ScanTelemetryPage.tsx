@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  RefreshCw, Download, Filter, Search, CheckCircle2, XCircle,
-  AlertTriangle, Shield, Loader2,
+  RefreshCw, Download, Filter, Search, AlertTriangle, Shield, Loader2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,13 +40,21 @@ interface TelemetryResponse {
   limit: number;
 }
 
-/* ─── API ────────────────────────────────────────────────────────────── */
+/* ─── Helpers ────────────────────────────────────────────────────────── */
 const BASE = () => import.meta.env.BASE_URL.replace(/\/$/, "");
 const hdrs = () => ({ Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" });
 async function api<T>(path: string): Promise<T> {
   const r = await fetch(`${BASE()}${path}`, { headers: hdrs() });
   if (!r.ok) throw new Error("Request failed");
   return r.json();
+}
+
+function extractDomain(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url.split("/")[0] ?? url;
+  }
 }
 
 /* ─── Status badge ───────────────────────────────────────────────────── */
@@ -60,8 +67,9 @@ function StatusCode({ code }: { code: number | null }) {
 /* ─── CSV export helper ──────────────────────────────────────────────── */
 function exportCsv(rows: TelemetryRow[]) {
   const cols: Array<keyof TelemetryRow> = [
-    "createdAt", "method", "url", "proxyIp", "statusCode", "latencyMs",
-    "retries", "delayMs", "backoffMs", "wafDetected", "captchaDetected", "bytesDownloaded",
+    "createdAt", "method", "url", "proxyIp", "fingerprintProfileId",
+    "statusCode", "latencyMs", "retries", "delayMs", "backoffMs",
+    "wafDetected", "captchaDetected", "bytesDownloaded",
   ];
   const header = cols.join(",");
   const lines = rows.map(r =>
@@ -86,10 +94,11 @@ export default function ScanTelemetryPage() {
   const [page, setPage] = useState(1);
   const LIMIT = 50;
 
-  // Filters (client-side on current page for now; server-side filter via query params in future)
-  const [searchUrl, setSearchUrl] = useState("");
+  const [searchUrl, setSearchUrl]     = useState("");
+  const [filterDomain, setFilterDomain] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
-  const [filterWaf, setFilterWaf] = useState(false);
+  const [filterFingerprint, setFilterFingerprint] = useState("all");
+  const [filterWaf, setFilterWaf]     = useState(false);
   const [filterCaptcha, setFilterCaptcha] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useQuery<TelemetryResponse>({
@@ -102,8 +111,13 @@ export default function ScanTelemetryPage() {
   const total   = data?.total ?? 0;
   const pages   = Math.max(1, Math.ceil(total / LIMIT));
 
+  /* Collect unique fingerprint profile IDs for the filter dropdown */
+  const fpIds = Array.from(new Set(allRows.map(r => r.fingerprintProfileId).filter(Boolean))) as number[];
+
   const filtered = allRows.filter(r => {
+    const domain = extractDomain(r.url);
     if (searchUrl && !r.url.toLowerCase().includes(searchUrl.toLowerCase())) return false;
+    if (filterDomain && !domain.toLowerCase().includes(filterDomain.toLowerCase())) return false;
     if (filterWaf && !r.wafDetected) return false;
     if (filterCaptcha && !r.captchaDetected) return false;
     if (filterStatus === "2xx" && (r.statusCode == null || r.statusCode < 200 || r.statusCode >= 300)) return false;
@@ -111,8 +125,15 @@ export default function ScanTelemetryPage() {
     if (filterStatus === "429" && r.statusCode !== 429) return false;
     if (filterStatus === "403" && r.statusCode !== 403) return false;
     if (filterStatus === "5xx" && (r.statusCode == null || r.statusCode < 500)) return false;
+    if (filterFingerprint !== "all" && String(r.fingerprintProfileId ?? "none") !== filterFingerprint) return false;
     return true;
   });
+
+  const clearFilters = () => {
+    setSearchUrl(""); setFilterDomain(""); setFilterStatus("all");
+    setFilterFingerprint("all"); setFilterWaf(false); setFilterCaptcha(false);
+  };
+  const hasFilters = searchUrl || filterDomain || filterStatus !== "all" || filterFingerprint !== "all" || filterWaf || filterCaptcha;
 
   return (
     <div className="p-6 space-y-5 max-w-screen-2xl mx-auto">
@@ -138,15 +159,30 @@ export default function ScanTelemetryPage() {
       {/* Filter bar */}
       <div className="flex items-center gap-3 flex-wrap rounded-xl border bg-card p-3">
         <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
+
+        {/* URL filter */}
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
-            className="pl-8 h-8 text-xs w-60"
+            className="pl-8 h-8 text-xs w-56"
             placeholder="Filter by URL…"
             value={searchUrl}
             onChange={e => { setSearchUrl(e.target.value); setPage(1); }}
           />
         </div>
+
+        {/* Domain filter */}
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input
+            className="pl-8 h-8 text-xs w-44"
+            placeholder="Filter by domain…"
+            value={filterDomain}
+            onChange={e => { setFilterDomain(e.target.value); setPage(1); }}
+          />
+        </div>
+
+        {/* Status filter */}
         <Select value={filterStatus} onValueChange={v => { setFilterStatus(v); setPage(1); }}>
           <SelectTrigger className="h-8 w-36 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
@@ -158,6 +194,21 @@ export default function ScanTelemetryPage() {
             <SelectItem value="5xx">5xx Server Error</SelectItem>
           </SelectContent>
         </Select>
+
+        {/* Fingerprint profile filter */}
+        {fpIds.length > 0 && (
+          <Select value={filterFingerprint} onValueChange={v => { setFilterFingerprint(v); setPage(1); }}>
+            <SelectTrigger className="h-8 w-40 text-xs"><SelectValue placeholder="Profile" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All profiles</SelectItem>
+              <SelectItem value="none">No profile</SelectItem>
+              {fpIds.map(id => (
+                <SelectItem key={id} value={String(id)}>Profile #{id}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         <div className="flex items-center gap-2">
           <Switch id="waf-filter" checked={filterWaf} onCheckedChange={setFilterWaf} />
           <Label htmlFor="waf-filter" className="text-xs cursor-pointer">WAF only</Label>
@@ -166,8 +217,9 @@ export default function ScanTelemetryPage() {
           <Switch id="cap-filter" checked={filterCaptcha} onCheckedChange={setFilterCaptcha} />
           <Label htmlFor="cap-filter" className="text-xs cursor-pointer">Captcha only</Label>
         </div>
-        {(searchUrl || filterStatus !== "all" || filterWaf || filterCaptcha) && (
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setSearchUrl(""); setFilterStatus("all"); setFilterWaf(false); setFilterCaptcha(false); }}>
+
+        {hasFilters && (
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={clearFilters}>
             Clear
           </Button>
         )}
@@ -182,8 +234,10 @@ export default function ScanTelemetryPage() {
               <tr className="border-b bg-muted/40 text-muted-foreground">
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Timestamp</th>
                 <th className="px-3 py-2.5 text-left font-medium">Method</th>
+                <th className="px-3 py-2.5 text-left font-medium">Domain</th>
                 <th className="px-3 py-2.5 text-left font-medium">URL</th>
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Proxy IP</th>
+                <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Fingerprint</th>
                 <th className="px-3 py-2.5 text-right font-medium">Status</th>
                 <th className="px-3 py-2.5 text-right font-medium">Latency</th>
                 <th className="px-3 py-2.5 text-right font-medium">Retries</th>
@@ -197,66 +251,78 @@ export default function ScanTelemetryPage() {
               {isLoading ? (
                 Array.from({ length: 10 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 11 }).map((__, j) => (
+                    {Array.from({ length: 13 }).map((__, j) => (
                       <td key={j} className="px-3 py-2"><Skeleton className="h-3.5 w-full" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-3 py-12 text-center text-muted-foreground">
+                  <td colSpan={13} className="px-3 py-12 text-center text-muted-foreground">
                     {total === 0
                       ? "No telemetry yet — records appear once scans run."
                       : "No records match the current filters."}
                   </td>
                 </tr>
-              ) : filtered.map(row => (
-                <tr key={row.id} className={cn(
-                  "border-b last:border-0 hover:bg-muted/30 transition-colors",
-                  row.wafDetected && "bg-red-500/5",
-                )}>
-                  <td className="px-3 py-2 whitespace-nowrap font-mono text-muted-foreground">
-                    {new Date(row.createdAt).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0">{row.method}</Badge>
-                  </td>
-                  <td className="px-3 py-2 max-w-xs truncate font-mono" title={row.url}>
-                    {row.url.replace(/^https?:\/\//, "")}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-muted-foreground whitespace-nowrap">
-                    {row.proxyIp ?? <span className="text-muted-foreground/50">direct</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right"><StatusCode code={row.statusCode} /></td>
-                  <td className="px-3 py-2 text-right text-muted-foreground">
-                    {row.latencyMs != null ? `${row.latencyMs}ms` : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {row.retries > 0
-                      ? <span className="text-amber-500 font-semibold">{row.retries}</span>
-                      : <span className="text-muted-foreground">0</span>
-                    }
-                  </td>
-                  <td className="px-3 py-2 text-right text-muted-foreground">
-                    {row.delayMs != null ? `${row.delayMs}ms` : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right text-muted-foreground">
-                    {row.backoffMs != null ? `${row.backoffMs}ms` : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {row.wafDetected
-                      ? <Shield className="w-3.5 h-3.5 text-red-500 mx-auto" aria-label="WAF detected" />
-                      : <span className="text-muted-foreground/30">—</span>
-                    }
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {row.captchaDetected
-                      ? <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mx-auto" aria-label="Captcha detected" />
-                      : <span className="text-muted-foreground/30">—</span>
-                    }
-                  </td>
-                </tr>
-              ))}
+              ) : filtered.map(row => {
+                const domain = extractDomain(row.url);
+                return (
+                  <tr key={row.id} className={cn(
+                    "border-b last:border-0 hover:bg-muted/30 transition-colors",
+                    row.wafDetected && "bg-red-500/5",
+                  )}>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono text-muted-foreground">
+                      {new Date(row.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0">{row.method}</Badge>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-muted-foreground whitespace-nowrap">
+                      {domain}
+                    </td>
+                    <td className="px-3 py-2 max-w-xs truncate font-mono" title={row.url}>
+                      {row.url.replace(/^https?:\/\/[^/]+/, "")}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-muted-foreground whitespace-nowrap">
+                      {row.proxyIp ?? <span className="text-muted-foreground/50">direct</span>}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {row.fingerprintProfileId != null
+                        ? <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0">#{row.fingerprintProfileId}</Badge>
+                        : <span className="text-muted-foreground/50">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2 text-right"><StatusCode code={row.statusCode} /></td>
+                    <td className="px-3 py-2 text-right text-muted-foreground">
+                      {row.latencyMs != null ? `${row.latencyMs}ms` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {row.retries > 0
+                        ? <span className="text-amber-500 font-semibold">{row.retries}</span>
+                        : <span className="text-muted-foreground">0</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2 text-right text-muted-foreground">
+                      {row.delayMs != null ? `${row.delayMs}ms` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right text-muted-foreground">
+                      {row.backoffMs != null ? `${row.backoffMs}ms` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {row.wafDetected
+                        ? <Shield className="w-3.5 h-3.5 text-red-500 mx-auto" aria-label="WAF detected" />
+                        : <span className="text-muted-foreground/30">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {row.captchaDetected
+                        ? <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mx-auto" aria-label="Captcha detected" />
+                        : <span className="text-muted-foreground/30">—</span>
+                      }
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -113,13 +113,16 @@ function ProxyDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Type</Label>
+              <Label>Proxy Class</Label>
               <Select value={type} onValueChange={setType}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="http">HTTP</SelectItem>
-                  <SelectItem value="https">HTTPS</SelectItem>
+                  <SelectItem value="datacenter">Datacenter</SelectItem>
+                  <SelectItem value="residential">Residential</SelectItem>
+                  <SelectItem value="isp">ISP</SelectItem>
+                  <SelectItem value="mobile">Mobile</SelectItem>
                   <SelectItem value="socks5">SOCKS5</SelectItem>
+                  <SelectItem value="http">HTTP (Generic)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -231,10 +234,11 @@ export default function ScanProxiesPage() {
               <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <th className="px-4 py-3 text-left font-medium">IP Address</th>
                 <th className="px-4 py-3 text-left font-medium">Label</th>
-                <th className="px-4 py-3 text-left font-medium">Type</th>
+                <th className="px-4 py-3 text-left font-medium">Class</th>
                 <th className="px-4 py-3 text-left font-medium">Country</th>
                 <th className="px-4 py-3 text-left font-medium">ASN</th>
                 <th className="px-4 py-3 text-right font-medium">Health</th>
+                <th className="px-4 py-3 text-right font-medium">Success %</th>
                 <th className="px-4 py-3 text-right font-medium">429s</th>
                 <th className="px-4 py-3 text-right font-medium">403s</th>
                 <th className="px-4 py-3 text-right font-medium">Avg Latency</th>
@@ -247,27 +251,37 @@ export default function ScanProxiesPage() {
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 12 }).map((__, j) => (
+                    {Array.from({ length: 13 }).map((__, j) => (
                       <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
                 ))
               ) : proxies.length === 0 ? (
-                <tr><td colSpan={12} className="px-4 py-12 text-center">
+                <tr><td colSpan={13} className="px-4 py-12 text-center">
                   <p className="text-muted-foreground text-sm">No proxies configured yet.</p>
                   <p className="text-xs text-muted-foreground mt-1">Add a proxy IP to start routing scan traffic through it.</p>
                 </td></tr>
-              ) : proxies.map(proxy => (
+              ) : proxies.map(proxy => {
+                const total = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
+                const successPct = total > 0 ? Math.round(proxy.successCount / total * 100) : null;
+                return (
                 <tr key={proxy.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-2.5 font-mono text-xs">{proxy.ip}</td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{proxy.label ?? "—"}</td>
-                  <td className="px-4 py-2.5"><Badge variant="outline" className="text-xs uppercase">{proxy.type}</Badge></td>
+                  <td className="px-4 py-2.5"><Badge variant="outline" className="text-xs capitalize">{proxy.type}</Badge></td>
                   <td className="px-4 py-2.5 text-xs">{proxy.country ?? "—"}</td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{proxy.asn ?? "—"}</td>
                   <td className="px-4 py-2.5 text-right">
                     <span className={cn("font-bold text-sm", proxy.healthScore >= 70 ? "text-green-600" : proxy.healthScore >= 30 ? "text-amber-500" : "text-red-500")}>
                       {proxy.healthScore}
                     </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-xs">
+                    {successPct != null ? (
+                      <span className={successPct >= 80 ? "text-green-600" : successPct >= 50 ? "text-amber-500" : "text-red-500"}>
+                        {successPct}%
+                      </span>
+                    ) : "—"}
                   </td>
                   <td className="px-4 py-2.5 text-right text-xs">{proxy.count429 ?? 0}</td>
                   <td className="px-4 py-2.5 text-right text-xs">{proxy.count403 ?? 0}</td>
@@ -307,7 +321,7 @@ export default function ScanProxiesPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
         </div>
