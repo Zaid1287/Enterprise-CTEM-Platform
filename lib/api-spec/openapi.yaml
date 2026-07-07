@@ -1015,6 +1015,14 @@ paths:
           in: query
           schema:
             type: string
+        - name: newSinceScanId
+          in: query
+          schema:
+            type: integer
+        - name: isStale
+          in: query
+          schema:
+            type: string
       responses:
         "200":
           description: List of findings

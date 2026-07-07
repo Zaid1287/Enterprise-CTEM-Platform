@@ -955,7 +955,9 @@ export const ListFindingsQueryParams = zod.object({
   "status": zod.coerce.string().optional(),
   "severity": zod.coerce.string().optional(),
   "assetId": zod.coerce.number().optional(),
-  "search": zod.coerce.string().optional()
+  "search": zod.coerce.string().optional(),
+  "newSinceScanId": zod.coerce.number().optional(),
+  "isStale": zod.coerce.string().optional()
 })
 
 export const ListFindingsResponseItem = zod.object({

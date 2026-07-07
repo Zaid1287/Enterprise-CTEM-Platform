@@ -11,4 +11,6 @@ status?: string;
 severity?: string;
 assetId?: number;
 search?: string;
+newSinceScanId?: number;
+isStale?: string;
 };

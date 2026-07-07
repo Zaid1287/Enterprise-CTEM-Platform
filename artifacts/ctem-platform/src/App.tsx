@@ -126,6 +126,19 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   );
 }
 
+function SuperAdminRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated, user } = useAuth();
+  if (!isAuthenticated) return <Redirect to="/login" />;
+  if (user?.role !== "super_admin") return <Redirect to="/dashboard" />;
+  return (
+    <AppLayout>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </AppLayout>
+  );
+}
+
 function AiMapperRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, aiMapperEnabled, aiMapperLoaded } = useAuth();
   const { toast } = useToast();
@@ -235,11 +248,11 @@ function Router() {
       <Route path="/settings/cdn-whitelist" component={() => <ProtectedRoute component={CdnWhitelistPage} />} />
       <Route path="/discovery" component={() => <ProtectedRoute component={DiscoveryPage} />} />
       <Route path="/exposure" component={() => <ProtectedRoute component={ExposurePage} />} />
-      <Route path="/scan-orchestration" component={() => <ProtectedRoute component={ScanOrchestrationPage} />} />
-      <Route path="/settings/scan-proxies" component={() => <ProtectedRoute component={ScanProxiesPage} />} />
-      <Route path="/settings/scan-fingerprints" component={() => <ProtectedRoute component={ScanFingerprintsPage} />} />
-      <Route path="/settings/orchestrator-config" component={() => <ProtectedRoute component={OrchestratorConfigPage} />} />
-      <Route path="/scan-telemetry" component={() => <ProtectedRoute component={ScanTelemetryPage} />} />
+      <Route path="/scan-orchestration" component={() => <SuperAdminRoute component={ScanOrchestrationPage} />} />
+      <Route path="/settings/scan-proxies" component={() => <SuperAdminRoute component={ScanProxiesPage} />} />
+      <Route path="/settings/scan-fingerprints" component={() => <SuperAdminRoute component={ScanFingerprintsPage} />} />
+      <Route path="/settings/orchestrator-config" component={() => <SuperAdminRoute component={OrchestratorConfigPage} />} />
+      <Route path="/scan-telemetry" component={() => <SuperAdminRoute component={ScanTelemetryPage} />} />
 
       {/* Fallback */}
       <Route component={() => <Redirect to={defaultPath} />} />
