@@ -34,21 +34,51 @@ interface KnobDef {
 }
 
 const KNOBS: KnobDef[] = [
-  { key: "enabled",                    type: "boolean", label: "Enable Orchestration Engine",   description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
-  { key: "use_proxies",                type: "boolean", label: "Use Proxy Pool",                description: "Route outbound scan requests through the configured proxy/IP pool." },
-  { key: "rotate_fingerprints",        type: "boolean", label: "Rotate Browser Fingerprints",   description: "Cycle through active fingerprint profiles on each request." },
-  { key: "dns_rotation_enabled",       type: "boolean", label: "Rotate DNS Resolvers",          description: "Use the DNS resolver pool instead of the system default resolver." },
-  { key: "cookie_persistence_enabled", type: "boolean", label: "Cookie Persistence",            description: "Maintain cookies across requests to the same host (session simulation)." },
-  { key: "circuit_breaker_enabled",    type: "boolean", label: "Enable Circuit Breakers",       description: "Open the circuit for a host after repeated rate-limit or block responses." },
-  { key: "log_all_requests",           type: "boolean", label: "Log All Requests to Telemetry", description: "Write every HTTP request to the telemetry table. Disable to reduce DB writes." },
-  { key: "max_retries",                type: "integer", label: "Max Retries per Request",       description: "Number of retry attempts before giving up on a request.", min: 0, max: 10 },
-  { key: "backoff_base_ms",            type: "integer", label: "Retry Base Backoff (ms)",       description: "Base delay for exponential backoff on retries.", min: 100, max: 30000 },
-  { key: "request_timeout_ms",         type: "integer", label: "Request Timeout (ms)",          description: "Hard timeout for each HTTP attempt.", min: 1000, max: 120000 },
-  { key: "max_concurrent_per_host",    type: "integer", label: "Max Concurrent Requests / Host",description: "Concurrency cap per target hostname.", min: 1, max: 50 },
-  { key: "circuit_breaker_threshold",  type: "integer", label: "Circuit Breaker Threshold",     description: "Consecutive failures before a circuit opens.", min: 1, max: 20 },
-  { key: "circuit_breaker_cooldown_ms",type: "integer", label: "Circuit Breaker Cooldown (ms)", description: "How long a circuit stays open before switching to half-open.", min: 10000, max: 3600000 },
-  { key: "rate_limit_window_ms",       type: "integer", label: "Rate Limit Window (ms)",        description: "Token bucket refill window for adaptive rate limiting.", min: 100, max: 60000 },
-  { key: "rate_limit_max_tokens",      type: "integer", label: "Rate Limit Max Tokens",         description: "Max requests per window before throttling.", min: 1, max: 1000 },
+  /* ── Master switches ─────────────────────────────────────────────────── */
+  { key: "enabled",                    type: "boolean", label: "Enable Orchestration Engine",    description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
+  { key: "use_proxies",                type: "boolean", label: "Use Proxy Pool",                 description: "Route outbound scan requests through the configured proxy/IP pool." },
+  { key: "rotate_fingerprints",        type: "boolean", label: "Rotate Browser Fingerprints",    description: "Cycle through active fingerprint profiles on each request." },
+  { key: "dns_rotation_enabled",       type: "boolean", label: "Rotate DNS Resolvers",           description: "Use the DNS resolver pool instead of the system default resolver." },
+  { key: "cookie_persistence_enabled", type: "boolean", label: "Cookie Persistence",             description: "Maintain cookies across requests to the same host (session simulation)." },
+  { key: "circuit_breaker_enabled",    type: "boolean", label: "Enable Circuit Breakers",        description: "Open the circuit for a host after repeated rate-limit or block responses." },
+  { key: "log_all_requests",           type: "boolean", label: "Log All Requests to Telemetry",  description: "Write every HTTP request to the telemetry table. Disable to reduce DB writes." },
+  /* ── Rotation strategies ─────────────────────────────────────────────── */
+  { key: "proxy_rotation_strategy",
+    type: "select",
+    label: "Proxy Rotation Strategy",
+    description: "Algorithm used to pick the next proxy from the pool.",
+    options: ["round-robin", "weighted-health", "least-429", "random"] },
+  { key: "resolver_rotation_strategy",
+    type: "select",
+    label: "DNS Resolver Rotation",
+    description: "Algorithm used to select a DNS resolver from the pool.",
+    options: ["round-robin", "random", "sticky"] },
+  { key: "fingerprint_rotation_strategy",
+    type: "select",
+    label: "Fingerprint Rotation Strategy",
+    description: "How browser fingerprint profiles are cycled across requests.",
+    options: ["random", "round-robin", "per-target"] },
+  /* ── Scan delay & throttle ───────────────────────────────────────────── */
+  { key: "scan_delay_intensity",
+    type: "select",
+    label: "Scan Delay Intensity",
+    description: "Controls inter-request delay to reduce detection probability.",
+    options: ["low", "medium", "high", "adaptive"] },
+  /* ── Proxy management ────────────────────────────────────────────────── */
+  { key: "max_requests_per_proxy",     type: "integer", label: "Max Requests per Proxy",          description: "Maximum requests routed through one proxy before rotating to the next.", min: 1, max: 10000 },
+  { key: "proxy_cooldown_minutes",     type: "integer", label: "Proxy Cooldown (min)",            description: "Minutes a proxy stays in cooldown after exceeding its error threshold.", min: 1, max: 1440 },
+  { key: "proxy_health_threshold",     type: "integer", label: "Proxy Health Score Threshold",    description: "Minimum health score (0-100) required for a proxy to remain active.", min: 0, max: 100 },
+  /* ── Retry & backoff ─────────────────────────────────────────────────── */
+  { key: "max_retries",                type: "integer", label: "Max Retries per Request",         description: "Number of retry attempts before giving up on a request.", min: 0, max: 10 },
+  { key: "backoff_base_ms",            type: "integer", label: "Retry Base Backoff (ms)",         description: "Base delay for exponential backoff on retries.", min: 100, max: 30000 },
+  { key: "request_timeout_ms",         type: "integer", label: "Request Timeout (ms)",            description: "Hard timeout for each HTTP attempt.", min: 1000, max: 120000 },
+  /* ── Concurrency & circuit breakers ─────────────────────────────────── */
+  { key: "max_concurrent_per_host",    type: "integer", label: "Max Concurrent Requests / Host",  description: "Concurrency cap per target hostname.", min: 1, max: 50 },
+  { key: "circuit_breaker_threshold",  type: "integer", label: "Circuit Breaker Threshold",       description: "Consecutive failures before a circuit opens.", min: 1, max: 20 },
+  { key: "circuit_breaker_cooldown_ms",type: "integer", label: "Circuit Breaker Cooldown (ms)",   description: "How long a circuit stays open before switching to half-open.", min: 10000, max: 3600000 },
+  /* ── Rate limiting ───────────────────────────────────────────────────── */
+  { key: "rate_limit_window_ms",       type: "integer", label: "Rate Limit Window (ms)",          description: "Token bucket refill window for adaptive rate limiting.", min: 100, max: 60000 },
+  { key: "rate_limit_max_tokens",      type: "integer", label: "Rate Limit Max Tokens",           description: "Max requests per window before throttling.", min: 1, max: 1000 },
 ];
 
 /* ─── Main Page ───────────────────────────────────────────────────────── */
@@ -148,7 +178,7 @@ export default function OrchestratorConfigPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Orchestrator Configuration</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            All 15 configuration knobs for the scan orchestration engine
+            All configuration knobs for the scan orchestration engine
           </p>
         </div>
         <div className="flex gap-2">

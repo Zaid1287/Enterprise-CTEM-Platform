@@ -28,7 +28,7 @@ function parseId(param: string | string[] | undefined): number {
 
 // ── Proxy CRUD ─────────────────────────────────────────────────────────────────
 
-router.get("/api/scan-proxies", requireAuth, requireAdmin, async (req, res) => {
+router.get("/api/scan-proxies", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const proxies = await db
       .select()
@@ -183,7 +183,7 @@ router.patch("/api/orchestrator-config", requireAuth, requireSuperAdmin, async (
 
 // ── Fingerprint Profiles ───────────────────────────────────────────────────────
 
-router.get("/api/scan-fingerprints", requireAuth, requireAdmin, async (req, res) => {
+router.get("/api/scan-fingerprints", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const profiles = await db
       .select()
@@ -196,7 +196,7 @@ router.get("/api/scan-fingerprints", requireAuth, requireAdmin, async (req, res)
   }
 });
 
-router.get("/api/scan-fingerprints/:id", requireAuth, requireAdmin, async (req, res) => {
+router.get("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -242,22 +242,48 @@ router.patch("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async
 
 router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const page  = Math.max(1, parseInt(req.query.page  as string ?? "1",  10));
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string ?? "50", 10)));
+    const page   = Math.max(1, parseInt(req.query.page  as string ?? "1",  10));
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit as string ?? "50", 10)));
     const offset = (page - 1) * limit;
 
-    const rows = await db
+    // Server-side filters
+    const proxyIp   = (req.query.proxyIp  as string | undefined)?.trim() || null;
+    const dateFrom  = (req.query.dateFrom as string | undefined)?.trim() || null;
+    const dateTo    = (req.query.dateTo   as string | undefined)?.trim() || null;
+    const status    = (req.query.status   as string | undefined)?.trim() || null;
+
+    const conds = [];
+    if (proxyIp)  conds.push(sql`proxy_ip = ${proxyIp}`);
+    if (dateFrom) conds.push(sql`created_at >= ${new Date(dateFrom)}`);
+    if (dateTo)   conds.push(sql`created_at <= ${new Date(dateTo)}`);
+    if (status === "429") conds.push(sql`status_code = 429`);
+    else if (status === "403") conds.push(sql`status_code = 403`);
+    else if (status === "2xx") conds.push(sql`status_code between 200 and 299`);
+    else if (status === "4xx") conds.push(sql`status_code between 400 and 499`);
+    else if (status === "5xx") conds.push(sql`status_code between 500 and 599`);
+
+    const whereClause = conds.length > 0 ? and(...conds) : undefined;
+
+    const rowsQuery = db
       .select()
       .from(scanRequestTelemetryTable)
       .orderBy(desc(scanRequestTelemetryTable.createdAt))
       .limit(limit)
       .offset(offset);
 
-    const [{ count }] = await db
+    const countQuery = db
       .select({ count: sql<number>`count(*)::int` })
       .from(scanRequestTelemetryTable);
 
-    res.json({ rows, total: count, page, limit });
+    if (whereClause) {
+      const rows = await rowsQuery.where(whereClause);
+      const [{ count }] = await countQuery.where(whereClause);
+      res.json({ rows, total: count, page, limit });
+    } else {
+      const rows = await rowsQuery;
+      const [{ count }] = await countQuery;
+      res.json({ rows, total: count, page, limit });
+    }
   } catch (err) {
     logger.error({ err }, "GET /api/scan-telemetry error");
     res.status(500).json({ error: "Failed to fetch telemetry" });

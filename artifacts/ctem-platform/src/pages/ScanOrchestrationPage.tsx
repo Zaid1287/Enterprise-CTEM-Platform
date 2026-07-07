@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity, Server, AlertTriangle, Zap, Clock, RefreshCw,
-  ShieldX, Wifi, WifiOff, RotateCcw, TrendingDown,
+  ShieldX, Wifi, WifiOff, RotateCcw, TrendingDown, Timer,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -153,19 +153,20 @@ export default function ScanOrchestrationPage() {
       )}
 
       {/* Stat widgets */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-3">
         {isLoading ? (
-          Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
+          Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
         ) : (
           <>
-            <StatCard label="Healthy Proxies"   value={p?.activeProxies ?? 0}    icon={Wifi}        color="text-green-600" />
-            <StatCard label="Cooling Proxies"   value={p?.coolingProxies ?? 0}   icon={Clock}       color="text-amber-500" />
-            <StatCard label="Inactive Proxies"  value={p?.inactiveProxies ?? 0}  icon={WifiOff}     color="text-red-500" />
-            <StatCard label="Requests / sec"    value={r?.reqPerSecond ?? 0}     icon={Zap}         color="text-blue-500" sub="last 5 min" />
-            <StatCard label="429 Rate Limited"  value={r?.count429 ?? 0}         icon={TrendingDown} color={r?.count429 ? "text-amber-500" : "text-muted-foreground"} sub="last 60 min" />
-            <StatCard label="403 Blocked"       value={r?.count403 ?? 0}         icon={Server}      color={r?.count403 ? "text-red-500" : "text-muted-foreground"} sub="last 60 min" />
-            <StatCard label="Open Circuits"     value={stats?.circuits?.open ?? 0} icon={ShieldX}   color={stats?.circuits?.open ? "text-red-500" : "text-green-600"} sub={`${stats?.circuits?.total ?? 0} total`} />
-            <StatCard label="Retry Queue"       value={stats?.retryQueueSize ?? 0} icon={RotateCcw} color={stats?.retryQueueSize ? "text-amber-500" : "text-muted-foreground"} sub="last 5 min" />
+            <StatCard label="Healthy Proxies"   value={p?.activeProxies ?? 0}                  icon={Wifi}        color="text-green-600" />
+            <StatCard label="Cooling Proxies"   value={p?.coolingProxies ?? 0}                 icon={Clock}       color="text-amber-500" />
+            <StatCard label="Inactive Proxies"  value={p?.inactiveProxies ?? 0}                icon={WifiOff}     color="text-red-500" />
+            <StatCard label="Requests / sec"    value={r?.reqPerSecond ?? 0}                   icon={Zap}         color="text-blue-500" sub="last 5 min" />
+            <StatCard label="Avg Latency"       value={r?.avgLatencyMs != null ? `${r.avgLatencyMs}ms` : "—"} icon={Timer} color="text-indigo-500" sub={`p95: ${r?.p95LatencyMs != null ? `${r.p95LatencyMs}ms` : "—"}`} />
+            <StatCard label="429 Rate Limited"  value={r?.count429 ?? 0}                       icon={TrendingDown} color={r?.count429 ? "text-amber-500" : "text-muted-foreground"} sub="last 60 min" />
+            <StatCard label="403 Blocked"       value={r?.count403 ?? 0}                       icon={Server}      color={r?.count403 ? "text-red-500" : "text-muted-foreground"} sub="last 60 min" />
+            <StatCard label="Open Circuits"     value={stats?.circuits?.open ?? 0}             icon={ShieldX}     color={stats?.circuits?.open ? "text-red-500" : "text-green-600"} sub={`${stats?.circuits?.total ?? 0} total`} />
+            <StatCard label="Retry Queue"       value={stats?.retryQueueSize ?? 0}             icon={RotateCcw}   color={stats?.retryQueueSize ? "text-amber-500" : "text-muted-foreground"} sub="last 5 min" />
           </>
         )}
       </div>

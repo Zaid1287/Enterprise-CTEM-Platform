@@ -22,7 +22,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 interface Proxy {
-  id: number; ip: string; label: string | null; type: string;
+  id: number; ip: string; port: number; label: string | null; type: string;
   country: string | null; asn: string | null;
   healthScore: number; successCount: number; failCount: number;
   count429: number; count403: number; avgLatencyMs: number | null;
@@ -64,7 +64,7 @@ function ProxyDialog({
   const qc = useQueryClient();
   const { toast } = useToast();
   const [ip, setIp]         = useState(initial?.ip ?? "");
-  const [port, setPort]     = useState(String(initial?.id ?? "3128"));
+  const [port, setPort]     = useState(String(initial?.port ?? "3128"));
   const [label, setLabel]   = useState(initial?.label ?? "");
   const [type, setType]     = useState(initial?.type ?? "http");
   const [country, setCountry] = useState(initial?.country ?? "");

@@ -100,11 +100,11 @@ const navGroups: NavGroup[] = [
     title: "Scan Orchestration",
     onlyFor: ["admin", "super_admin"],
     items: [
-      { label: "Dashboard",        href: "/scan-orchestration",      icon: Cpu },
-      { label: "Proxy Pool",       href: "/settings/scan-proxies",   icon: Radio },
-      { label: "Fingerprints",     href: "/settings/scan-fingerprints", icon: Fingerprint },
-      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders, onlyFor: ["super_admin"] },
-      { label: "Telemetry Logs",   href: "/scan-telemetry",          icon: ScrollText },
+      { label: "Dashboard",        href: "/scan-orchestration",         icon: Cpu },
+      { label: "Proxy Pool",       href: "/settings/scan-proxies",      icon: Radio,        onlyFor: ["super_admin"] },
+      { label: "Fingerprints",     href: "/settings/scan-fingerprints", icon: Fingerprint,  onlyFor: ["super_admin"] },
+      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders,    onlyFor: ["super_admin"] },
+      { label: "Telemetry Logs",   href: "/scan-telemetry",             icon: ScrollText },
     ],
   },
   {
