@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -21,19 +22,19 @@ export async function fetchLatestVersion(githubUrl: string): Promise<string | nu
   if (!repo) return null;
 
   try {
-    const relRes = await fetch(`${GITHUB_API}/repos/${repo}/releases/latest`, {
+    const relRes = await orchestratedFetch(`${GITHUB_API}/repos/${repo}/releases/latest`, {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "Sentinelware-CTEM/1.0" },
       signal: AbortSignal.timeout(10_000),
-    });
+    }, { intensity: "passive" });
     if (relRes.ok) {
       const data = await relRes.json() as { tag_name?: string };
       if (data.tag_name) return stripLeadingV(data.tag_name);
     }
 
-    const tagsRes = await fetch(`${GITHUB_API}/repos/${repo}/tags?per_page=1`, {
+    const tagsRes = await orchestratedFetch(`${GITHUB_API}/repos/${repo}/tags?per_page=1`, {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "Sentinelware-CTEM/1.0" },
       signal: AbortSignal.timeout(10_000),
-    });
+    }, { intensity: "passive" });
     if (tagsRes.ok) {
       const tags = await tagsRes.json() as { name: string }[];
       if (tags.length > 0) return stripLeadingV(tags[0]!.name);

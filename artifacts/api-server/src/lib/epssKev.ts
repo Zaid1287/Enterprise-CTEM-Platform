@@ -12,6 +12,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db, platformSettingsTable } from "@workspace/db";
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const EPSS_BATCH_SIZE  = 100;
 const EPSS_API         = "https://api.first.org/data/v1/epss";
@@ -114,10 +115,10 @@ export async function fetchEpssScores(cveIds: string[]): Promise<Map<string, Eps
     try {
       const ctrl = new AbortController();
       const t    = setTimeout(() => ctrl.abort(), 15000);
-      const res  = await fetch(`${EPSS_API}?cve=${batch.join(",")}`, {
+      const res  = await orchestratedFetch(`${EPSS_API}?cve=${batch.join(",")}`, {
         signal: ctrl.signal,
         headers: { Accept: "application/json" },
-      });
+      }, { intensity: "passive" });
       clearTimeout(t);
       if (!res.ok) {
         failedBatches++;
@@ -177,10 +178,10 @@ export async function fetchKevSet(): Promise<Set<string>> {
   try {
     const ctrl = new AbortController();
     const t    = setTimeout(() => ctrl.abort(), 20000);
-    const res  = await fetch(KEV_URL, {
+    const res  = await orchestratedFetch(KEV_URL, {
       signal: ctrl.signal,
       headers: { Accept: "application/json" },
-    });
+    }, { intensity: "passive" });
     clearTimeout(t);
     if (!res.ok) throw new Error(`KEV HTTP ${res.status}`);
     const data: any = await res.json().catch(() => null);

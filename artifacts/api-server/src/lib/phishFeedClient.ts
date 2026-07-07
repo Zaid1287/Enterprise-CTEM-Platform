@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 interface PhishFeedState {
   phishtank: Set<string>;
@@ -49,7 +50,7 @@ async function fetchPhishTank(apiKey: string | null): Promise<Set<string>> {
     ? `https://data.phishtank.com/data/${encodeURIComponent(apiKey)}/online-valid.json`
     : "https://data.phishtank.com/data/online-valid.json";
   try {
-    const res = await fetch(endpoint, { signal: AbortSignal.timeout(20_000) });
+    const res = await orchestratedFetch(endpoint, { signal: AbortSignal.timeout(20_000) }, { intensity: "passive" });
     if (res.status === 429 || res.status === 403 || res.status === 401) {
       // Key invalid or rate-limited — if we used a key, fall back to anonymous
       if (apiKey) {
@@ -74,9 +75,10 @@ async function fetchPhishTank(apiKey: string | null): Promise<Set<string>> {
 async function fetchOpenPhish(): Promise<Set<string>> {
   const urls = new Set<string>();
   try {
-    const res = await fetch(
+    const res = await orchestratedFetch(
       "https://openphish.com/feed.txt",
       { signal: AbortSignal.timeout(10_000) },
+      { intensity: "passive" },
     );
     if (!res.ok) return urls;
     const text = await res.text();

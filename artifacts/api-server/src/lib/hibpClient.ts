@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 export interface HibpBreach {
   name: string;
@@ -30,7 +31,7 @@ export async function hibpDomainLookup(domain: string, apiKey?: string): Promise
     // When API key is present: use the domain-specific endpoint
     if (apiKey) {
       await new Promise(r => setTimeout(r, HIBP_DELAY_MS));
-      const res = await fetch(
+      const res = await orchestratedFetch(
         `${HIBP_BASE}/api/v3/breacheddomain/${encodeURIComponent(domain)}`,
         {
           headers: {
@@ -39,25 +40,23 @@ export async function hibpDomainLookup(domain: string, apiKey?: string): Promise
           },
           signal: AbortSignal.timeout(12_000),
         },
+        { intensity: "passive" },
       );
       if (res.status === 404) {
-        // 404 means no breaches found for this domain
         return { breaches: [], totalPwnedAccounts: 0 };
       }
       if (!res.ok) {
         logger.warn(`HIBP breacheddomain API error: ${res.status} for ${domain}`);
         return null;
       }
-      // Response is { email: string[] } mapping emails to breach names
       const emailBreachMap = await res.json() as Record<string, string[]>;
       const emailCount = Object.keys(emailBreachMap).length;
       const allBreachNames = [...new Set(Object.values(emailBreachMap).flat())];
-      // Fetch details for each unique breach name (rate-limited)
       const breaches: HibpBreach[] = [];
       for (const breachName of allBreachNames.slice(0, 20)) {
         await new Promise(r => setTimeout(r, HIBP_DELAY_MS));
         try {
-          const bRes = await fetch(
+          const bRes = await orchestratedFetch(
             `${HIBP_BASE}/api/v3/breach/${encodeURIComponent(breachName)}`,
             {
               headers: {
@@ -66,6 +65,7 @@ export async function hibpDomainLookup(domain: string, apiKey?: string): Promise
               },
               signal: AbortSignal.timeout(10_000),
             },
+            { intensity: "passive" },
           );
           if (bRes.ok) {
             const b = await bRes.json() as HibpBreach;
@@ -79,12 +79,13 @@ export async function hibpDomainLookup(domain: string, apiKey?: string): Promise
     }
 
     // Without API key: fetch public breach list and filter by domain match
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `${HIBP_BASE}/api/v3/breaches`,
       {
         headers: { "user-agent": "Sentinelware-CTEM/1.0" },
         signal: AbortSignal.timeout(15_000),
       },
+      { intensity: "passive" },
     );
     if (!res.ok) {
       logger.warn(`HIBP public breaches API error: ${res.status}`);
@@ -106,7 +107,7 @@ export async function hibpEmailLookup(email: string, apiKey: string): Promise<Hi
   if (!apiKey) return null;
   try {
     await new Promise(r => setTimeout(r, HIBP_DELAY_MS));
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `${HIBP_BASE}/api/v3/breachedaccount/${encodeURIComponent(email)}`,
       {
         headers: {
@@ -115,6 +116,7 @@ export async function hibpEmailLookup(email: string, apiKey: string): Promise<Hi
         },
         signal: AbortSignal.timeout(10_000),
       },
+      { intensity: "passive" },
     );
     if (res.status === 404) return [];
     if (!res.ok) return null;

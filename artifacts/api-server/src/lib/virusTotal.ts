@@ -1,3 +1,5 @@
+import { orchestratedFetch } from "./scanOrchestrator";
+
 export interface VirusTotalResult {
   target: string;
   targetType: "domain" | "ip";
@@ -14,10 +16,10 @@ export interface VirusTotalResult {
 async function vtFetch(url: string, apiKey: string): Promise<any> {
   const ctrl = new AbortController();
   setTimeout(() => ctrl.abort(), 12000);
-  const res = await fetch(url, {
+  const res = await orchestratedFetch(url, {
     headers: { "x-apikey": apiKey, "Accept": "application/json" },
     signal: ctrl.signal,
-  });
+  }, { intensity: "passive" });
   if (res.status === 404) return null;
   if (res.status === 401) throw new Error("VirusTotal: invalid API key");
   if (res.status === 429) throw new Error("VirusTotal: rate limit exceeded");

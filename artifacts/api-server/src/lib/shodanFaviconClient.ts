@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 export interface ShodanFaviconMatch {
   ip: string;
@@ -40,7 +41,7 @@ export async function searchShodanByFaviconHash(
     const query = encodeURIComponent(`http.favicon.hash:${mmh3}`);
     const url = `https://api.shodan.io/shodan/host/search?query=${query}&key=${encodeURIComponent(apiKey)}&facets=org,country`;
 
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    const res = await orchestratedFetch(url, { signal: AbortSignal.timeout(15_000) }, { intensity: "passive" });
 
     if (!res.ok) {
       logger.warn({ status: res.status, mmh3 }, "Shodan favicon search returned non-OK status");

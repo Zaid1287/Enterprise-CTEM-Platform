@@ -1,3 +1,5 @@
+import { orchestratedFetch } from "./scanOrchestrator";
+
 export interface GeoIpResult {
   country: string | null;
   countryCode: string | null;
@@ -18,12 +20,12 @@ export async function geoIpBatch(ips: string[]): Promise<Map<string, GeoIpResult
 
   for (const chunk of chunks) {
     try {
-      const res = await fetch(`${ipApiBase}?fields=status,message,country,countryCode,city,as,org,isp,query`, {
+      const res = await orchestratedFetch(`${ipApiBase}?fields=status,message,country,countryCode,city,as,org,isp,query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(chunk),
         signal: AbortSignal.timeout(10_000),
-      });
+      }, { intensity: "passive" });
       if (!res.ok) continue;
       const data = await res.json() as any[];
       for (const item of data) {

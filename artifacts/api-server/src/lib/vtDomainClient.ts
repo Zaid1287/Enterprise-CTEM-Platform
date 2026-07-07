@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 export interface VtDomainResult {
   malicious: number;
@@ -17,12 +18,13 @@ const VT_BASE = "https://www.virustotal.com/api/v3";
 export async function vtDomainLookup(domain: string, apiKey: string): Promise<VtDomainResult | null> {
   if (!apiKey) return null;
   try {
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `${VT_BASE}/domains/${encodeURIComponent(domain)}`,
       {
         headers: { "x-apikey": apiKey },
         signal: AbortSignal.timeout(12_000),
       },
+      { intensity: "passive" },
     );
     if (res.status === 429) {
       logger.warn(`VT rate limit hit for ${domain}`);
@@ -59,12 +61,12 @@ export async function vtUrlScan(url: string, apiKey: string): Promise<VtDomainRe
   if (!apiKey) return null;
   try {
     // ── Step 1: Submit URL for scanning ──────────────────────────────────────
-    const submitRes = await fetch(`${VT_BASE}/urls`, {
+    const submitRes = await orchestratedFetch(`${VT_BASE}/urls`, {
       method: "POST",
       headers: { "x-apikey": apiKey, "Content-Type": "application/x-www-form-urlencoded" },
       body: `url=${encodeURIComponent(url)}`,
       signal: AbortSignal.timeout(15_000),
-    });
+    }, { intensity: "passive" });
 
     let analysisId: string | null = null;
     if (submitRes.ok) {
@@ -75,10 +77,10 @@ export async function vtUrlScan(url: string, apiKey: string): Promise<VtDomainRe
     // ── Step 2: Fetch analysis result (poll once after short delay) ───────────
     if (analysisId) {
       await new Promise(r => setTimeout(r, 8_000)); // wait 8s for VT to analyse
-      const analysisRes = await fetch(`${VT_BASE}/analyses/${encodeURIComponent(analysisId)}`, {
+      const analysisRes = await orchestratedFetch(`${VT_BASE}/analyses/${encodeURIComponent(analysisId)}`, {
         headers: { "x-apikey": apiKey },
         signal: AbortSignal.timeout(12_000),
-      });
+      }, { intensity: "passive" });
       if (analysisRes.ok) {
         const analysisJson = await analysisRes.json() as any;
         const attr = analysisJson?.data?.attributes ?? {};
@@ -101,10 +103,10 @@ export async function vtUrlScan(url: string, apiKey: string): Promise<VtDomainRe
 
     // ── Fallback: GET-only for already-known URLs ─────────────────────────────
     const encoded = Buffer.from(url).toString("base64url");
-    const getRes = await fetch(`${VT_BASE}/urls/${encoded}`, {
+    const getRes = await orchestratedFetch(`${VT_BASE}/urls/${encoded}`, {
       headers: { "x-apikey": apiKey },
       signal: AbortSignal.timeout(12_000),
-    });
+    }, { intensity: "passive" });
     if (!getRes.ok) return null;
     const json = await getRes.json() as any;
     const attr = json?.data?.attributes ?? {};

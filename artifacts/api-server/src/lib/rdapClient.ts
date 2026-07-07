@@ -1,3 +1,5 @@
+import { orchestratedFetch } from "./scanOrchestrator";
+
 export interface RdapResult {
   registrar: string | null;
   registrantCountry: string | null;
@@ -28,10 +30,10 @@ function ageDays(dateStr: string | null): number | null {
 
 export async function rdapLookup(domain: string): Promise<RdapResult | null> {
   try {
-    const res = await fetch(`${RDAP_BOOTSTRAP}${domain}`, {
+    const res = await orchestratedFetch(`${RDAP_BOOTSTRAP}${domain}`, {
       signal: AbortSignal.timeout(8000),
       headers: { "Accept": "application/json" },
-    });
+    }, { intensity: "passive" });
     if (!res.ok) return null;
     const data = await res.json() as any;
 

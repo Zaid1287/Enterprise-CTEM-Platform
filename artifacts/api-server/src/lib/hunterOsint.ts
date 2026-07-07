@@ -1,3 +1,5 @@
+import { orchestratedFetch } from "./scanOrchestrator";
+
 export interface HunterEmail {
   email: string;
   firstName?: string;
@@ -25,10 +27,10 @@ export async function hunterDomainSearch(
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 12000);
     const url = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&api_key=${apiKey}&limit=${limit}`;
-    const res = await fetch(url, {
+    const res = await orchestratedFetch(url, {
       signal: ctrl.signal,
       headers: { "Accept": "application/json" },
-    });
+    }, { intensity: "passive" });
     if (res.status === 401) throw new Error("Hunter.io: invalid API key");
     if (res.status === 429) throw new Error("Hunter.io: rate limit exceeded");
     if (!res.ok) return null;

@@ -3,6 +3,7 @@ import { promisify } from "util";
 import dns from "dns/promises";
 import fs from "fs";
 import path from "path";
+import { orchestratedFetch } from "./scanOrchestrator";
 import zlib from "zlib";
 
 const execAsync = promisify(exec);
@@ -378,7 +379,7 @@ export async function queryShodanInternetDB(ip: string): Promise<ShodanHostData 
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 10000);
-    const res = await fetch(`https://internetdb.shodan.io/${ip}`, { signal: ctrl.signal });
+    const res = await orchestratedFetch(`https://internetdb.shodan.io/${ip}`, { signal: ctrl.signal }, { intensity: "passive" });
     if (!res.ok) return null;
     const d: any = await res.json();
     if (d.detail === "No information available") return null;
@@ -393,7 +394,7 @@ export async function queryShodanFullApi(ip: string, apiKey: string): Promise<Sh
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 12000);
-    const res = await fetch(`https://api.shodan.io/shodan/host/${ip}?key=${apiKey}`, { signal: ctrl.signal });
+    const res = await orchestratedFetch(`https://api.shodan.io/shodan/host/${ip}?key=${apiKey}`, { signal: ctrl.signal }, { intensity: "passive" });
     if (!res.ok) return null;
     const d: any = await res.json();
     if (d.error) return null;

@@ -1,5 +1,6 @@
 import { exec, execSync } from "child_process";
 import { promisify } from "util";
+import { orchestratedFetch, type OrchestratorContext } from "./scanOrchestrator";
 
 const execAsync  = promisify(exec);
 const WHATWEB_BIN = (() => { try { return execSync("which whatweb 2>/dev/null", { timeout: 3000 }).toString().trim(); } catch { return ""; } })();
@@ -521,7 +522,7 @@ function runDetection(page: PageData): DetectedTechnology[] {
   return [...results.values()].sort((a, b) => b.confidence - a.confidence);
 }
 
-export async function detectTechnologies(rawUrl: string, timeoutMs = 12000): Promise<DetectedTechnology[]> {
+export async function detectTechnologies(rawUrl: string, timeoutMs = 12000, ctx: OrchestratorContext = {}): Promise<DetectedTechnology[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -530,7 +531,7 @@ export async function detectTechnologies(rawUrl: string, timeoutMs = 12000): Pro
 
   async function tryFetch(target: string): Promise<PageData | null> {
     try {
-      const res = await fetch(target, {
+      const res = await orchestratedFetch(target, {
         signal: controller.signal,
         redirect: "follow",
         headers: {
@@ -538,7 +539,7 @@ export async function detectTechnologies(rawUrl: string, timeoutMs = 12000): Pro
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.5",
         },
-      });
+      }, ctx);
 
       const rawHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => { rawHeaders[k.toLowerCase()] = v; });

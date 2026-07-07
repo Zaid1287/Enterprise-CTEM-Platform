@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 export interface AbuseChPhishingResult {
   url: string;
@@ -12,12 +13,12 @@ export interface AbuseChPhishingResult {
 export async function queryUrlhaus(domain: string): Promise<AbuseChPhishingResult[]> {
   const results: AbuseChPhishingResult[] = [];
   try {
-    const res = await fetch("https://urlhaus-api.abuse.ch/v1/host/", {
+    const res = await orchestratedFetch("https://urlhaus-api.abuse.ch/v1/host/", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ host: domain }).toString(),
       signal: AbortSignal.timeout(12_000),
-    });
+    }, { intensity: "passive" });
 
     if (!res.ok) return results;
 
@@ -56,12 +57,12 @@ export async function queryUrlhaus(domain: string): Promise<AbuseChPhishingResul
 export async function queryThreatFox(domain: string): Promise<AbuseChPhishingResult[]> {
   const results: AbuseChPhishingResult[] = [];
   try {
-    const res = await fetch("https://threatfox-api.abuse.ch/api/v1/", {
+    const res = await orchestratedFetch("https://threatfox-api.abuse.ch/api/v1/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "search_ioc", search_term: domain }),
       signal: AbortSignal.timeout(12_000),
-    });
+    }, { intensity: "passive" });
 
     if (!res.ok) return results;
 

@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 export interface MetaAd {
   adId: string;
@@ -56,9 +57,9 @@ export async function scanMetaAds(brandName: string, domain: string, accessToken
         access_token: accessToken,
       });
 
-      const res = await fetch(`${META_ADS_API}?${params.toString()}`, {
+      const res = await orchestratedFetch(`${META_ADS_API}?${params.toString()}`, {
         signal: AbortSignal.timeout(15_000),
-      });
+      }, { intensity: "passive" });
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "");

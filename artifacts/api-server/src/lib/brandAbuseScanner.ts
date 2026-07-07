@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 // @ts-ignore — google-play-scraper ships CJS; the types are bundled
 import gplay from "google-play-scraper";
 
@@ -77,7 +78,7 @@ async function checkSocialHandle(
 
   for (const p of platforms) {
     try {
-      const res = await fetch(p.url, {
+      const res = await orchestratedFetch(p.url, {
         method: "GET",
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
         signal: AbortSignal.timeout(8_000),
@@ -121,7 +122,7 @@ async function checkCertTransparencyAbuse(
   out: BrandAbuseResult[],
 ): Promise<void> {
   try {
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `https://crt.sh/?q=%25${encodeURIComponent(brand)}%25&output=json`,
       { signal: AbortSignal.timeout(12_000) },
     );
@@ -202,7 +203,7 @@ async function checkAppleAppStore(
   out: BrandAbuseResult[],
 ): Promise<void> {
   try {
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `https://itunes.apple.com/search?term=${encodeURIComponent(brand)}&entity=software&limit=50`,
       { signal: AbortSignal.timeout(8_000) },
     );
@@ -298,7 +299,7 @@ async function checkAPKPure(
     const brandLower = brand.toLowerCase();
     const brandSlug  = brandLower.replace(/\s+/g, "-");
 
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `https://apkpure.com/search?q=${encodeURIComponent(brand)}`,
       {
         headers: {
@@ -362,7 +363,7 @@ async function checkAPKPure(
 
     // Fallback: brand-slug URL probe when search returned no cards
     if (out.filter(r => r.platform === "APKPure").length === 0) {
-      const probeRes = await fetch(
+      const probeRes = await orchestratedFetch(
         `https://apkpure.com/${brandSlug}`,
         { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(6_000) },
       ).catch(() => null);
@@ -402,7 +403,7 @@ async function checkAptoide(
     // Aptoide public REST API v7 — path-style parameters on ws2 host
     // Correct format: /api/7/apps/search/query/{TERM}/limit/{N}[/sort/{field}]
     const searchUrl = `https://ws2.aptoide.com/api/7/apps/search/query/${encodeURIComponent(brand)}/limit/25`;
-    const res = await fetch(searchUrl, {
+    const res = await orchestratedFetch(searchUrl, {
       headers: {
         "User-Agent": "Aptoide/9.20.6.1 (Linux; Android 12)",
         "Accept": "application/json",
@@ -462,7 +463,7 @@ async function checkSamsungGalaxyStore(
     const brandLower = brand.toLowerCase();
 
     // Samsung Galaxy Store — keyword search endpoint used by the web portal
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `https://galaxystore.samsung.com/api/detail/getSearchKeywordContent?searchTxt=${encodeURIComponent(brand)}&contentType=app&cpStatus=0&startIndex=0&endIndex=20&language=EN&country=US`,
       {
         headers: {
@@ -529,7 +530,7 @@ async function checkHuaweiAppGallery(
 
     // Huawei AppGallery — apigw search endpoint used by the web portal
     // Response shape: { layoutData: [{ dataList: [...] }] } or fallback shapes
-    const hwRes = await fetch(
+    const hwRes = await orchestratedFetch(
       `https://appgallery.cloud.huawei.com/apigw/search/keyword?keyword=${encodeURIComponent(brand)}&pageIndex=0&pageSize=20`,
       {
         headers: {
@@ -604,7 +605,7 @@ async function checkAmazonAppstore(
   try {
     const brandLower = brand.toLowerCase();
 
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `https://www.amazon.com/s?k=${encodeURIComponent(brand)}&i=mobile-apps`,
       {
         headers: {
@@ -690,7 +691,7 @@ async function checkJailbreakRepos(
   // BigBoss publishes a plain-text APT Packages index we can download and grep.
   // We limit the body read to 2 MB to stay within budget.
   try {
-    const bbRes = await fetch(
+    const bbRes = await orchestratedFetch(
       "http://apt.thebigboss.org/repofiles/cydia/dists/stable/main/binary-iphoneos-arm/Packages",
       {
         headers: {
@@ -755,7 +756,7 @@ async function checkJailbreakRepos(
   try {
     // Try the native search API first (faster), fall back to full packages.json
     let charizPkgs: any[] = [];
-    const searchRes = await fetch(
+    const searchRes = await orchestratedFetch(
       `https://repo.chariz.com/api/search?q=${encodeURIComponent(brand)}`,
       {
         headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
@@ -771,7 +772,7 @@ async function checkJailbreakRepos(
 
     // Fallback: full packages.json (filter client-side)
     if (charizPkgs.length === 0) {
-      const listRes = await fetch("https://repo.chariz.com/packages.json", {
+      const listRes = await orchestratedFetch("https://repo.chariz.com/packages.json", {
         headers: { "User-Agent": "Sileo/2.4 Darwin/21.0.0" },
         signal: AbortSignal.timeout(10_000),
       }).catch(() => null);
@@ -817,7 +818,7 @@ async function checkJailbreakRepos(
   // indexing the repos that Sileo itself queries. Response:
   //   { status: "Successful", data: [{ package, name, author, latestVersion, repository, ... }] }
   try {
-    const canisterRes = await fetch(
+    const canisterRes = await orchestratedFetch(
       `https://api.canister.me/v1/community/packages/search?q=${encodeURIComponent(brand)}&count=25`,
       {
         headers: {
@@ -879,7 +880,7 @@ async function checkYouTubeAbuse(
       maxResults: "25",
       key: apiKey,
     });
-    const searchRes = await fetch(
+    const searchRes = await orchestratedFetch(
       `https://www.googleapis.com/youtube/v3/search?${searchParams.toString()}`,
       { signal: AbortSignal.timeout(10_000) },
     );
@@ -932,7 +933,7 @@ async function checkYouTubeAbuse(
       id: channelIds,
       key: apiKey,
     });
-    const statsRes = await fetch(
+    const statsRes = await orchestratedFetch(
       `https://www.googleapis.com/youtube/v3/channels?${statsParams.toString()}`,
       { signal: AbortSignal.timeout(10_000) },
     );
@@ -988,7 +989,7 @@ async function checkRedditAbuse(
 
   // Step 1: Search for subreddits whose name contains the brand (community squatting)
   try {
-    const srRes = await fetch(
+    const srRes = await orchestratedFetch(
       `https://www.reddit.com/subreddits/search.json?q=${encodeURIComponent(brand)}&type=sr&limit=25`,
       {
         headers: { "User-Agent": "SentinelwareBrandMonitor/1.0" },
@@ -1047,7 +1048,7 @@ async function checkRedditAbuse(
   const queries = [`${brand} scam`, `${brand} fake`, `${brand} fraud`];
   for (const q of queries) {
     try {
-      const res = await fetch(
+      const res = await orchestratedFetch(
         `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&type=link,sr&sort=new&limit=10`,
         {
           headers: { "User-Agent": "SentinelwareBrandMonitor/1.0" },

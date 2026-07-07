@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const UA = "Mozilla/5.0 (compatible; CTEM-OSINT/1.0)";
 
@@ -33,7 +34,7 @@ async function safeFetch(url: string, timeoutMs = 15000): Promise<string | null>
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } });
+    const res = await orchestratedFetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } }, { intensity: "passive" });
     clearTimeout(t);
     if (!res.ok) return null;
     return res.text();
@@ -75,9 +76,9 @@ async function queryEmailsFromCertificates(domain: string): Promise<HarvesterEma
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15000);
-    const res = await fetch(`https://crt.sh/?q=${encodeURIComponent(domain)}&output=json`, {
+    const res = await orchestratedFetch(`https://crt.sh/?q=${encodeURIComponent(domain)}&output=json`, {
       signal: ctrl.signal, headers: { "User-Agent": UA },
-    });
+    }, { intensity: "passive" });
     clearTimeout(t);
     if (!res.ok) return [];
     const data = await res.json() as Array<{ email?: string; name_value: string }>;
@@ -93,9 +94,10 @@ async function queryHunterIo(domain: string, apiKey: string): Promise<HarvesterE
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15000);
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&api_key=${encodeURIComponent(apiKey)}&limit=50`,
-      { signal: ctrl.signal, headers: { "User-Agent": UA } }
+      { signal: ctrl.signal, headers: { "User-Agent": UA } },
+      { intensity: "passive" },
     );
     clearTimeout(t);
     if (!res.ok) return [];
@@ -121,9 +123,10 @@ async function queryAlienVault(domain: string): Promise<{ hosts: HarvesterHost[]
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15000);
-    const res = await fetch(
+    const res = await orchestratedFetch(
       `https://otx.alienvault.com/api/v1/indicators/domain/${domain}/passive_dns`,
-      { signal: ctrl.signal, headers: { "User-Agent": UA } }
+      { signal: ctrl.signal, headers: { "User-Agent": UA } },
+      { intensity: "passive" },
     );
     clearTimeout(t);
     if (!res.ok) return { hosts: [], ips: [] };

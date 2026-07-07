@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 export interface IntelXResult {
   bucket: string;
@@ -40,7 +41,7 @@ export async function intelxSearch(
   if (!apiKey || !query.trim()) return [];
 
   try {
-    const searchRes = await fetch(`${BASE_URL}/intelligent/search`, {
+    const searchRes = await orchestratedFetch(`${BASE_URL}/intelligent/search`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -68,12 +69,13 @@ export async function intelxSearch(
     for (let poll = 0; poll < MAX_POLLS; poll++) {
       await new Promise(r => setTimeout(r, POLL_DELAY_MS));
 
-      const resultRes = await fetch(
+      const resultRes = await orchestratedFetch(
         `${BASE_URL}/intelligent/search/result?id=${encodeURIComponent(searchId)}&limit=${maxResults}&offset=0`,
         {
           headers: { "x-key": apiKey },
           signal: AbortSignal.timeout(10_000),
         },
+        { intensity: "passive" },
       );
       if (!resultRes.ok) continue;
 

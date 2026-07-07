@@ -1,3 +1,5 @@
+import { orchestratedFetch } from "./scanOrchestrator";
+
 export interface SafeBrowsingResult {
   isFlagged: boolean;
   threatType: string | null;
@@ -26,7 +28,7 @@ export async function checkGoogleSafeBrowsing(
         },
       };
 
-      const res = await fetch(
+      const res = await orchestratedFetch(
         `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${apiKey}`,
         {
           method: "POST",
@@ -34,6 +36,7 @@ export async function checkGoogleSafeBrowsing(
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(10_000),
         },
+        { intensity: "passive" },
       );
 
       if (!res.ok) continue;
