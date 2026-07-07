@@ -331,12 +331,13 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
       .from(scanRequestTelemetryTable)
       .where(gte(scanRequestTelemetryTable.createdAt, since30m));
 
-    // Requests in last 5 minutes → req/s
+    // Requests in last 60 seconds → req/s
+    const since60s = new Date(now - 60_000);
     const [recent] = await db
-      .select({ count5m: sql<number>`count(*)::int` })
+      .select({ count60s: sql<number>`count(*)::int` })
       .from(scanRequestTelemetryTable)
-      .where(gte(scanRequestTelemetryTable.createdAt, since5m));
-    const reqPerSecond = Math.round((recent.count5m ?? 0) / 300 * 100) / 100;
+      .where(gte(scanRequestTelemetryTable.createdAt, since60s));
+    const reqPerSecond = Math.round((recent.count60s ?? 0) / 60 * 100) / 100;
 
     // Per-minute trend for the last 30 minutes (1-min buckets)
     const trend = await db

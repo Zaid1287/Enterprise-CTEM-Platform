@@ -1313,10 +1313,20 @@ export type UpdateOrchestratorConfig200 = { [key: string]: unknown };
 export type ListScanTelemetryParams = {
 page?: number;
 limit?: number;
+proxyIp?: string;
+dateFrom?: string;
+dateTo?: string;
+/**
+ * Status filter: 2xx, 4xx, 5xx, 429, 403
+ */
+status?: string;
+/**
+ * Pass '1' to filter to WAF-detected requests
+ */
 waf?: string;
+/**
+ * Pass '1' to filter to captcha-detected requests
+ */
 captcha?: string;
-proxyId?: number;
-status?: number;
-host?: string;
 };
 

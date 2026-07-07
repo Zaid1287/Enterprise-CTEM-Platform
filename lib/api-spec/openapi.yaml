@@ -2430,24 +2430,31 @@ paths:
           schema:
             type: integer
             default: 50
+        - name: proxyIp
+          in: query
+          schema:
+            type: string
+        - name: dateFrom
+          in: query
+          schema:
+            type: string
+        - name: dateTo
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: "Status filter: 2xx, 4xx, 5xx, 429, 403"
+          schema:
+            type: string
         - name: waf
           in: query
+          description: "Pass '1' to filter to WAF-detected requests"
           schema:
             type: string
         - name: captcha
           in: query
-          schema:
-            type: string
-        - name: proxyId
-          in: query
-          schema:
-            type: integer
-        - name: status
-          in: query
-          schema:
-            type: integer
-        - name: host
-          in: query
+          description: "Pass '1' to filter to captcha-detected requests"
           schema:
             type: string
       responses:
