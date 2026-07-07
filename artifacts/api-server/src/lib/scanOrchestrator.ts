@@ -13,7 +13,7 @@ import { pushWaterfallEvent } from "./sseManager.js";
 import { logger } from "./logger.js";
 import { fetch as undiciFetch, ProxyAgent, Agent } from "undici";
 import { dispatchNotifications } from "./notifier.js";
-import { resolveJsChallenge } from "./jsChallengeResolver.js";
+import { resolveJsChallenge, resolveWithCaptchaToken } from "./jsChallengeResolver.js";
 import { buildTlsDispatcher, buildSocksDispatcher, getRandomTlsProfile, TLS_PROFILES } from "./tlsFingerprintRotator.js";
 import { trySolveCaptcha, captchaTokenHeader } from "./captchaSolver.js";
 
@@ -412,8 +412,6 @@ export async function orchestratedFetch(
   }
   await sleep(baseDelay);
 
-  const existingCookies = getCookieHeader(url);
-
   let lastError: Error | undefined;
   let attemptNumber = 0;
   let backoffMs = 0;
@@ -448,9 +446,12 @@ export async function orchestratedFetch(
     // ── Issue 6: Fingerprint crash guard — sanitizeHeaders already called at load,
     //    but guard here too in case profile was somehow set externally.
     const fingerprintHeaders: Record<string, string> = profile ? sanitizeHeaders(profile.headers) : {};
+    // Refresh cookies on every iteration — cookies set via set-cookie in earlier
+    // retries are now in the jar and must be included in subsequent requests.
+    const freshCookies = getCookieHeader(url);
     const mergedHeaders: Record<string, string> = {
       ...fingerprintHeaders,
-      ...(existingCookies ? { "Cookie": existingCookies } : {}),
+      ...(freshCookies ? { "Cookie": freshCookies } : {}),
       ...(init.headers as Record<string, string> ?? {}),
     };
 
@@ -630,13 +631,18 @@ export async function orchestratedFetch(
       // be set, and returns the final page content.  Only fires for pure-JS
       // challenges — visual CAPTCHAs (Turnstile interactive, hCaptcha boxes) are
       // handled by the CAPTCHA solver block below.
+      // Fire Puppeteer for ALL CF/Akamai challenges — even when captchaDetected is
+      // true, because Cloudflare Turnstile (automatic mode) is both a JS challenge
+      // AND has CAPTCHA JS present.  Puppeteer with stealth handles automatic
+      // Turnstile without any solver API key.  Interactive Turnstile will not
+      // clear here; the CAPTCHA solver block below handles that case.
       if (
         config.wafBypassEnabled &&
-        (analysis.classification === "CloudflareChallenge" || analysis.classification === "AkamaiChallenge") &&
-        !captchaDetected
+        (analysis.classification === "CloudflareChallenge" || analysis.classification === "AkamaiChallenge")
       ) {
         const ua = (fingerprintHeaders["User-Agent"] ?? fingerprintHeaders["user-agent"]) as string | undefined;
-        const resolved = await resolveJsChallenge(url, ua, existingCookies ?? undefined).catch(() => null);
+        // Use fresh cookies (retries may have set new cookies via set-cookie)
+        const resolved = await resolveJsChallenge(url, ua, getCookieHeader(url) ?? undefined).catch(() => null);
         if (resolved?.challengeCleared) {
           // Persist the bypass cookies so all subsequent requests in this scan
           // include them (e.g. cf_clearance).
@@ -666,6 +672,37 @@ export async function orchestratedFetch(
       if (captchaDetected && config.wafBypassEnabled) {
         const solved = await trySolveCaptcha(bodyText, url).catch(() => null);
         if (solved) {
+          // ── Primary: Puppeteer-based token injection ────────────────────────
+          // For Cloudflare Turnstile, hCaptcha, and reCAPTCHA the token MUST be
+          // submitted to the challenge form endpoint to obtain the bypass cookie
+          // (cf_clearance etc.).  Simply adding the token as a GET header does
+          // not work for CF challenges — Puppeteer injection is the only correct
+          // method.
+          const captchaUa = (fingerprintHeaders["User-Agent"] ?? fingerprintHeaders["user-agent"]) as string | undefined;
+          const puppeteerResult = await resolveWithCaptchaToken(
+            url, solved, captchaUa, getCookieHeader(url) ?? undefined
+          ).catch(() => null);
+
+          if (puppeteerResult?.challengeCleared) {
+            if (puppeteerResult.cookies) {
+              for (const pair of puppeteerResult.cookies.split(";")) {
+                const trimmed = pair.trim();
+                if (trimmed) storeCookies(url, [`${trimmed}; Path=/`]);
+              }
+            }
+            if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(tenantId, url);
+            if (config.circuitBreakerEnabled) await recordCircuitResult(tenantId, hostname, true);
+            logger.info({ url, captchaType: solved.type }, "CAPTCHA token injector: challenge cleared via Puppeteer — returning page body");
+            return new Response(puppeteerResult.body, {
+              status:  200,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+
+          // ── Fallback: HTTP header injection ────────────────────────────────
+          // Works for custom sites whose middleware accepts CAPTCHA tokens in
+          // request headers (e.g. some WordPress plugins, custom backends).
+          // Does NOT work for Cloudflare, but is a cheap no-cost retry.
           const tokenHeaderName = captchaTokenHeader(solved.type);
           const captchaRetryHeaders = { ...mergedHeaders, [tokenHeaderName]: solved.token };
           try {
@@ -678,14 +715,14 @@ export async function orchestratedFetch(
               dispatcher: proxyAgent ?? currentTlsDispatcher,
             }) as Response;
             clearTimeout(captchaTimeoutId);
-            const captchaBodyText = await captchaResponse.clone().text().catch(() => "");
+            const captchaBodyText  = await captchaResponse.clone().text().catch(() => "");
             const captchaSetCookie = captchaResponse.headers.get("set-cookie");
             if (captchaSetCookie) storeCookies(url, [captchaSetCookie]);
             const captchaAnalysis = analyzeResponse(captchaResponse.status, captchaBodyText, {});
             if (captchaAnalysis.isSuccess) {
               if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(tenantId, url);
               if (config.circuitBreakerEnabled) await recordCircuitResult(tenantId, hostname, true);
-              logger.info({ url, captchaType: solved.type }, "CAPTCHA solver: token accepted — returning solved response");
+              logger.info({ url, captchaType: solved.type }, "CAPTCHA solver: header injection accepted — returning solved response");
               return captchaResponse;
             }
           } catch { /* solver retry failed — fall through to standard loop */ }
