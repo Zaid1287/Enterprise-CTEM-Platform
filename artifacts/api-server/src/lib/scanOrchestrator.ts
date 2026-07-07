@@ -11,8 +11,11 @@ import { analyzeResponse, type ResponseClassification } from "./responseAnalyzer
 import { resolveWithRotation } from "./dnsResolverPool.js";
 import { pushWaterfallEvent } from "./sseManager.js";
 import { logger } from "./logger.js";
-import { fetch as undiciFetch, ProxyAgent, Agent, buildConnector } from "undici";
+import { fetch as undiciFetch, ProxyAgent, Agent } from "undici";
 import { dispatchNotifications } from "./notifier.js";
+import { resolveJsChallenge } from "./jsChallengeResolver.js";
+import { buildTlsDispatcher, buildSocksDispatcher, getRandomTlsProfile, TLS_PROFILES } from "./tlsFingerprintRotator.js";
+import { trySolveCaptcha, captchaTokenHeader } from "./captchaSolver.js";
 
 export interface OrchestratorContext {
   tenantId?: number;
@@ -264,29 +267,25 @@ async function writeTelemetry(data: {
   }
 }
 
-// ── Issue 10: DNS rotation via custom undici Agent ────────────────────────────
-// Resolves hostnames through the rotating DNS pool (8.8.8.8/1.1.1.1/9.9.9.9/…)
-// instead of the Replit system resolver. Original hostname kept in opts.servername
-// so TLS SNI works correctly. Used as the default dispatcher when no proxy is set.
-const _defaultConnector = buildConnector({});
-const _dnsRotationAgent = new Agent({
-  connect: (opts: any, callback: any) => {
-    const originalHostname: string = opts.hostname ?? "";
-    if (!originalHostname || /^\d{1,3}(\.\d{1,3}){3}$/.test(originalHostname)) {
-      _defaultConnector(opts, callback);
-      return;
-    }
-    resolveWithRotation(originalHostname)
-      .then(ips => {
-        if (ips.length > 0) {
-          opts.servername = opts.servername || originalHostname;
-          opts.hostname   = ips[Math.floor(Math.random() * ips.length)];
-        }
-        _defaultConnector(opts, callback);
-      })
-      .catch(() => _defaultConnector(opts, callback));
-  },
-});
+// ── TLS fingerprint dispatcher pool ──────────────────────────────────────────
+// Pre-build one undici Agent per TLS profile at module init.  Each Agent routes
+// DNS through the rotating pool AND uses a different cipher suite ordering so
+// every scan attempt produces a different JA3 hash.  We pool them (rather than
+// creating one per request) to reuse keep-alive connections within each profile.
+const _tlsDispatcherPool: Map<string, Agent> = new Map(
+  TLS_PROFILES.map(p => [p.id, buildTlsDispatcher(p)]),
+);
+
+// Per-tenant rotation index — incremented each time getTlsDispatcher() is called
+// so consecutive requests from the same scan cycle through all 4 profiles.
+const _tlsRotationIdx = new Map<number, number>();
+
+function getTlsDispatcher(tenantId: number): Agent {
+  const idx = (_tlsRotationIdx.get(tenantId) ?? 0) % TLS_PROFILES.length;
+  _tlsRotationIdx.set(tenantId, idx + 1);
+  const profileId = TLS_PROFILES[idx]?.id ?? TLS_PROFILES[0]!.id;
+  return _tlsDispatcherPool.get(profileId) ?? _tlsDispatcherPool.get(TLS_PROFILES[0]!.id)!;
+}
 
 const CIRCUIT_TRIP_CLASSES: Set<ResponseClassification> = new Set([
   "RateLimited", "Forbidden", "CloudflareChallenge", "AkamaiChallenge", "ImpervaBlock",
@@ -363,13 +362,20 @@ export async function orchestratedFetch(
   }
 
   // Select proxy — only when orchestrator is enabled and use_proxies is true.
-  // Returns a value instead of mutating outer vars so TypeScript can track the type.
-  const pickProxy = async (excludeProxyId?: number): Promise<{ proxy: ActiveProxy | null; proxyAgent: ProxyAgent | undefined }> => {
+  // SOCKS4/5 proxies get a custom SocksDispatcher (requires the `socks` package);
+  // HTTP/HTTPS proxies use undici's native ProxyAgent.
+  const pickProxy = async (excludeProxyId?: number): Promise<{ proxy: ActiveProxy | null; proxyAgent: Agent | undefined }> => {
     if (!config.useProxies || !config.enabled) return { proxy: null, proxyAgent: undefined };
     try {
       const p = await selectHealthiestProxy(excludeProxyId);
       if (p) {
-        return { proxy: p, proxyAgent: new ProxyAgent(buildProxyUrl(p)) };
+        if (p.type === "socks5" || p.type === "socks4") {
+          const socksType = p.type === "socks5" ? 5 : 4;
+          const tlsProf = getRandomTlsProfile();
+          const socksAgent = await buildSocksDispatcher(p.ip, p.port, socksType, p.username, p.password, tlsProf);
+          return { proxy: p, proxyAgent: socksAgent };
+        }
+        return { proxy: p, proxyAgent: new ProxyAgent(buildProxyUrl(p)) as unknown as Agent };
       }
     } catch { /* fall through */ }
     return { proxy: null, proxyAgent: undefined };
@@ -420,16 +426,23 @@ export async function orchestratedFetch(
   let lastWafDetected = await isHostWafProtected(tenantId, hostname);
   let wafHitCount     = 0; // tracks how many attempts triggered WAF in this call
 
+  // TLS dispatcher rotates each attempt: Chrome → Firefox → Safari → Edge → …
+  // When a SOCKS proxy is active it supplies its own TLS handling so we fall back
+  // to the pool only when going direct.
+  let currentTlsDispatcher: Agent = getTlsDispatcher(tenantId);
+
   while (attemptNumber <= maxRetries) {
-    // ── Issue 7: WAF bypass — on next retry after WAF, rotate profile + proxy ──
+    // ── Issue 7: WAF bypass — on next retry after WAF, rotate profile + proxy + TLS ──
     if (lastWafDetected && config.wafBypassEnabled && attemptNumber > 0) {
       const prevProfileId = profile?.id;
       profile = pickRandomProfile(profiles, prevProfileId);
       const prevProxyId = proxy?.id;
       ({ proxy, proxyAgent } = await pickProxy(prevProxyId));
+      // Rotate TLS fingerprint alongside HTTP fingerprint so JA3 hash also changes
+      if (!proxyAgent) currentTlsDispatcher = getTlsDispatcher(tenantId);
       // Double the delay for WAF bypass — makes the request look less robotic
       backoffMs = Math.min(backoffMs * 2 || baseDelay * 2, config.maxBackoffMs);
-      logger.debug({ url, prevProfileId, newProfileId: profile?.id, prevProxyId, newProxyId: proxy?.id }, "WAF bypass: rotated fingerprint + proxy");
+      logger.debug({ url, prevProfileId, newProfileId: profile?.id, prevProxyId, newProxyId: proxy?.id }, "WAF bypass: rotated fingerprint + proxy + TLS profile");
     }
 
     // ── Issue 6: Fingerprint crash guard — sanitizeHeaders already called at load,
@@ -451,14 +464,15 @@ export async function orchestratedFetch(
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
-      // Use undici fetch with ProxyAgent when proxy is configured — this actually routes
-      // the TCP connection through the proxy, changing the outbound IP seen by the target.
-      // Issue 10: always set dispatcher — proxy when available, DNS-rotation agent otherwise
+      // Use undici fetch with the appropriate dispatcher:
+      //  - SOCKS4/5 proxy → SocksDispatcher (from tlsFingerprintRotator)
+      //  - HTTP/HTTPS proxy → ProxyAgent
+      //  - Direct → TLS fingerprint dispatcher (rotates Chrome/Firefox/Safari/Edge JA3)
       const response = await (undiciFetch as any)(url, {
         ...init,
         headers: mergedHeaders,
         signal: controller.signal,
-        dispatcher: proxyAgent ?? _dnsRotationAgent,
+        dispatcher: proxyAgent ?? currentTlsDispatcher,
       }) as Response;
 
       clearTimeout(timeoutId);
@@ -606,6 +620,75 @@ export async function orchestratedFetch(
             assetName: ctx.target ?? hostname,
             domain: hostname,
           }).catch(() => {});
+        }
+      }
+
+      // ── Puppeteer JS challenge resolution ─────────────────────────────────────
+      // Cloudflare "Just a moment…" and Akamai wait-room challenges require a real
+      // JS engine.  Puppeteer (headless Chrome) navigates the page, executes the
+      // challenge script, waits for the bypass cookie (cf_clearance / etc.) to
+      // be set, and returns the final page content.  Only fires for pure-JS
+      // challenges — visual CAPTCHAs (Turnstile interactive, hCaptcha boxes) are
+      // handled by the CAPTCHA solver block below.
+      if (
+        config.wafBypassEnabled &&
+        (analysis.classification === "CloudflareChallenge" || analysis.classification === "AkamaiChallenge") &&
+        !captchaDetected
+      ) {
+        const ua = (fingerprintHeaders["User-Agent"] ?? fingerprintHeaders["user-agent"]) as string | undefined;
+        const resolved = await resolveJsChallenge(url, ua, existingCookies ?? undefined).catch(() => null);
+        if (resolved?.challengeCleared) {
+          // Persist the bypass cookies so all subsequent requests in this scan
+          // include them (e.g. cf_clearance).
+          if (resolved.cookies) {
+            for (const pair of resolved.cookies.split(";")) {
+              const trimmed = pair.trim();
+              if (trimmed) storeCookies(url, [`${trimmed}; Path=/`]);
+            }
+          }
+          if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(tenantId, url);
+          if (config.circuitBreakerEnabled) await recordCircuitResult(tenantId, hostname, true);
+          logger.info({ url, statusCode: resolved.statusCode }, "JS challenge resolver: challenge cleared — returning Puppeteer page body");
+          return new Response(resolved.body, {
+            status:  resolved.statusCode,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+        // Challenge not cleared — fall through to standard WAF retry loop
+        logger.debug({ url }, "JS challenge resolver: challenge still active — continuing retry loop");
+      }
+
+      // ── Automated CAPTCHA solving (reCAPTCHA / hCaptcha / Turnstile) ──────────
+      // When a CAPTCHA gate is detected in the response body, attempt to solve it
+      // via the configured external service (2captcha or CapMonster).  On success
+      // the token is injected as an HTTP header and a direct retry is made.
+      // This CANNOT solve interactive visual challenges if no solver API key is set.
+      if (captchaDetected && config.wafBypassEnabled) {
+        const solved = await trySolveCaptcha(bodyText, url).catch(() => null);
+        if (solved) {
+          const tokenHeaderName = captchaTokenHeader(solved.type);
+          const captchaRetryHeaders = { ...mergedHeaders, [tokenHeaderName]: solved.token };
+          try {
+            const captchaController = new AbortController();
+            const captchaTimeoutId  = setTimeout(() => captchaController.abort(), 30_000);
+            const captchaResponse   = await (undiciFetch as any)(url, {
+              ...init,
+              headers:    captchaRetryHeaders,
+              signal:     captchaController.signal,
+              dispatcher: proxyAgent ?? currentTlsDispatcher,
+            }) as Response;
+            clearTimeout(captchaTimeoutId);
+            const captchaBodyText = await captchaResponse.clone().text().catch(() => "");
+            const captchaSetCookie = captchaResponse.headers.get("set-cookie");
+            if (captchaSetCookie) storeCookies(url, [captchaSetCookie]);
+            const captchaAnalysis = analyzeResponse(captchaResponse.status, captchaBodyText, {});
+            if (captchaAnalysis.isSuccess) {
+              if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(tenantId, url);
+              if (config.circuitBreakerEnabled) await recordCircuitResult(tenantId, hostname, true);
+              logger.info({ url, captchaType: solved.type }, "CAPTCHA solver: token accepted — returning solved response");
+              return captchaResponse;
+            }
+          } catch { /* solver retry failed — fall through to standard loop */ }
         }
       }
 

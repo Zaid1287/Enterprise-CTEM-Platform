@@ -359,6 +359,11 @@ export function closeBrowser(): void {
  * Pre-warm the browser instance so the first scan doesn't pay
  * the cold-start cost. Called at server startup.
  */
+/** Exported alias for the shared Puppeteer browser singleton.
+ *  Used by jsChallengeResolver.ts to avoid spinning up a second Chromium process.
+ */
+export const getBrowserInstance = getBrowser;
+
 export async function warmBrowser(): Promise<void> {
   try {
     const b = await getBrowser();

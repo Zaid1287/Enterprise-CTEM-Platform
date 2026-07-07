@@ -111,6 +111,15 @@ const CATEGORY_META: Record<string, {
     description: "Stripe API keys for subscription billing, checkout, and the customer portal",
     docsUrl: "https://dashboard.stripe.com/apikeys",
   },
+  waf_bypass: {
+    label: "WAF Bypass & CAPTCHA",
+    icon: ShieldAlert,
+    color: "text-orange-400",
+    bg: "bg-orange-500/10",
+    border: "border-orange-500/20",
+    description: "Automated CAPTCHA solving (2captcha / CapMonster) for reCAPTCHA, hCaptcha, and Cloudflare Turnstile challenges encountered during scans",
+    docsUrl: "https://2captcha.com",
+  },
   general: {
     label: "General",
     icon: Key,
@@ -121,7 +130,7 @@ const CATEGORY_META: Record<string, {
   },
 };
 
-const CATEGORY_ORDER = ["infrastructure", "billing", "scanning", "intelligence", "osint", "brand_threat", "brand_intelligence", "email", "notifications", "general"];
+const CATEGORY_ORDER = ["infrastructure", "billing", "scanning", "waf_bypass", "intelligence", "osint", "brand_threat", "brand_intelligence", "email", "notifications", "general"];
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function PlatformSettingsPage() {
