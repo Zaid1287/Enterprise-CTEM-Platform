@@ -80,9 +80,13 @@ const scanProgressMap = new Map<number, AssetProgress[]>();
 // ── Scan execution queue ───────────────────────────────────────────────────────
 // MAX_CONCURRENT_SCANS: max number of scans running simultaneously across all tenants.
 // MAX_PARALLEL_ASSETS:  max number of assets scanned in parallel within a single scan.
+// MAX_QUEUE_DEPTH:      hard cap on pending items; requests beyond this get a 429.
 // Raise these only if the host has enough CPU/RAM — each asset spawns multiple child processes.
 const MAX_CONCURRENT_SCANS = 2;
 const MAX_PARALLEL_ASSETS   = 1;
+export const MAX_QUEUE_DEPTH = 50;
+/** Fill ratio (0–1) above which a queue_full alert rule fires. */
+export const QUEUE_FULL_ALERT_THRESHOLD = 0.8;
 
 interface QueueEntry {
   scanId: number;
@@ -110,11 +114,59 @@ export function isInProcessQueuePaused(): boolean { return _inProcessPaused; }
 // a DB round-trip.  Cleaned up in the enqueueAndRun finally block.
 export const cancelledScanIds = new Set<number>();
 
+export function isQueueFull(): boolean {
+  return scanQueue.length >= MAX_QUEUE_DEPTH;
+}
+
+// Debounce queue_full alert rules — max once per hour (module-level so it survives across calls)
+let _lastQueueFullAlertAt = 0;
+
+/**
+ * Fire queue_full alert rules for all tenants with active/pending scans.
+ * Debounced to once per hour. Safe to call fire-and-forget.
+ */
+async function _fireQueueFullIfNeeded(pendingCount: number): Promise<void> {
+  const now = Date.now();
+  if (now - _lastQueueFullAlertAt < 60 * 60 * 1000) return;
+  _lastQueueFullAlertAt = now;
+  try {
+    const { dispatchMultiTenantNotifications } = await import("../lib/notifier");
+    const activeRows = await db
+      .select({ tenantId: scansTable.tenantId })
+      .from(scansTable)
+      .where(sql`${scansTable.status} IN ('pending', 'running')`);
+    const tenantIds = [...new Set(activeRows.map(r => r.tenantId).filter((t): t is number => t != null))];
+    if (tenantIds.length === 0) return;
+    await dispatchMultiTenantNotifications(tenantIds, {
+      eventType: "queue_full",
+      title: `Scan queue near capacity — ${pendingCount}/${MAX_QUEUE_DEPTH} slots used`,
+      message: `The in-process scan queue is ${Math.round((pendingCount / MAX_QUEUE_DEPTH) * 100)}% full (${pendingCount}/${MAX_QUEUE_DEPTH}). New scans are being rejected with HTTP 429 until the backlog clears.`,
+      severity: "high",
+    });
+    logger.warn({ pendingCount, cap: MAX_QUEUE_DEPTH }, "Queue full alert rules fired from enqueue path");
+  } catch (err) {
+    logger.error({ err }, "Failed to fire queue_full alert rules");
+  }
+}
+
+/** Thrown by enqueueAndRun() when the queue is at capacity. */
+export class QueueFullError extends Error {
+  public readonly queueDepth: number;
+  public readonly queueCap: number;
+  constructor(depth: number, cap: number) {
+    super(`Scan queue is full (${depth}/${cap} pending slots used)`);
+    this.name = "QueueFullError";
+    this.queueDepth = depth;
+    this.queueCap = cap;
+  }
+}
+
 export function getInProcessQueueStats() {
   return {
     activeScans,
     pendingCount: scanQueue.length,
     maxConcurrent: MAX_CONCURRENT_SCANS,
+    queueCap: MAX_QUEUE_DEPTH,
     pendingScanIds: scanQueue.map(e => e.scanId),
     paused: _inProcessPaused,
   };
@@ -151,9 +203,22 @@ function drainQueue() {
 }
 
 export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise<void> {
+  // Hard cap — single source of truth for all callers including beat scheduler.
+  if (scanQueue.length >= MAX_QUEUE_DEPTH) {
+    const depth = scanQueue.length;
+    logger.warn({ scanId: entry.scanId, depth, cap: MAX_QUEUE_DEPTH }, "Queue full — rejecting scan");
+    // Fire queue_full alert rules deterministically (debounced inside helper)
+    _fireQueueFullIfNeeded(depth).catch(() => {});
+    throw new QueueFullError(depth, MAX_QUEUE_DEPTH);
+  }
+
   return new Promise<void>(resolve => {
     scanQueue.push({ ...entry, resolve });
     logger.info({ scanId: entry.scanId, queueLength: scanQueue.length }, "Scan queued");
+    // Fire threshold alert when >= 80% full
+    if (scanQueue.length / MAX_QUEUE_DEPTH >= QUEUE_FULL_ALERT_THRESHOLD) {
+      _fireQueueFullIfNeeded(scanQueue.length).catch(() => {});
+    }
     drainQueue();
   }).then(async () => {
     try {
@@ -3761,6 +3826,19 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
     res.status(400).json({ error: "No pipeline tools enabled. Configure pipeline steps first." }); return;
   }
 
+  // Queue depth cap — reject before creating a scan record so the DB stays clean
+  const currentDepth = scanQueue.length;
+  if (currentDepth >= MAX_QUEUE_DEPTH) {
+    const estimatedWaitMinutes = Math.ceil((currentDepth + 1) / MAX_CONCURRENT_SCANS) * 25;
+    res.status(429).json({
+      error: `Scan queue is full (${currentDepth}/${MAX_QUEUE_DEPTH} slots used). Please wait for running scans to complete before submitting new ones.`,
+      queueDepth: currentDepth,
+      queueCap: MAX_QUEUE_DEPTH,
+      estimatedWaitMinutes,
+    });
+    return;
+  }
+
   // Scan record is created under the effective (client) tenant so the client can see it
   const willQueue = activeScans >= MAX_CONCURRENT_SCANS;
   const [scan] = await db.insert(scansTable).values({
@@ -3772,6 +3850,7 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
   res.status(201).json({
     scanId: scan.id, status: scan.status, assetCount: configs.length, findingsCount: 0,
     queued: willQueue, queuePosition: willQueue ? scanQueue.length + 1 : 0,
+    queueDepth: scanQueue.length, queueCap: MAX_QUEUE_DEPTH,
   });
 
   setImmediate(() => {
@@ -4083,6 +4162,20 @@ router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: Aut
     .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
     .where(and(eq(toolPipelineStepsTable.tenantId, callerTenantId), eq(toolPipelineStepsTable.isEnabled, true)));
   const enabledTools = pipelineSteps.map(p => p.tool);
+
+  // Queue depth cap — reject before creating a scan record so the DB stays clean
+  const currentDepthNow = scanQueue.length;
+  if (currentDepthNow >= MAX_QUEUE_DEPTH) {
+    const estimatedWaitMinutes = Math.ceil((currentDepthNow + 1) / MAX_CONCURRENT_SCANS) * 25;
+    res.status(429).json({
+      error: `Scan queue is full (${currentDepthNow}/${MAX_QUEUE_DEPTH} slots used). Please wait for running scans to complete before submitting new ones.`,
+      queueDepth: currentDepthNow,
+      queueCap: MAX_QUEUE_DEPTH,
+      estimatedWaitMinutes,
+    });
+    return;
+  }
+
   const willQueue = activeScans >= MAX_CONCURRENT_SCANS;
   const [scan] = await db.insert(scansTable).values({
     tenantId: scheduleTenantId, name: `${schedule.name} — ${new Date().toLocaleDateString()}`,
@@ -4092,6 +4185,7 @@ router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: Aut
   res.status(201).json({
     scanId: scan.id, status: scan.status, assetCount: configs.length, findingsCount: 0,
     queued: willQueue, queuePosition: willQueue ? scanQueue.length + 1 : 0,
+    queueDepth: scanQueue.length, queueCap: MAX_QUEUE_DEPTH,
   });
   setImmediate(() => {
     enqueueAndRun({ scanId: scan.id, tenantId: scheduleTenantId, userId, configs, allTools, enabledTools, scheduleId }).catch(() => {});

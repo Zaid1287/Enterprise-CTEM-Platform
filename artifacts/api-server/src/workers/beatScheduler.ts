@@ -114,7 +114,14 @@ async function runDirect(
     logger.info({ scanId, tenantId, assetCount: configs.length }, "Beat: starting inline scan via direct enqueueAndRun");
     await enqueueAndRun({ scanId, tenantId, userId: 0, configs, allTools, enabledTools });
     logger.info({ scanId }, "Beat: inline scan completed");
-  } catch (err) {
+  } catch (err: unknown) {
+    // Queue full — leave scan in "pending" state so the next beat cycle can retry.
+    // Do NOT mark as "failed" — the scan has not actually failed, just been deferred.
+    const { QueueFullError } = await import("../routes/pipelineScans");
+    if (err instanceof QueueFullError) {
+      logger.warn({ scanId, depth: err.queueDepth, cap: err.queueCap }, "Beat: queue full — scan deferred, will retry on next cycle");
+      return;
+    }
     logger.error({ err, scanId }, "Beat: inline scan failed");
     await db.update(scansTable)
       .set({ status: "failed", completedAt: new Date() })

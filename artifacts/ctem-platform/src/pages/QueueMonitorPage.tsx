@@ -30,7 +30,7 @@ interface RecentScan {
 }
 interface DbStats { running: number; pending: number; completed: number; failed: number; cancelled: number; }
 interface QueueStat { name: string; active: number; waiting: number; completed: number; failed: number; delayed: number; paused: boolean; }
-interface InProcess { activeScans: number; pendingCount: number; maxConcurrent: number; pendingScanIds: number[]; paused: boolean; }
+interface InProcess { activeScans: number; pendingCount: number; maxConcurrent: number; queueCap: number; pendingScanIds: number[]; paused: boolean; }
 interface WorkerInfo { running: boolean; mode: string; status: string; concurrency: number; }
 interface WorkerHealth { scanWorker: WorkerInfo; alertWorker: WorkerInfo; redis: boolean; inProcessPaused: boolean; }
 interface ThroughputHour { hour: string | null; completed: number; failed: number; cancelled: number; }
@@ -398,6 +398,38 @@ export default function QueueMonitorPage() {
                   max concurrency: {inP.maxConcurrent}
                 </span>
               </div>
+
+              {/* ── Queue depth / cap fill bar ─────────────────────────────── */}
+              {(() => {
+                const cap = inP.queueCap ?? 50;
+                const pct = Math.min(100, Math.round((inP.pendingCount / cap) * 100));
+                const isNearFull = pct >= 80;
+                const isFull = pct >= 100;
+                return (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className={cn("font-medium", isFull ? "text-red-400" : isNearFull ? "text-amber-400" : "text-muted-foreground")}>
+                        Queue depth: {inP.pendingCount} / {cap} slots
+                      </span>
+                      <span className={cn("font-mono font-semibold", isFull ? "text-red-400" : isNearFull ? "text-amber-400" : "text-muted-foreground")}>
+                        {pct}%
+                        {isFull && <span className="ml-1 text-red-400">— FULL (new scans rejected)</span>}
+                        {!isFull && isNearFull && <span className="ml-1 text-amber-400">— near capacity</span>}
+                      </span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-muted/50 overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all duration-500",
+                          isFull ? "bg-red-500" : isNearFull ? "bg-amber-500" : "bg-blue-500",
+                        )}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="grid grid-cols-3 gap-3">
                 <div className={cn("rounded-xl px-4 py-3 border text-center", inP.activeScans > 0 ? "bg-blue-500/10 border-blue-500/30" : "bg-muted/30 border-border")}>
                   <p className={cn("text-2xl font-bold tabular-nums", inP.activeScans > 0 ? "text-blue-400" : "text-muted-foreground")}>

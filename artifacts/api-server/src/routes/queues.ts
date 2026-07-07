@@ -14,7 +14,10 @@ import {
   pauseInProcessQueue,
   resumeInProcessQueue,
   isInProcessQueuePaused,
+  MAX_QUEUE_DEPTH,
+  QUEUE_FULL_ALERT_THRESHOLD,
 } from "./pipelineScans";
+import { dispatchMultiTenantNotifications } from "../lib/notifier";
 import { getScanWorkerHealth } from "../workers/scanWorker";
 import { getAlertWorkerHealth } from "../workers/alertWorker";
 import { logger } from "../lib/logger";
@@ -146,6 +149,8 @@ async function getUpcomingSchedules() {
 
 // Debounce queue depth DB alerts — max one per hour
 let _lastDepthAlertAt = 0;
+// Debounce queue_full rule dispatch — max one per hour
+let _lastQueueFullRuleAt = 0;
 
 /** Insert a queue depth alert into the DB for all admin tenants with active scans. */
 async function fireQueueDepthAlert(waiting: number): Promise<void> {
@@ -178,6 +183,35 @@ async function fireQueueDepthAlert(waiting: number): Promise<void> {
   }
 }
 
+/**
+ * Fire alert rules with trigger_type "queue_full" for all affected tenants.
+ * Called when in-process queue depth exceeds QUEUE_FULL_ALERT_THRESHOLD (80% of cap).
+ */
+async function fireQueueFullAlertRules(pendingCount: number): Promise<void> {
+  const now = Date.now();
+  if (now - _lastQueueFullRuleAt < 60 * 60 * 1000) return; // once per hour max
+  _lastQueueFullRuleAt = now;
+
+  try {
+    const activeRows = await db
+      .select({ tenantId: scansTable.tenantId })
+      .from(scansTable)
+      .where(sql`${scansTable.status} IN ('pending', 'running')`);
+    const tenantIds = [...new Set(activeRows.map(r => r.tenantId))];
+    if (tenantIds.length === 0) return;
+
+    await dispatchMultiTenantNotifications(tenantIds, {
+      eventType: "queue_full",
+      title: `Scan queue near capacity — ${pendingCount}/${MAX_QUEUE_DEPTH} slots used`,
+      message: `The in-process scan queue is ${Math.round((pendingCount / MAX_QUEUE_DEPTH) * 100)}% full (${pendingCount}/${MAX_QUEUE_DEPTH}). New user-initiated scans will be rejected with HTTP 429 until the backlog clears.`,
+      severity: "high",
+    });
+    logger.warn({ pendingCount, cap: MAX_QUEUE_DEPTH }, "Queue full alert rules fired");
+  } catch (err) {
+    logger.error({ err }, "Failed to fire queue_full alert rules");
+  }
+}
+
 // ── GET /queues/status ─────────────────────────────────────────────────────
 router.get("/queues/status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (!isAdmin(req)) { res.status(403).json({ error: "Forbidden" }); return; }
@@ -204,6 +238,12 @@ router.get("/queues/status", requireAuth, async (req: AuthenticatedRequest, res)
   // Fire DB alert if threshold exceeded (non-blocking, fire-and-forget)
   if (totalWaiting > 20) {
     fireQueueDepthAlert(totalWaiting).catch(() => {});
+  }
+
+  // Fire queue_full alert rules when in-process queue exceeds 80% of cap
+  const queueFillRatio = inProcess.pendingCount / MAX_QUEUE_DEPTH;
+  if (queueFillRatio >= QUEUE_FULL_ALERT_THRESHOLD) {
+    fireQueueFullAlertRules(inProcess.pendingCount).catch(() => {});
   }
 
   res.json({

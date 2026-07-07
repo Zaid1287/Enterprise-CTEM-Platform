@@ -3,7 +3,7 @@ import { eq, and, inArray, desc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable, externalMemberAssetsTable } from "@workspace/db";
-import { enqueueAndRun, queuePosition, cancelledScanIds, removeScanFromInProcessQueue, type AssetToolConfigItem } from "./pipelineScans";
+import { enqueueAndRun, queuePosition, cancelledScanIds, removeScanFromInProcessQueue, getInProcessQueueStats, MAX_QUEUE_DEPTH, type AssetToolConfigItem } from "./pipelineScans";
 import {
   CreateScanBody, GetScanParams, DeleteScanParams, CancelScanParams,
   ListScansQueryParams, ListScanJobsParams,
@@ -254,6 +254,19 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
     // 3. Derive asset IDs and tenantId from validated rows only
     validatedAssetIds = assetRows.map(a => a.id);
     assetTenantId = (tenantIds[0] ?? assetTenantId) as number;
+  }
+
+  // Queue depth cap — check before creating a scan record so the DB stays clean
+  const qStats = getInProcessQueueStats();
+  if (qStats.pendingCount >= MAX_QUEUE_DEPTH) {
+    const estimatedWaitMinutes = Math.ceil((qStats.pendingCount + 1) / qStats.maxConcurrent) * 25;
+    res.status(429).json({
+      error: `Scan queue is full (${qStats.pendingCount}/${MAX_QUEUE_DEPTH} slots used). Please wait for running scans to complete before submitting new ones.`,
+      queueDepth: qStats.pendingCount,
+      queueCap: MAX_QUEUE_DEPTH,
+      estimatedWaitMinutes,
+    });
+    return;
   }
 
   const [scan] = await db.insert(scansTable).values({

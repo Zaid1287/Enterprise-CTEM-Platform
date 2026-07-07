@@ -7,7 +7,7 @@ import { pushSseEvent } from "./sseManager";
 
 export interface NotificationEvent {
   tenantId: number;
-  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat" | "phishing_detected" | "data_leak_found" | "brand_abuse_found";
+  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat" | "phishing_detected" | "data_leak_found" | "brand_abuse_found" | "queue_full";
   title: string;
   message: string;
   severity: string;
@@ -34,6 +34,7 @@ function shouldRuleFire(triggerType: string, event: NotificationEvent): boolean 
     case "phishing_detected":  return event.eventType === "phishing_detected";
     case "data_leak_found":    return event.eventType === "data_leak_found";
     case "brand_abuse_found":  return event.eventType === "brand_abuse_found";
+    case "queue_full":         return event.eventType === "queue_full";
     case "any":                return true;
     default:                   return event.eventType === "scan_complete";
   }
