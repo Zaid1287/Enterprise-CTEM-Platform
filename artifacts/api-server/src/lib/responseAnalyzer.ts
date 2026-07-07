@@ -115,17 +115,17 @@ export function analyzeResponse(
   if (status === 403) {
     if (wafDetected) {
       if (CF_HEADERS.some(h => headers[h]) || /cloudflare/i.test(body.slice(0, 4000))) {
-        return { classification: "CloudflareChallenge", wafDetected, captchaDetected, isTransient: true, isSuccess: false };
+        return { classification: "CloudflareChallenge", wafDetected, captchaDetected, isTransient: false, isSuccess: false };
       }
       if (AKAMAI_HEADERS.some(h => headers[h])) {
-        return { classification: "AkamaiChallenge", wafDetected, captchaDetected, isTransient: true, isSuccess: false };
+        return { classification: "AkamaiChallenge", wafDetected, captchaDetected, isTransient: false, isSuccess: false };
       }
       if (IMPERVA_HEADERS.some(h => headers[h])) {
-        return { classification: "ImpervaBlock", wafDetected, captchaDetected, isTransient: true, isSuccess: false };
+        return { classification: "ImpervaBlock", wafDetected, captchaDetected, isTransient: false, isSuccess: false };
       }
     }
     if (captchaDetected) {
-      return { classification: "Captcha", wafDetected, captchaDetected, isTransient: true, isSuccess: false };
+      return { classification: "Captcha", wafDetected, captchaDetected, isTransient: false, isSuccess: false };
     }
     return { classification: "Forbidden", wafDetected, captchaDetected, isTransient: false, isSuccess: false };
   }

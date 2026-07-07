@@ -71,15 +71,15 @@ export async function resolveWithRotation(hostname: string): Promise<string[]> {
 
     const fallbacks = RESOLVERS.filter(r => r.ip !== resolver.ip);
     for (const fb of fallbacks) {
+      const fbStart = Date.now();
       try {
         fb.totalRequests++;
-        const fbStart = Date.now();
         const addresses = await resolveWithResolver(hostname, fb.ip);
         fb.totalLatencyMs += Date.now() - fbStart;
         return addresses;
       } catch {
         fb.failures++;
-        fb.totalLatencyMs += Date.now() - Date.now();
+        fb.totalLatencyMs += Date.now() - fbStart;
       }
     }
 

@@ -1,13 +1,14 @@
 import { db, scanFingerprintProfilesTable, scanRequestTelemetryTable, orchestratorConfigTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { selectHealthiestProxy, recordProxyOutcome, type ProxyOutcome } from "./proxyManager.js";
 import { waitForRateLimitToken, recordRateLimitSuccess, recordRateLimitFailure } from "./adaptiveRateLimiter.js";
 import { getCircuitState, isCircuitOpen, recordCircuitResult } from "./circuitBreaker.js";
 import { getDelay, sleep, type ScanIntensity } from "./delayEngine.js";
 import { storeCookies, getCookieHeader } from "./cookieJar.js";
-import { analyzeResponse } from "./responseAnalyzer.js";
+import { analyzeResponse, type ResponseClassification } from "./responseAnalyzer.js";
 import { resolveWithRotation } from "./dnsResolverPool.js";
 import { logger } from "./logger.js";
+import { fetch as undiciFetch, ProxyAgent } from "undici";
 
 export interface OrchestratorContext {
   tenantId?: number;
@@ -40,14 +41,14 @@ async function loadConfig(): Promise<OrchConfig> {
       enabled:            map["enabled"]             !== "false",
       useProxies:         map["use_proxies"]          !== "false",
       rotateFingerprints: map["rotate_fingerprints"]  !== "false",
-      maxRetries:         parseInt(map["max_retries"] ?? "4", 10),
+      maxRetries:         parseInt(map["max_retries"] ?? "3", 10),
       backoffBaseMs:      parseInt(map["backoff_base_ms"] ?? "1000", 10),
       logAllRequests:     map["log_all_requests"]     !== "false",
     };
     _configLoadedAt = Date.now();
     return _config;
   } catch {
-    return { enabled: true, useProxies: false, rotateFingerprints: true, maxRetries: 4, backoffBaseMs: 1000, logAllRequests: true };
+    return { enabled: true, useProxies: false, rotateFingerprints: true, maxRetries: 3, backoffBaseMs: 1000, logAllRequests: true };
   }
 }
 
@@ -108,25 +109,57 @@ async function writeTelemetry(data: {
   }
 }
 
+// Classifications that warrant tripping the circuit breaker (rate-limit or active block).
+const CIRCUIT_TRIP_CLASSES: Set<ResponseClassification> = new Set([
+  "RateLimited", "Forbidden", "CloudflareChallenge", "AkamaiChallenge", "ImpervaBlock",
+]);
+
+// Only these transient classes are worth retrying — 403/WAF blocks and permanent errors are not.
+const RETRYABLE_CLASSES: Set<ResponseClassification> = new Set([
+  "RateLimited", "TemporaryError", "Timeout", "ConnectionReset",
+]);
+
 export async function orchestratedFetch(
   url: string,
   init: RequestInit = {},
   ctx: OrchestratorContext = {},
 ): Promise<Response> {
-  const config = await loadConfig();
-  const profiles = config.rotateFingerprints ? await loadProfiles() : [];
+  let config: OrchConfig;
+  let profiles: Array<{ id: number; headers: Record<string, string> }>;
+
+  // Bootstrap with safe fallbacks so orchestration errors never kill the scan
+  try {
+    config = await loadConfig();
+  } catch {
+    config = { enabled: true, useProxies: false, rotateFingerprints: false, maxRetries: 3, backoffBaseMs: 1000, logAllRequests: false };
+  }
+  try {
+    profiles = config.rotateFingerprints ? await loadProfiles() : [];
+  } catch {
+    profiles = [];
+  }
+
   const hostname = extractHostname(url);
   const intensity = ctx.intensity ?? "endpoint-discovery";
   const method = (init.method ?? "GET").toUpperCase();
 
   if (isCircuitOpen(hostname)) {
-    const circuitState = getCircuitState(hostname);
-    throw new Error(`Circuit breaker OPEN for ${hostname} (state: ${circuitState})`);
+    throw new Error(`Circuit breaker OPEN for ${hostname} (state: ${getCircuitState(hostname)})`);
   }
 
+  // Select proxy — always attempt selection but only use when enabled
   let proxy: Awaited<ReturnType<typeof selectHealthiestProxy>> = null;
+  let proxyAgent: ProxyAgent | undefined;
   if (config.useProxies && config.enabled) {
-    proxy = await selectHealthiestProxy();
+    try {
+      proxy = await selectHealthiestProxy();
+      if (proxy) {
+        proxyAgent = new ProxyAgent(`http://${proxy.ip}:${proxy.port}`);
+      }
+    } catch {
+      proxy = null;
+      proxyAgent = undefined;
+    }
   }
 
   const profile = pickRandomProfile(profiles);
@@ -145,31 +178,34 @@ export async function orchestratedFetch(
   };
 
   let lastError: Error | undefined;
-  let retries = 0;
+  let attemptNumber = 0;
   let backoffMs = 0;
   let statusCode: number | undefined;
   const maxRetries = config.maxRetries;
 
-  while (retries <= maxRetries) {
+  while (attemptNumber <= maxRetries) {
     const requestStart = Date.now();
     let wafDetected = false;
     let captchaDetected = false;
     let bytesDownloaded: number | undefined;
+    let latencyMs = 0;
 
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
-      const fetchOpts: RequestInit = {
+      // Use undici fetch with ProxyAgent when proxy is configured — this actually routes
+      // the TCP connection through the proxy, changing the outbound IP seen by the target.
+      const response = await (undiciFetch as any)(url, {
         ...init,
         headers: mergedHeaders,
         signal: controller.signal,
-      };
+        ...(proxyAgent ? { dispatcher: proxyAgent } : {}),
+      }) as Response;
 
-      const response = await fetch(url, fetchOpts);
       clearTimeout(timeoutId);
 
-      const latencyMs = Date.now() - requestStart;
+      latencyMs = Date.now() - requestStart;
       statusCode = response.status;
 
       const bodyText = await response.clone().text().catch(() => "");
@@ -185,64 +221,72 @@ export async function orchestratedFetch(
       const setCookieHeader = response.headers.get("set-cookie");
       if (setCookieHeader) storeCookies(url, [setCookieHeader]);
 
+      // Record proxy outcome on every attempt
       if (proxy) {
         const outcome: ProxyOutcome = analysis.classification === "RateLimited" ? "rate_limited"
-          : analysis.classification === "Forbidden" ? "forbidden"
+          : analysis.classification === "Forbidden"
+            || analysis.classification === "CloudflareChallenge"
+            || analysis.classification === "AkamaiChallenge"
+            || analysis.classification === "ImpervaBlock" ? "forbidden"
           : analysis.classification === "Timeout" ? "timeout"
           : analysis.isSuccess ? "success"
           : "connection_error";
         recordProxyOutcome(proxy.id, outcome, latencyMs).catch(() => {});
       }
 
-      if (analysis.isSuccess || !analysis.isTransient) {
-        if (analysis.isSuccess) {
-          recordRateLimitSuccess(url);
-          recordCircuitResult(hostname, true);
-        } else {
-          recordCircuitResult(hostname, false);
-        }
+      // Write per-attempt telemetry
+      if (config.logAllRequests) {
+        writeTelemetry({
+          tenantId: ctx.tenantId,
+          scanId: ctx.scanId,
+          assetId: ctx.assetId,
+          target: ctx.target ?? hostname,
+          method,
+          url,
+          proxyId: proxy?.id,
+          fingerprintProfileId: profile?.id,
+          statusCode,
+          latencyMs,
+          retries: attemptNumber,
+          delayAppliedMs: delay,
+          backoffAppliedMs: backoffMs,
+          healthScoreAtDispatch: proxy?.healthScore,
+          circuitBreakerState: getCircuitState(hostname),
+          wafDetected,
+          captchaDetected,
+          bytesDownloaded,
+        }).catch(() => {});
+      }
 
-        if (config.logAllRequests) {
-          writeTelemetry({
-            tenantId: ctx.tenantId,
-            scanId: ctx.scanId,
-            assetId: ctx.assetId,
-            target: ctx.target ?? hostname,
-            method,
-            url,
-            proxyId: proxy?.id,
-            fingerprintProfileId: profile?.id,
-            statusCode,
-            latencyMs,
-            retries,
-            delayAppliedMs: delay,
-            backoffAppliedMs: backoffMs,
-            healthScoreAtDispatch: proxy?.healthScore,
-            circuitBreakerState: getCircuitState(hostname),
-            wafDetected,
-            captchaDetected,
-            bytesDownloaded,
-          }).catch(() => {});
-        }
+      if (analysis.isSuccess) {
+        recordRateLimitSuccess(url);
+        recordCircuitResult(hostname, true);
+        return response;
+      }
 
+      // Only trip circuit breaker for rate-limit or active block responses
+      if (CIRCUIT_TRIP_CLASSES.has(analysis.classification)) {
+        recordCircuitResult(hostname, false);
+      }
+
+      // Only retry for explicitly transient, recoverable classes (not 403/WAF/permanent)
+      if (!RETRYABLE_CLASSES.has(analysis.classification)) {
         return response;
       }
 
       recordRateLimitFailure(url, analysis.retryAfterMs);
-      recordCircuitResult(hostname, false);
 
-      retries++;
-      if (retries > maxRetries) break;
+      attemptNumber++;
+      if (attemptNumber > maxRetries) break;
 
       const jitter = Math.random() * config.backoffBaseMs;
-      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, retries - 1) + jitter, 30_000);
-
+      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, attemptNumber - 1) + jitter, 30_000);
       if (analysis.retryAfterMs) backoffMs = Math.max(backoffMs, analysis.retryAfterMs);
-      logger.debug({ url, retries, backoffMs, classification: analysis.classification }, "Orchestrator retrying");
+      logger.debug({ url, attemptNumber, backoffMs, classification: analysis.classification }, "Orchestrator retrying");
       await sleep(backoffMs);
 
     } catch (err: any) {
-      const latencyMs = Date.now() - requestStart;
+      latencyMs = Date.now() - requestStart;
       lastError = err;
 
       recordCircuitResult(hostname, false);
@@ -251,38 +295,39 @@ export async function orchestratedFetch(
         recordProxyOutcome(proxy.id, outcome, latencyMs).catch(() => {});
       }
 
-      retries++;
-      if (retries > maxRetries) break;
+      // Write per-attempt telemetry for errors too
+      if (config.logAllRequests) {
+        writeTelemetry({
+          tenantId: ctx.tenantId,
+          scanId: ctx.scanId,
+          assetId: ctx.assetId,
+          target: ctx.target ?? hostname,
+          method,
+          url,
+          proxyId: proxy?.id,
+          fingerprintProfileId: profile?.id,
+          latencyMs,
+          retries: attemptNumber,
+          delayAppliedMs: delay,
+          backoffAppliedMs: backoffMs,
+          healthScoreAtDispatch: proxy?.healthScore,
+          circuitBreakerState: getCircuitState(hostname),
+          wafDetected: false,
+          captchaDetected: false,
+        }).catch(() => {});
+      }
+
+      attemptNumber++;
+      if (attemptNumber > maxRetries) break;
 
       const jitter = Math.random() * config.backoffBaseMs;
-      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, retries - 1) + jitter, 30_000);
-      logger.debug({ url, retries, backoffMs, err: err?.message }, "Orchestrator retrying after error");
+      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, attemptNumber - 1) + jitter, 30_000);
+      logger.debug({ url, attemptNumber, backoffMs, err: err?.message }, "Orchestrator retrying after error");
       await sleep(backoffMs);
     }
   }
 
-  if (config.logAllRequests) {
-    writeTelemetry({
-      tenantId: ctx.tenantId,
-      scanId: ctx.scanId,
-      assetId: ctx.assetId,
-      target: ctx.target ?? hostname,
-      method,
-      url,
-      proxyId: proxy?.id,
-      fingerprintProfileId: profile?.id,
-      statusCode,
-      retries,
-      delayAppliedMs: delay,
-      backoffAppliedMs: backoffMs,
-      healthScoreAtDispatch: proxy?.healthScore,
-      circuitBreakerState: getCircuitState(hostname),
-      wafDetected: false,
-      captchaDetected: false,
-    }).catch(() => {});
-  }
-
-  throw lastError ?? new Error(`orchestratedFetch failed after ${retries} attempts: ${url}`);
+  throw lastError ?? new Error(`orchestratedFetch exhausted ${maxRetries + 1} attempts: ${url}`);
 }
 
 export { resolveWithRotation as orchestratedDnsResolve };

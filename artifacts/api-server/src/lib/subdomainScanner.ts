@@ -3,7 +3,7 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import dns from "dns/promises";
-import { orchestratedFetch } from "./scanOrchestrator";
+import { orchestratedFetch, orchestratedDnsResolve } from "./scanOrchestrator";
 
 const execAsync = promisify(exec);
 
@@ -435,7 +435,7 @@ async function resolveWithNodeDns(candidates: string[]): Promise<Map<string, str
     await Promise.allSettled(
       batch.map(async (sub) => {
         try {
-          const ips = await dns.resolve4(sub);
+          const ips = await orchestratedDnsResolve(sub);
           if (ips.length > 0) result.set(sub, ips[0]);
         } catch {}
       }),

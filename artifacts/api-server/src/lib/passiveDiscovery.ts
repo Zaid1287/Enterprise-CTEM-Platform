@@ -1,6 +1,6 @@
 import dns from "node:dns/promises";
 import { logger } from "./logger";
-import { orchestratedFetch } from "./scanOrchestrator";
+import { orchestratedFetch, orchestratedDnsResolve } from "./scanOrchestrator";
 
 const UA = "Sentinelware-CTEM/1.0";
 const timeout = (ms: number) => AbortSignal.timeout(ms);
@@ -130,7 +130,7 @@ export async function runAsnLookup(target: string): Promise<DiscoveryModuleResul
     // Step 1: Resolve the domain to IPs
     const ips: string[] = [];
     try {
-      const [a4, a6] = await Promise.allSettled([dns.resolve4(domain), dns.resolve6(domain)]);
+      const [a4, a6] = await Promise.allSettled([orchestratedDnsResolve(domain), dns.resolve6(domain)]);
       if (a4.status === "fulfilled") ips.push(...a4.value.slice(0, 3));
       if (a6.status === "fulfilled") ips.push(...a6.value.slice(0, 2));
     } catch { /* ignore */ }
@@ -328,7 +328,7 @@ export async function runShodanSearch(target: string, apiKey: string | null): Pr
   try {
     // Resolve IPs first
     const ips: string[] = [];
-    try { ips.push(...(await dns.resolve4(domain)).slice(0, 3)); } catch { /* ignore */ }
+    try { ips.push(...(await orchestratedDnsResolve(domain)).slice(0, 3)); } catch { /* ignore */ }
 
     const hostResults: unknown[] = [];
     for (const ip of ips.slice(0, 3)) {

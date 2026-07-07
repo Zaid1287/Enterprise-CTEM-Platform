@@ -8,7 +8,7 @@ import { getRedis, setRuntimeRedisUrl } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startBeatScheduler } from "./workers/beatScheduler";
-import { db, platformSettingsTable, brandThreatScansTable } from "@workspace/db";
+import { db, platformSettingsTable, brandThreatScansTable, orchestratorConfigTable, scanFingerprintProfilesTable } from "@workspace/db";
 import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { runBrandThreatScan, PermResult } from "./lib/brandThreatRunner";
@@ -70,6 +70,62 @@ async function resumeOrResetStuckBrandThreatScans(): Promise<void> {
     }
   } catch (err) {
     logger.warn({ err }, "Could not resume stuck brand threat scans on startup (non-fatal)");
+  }
+}
+
+async function seedOrchestratorDefaults(): Promise<void> {
+  try {
+    const DEFAULT_CONFIG: Array<{ key: string; value: string }> = [
+      { key: "enabled",            value: "true"  },
+      { key: "use_proxies",        value: "false" },
+      { key: "rotate_fingerprints", value: "true" },
+      { key: "max_retries",        value: "3"     },
+      { key: "backoff_base_ms",    value: "1000"  },
+      { key: "log_all_requests",   value: "true"  },
+    ];
+    for (const row of DEFAULT_CONFIG) {
+      await db.insert(orchestratorConfigTable).values(row).onConflictDoNothing();
+    }
+
+    const existing = await db.select({ id: scanFingerprintProfilesTable.id }).from(scanFingerprintProfilesTable).limit(1);
+    if (existing.length === 0) {
+      await db.insert(scanFingerprintProfilesTable).values([
+        {
+          name: "Chrome 120 / Windows",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+          },
+          isActive: true,
+        },
+        {
+          name: "Firefox 121 / Linux",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+          },
+          isActive: true,
+        },
+        {
+          name: "curl / generic security scanner",
+          headers: {
+            "User-Agent": "curl/8.5.0",
+            "Accept": "*/*",
+          },
+          isActive: false,
+        },
+      ]);
+      logger.info("Orchestrator: seeded default fingerprint profiles");
+    }
+    logger.info("Orchestrator: config defaults ensured");
+  } catch (err) {
+    logger.warn({ err }, "Orchestrator seed failed (non-fatal)");
   }
 }
 
@@ -143,6 +199,7 @@ const server = app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   resumeOrResetStuckBrandThreatScans().catch(e => logger.error({ err: e }, "Scan resume error"));
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
+  seedOrchestratorDefaults().catch(e => logger.error({ err: e }, "Orchestrator seed error"));
   scheduleRetestCoolingProxies().catch(e => logger.error({ err: e }, "Proxy retest scheduler error"));
   initStripe().catch(e => logger.error({ err: e }, "Stripe init error"));
 
