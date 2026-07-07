@@ -223,31 +223,21 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
 
   const clientTenants = visibleClientTenants;
   const clientTenantIds = clientTenants.map(t => t.id);
-  // Aggregated platform stats use client tenant scope only (never include platform tenant)
+  // For client-specific breakdowns (clientRiskRankings, tenantMetrics) use only client tenants
   const allTenantsRaw = clientTenants;
-  const allTenantIds = clientTenantIds;
+  // For platform-wide data aggregation (assets, findings, risk scores, alerts) include the
+  // caller's own tenant so scans/findings created under it are always visible
+  const allDataTenantIds = [...new Set([req.user!.tenantId, ...clientTenantIds])];
 
-  if (allTenantIds.length === 0) {
-    // Admin with no child clients yet — return empty but valid structure
-    res.json({
-      totalClients: 0, totalAssets: 0, totalFindings: 0, totalScans: 0,
-      openAlertsCount: 0, platformRiskScore: 0, amCount: 0, clientsAtCriticalRisk: 0,
-      newVulns7D: 0, resolvedVulns7D: 0, exposedPortsCount: 0,
-      severityBreakdown: [], riskTrend: [], topVulnerableAssets: [], recentAlerts: [],
-      clientRiskTable: [], amPortfolio: [], brandThreatStats: { total: 0, high: 0, medium: 0, low: 0 },
-      takedownStats: { total: 0, pending: 0, resolved: 0 },
-    });
-    return;
-  }
-
+  // Allow empty client list but still show data from caller's own tenant
   const [allUsers, allAssets, allFindings, allScans, allAlerts, brandThreats, allTakedowns] = await Promise.all([
     db.select({ id: usersTable.id, tenantId: usersTable.tenantId, role: usersTable.role }).from(usersTable),
-    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, allTenantIds)),
-    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, allTenantIds)),
-    db.select().from(scansTable).where(inArray(scansTable.tenantId, allTenantIds)),
-    db.select().from(alertsTable).where(inArray(alertsTable.tenantId, allTenantIds)).orderBy(desc(alertsTable.createdAt)),
-    db.select().from(brandThreatScansTable).where(inArray(brandThreatScansTable.tenantId, allTenantIds)),
-    db.select().from(takedownRequestsTable).where(inArray(takedownRequestsTable.tenantId, allTenantIds)),
+    db.select().from(assetsTable).where(inArray(assetsTable.tenantId, allDataTenantIds)),
+    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, allDataTenantIds)),
+    db.select().from(scansTable).where(inArray(scansTable.tenantId, allDataTenantIds)),
+    db.select().from(alertsTable).where(inArray(alertsTable.tenantId, allDataTenantIds)).orderBy(desc(alertsTable.createdAt)),
+    db.select().from(brandThreatScansTable).where(inArray(brandThreatScansTable.tenantId, allDataTenantIds)),
+    db.select().from(takedownRequestsTable).where(inArray(takedownRequestsTable.tenantId, allDataTenantIds)),
   ]);
 
   const assetIds = allAssets.map(a => a.id);

@@ -459,21 +459,24 @@ function SuperAdminDashboard() {
               <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No unread alerts
             </div>
           ) : recentAlerts.map((a: any) => (
-            <div key={a.id} className="px-4 py-3 transition-colors hover:bg-accent/20 bg-primary/[0.03]">
-              <div className="flex items-start gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-xs font-medium truncate flex-1">{a.title}</p>
-                    <SeverityBadge severity={a.severity} />
+            <Link key={a.id} href={`/alerts/${a.id}`}>
+              <div className="px-4 py-3 transition-colors hover:bg-accent/30 bg-primary/[0.03] cursor-pointer">
+                <div className="flex items-start gap-2.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium truncate flex-1">{a.title}</p>
+                      <SeverityBadge severity={a.severity} />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                      <Building2 className="w-2.5 h-2.5 shrink-0" />
+                      {a.clientName} · {new Date(a.createdAt).toLocaleDateString()}
+                    </p>
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                    <Building2 className="w-2.5 h-2.5 shrink-0" />
-                    {a.clientName} · {new Date(a.createdAt).toLocaleDateString()}
-                  </p>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
                 </div>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       </div>
@@ -1014,21 +1017,24 @@ function AccountManagerDashboard() {
                 No unread alerts
               </div>
             ) : recentAlerts.map((a: any) => (
-              <div key={a.id} className="px-4 py-3 transition-colors bg-primary/[0.03]">
-                <div className="flex items-start gap-2.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs font-medium truncate flex-1">{a.title}</p>
-                      <SeverityBadge severity={a.severity} />
+              <Link key={a.id} href={`/alerts/${a.id}`}>
+                <div className="px-4 py-3 transition-colors hover:bg-accent/30 bg-primary/[0.03] cursor-pointer">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-xs font-medium truncate flex-1">{a.title}</p>
+                        <SeverityBadge severity={a.severity} />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                        <Building2 className="w-2.5 h-2.5 shrink-0" />
+                        {a.clientName} · {new Date(a.createdAt).toLocaleDateString()}
+                      </p>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                      <Building2 className="w-2.5 h-2.5 shrink-0" />
-                      {a.clientName} · {new Date(a.createdAt).toLocaleDateString()}
-                    </p>
+                    <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
@@ -1580,20 +1586,23 @@ function AdminDashboard() {
               <Bell className="w-7 h-7 mx-auto mb-2 opacity-30" /> No unread alerts
             </div>
           ) : recentAlerts.map((a: any) => (
-            <div key={a.id} className="px-4 py-3 transition-colors bg-primary/[0.03]">
-              <div className="flex items-start gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-xs font-medium truncate flex-1">{a.title}</p>
-                    <SeverityBadge severity={a.severity} />
+            <Link key={a.id} href={`/alerts/${a.id}`}>
+              <div className="px-4 py-3 transition-colors hover:bg-accent/30 bg-primary/[0.03] cursor-pointer">
+                <div className="flex items-start gap-2.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium truncate flex-1">{a.title}</p>
+                      <SeverityBadge severity={a.severity} />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {new Date(a.createdAt).toLocaleDateString()}
+                    </p>
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {new Date(a.createdAt).toLocaleDateString()}
-                  </p>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
                 </div>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       </div>

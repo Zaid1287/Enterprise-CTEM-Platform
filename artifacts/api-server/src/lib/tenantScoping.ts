@@ -18,7 +18,8 @@ export async function getPrivilegedTenantIds(user: NonNullable<AuthenticatedRequ
       .select({ id: tenantsTable.id })
       .from(tenantsTable)
       .where(eq(tenantsTable.isPlatform, false));
-    return rows.map(r => r.id);
+    // Always include the SA's own tenant so assets/findings/scans created under it are visible
+    return [...new Set([user.tenantId, ...rows.map(r => r.id)])];
   }
   if (user.role === "admin") {
     // Platform-admin has the same cross-tenant visibility as super_admin
@@ -31,7 +32,7 @@ export async function getPrivilegedTenantIds(user: NonNullable<AuthenticatedRequ
         .select({ id: tenantsTable.id })
         .from(tenantsTable)
         .where(eq(tenantsTable.isPlatform, false));
-      return rows.map(r => r.id);
+      return [...new Set([user.tenantId, ...rows.map(r => r.id)])];
     }
     // Non-platform admin: only child tenants (parentTenantId = admin's tenantId)
     const rows = await db
