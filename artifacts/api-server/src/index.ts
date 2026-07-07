@@ -182,16 +182,16 @@ async function seedOrchestratorDefaults(): Promise<void> {
     const existingProxies = await db.select({ id: scanProxiesTable.id }).from(scanProxiesTable).limit(1);
     if (existingProxies.length === 0) {
       const SEED_PROXIES = [
-        { ip: "51.159.66.73",   port: 3128, type: "http",   country: "FR", provider: "Scaleway",    healthScore: 50, status: "inactive" as const },
-        { ip: "194.163.45.55",  port: 3128, type: "http",   country: "DE", provider: "Contabo",     healthScore: 50, status: "inactive" as const },
-        { ip: "167.99.69.20",   port: 3128, type: "http",   country: "GB", provider: "DigitalOcean", healthScore: 50, status: "inactive" as const },
-        { ip: "45.77.56.114",   port: 3128, type: "http",   country: "SG", provider: "Vultr",       healthScore: 50, status: "inactive" as const },
-        { ip: "146.59.7.19",    port: 3128, type: "http",   country: "PL", provider: "OVH",         healthScore: 50, status: "inactive" as const },
-        { ip: "103.149.88.65",  port: 3128, type: "http",   country: "HK", provider: "ColoCrossing", healthScore: 50, status: "inactive" as const },
-        { ip: "185.191.236.47", port: 3128, type: "http",   country: "NL", provider: "Hetzner",     healthScore: 50, status: "inactive" as const },
-        { ip: "80.240.31.46",   port: 3128, type: "http",   country: "US", provider: "Linode",      healthScore: 50, status: "inactive" as const },
-        { ip: "172.104.137.176", port: 1080, type: "socks5", country: "AU", provider: "Akamai",     healthScore: 50, status: "inactive" as const },
-        { ip: "139.59.1.14",    port: 1080, type: "socks5", country: "IN", provider: "DigitalOcean", healthScore: 50, status: "inactive" as const },
+        { ip: "13.41.174.221",   port: 3128, type: "http",   country: "GB", provider: "AWS",         healthScore: 50, status: "inactive" as const },
+        { ip: "18.132.253.89",   port: 3128, type: "http",   country: "GB", provider: "AWS",         healthScore: 50, status: "inactive" as const },
+        { ip: "3.10.209.190",    port: 3128, type: "http",   country: "GB", provider: "AWS",         healthScore: 50, status: "inactive" as const },
+        { ip: "52.56.180.151",   port: 3128, type: "http",   country: "GB", provider: "AWS",         healthScore: 50, status: "inactive" as const },
+        { ip: "13.37.4.46",      port: 3128, type: "http",   country: "FR", provider: "AWS",         healthScore: 50, status: "inactive" as const },
+        { ip: "15.188.51.175",   port: 3128, type: "http",   country: "FR", provider: "AWS",         healthScore: 50, status: "inactive" as const },
+        { ip: "185.191.236.47",  port: 3128, type: "http",   country: "NL", provider: "Hetzner",     healthScore: 50, status: "inactive" as const },
+        { ip: "194.163.45.55",   port: 3128, type: "http",   country: "DE", provider: "Contabo",     healthScore: 50, status: "inactive" as const },
+        { ip: "172.104.137.176", port: 1080, type: "socks5", country: "AU", provider: "Akamai",      healthScore: 50, status: "inactive" as const },
+        { ip: "139.59.1.14",     port: 1080, type: "socks5", country: "IN", provider: "DigitalOcean", healthScore: 50, status: "inactive" as const },
       ];
       await db.insert(scanProxiesTable).values(SEED_PROXIES);
       logger.info("Orchestrator: seeded 10 example proxy entries (all inactive by default)");

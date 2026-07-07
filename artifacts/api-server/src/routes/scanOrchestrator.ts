@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../lib/auth.js";
 import { db, scanProxiesTable, orchestratorConfigTable, scanFingerprintProfilesTable, scanRequestTelemetryTable } from "@workspace/db";
-import { eq, desc, sql, gte, and } from "drizzle-orm";
+import { eq, desc, sql, gte, and, isNotNull } from "drizzle-orm";
 import { healthCheckProxy } from "../lib/proxyHealthCheck.js";
 import { getAllCircuits } from "../lib/circuitBreaker.js";
 import { getAllRateLimiterStats } from "../lib/adaptiveRateLimiter.js";
@@ -34,7 +34,22 @@ router.get("/api/scan-proxies", requireAuth, requireAdmin, async (req, res) => {
       .select()
       .from(scanProxiesTable)
       .orderBy(desc(scanProxiesTable.healthScore));
-    res.json(proxies);
+
+    // Attach requestsToday count from telemetry table (requests where proxy_ip matches)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const perIpToday = await db
+      .select({
+        proxyId: scanRequestTelemetryTable.proxyId,
+        count:   sql<number>`count(*)::int`,
+      })
+      .from(scanRequestTelemetryTable)
+      .where(and(gte(scanRequestTelemetryTable.createdAt, todayStart), isNotNull(scanRequestTelemetryTable.proxyId)))
+      .groupBy(scanRequestTelemetryTable.proxyId);
+    const todayMap = new Map(perIpToday.map(r => [r.proxyId, r.count]));
+
+    const enriched = proxies.map(p => ({ ...p, requestsToday: todayMap.get(p.id) ?? 0 }));
+    res.json(enriched);
   } catch (err) {
     logger.error({ err }, "GET /api/scan-proxies error");
     res.status(500).json({ error: "Failed to fetch proxies" });
@@ -298,7 +313,7 @@ router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) =>
 router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, res) => {
   try {
     const now = Date.now();
-    const since60m = new Date(now - 60 * 60_000);
+    const since30m = new Date(now - 30 * 60_000);
     const since5m  = new Date(now -  5 * 60_000);
 
     const [totals] = await db
@@ -314,7 +329,7 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
         avgBytesDownloaded: sql<number>`round(avg(bytes_downloaded))::int`,
       })
       .from(scanRequestTelemetryTable)
-      .where(gte(scanRequestTelemetryTable.createdAt, since60m));
+      .where(gte(scanRequestTelemetryTable.createdAt, since30m));
 
     // Requests in last 5 minutes → req/s
     const [recent] = await db
@@ -323,7 +338,7 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
       .where(gte(scanRequestTelemetryTable.createdAt, since5m));
     const reqPerSecond = Math.round((recent.count5m ?? 0) / 300 * 100) / 100;
 
-    // Per-minute trend for the last 60 minutes (1-min buckets)
+    // Per-minute trend for the last 30 minutes (1-min buckets)
     const trend = await db
       .select({
         minute:       sql<string>`date_trunc('minute', created_at)::text`,
@@ -335,7 +350,7 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
         count403:     sql<number>`count(*) filter (where status_code = 403)::int`,
       })
       .from(scanRequestTelemetryTable)
-      .where(gte(scanRequestTelemetryTable.createdAt, since60m))
+      .where(gte(scanRequestTelemetryTable.createdAt, since30m))
       .groupBy(sql`date_trunc('minute', created_at)`)
       .orderBy(sql`date_trunc('minute', created_at)`);
 
@@ -359,16 +374,38 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
       .from(scanRequestTelemetryTable)
       .where(gte(scanRequestTelemetryTable.createdAt, since5m));
 
+    // Per-host last status code + recent req/s (for Target Blocking Health table)
+    const hostStatsRaw = await db
+      .select({
+        host:        sql<string>`regexp_replace(url, '^https?://([^/:]+).*$', '\\1')`,
+        lastStatus:  sql<number | null>`(array_agg(status_code ORDER BY created_at DESC))[1]`,
+        recentCount: sql<number>`count(*) filter (where created_at >= ${since5m})::int`,
+      })
+      .from(scanRequestTelemetryTable)
+      .where(gte(scanRequestTelemetryTable.createdAt, since30m))
+      .groupBy(sql`regexp_replace(url, '^https?://([^/:]+).*$', '\\1')`);
+
+    const hostStats: Record<string, { lastStatus: number | null; reqPerSec: number }> = {};
+    for (const hs of hostStatsRaw) {
+      if (hs.host) {
+        hostStats[hs.host] = {
+          lastStatus: hs.lastStatus ?? null,
+          reqPerSec: Math.round((hs.recentCount ?? 0) / 300 * 100) / 100,
+        };
+      }
+    }
+
     res.json({
-      window: "last_60_minutes",
+      window: "last_30_minutes",
       generatedAt: new Date().toISOString(),
       requests:  { ...totals, reqPerSecond },
       retryQueueSize: retryQueue.size ?? 0,
-      trend: trend.slice(-60),
+      trend: trend.slice(-30),
       proxies:   proxyStats,
       circuits: { open: openCircuits, total: circuits.length, details: circuits.slice(0, 20) },
       rateLimiters: rateLimiterStats.slice(0, 20),
       dnsResolvers: dnsStats,
+      hostStats,
     });
   } catch (err) {
     logger.error({ err }, "GET /api/scan-telemetry/stats error");

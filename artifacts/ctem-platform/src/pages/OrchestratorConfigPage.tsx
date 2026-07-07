@@ -38,6 +38,7 @@ const KNOBS: KnobDef[] = [
   { key: "enabled",                type: "boolean", label: "Enable Orchestration Engine",   description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
   { key: "use_proxies",            type: "boolean", label: "Use Proxy Pool",                description: "Route outbound scan requests through the configured proxy/IP pool." },
   { key: "rotate_fingerprints",    type: "boolean", label: "Rotate Browser Fingerprints",   description: "Cycle through active fingerprint profiles on each request." },
+  { key: "adaptive_rate_limit",    type: "boolean", label: "Adaptive Rate Limiting",        description: "Dynamically throttle requests per-host based on observed 429/403 response rates." },
   { key: "log_all_requests",       type: "boolean", label: "Log All Requests to Telemetry", description: "Write every HTTP request to the telemetry table. Disable to reduce DB writes." },
   /* ── Rotation & delay strategies (4 selects) ─────────────────────────── */
   { key: "proxy_rotation_strategy",
@@ -64,11 +65,10 @@ const KNOBS: KnobDef[] = [
   { key: "max_requests_per_proxy",  type: "integer", label: "Max Requests per Proxy",         description: "Maximum requests routed through one proxy before rotating to the next.", min: 1,   max: 10000 },
   { key: "proxy_cooldown_minutes",  type: "integer", label: "Proxy Cooldown (min)",            description: "Minutes a proxy stays in cooldown after exceeding its error threshold.", min: 1,   max: 1440 },
   { key: "proxy_health_threshold",  type: "integer", label: "Proxy Health Score Threshold",    description: "Minimum health score (0–100) required for a proxy to remain active.",   min: 0,   max: 100 },
-  /* ── Retry, backoff & concurrency (4 integers) ───────────────────────── */
-  { key: "max_retries",             type: "integer", label: "Max Retries per Request",         description: "Number of retry attempts before giving up on a request.",                min: 0,   max: 10 },
-  { key: "backoff_base_ms",         type: "integer", label: "Retry Base Backoff (ms)",         description: "Base delay for exponential backoff on retries.",                        min: 100, max: 30000 },
-  { key: "max_concurrent_per_host", type: "integer", label: "Max Concurrent Requests / Host",  description: "Concurrency cap per target hostname.",                                  min: 1,   max: 50 },
-  { key: "circuit_breaker_threshold",type:"integer", label: "Circuit Breaker Threshold",       description: "Consecutive failures before a circuit opens.",                          min: 1,   max: 20 },
+  /* ── Retry, backoff & circuit breaker (3 integers) ─────────────────────── */
+  { key: "max_retries",              type: "integer", label: "Max Retries per Request",        description: "Number of retry attempts before giving up on a request.",   min: 0,   max: 10 },
+  { key: "backoff_base_ms",          type: "integer", label: "Retry Max Backoff (ms)",         description: "Maximum backoff cap for exponential retry delays.",          min: 100, max: 30000 },
+  { key: "circuit_breaker_threshold",type: "integer", label: "Circuit Breaker Threshold",      description: "Consecutive failures before a circuit opens.",               min: 1,   max: 20 },
 ];
 
 /* ─── Main Page ───────────────────────────────────────────────────────── */

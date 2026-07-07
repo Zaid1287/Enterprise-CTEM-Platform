@@ -37,11 +37,13 @@ interface TelemetryStats {
   circuits: { open: number; total: number; details: Array<{ host: string; state: string; failures: number; lastFailure: number }> };
   rateLimiters: Array<{ host: string; tokens: number; lastRefill: number }>;
   dnsResolvers: Array<{ ip: string; avgMs: number; failures: number; successes: number }>;
+  hostStats?: Record<string, { lastStatus: number | null; reqPerSec: number }>;
 }
 interface Proxy {
-  id: number; ip: string; label: string | null; type: string; country: string | null; asn: string | null;
+  id: number; ip: string; port: number; label: string | null; type: string; country: string | null; asn: string | null;
   healthScore: number; successCount: number; failCount: number; count429: number; count403: number;
-  avgLatencyMs: number | null; status: "active" | "cooldown" | "inactive"; lastTestedAt: string | null;
+  avgLatencyMs: number | null; status: "active" | "cooldown" | "inactive";
+  lastTestedAt: string | null; requestsToday: number;
 }
 
 /* ─── API ────────────────────────────────────────────────────────────── */
@@ -112,21 +114,32 @@ export default function ScanOrchestrationPage() {
   const r = stats?.requests;
   const p = stats?.proxies;
 
-  /* Build a "Target Blocking Health" table from rate limiters + circuit details */
-  interface TargetHealth { host: string; circuitState: string; failures: number; limitTokens: number | null }
+  /* Build a "Target Blocking Health" table from rate limiters + circuit details + hostStats */
+  interface TargetHealth {
+    host: string; circuitState: string; failures: number;
+    lastStatus: number | null; reqPerSec: number;
+  }
   const targetHealth: TargetHealth[] = [];
   const seenHosts = new Set<string>();
+  const hs = stats?.hostStats ?? {};
   for (const c of (stats?.circuits?.details ?? [])) {
     if (!seenHosts.has(c.host)) {
       seenHosts.add(c.host);
-      const rl = (stats?.rateLimiters ?? []).find(r => r.host === c.host);
-      targetHealth.push({ host: c.host, circuitState: c.state, failures: c.failures, limitTokens: rl?.tokens ?? null });
+      targetHealth.push({
+        host: c.host, circuitState: c.state, failures: c.failures,
+        lastStatus: hs[c.host]?.lastStatus ?? null,
+        reqPerSec:  hs[c.host]?.reqPerSec  ?? 0,
+      });
     }
   }
   for (const rl of (stats?.rateLimiters ?? [])) {
     if (!seenHosts.has(rl.host)) {
       seenHosts.add(rl.host);
-      targetHealth.push({ host: rl.host, circuitState: "closed", failures: 0, limitTokens: rl.tokens });
+      targetHealth.push({
+        host: rl.host, circuitState: "closed", failures: 0,
+        lastStatus: hs[rl.host]?.lastStatus ?? null,
+        reqPerSec:  hs[rl.host]?.reqPerSec  ?? 0,
+      });
     }
   }
 
@@ -163,8 +176,8 @@ export default function ScanOrchestrationPage() {
             <StatCard label="Inactive Proxies"  value={p?.inactiveProxies ?? 0}                icon={WifiOff}     color="text-red-500" />
             <StatCard label="Requests / sec"    value={r?.reqPerSecond ?? 0}                   icon={Zap}         color="text-blue-500" sub="last 5 min" />
             <StatCard label="Avg Latency"       value={r?.avgLatencyMs != null ? `${r.avgLatencyMs}ms` : "—"} icon={Timer} color="text-indigo-500" sub={`p95: ${r?.p95LatencyMs != null ? `${r.p95LatencyMs}ms` : "—"}`} />
-            <StatCard label="429 Rate Limited"  value={r?.count429 ?? 0}                       icon={TrendingDown} color={r?.count429 ? "text-amber-500" : "text-muted-foreground"} sub="last 60 min" />
-            <StatCard label="403 Blocked"       value={r?.count403 ?? 0}                       icon={Server}      color={r?.count403 ? "text-red-500" : "text-muted-foreground"} sub="last 60 min" />
+            <StatCard label="429 Rate Limited"  value={r?.count429 ?? 0}                       icon={TrendingDown} color={r?.count429 ? "text-amber-500" : "text-muted-foreground"} sub="last 30 min" />
+            <StatCard label="403 Blocked"       value={r?.count403 ?? 0}                       icon={Server}      color={r?.count403 ? "text-red-500" : "text-muted-foreground"} sub="last 30 min" />
             <StatCard label="Open Circuits"     value={stats?.circuits?.open ?? 0}             icon={ShieldX}     color={stats?.circuits?.open ? "text-red-500" : "text-green-600"} sub={`${stats?.circuits?.total ?? 0} total`} />
             <StatCard label="Retry Queue"       value={stats?.retryQueueSize ?? 0}             icon={RotateCcw}   color={stats?.retryQueueSize ? "text-amber-500" : "text-muted-foreground"} sub="last 5 min" />
           </>
@@ -175,7 +188,7 @@ export default function ScanOrchestrationPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Request trend (Requests / Retries / WAF) */}
         <div className="rounded-xl border bg-card p-4">
-          <h2 className="text-sm font-semibold mb-3">Request Volume Trend (last 60 min)</h2>
+          <h2 className="text-sm font-semibold mb-3">Request Volume Trend (last 30 min)</h2>
           {trendData.length === 0 ? (
             <div className="h-48 flex items-center justify-center text-xs text-muted-foreground">No data yet — requests will appear here once scans run.</div>
           ) : (
@@ -196,7 +209,7 @@ export default function ScanOrchestrationPage() {
 
         {/* Blocking trend (429 / 403) */}
         <div className="rounded-xl border bg-card p-4">
-          <h2 className="text-sm font-semibold mb-3">429 / 403 Blocking Trend (last 60 min)</h2>
+          <h2 className="text-sm font-semibold mb-3">429 / 403 Blocking Trend (last 30 min)</h2>
           {trendData.length === 0 ? (
             <div className="h-48 flex items-center justify-center text-xs text-muted-foreground">No data yet.</div>
           ) : (
@@ -229,20 +242,27 @@ export default function ScanOrchestrationPage() {
                   <th className="px-4 py-2 text-left font-medium">Target Host</th>
                   <th className="px-4 py-2 text-left font-medium">Circuit State</th>
                   <th className="px-4 py-2 text-right font-medium">Failures</th>
-                  <th className="px-4 py-2 text-right font-medium">Rate Limit Tokens</th>
+                  <th className="px-4 py-2 text-right font-medium">Last Status</th>
+                  <th className="px-4 py-2 text-right font-medium">Current Rate (req/s)</th>
                 </tr>
               </thead>
               <tbody>
-                {targetHealth.map((t, i) => (
+                {targetHealth.map((t, i) => {
+                  const sc = t.lastStatus;
+                  const scClass = sc == null ? "text-muted-foreground"
+                    : sc >= 500 ? "text-red-500 font-semibold"
+                    : sc >= 400 ? "text-amber-500 font-semibold"
+                    : "text-green-600 font-semibold";
+                  return (
                   <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-2 font-mono text-xs">{t.host}</td>
                     <td className="px-4 py-2"><StatusBadge status={t.circuitState} /></td>
                     <td className="px-4 py-2 text-right text-xs">{t.failures}</td>
-                    <td className="px-4 py-2 text-right text-xs text-muted-foreground">
-                      {t.limitTokens != null ? t.limitTokens : "—"}
-                    </td>
+                    <td className={`px-4 py-2 text-right text-xs font-mono ${scClass}`}>{sc ?? "—"}</td>
+                    <td className="px-4 py-2 text-right text-xs">{t.reqPerSec > 0 ? `${t.reqPerSec}` : "—"}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -267,12 +287,14 @@ export default function ScanOrchestrationPage() {
                 <th className="px-4 py-2 text-right font-medium">429s</th>
                 <th className="px-4 py-2 text-right font-medium">403s</th>
                 <th className="px-4 py-2 text-right font-medium">Avg Latency</th>
+                <th className="px-4 py-2 text-right font-medium">Requests Today</th>
+                <th className="px-4 py-2 text-left font-medium">Last Used</th>
                 <th className="px-4 py-2 text-left font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
               {!proxies || proxies.length === 0 ? (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-xs text-muted-foreground">No proxies configured. Add proxies in Settings → Proxy Pool.</td></tr>
+                <tr><td colSpan={12} className="px-4 py-8 text-center text-xs text-muted-foreground">No proxies configured. Add proxies in Settings → Proxy Pool.</td></tr>
               ) : proxies.slice(0, 20).map(proxy => {
                 const total = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
                 const successPct = total > 0 ? Math.round(proxy.successCount / total * 100) : null;
@@ -298,6 +320,14 @@ export default function ScanOrchestrationPage() {
                     <td className="px-4 py-2 text-right text-xs">{proxy.count403 ?? 0}</td>
                     <td className="px-4 py-2 text-right text-xs text-muted-foreground">
                       {proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs">
+                      {proxy.requestsToday > 0 ? proxy.requestsToday.toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                      {proxy.lastTestedAt
+                        ? new Date(proxy.lastTestedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                        : "—"}
                     </td>
                     <td className="px-4 py-2"><StatusBadge status={proxy.status} /></td>
                   </tr>
