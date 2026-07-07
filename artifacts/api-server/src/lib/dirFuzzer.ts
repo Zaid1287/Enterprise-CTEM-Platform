@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const execAsync = promisify(exec);
 
@@ -236,16 +237,13 @@ class Semaphore {
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 async function headProbe(
-  url: string, timeoutMs = 5000
+  url: string, _timeoutMs = 5000
 ): Promise<{ status: number; length?: number; type?: string; redirect?: string } | null> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, {
-      method: "HEAD", signal: ctrl.signal, redirect: "manual",
+    const res = await orchestratedFetch(url, {
+      method: "HEAD", redirect: "manual",
       headers: { "User-Agent": UA, "Connection": "close" },
-    });
-    clearTimeout(t);
+    }, { intensity: "endpoint-discovery" });
     return {
       status: res.status,
       length: res.headers.get("content-length") != null
@@ -257,12 +255,9 @@ async function headProbe(
   } catch { return null; }
 }
 
-async function getHtml(url: string, timeoutMs = 10000): Promise<string> {
+async function getHtml(url: string, _timeoutMs = 10000): Promise<string> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } });
-    clearTimeout(t);
+    const res = await orchestratedFetch(url, { headers: { "User-Agent": UA } }, { intensity: "endpoint-discovery" });
     if (!res.ok) return "";
     return (await res.text()).slice(0, 200_000);
   } catch { return ""; }
@@ -273,10 +268,7 @@ async function getHtml(url: string, timeoutMs = 10000): Promise<string> {
 async function fetchWayback(host: string): Promise<string[]> {
   try {
     const url = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(host + "/*")}&output=json&fl=original&collapse=urlkey&limit=500&filter=statuscode:200&matchType=domain`;
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 20000);
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } });
-    clearTimeout(t);
+    const res = await orchestratedFetch(url, { headers: { "User-Agent": UA } }, { intensity: "passive" });
     if (!res.ok) return [];
     const data = await res.json().catch(() => []) as string[][];
     return data.slice(1).map(row => row[0]).filter(Boolean);
@@ -286,10 +278,7 @@ async function fetchWayback(host: string): Promise<string[]> {
 async function fetchOtx(host: string): Promise<string[]> {
   try {
     const url = `https://otx.alienvault.com/api/v1/indicators/hostname/${host}/url_list?limit=200`;
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 10000);
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } });
-    clearTimeout(t);
+    const res = await orchestratedFetch(url, { headers: { "User-Agent": UA } }, { intensity: "passive" });
     if (!res.ok) return [];
     const data = await res.json().catch(() => null) as any;
     if (!data?.url_list) return [];

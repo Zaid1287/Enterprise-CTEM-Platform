@@ -2,6 +2,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs";
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const execAsync = promisify(exec);
 
@@ -156,12 +157,9 @@ async function ghFetch(path: string, remainingRef: { v: number }): Promise<{ ok:
 }
 
 // Plain HTTP helper for .git checks
-async function httpGet(url: string, timeoutMs = 8000): Promise<{ status: number; body: string }> {
+async function httpGet(url: string, _timeoutMs = 8000): Promise<{ status: number; body: string }> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA }, redirect: "follow" });
-    clearTimeout(t);
+    const res = await orchestratedFetch(url, { headers: { "User-Agent": UA }, redirect: "follow" }, { intensity: "passive" });
     const body = await res.text().catch(() => "");
     return { status: res.status, body: body.slice(0, 8192) };
   } catch {

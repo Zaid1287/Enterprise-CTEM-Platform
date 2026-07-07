@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -105,18 +106,14 @@ function generateBucketNames(company: string, extraHints: string[] = []): string
 
 const UA = "Mozilla/5.0 (compatible; CTEM-CloudRecon/1.0; +https://sentinelware.io)";
 
-async function probeUrl(url: string, timeoutMs = 8000, retries = 2): Promise<{ status: number; body: string; contentType: string }> {
+async function probeUrl(url: string, _timeoutMs = 8000, retries = 2): Promise<{ status: number; body: string; contentType: string }> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), timeoutMs);
-      const res = await fetch(url, {
+      const res = await orchestratedFetch(url, {
         method: "GET",
-        signal: ctrl.signal,
         headers: { "User-Agent": UA },
         redirect: "follow",
-      });
-      clearTimeout(t);
+      }, { intensity: "passive" });
       // Rate limited — back off and retry
       if (res.status === 429 && attempt < retries) {
         const retryAfter = parseInt(res.headers.get("retry-after") ?? "5", 10);

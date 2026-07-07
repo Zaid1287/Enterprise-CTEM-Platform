@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const execAsync = promisify(exec);
 
@@ -157,16 +158,13 @@ const TEMPLATES: Template[] = [
 const UA = "Mozilla/5.0 (compatible; Nuclei/3.1; +https://sentinelware.io)";
 
 async function fetchUrl(
-  url: string, timeoutMs = 8000, headers?: Record<string, string>
+  url: string, _timeoutMs = 8000, headers?: Record<string, string>
 ): Promise<{ status: number; body: string; headers: Record<string, string> } | null> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, {
-      method: "GET", signal: ctrl.signal, redirect: "manual",
+    const res = await orchestratedFetch(url, {
+      method: "GET", redirect: "manual",
       headers: { "User-Agent": UA, "Accept": "*/*", ...headers },
-    });
-    clearTimeout(t);
+    }, { intensity: "vuln-scan" });
     const body = (await res.text().catch(() => "")).slice(0, 8000);
     const h: Record<string, string> = {};
     res.headers.forEach((v, k) => { h[k.toLowerCase()] = v; });

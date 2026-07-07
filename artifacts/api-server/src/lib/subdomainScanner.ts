@@ -3,6 +3,7 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import dns from "dns/promises";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const execAsync = promisify(exec);
 
@@ -207,10 +208,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 
 async function queryCrtSh(domain: string): Promise<string[]> {
   try {
-    const res = await fetch(`https://crt.sh/?q=%.${domain}&output=json`, {
-      signal: AbortSignal.timeout(15_000),
+    const res = await orchestratedFetch(`https://crt.sh/?q=%.${domain}&output=json`, {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
-    });
+    }, { intensity: "passive" });
     if (!res.ok) return [];
     const data: any[] = await res.json().catch(() => []);
     const seen = new Set<string>();
@@ -228,10 +228,9 @@ async function queryCrtSh(domain: string): Promise<string[]> {
 
 async function queryAlienVault(domain: string): Promise<string[]> {
   try {
-    const res = await fetch(`https://otx.alienvault.com/api/v1/indicators/domain/${domain}/passive_dns`, {
-      signal: AbortSignal.timeout(15_000),
+    const res = await orchestratedFetch(`https://otx.alienvault.com/api/v1/indicators/domain/${domain}/passive_dns`, {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
-    });
+    }, { intensity: "passive" });
     if (!res.ok) return [];
     const data = await res.json().catch(() => ({}));
     const subs = new Set<string>();
@@ -240,10 +239,9 @@ async function queryAlienVault(domain: string): Promise<string[]> {
       if (isValidSubdomain(h, domain)) subs.add(h);
     }
     // Also check OTX subdomains endpoint
-    const res2 = await fetch(`https://otx.alienvault.com/api/v1/indicators/domain/${domain}/url_list?limit=100`, {
-      signal: AbortSignal.timeout(10_000),
+    const res2 = await orchestratedFetch(`https://otx.alienvault.com/api/v1/indicators/domain/${domain}/url_list?limit=100`, {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
-    }).catch(() => null);
+    }, { intensity: "passive" }).catch(() => null);
     if (res2?.ok) {
       const data2 = await res2.json().catch(() => ({}));
       for (const entry of data2?.url_list ?? []) {
@@ -263,10 +261,9 @@ async function queryAlienVault(domain: string): Promise<string[]> {
 async function queryWayback(domain: string): Promise<string[]> {
   try {
     const url = `https://web.archive.org/cdx/search/cdx?url=*.${domain}&output=json&fl=original&collapse=urlkey&limit=5000`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(15_000),
+    const res = await orchestratedFetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
-    });
+    }, { intensity: "passive" });
     if (!res.ok) return [];
     const rows: any[] = await res.json().catch(() => []);
     // rows[0] is header ["original"], skip it
@@ -279,10 +276,9 @@ async function queryWayback(domain: string): Promise<string[]> {
 
 async function queryUrlScan(domain: string): Promise<string[]> {
   try {
-    const res = await fetch(`https://urlscan.io/api/v1/search/?q=domain:${domain}&size=200`, {
-      signal: AbortSignal.timeout(15_000),
+    const res = await orchestratedFetch(`https://urlscan.io/api/v1/search/?q=domain:${domain}&size=200`, {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
-    });
+    }, { intensity: "passive" });
     if (!res.ok) return [];
     const data = await res.json().catch(() => ({}));
     const subs = new Set<string>();
@@ -303,10 +299,9 @@ async function queryUrlScan(domain: string): Promise<string[]> {
 
 async function queryRapidDns(domain: string): Promise<string[]> {
   try {
-    const res = await fetch(`https://rapiddns.io/subdomain/${domain}?full=1&down=1`, {
-      signal: AbortSignal.timeout(15_000),
+    const res = await orchestratedFetch(`https://rapiddns.io/subdomain/${domain}?full=1&down=1`, {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0", "Accept": "text/plain" },
-    });
+    }, { intensity: "passive" });
     if (!res.ok) return [];
     const text = await res.text();
     const subs = new Set<string>();
@@ -323,15 +318,13 @@ async function queryRapidDns(domain: string): Promise<string[]> {
 async function queryCommonCrawl(domain: string): Promise<string[]> {
   try {
     // Get the latest CC index
-    const infoRes = await fetch("https://index.commoncrawl.org/collinfo.json", {
-      signal: AbortSignal.timeout(10_000),
-    });
+    const infoRes = await orchestratedFetch("https://index.commoncrawl.org/collinfo.json", {}, { intensity: "passive" });
     if (!infoRes.ok) return [];
     const indices: any[] = await infoRes.json().catch(() => []);
     const latest = indices[0]?.id ?? "CC-MAIN-2024-51";
 
     const ccUrl = `https://index.commoncrawl.org/${latest}/cdx/search?url=*.${domain}&output=json&fl=url&limit=2000`;
-    const res = await fetch(ccUrl, { signal: AbortSignal.timeout(15_000) });
+    const res = await orchestratedFetch(ccUrl, {}, { intensity: "passive" });
     if (!res.ok) return [];
     const text = await res.text();
     const subs = new Set<string>();
@@ -527,10 +520,9 @@ async function probeHttpFallback(
       batch.map(async (host) => {
         for (const scheme of ["https", "http"]) {
           try {
-            const res = await fetch(`${scheme}://${host}`, {
-              signal: AbortSignal.timeout(8_000),
+            const res = await orchestratedFetch(`${scheme}://${host}`, {
               redirect: "manual",
-            });
+            }, { intensity: "passive" });
             const body = await res.text().catch(() => "");
             const titleMatch = body.match(/<title[^>]*>([^<]*)<\/title>/i);
             const redirectTo = res.headers.get("location") ?? "";

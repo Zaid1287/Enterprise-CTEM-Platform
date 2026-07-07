@@ -2,6 +2,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { logger } from "./logger.js";
 import puppeteer from "puppeteer";
+import { orchestratedFetch } from "./scanOrchestrator.js";
 
 const execAsync = promisify(exec);
 
@@ -45,10 +46,8 @@ function isUsefulUrl(url: string): boolean {
   return true;
 }
 
-function timedFetch(url: string, opts: RequestInit = {}, ms = 12000): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(t));
+function timedFetch(url: string, opts: RequestInit = {}, _ms = 12000): Promise<Response> {
+  return orchestratedFetch(url, opts, { intensity: "endpoint-discovery" });
 }
 
 const UA = "Mozilla/5.0 (compatible; SecurityScanner/1.0)";

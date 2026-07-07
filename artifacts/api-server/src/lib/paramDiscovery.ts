@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -144,12 +145,9 @@ const ARJUN_WORDLIST = [
 
 const UA = "Mozilla/5.0 (compatible; CTEM-ParamScanner/1.0; +https://sentinelware.io)";
 
-async function fetchText(url: string, timeoutMs = 10000): Promise<string | null> {
+async function fetchText(url: string, _timeoutMs = 10000): Promise<string | null> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } });
-    clearTimeout(t);
+    const res = await orchestratedFetch(url, { headers: { "User-Agent": UA } }, { intensity: "endpoint-discovery" });
     if (!res.ok) return null;
     return await res.text();
   } catch {

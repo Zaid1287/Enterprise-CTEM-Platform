@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { scheduleRetestCoolingProxies } from "./lib/proxyManager";
 import { bootstrapNucleiTemplates } from "./lib/nucleiScanner";
 import { warmBrowser } from "./lib/screenshotEngine";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
@@ -142,6 +143,7 @@ const server = app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   resumeOrResetStuckBrandThreatScans().catch(e => logger.error({ err: e }, "Scan resume error"));
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
+  scheduleRetestCoolingProxies().catch(e => logger.error({ err: e }, "Proxy retest scheduler error"));
   initStripe().catch(e => logger.error({ err: e }, "Stripe init error"));
 
   // ── Load Redis URL from platform settings (if not in env), then start workers

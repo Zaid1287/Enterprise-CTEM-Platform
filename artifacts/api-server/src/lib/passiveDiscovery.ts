@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const UA = "Sentinelware-CTEM/1.0";
 const timeout = (ms: number) => AbortSignal.timeout(ms);
@@ -27,9 +28,9 @@ function extractCompany(domain: string): string {
 }
 
 async function safeFetch(url: string, opts: RequestInit & { timeoutMs?: number } = {}): Promise<Response | null> {
-  const { timeoutMs = 12000, ...rest } = opts;
+  const { timeoutMs: _timeoutMs, ...rest } = opts;
   try {
-    const res = await fetch(url, { ...rest, signal: timeout(timeoutMs), headers: { "User-Agent": UA, ...(rest.headers ?? {}) } });
+    const res = await orchestratedFetch(url, { ...rest, headers: { "User-Agent": UA, ...(rest.headers ?? {}) } }, { intensity: "passive" });
     return res;
   } catch {
     return null;

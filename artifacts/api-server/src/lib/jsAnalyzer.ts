@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -211,15 +212,12 @@ function runSecretFinder(content: string, fileUrl: string): JsSecret[] {
 // ── Extract JS file URLs from page HTML ───────────────────────────────────────
 
 async function extractJsUrls(target: string, baseOrigin: string): Promise<string[]> {
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const res = await fetch(target, {
-      signal: ctrl.signal,
+    const res = await orchestratedFetch(target, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; CTEM-Scanner/1.0; +https://sentinelware.io)" },
-    });
+    }, { intensity: "passive" });
     if (!res.ok) return [];
-    const html = await res.text();
+    const html = await res.text().catch(() => "");
     const urls = new Set<string>();
 
     // <script src="...">
@@ -238,8 +236,6 @@ async function extractJsUrls(target: string, baseOrigin: string): Promise<string
     return [...urls];
   } catch {
     return [];
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -250,13 +246,9 @@ const MAX_JS_SIZE = 5 * 1024 * 1024;
 async function analyzeJsFile(url: string): Promise<{ file: JsFile; endpoints: JsEndpoint[]; secrets: JsSecret[] }> {
   const file: JsFile = { url, size: 0, analyzed: false, endpointCount: 0, secretCount: 0 };
   try {
-    const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 15000);
-    const res = await fetch(url, {
-      signal: ctrl.signal,
+    const res = await orchestratedFetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; CTEM-Scanner/1.0)" },
-    });
-    clearTimeout(timeout);
+    }, { intensity: "passive" });
     if (!res.ok) return { file, endpoints: [], secrets: [] };
 
     const ct = res.headers.get("content-type") ?? "";

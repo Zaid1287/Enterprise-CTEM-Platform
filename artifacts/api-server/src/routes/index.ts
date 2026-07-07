@@ -34,6 +34,7 @@ import cdnWhitelistRouter from "./cdnWhitelist";
 import aiMapperRouter from "./aiMapper";
 import customToolsRouter from "./customTools";
 import suppressionsRouter from "./suppressions";
+import scanOrchestratorRouter from "./scanOrchestrator";
 
 const router: IRouter = Router();
 
@@ -72,5 +73,6 @@ router.use(cdnWhitelistRouter);
 router.use(aiMapperRouter);
 router.use(customToolsRouter);
 router.use(suppressionsRouter);
+router.use(scanOrchestratorRouter);
 
 export default router;
