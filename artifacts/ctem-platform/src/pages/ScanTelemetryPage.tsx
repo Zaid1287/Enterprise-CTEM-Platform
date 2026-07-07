@@ -231,6 +231,7 @@ export default function ScanTelemetryPage() {
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Timestamp</th>
                 <th className="px-3 py-2.5 text-left font-medium">Method</th>
                 <th className="px-3 py-2.5 text-left font-medium">Target</th>
+                <th className="px-3 py-2.5 text-left font-medium">URL (truncated)</th>
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Proxy IP</th>
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Fingerprint</th>
                 <th className="px-3 py-2.5 text-right font-medium">Status</th>
@@ -246,14 +247,14 @@ export default function ScanTelemetryPage() {
               {isLoading ? (
                 Array.from({ length: 10 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 12 }).map((__, j) => (
+                    {Array.from({ length: 13 }).map((__, j) => (
                       <td key={j} className="px-3 py-2"><Skeleton className="h-3.5 w-full" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-12 text-center text-muted-foreground">
+                  <td colSpan={13} className="px-3 py-12 text-center text-muted-foreground">
                     {total === 0
                       ? "No telemetry yet — records appear once scans run."
                       : "No records match the current filters."}
@@ -261,8 +262,13 @@ export default function ScanTelemetryPage() {
                 </tr>
               ) : filtered.map(row => {
                 const domain = extractDomain(row.url);
-                const path   = (() => { try { return new URL(row.url).pathname; } catch { return row.url; } })();
-                const target = path && path !== "/" ? `${domain}${path}` : domain;
+                const truncUrl = (() => {
+                  try {
+                    const u = new URL(row.url);
+                    const p = u.pathname.length > 60 ? u.pathname.slice(0, 57) + "…" : u.pathname;
+                    return u.search ? p + u.search.slice(0, 20) + "…" : p;
+                  } catch { return row.url.slice(0, 80); }
+                })();
                 return (
                   <tr key={row.id} className={cn(
                     "border-b last:border-0 hover:bg-muted/30 transition-colors",
@@ -274,12 +280,15 @@ export default function ScanTelemetryPage() {
                     <td className="px-3 py-2">
                       <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0">{row.method}</Badge>
                     </td>
-                    <td className="px-3 py-2 max-w-xs truncate font-mono text-muted-foreground" title={row.url}>
+                    <td className="px-3 py-2 font-mono text-muted-foreground whitespace-nowrap">
                       <button
                         className="hover:underline text-left"
                         onClick={() => { setFilterHost(domain); setPage(1); }}
                         title={`Filter by ${domain}`}
-                      >{target}</button>
+                      >{domain}</button>
+                    </td>
+                    <td className="px-3 py-2 max-w-xs truncate font-mono text-muted-foreground text-[11px]" title={row.url}>
+                      {truncUrl}
                     </td>
                     <td className="px-3 py-2 font-mono whitespace-nowrap">
                       {row.proxyIp
