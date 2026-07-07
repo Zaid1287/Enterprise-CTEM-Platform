@@ -1184,6 +1184,8 @@ export interface ScanTelemetryTrendPoint {
   avgLatencyMs?: number;
   wafCount?: number;
   retryCount?: number;
+  count429?: number;
+  count403?: number;
 }
 
 export type ScanTelemetryStatsRequests = {
@@ -1314,6 +1316,10 @@ export type ListScanTelemetryParams = {
 page?: number;
 limit?: number;
 proxyIp?: string;
+/**
+ * Server-side target hostname filter (substring match)
+ */
+host?: string;
 dateFrom?: string;
 dateTo?: string;
 /**

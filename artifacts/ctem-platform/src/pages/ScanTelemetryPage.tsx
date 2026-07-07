@@ -89,11 +89,12 @@ function exportCsv(rows: TelemetryRow[]) {
 
 /* ─── Build query string ─────────────────────────────────────────────── */
 function buildQs(p: {
-  page: number; proxyIp: string; dateFrom: string; dateTo: string;
+  page: number; proxyIp: string; host: string; dateFrom: string; dateTo: string;
   status: string; waf: boolean; captcha: boolean;
 }) {
   const q = new URLSearchParams({ page: String(p.page), limit: "50" });
   if (p.proxyIp)  q.set("proxyIp",  p.proxyIp);
+  if (p.host)     q.set("host",     p.host);
   if (p.dateFrom) q.set("dateFrom", p.dateFrom);
   if (p.dateTo)   q.set("dateTo",   p.dateTo);
   if (p.status !== "all") q.set("status", p.status);
@@ -105,8 +106,7 @@ function buildQs(p: {
 /* ─── Main Page ───────────────────────────────────────────────────────── */
 export default function ScanTelemetryPage() {
   const [page, setPage]         = useState(1);
-  const [searchUrl, setSearchUrl]   = useState("");
-  const [filterDomain, setFilterDomain] = useState("");
+  const [filterHost, setFilterHost]       = useState("");
   const [filterProxyIp, setFilterProxyIp] = useState("");
   const [filterStatus, setFilterStatus]   = useState("all");
   const [filterWaf, setFilterWaf]         = useState(false);
@@ -114,8 +114,8 @@ export default function ScanTelemetryPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo,   setDateTo]   = useState("");
 
-  /* Server-side filters pushed to backend */
-  const qs = buildQs({ page, proxyIp: filterProxyIp, dateFrom, dateTo, status: filterStatus, waf: filterWaf, captcha: filterCaptcha });
+  /* All filters are server-side */
+  const qs = buildQs({ page, proxyIp: filterProxyIp, host: filterHost, dateFrom, dateTo, status: filterStatus, waf: filterWaf, captcha: filterCaptcha });
 
   const { data, isLoading, refetch, isFetching } = useQuery<TelemetryResponse>({
     queryKey: ["scan-telemetry", qs],
@@ -127,18 +127,14 @@ export default function ScanTelemetryPage() {
   const total   = data?.total ?? 0;
   const pages   = Math.max(1, Math.ceil(total / 50));
 
-  /* Client-side secondary filters (URL text + domain — WAF/captcha are server-side) */
-  const filtered = allRows.filter(r => {
-    if (searchUrl    && !r.url.toLowerCase().includes(searchUrl.toLowerCase())) return false;
-    if (filterDomain && !extractDomain(r.url).toLowerCase().includes(filterDomain.toLowerCase())) return false;
-    return true;
-  });
+  /* All filtering is server-side — rows are already filtered */
+  const filtered = allRows;
 
   const clearFilters = () => {
-    setSearchUrl(""); setFilterDomain(""); setFilterProxyIp(""); setFilterStatus("all");
+    setFilterHost(""); setFilterProxyIp(""); setFilterStatus("all");
     setFilterWaf(false); setFilterCaptcha(false); setDateFrom(""); setDateTo(""); setPage(1);
   };
-  const hasFilters = searchUrl || filterDomain || filterProxyIp || filterStatus !== "all" || filterWaf || filterCaptcha || dateFrom || dateTo;
+  const hasFilters = filterHost || filterProxyIp || filterStatus !== "all" || filterWaf || filterCaptcha || dateFrom || dateTo;
 
   return (
     <div className="p-6 space-y-5 max-w-screen-2xl mx-auto">
@@ -166,18 +162,11 @@ export default function ScanTelemetryPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
 
-          {/* URL filter (client-side) */}
+          {/* Target/host filter (server-side) */}
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input className="pl-8 h-8 text-xs w-52" placeholder="Filter by URL…"
-              value={searchUrl} onChange={e => setSearchUrl(e.target.value)} />
-          </div>
-
-          {/* Domain filter (client-side) */}
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input className="pl-8 h-8 text-xs w-40" placeholder="Domain filter…"
-              value={filterDomain} onChange={e => setFilterDomain(e.target.value)} />
+            <Input className="pl-8 h-8 text-xs w-52" placeholder="Filter by target host…"
+              value={filterHost} onChange={e => { setFilterHost(e.target.value); setPage(1); }} />
           </div>
 
           {/* Proxy IP filter (server-side) */}
@@ -241,8 +230,7 @@ export default function ScanTelemetryPage() {
               <tr className="border-b bg-muted/40 text-muted-foreground">
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Timestamp</th>
                 <th className="px-3 py-2.5 text-left font-medium">Method</th>
-                <th className="px-3 py-2.5 text-left font-medium">Domain</th>
-                <th className="px-3 py-2.5 text-left font-medium">URL Path</th>
+                <th className="px-3 py-2.5 text-left font-medium">Target</th>
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Proxy IP</th>
                 <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Fingerprint</th>
                 <th className="px-3 py-2.5 text-right font-medium">Status</th>
@@ -258,14 +246,14 @@ export default function ScanTelemetryPage() {
               {isLoading ? (
                 Array.from({ length: 10 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 13 }).map((__, j) => (
+                    {Array.from({ length: 12 }).map((__, j) => (
                       <td key={j} className="px-3 py-2"><Skeleton className="h-3.5 w-full" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-12 text-center text-muted-foreground">
+                  <td colSpan={12} className="px-3 py-12 text-center text-muted-foreground">
                     {total === 0
                       ? "No telemetry yet — records appear once scans run."
                       : "No records match the current filters."}
@@ -274,6 +262,7 @@ export default function ScanTelemetryPage() {
               ) : filtered.map(row => {
                 const domain = extractDomain(row.url);
                 const path   = (() => { try { return new URL(row.url).pathname; } catch { return row.url; } })();
+                const target = path && path !== "/" ? `${domain}${path}` : domain;
                 return (
                   <tr key={row.id} className={cn(
                     "border-b last:border-0 hover:bg-muted/30 transition-colors",
@@ -285,8 +274,13 @@ export default function ScanTelemetryPage() {
                     <td className="px-3 py-2">
                       <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0">{row.method}</Badge>
                     </td>
-                    <td className="px-3 py-2 font-mono text-muted-foreground whitespace-nowrap">{domain}</td>
-                    <td className="px-3 py-2 max-w-xs truncate font-mono text-muted-foreground" title={row.url}>{path}</td>
+                    <td className="px-3 py-2 max-w-xs truncate font-mono text-muted-foreground" title={row.url}>
+                      <button
+                        className="hover:underline text-left"
+                        onClick={() => { setFilterHost(domain); setPage(1); }}
+                        title={`Filter by ${domain}`}
+                      >{target}</button>
+                    </td>
                     <td className="px-3 py-2 font-mono whitespace-nowrap">
                       {row.proxyIp
                         ? <button

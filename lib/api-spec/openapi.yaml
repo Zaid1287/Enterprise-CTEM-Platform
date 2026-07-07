@@ -2434,6 +2434,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: host
+          in: query
+          description: "Server-side target hostname filter (substring match)"
+          schema:
+            type: string
         - name: dateFrom
           in: query
           schema:
@@ -4524,6 +4529,10 @@ components:
         wafCount:
           type: integer
         retryCount:
+          type: integer
+        count429:
+          type: integer
+        count403:
           type: integer
 
     ScanTelemetryStats:

@@ -12,4 +12,6 @@ export interface ScanTelemetryTrendPoint {
   avgLatencyMs?: number;
   wafCount?: number;
   retryCount?: number;
+  count429?: number;
+  count403?: number;
 }

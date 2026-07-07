@@ -263,12 +263,14 @@ router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) =>
 
     // Server-side filters
     const proxyIp   = (req.query.proxyIp  as string | undefined)?.trim() || null;
+    const host      = (req.query.host     as string | undefined)?.trim() || null;
     const dateFrom  = (req.query.dateFrom as string | undefined)?.trim() || null;
     const dateTo    = (req.query.dateTo   as string | undefined)?.trim() || null;
     const status    = (req.query.status   as string | undefined)?.trim() || null;
 
     const conds = [];
     if (proxyIp)  conds.push(sql`proxy_ip = ${proxyIp}`);
+    if (host)     conds.push(sql`url ilike ${"%" + host + "%"}`);
     if (dateFrom) conds.push(sql`created_at >= ${new Date(dateFrom)}`);
     if (dateTo)   conds.push(sql`created_at <= ${new Date(dateTo)}`);
     if (status === "429") conds.push(sql`status_code = 429`);

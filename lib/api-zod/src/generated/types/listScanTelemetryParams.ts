@@ -10,6 +10,10 @@ export type ListScanTelemetryParams = {
 page?: number;
 limit?: number;
 proxyIp?: string;
+/**
+ * Server-side target hostname filter (substring match)
+ */
+host?: string;
 dateFrom?: string;
 dateTo?: string;
 /**

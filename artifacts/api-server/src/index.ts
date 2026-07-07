@@ -77,21 +77,21 @@ async function seedOrchestratorDefaults(): Promise<void> {
   try {
     // 15 orchestrator config knobs
     const DEFAULT_CONFIG: Array<{ key: string; value: string }> = [
-      { key: "enabled",                   value: "true"    },
-      { key: "use_proxies",               value: "false"   },
-      { key: "rotate_fingerprints",       value: "true"    },
-      { key: "adaptive_rate_limit",       value: "true"    },
-      { key: "log_all_requests",          value: "true"    },
-      { key: "proxy_rotation_strategy",   value: "round-robin" },
-      { key: "resolver_rotation_strategy",value: "round-robin" },
-      { key: "fingerprint_rotation_strategy", value: "round-robin" },
-      { key: "scan_delay_intensity",      value: "discovery" },
-      { key: "max_requests_per_host",     value: "2000"    },
-      { key: "max_requests_per_proxy",    value: "500"     },
-      { key: "max_concurrent_requests",   value: "20"      },
-      { key: "proxy_health_threshold",    value: "60"      },
-      { key: "retry_base_delay_ms",       value: "1000"    },
-      { key: "max_retries",               value: "4"       },
+      { key: "enabled",                        value: "true"        },
+      { key: "use_proxies",                    value: "false"       },
+      { key: "rotate_fingerprints",            value: "true"        },
+      { key: "adaptive_rate_limit",            value: "true"        },
+      { key: "proxy_health_scoring",           value: "true"        },
+      { key: "circuit_breaker_enabled",        value: "true"        },
+      { key: "log_all_requests",               value: "true"        },
+      { key: "proxy_rotation_strategy",        value: "round-robin" },
+      { key: "resolver_rotation_strategy",     value: "round-robin" },
+      { key: "fingerprint_rotation_strategy",  value: "round-robin" },
+      { key: "scan_delay_intensity",           value: "discovery"   },
+      { key: "proxy_health_threshold",         value: "60"          },
+      { key: "proxy_cooldown_minutes",         value: "15"          },
+      { key: "max_retries",                    value: "4"           },
+      { key: "max_backoff_ms",                 value: "30000"       },
     ];
     for (const row of DEFAULT_CONFIG) {
       await db.insert(orchestratorConfigTable).values(row).onConflictDoNothing();

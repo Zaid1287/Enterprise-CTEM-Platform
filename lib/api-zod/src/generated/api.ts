@@ -2454,6 +2454,7 @@ export const ListScanTelemetryQueryParams = zod.object({
   "page": zod.coerce.number().default(listScanTelemetryQueryPageDefault),
   "limit": zod.coerce.number().default(listScanTelemetryQueryLimitDefault),
   "proxyIp": zod.coerce.string().optional(),
+  "host": zod.coerce.string().optional().describe('Server-side target hostname filter (substring match)'),
   "dateFrom": zod.coerce.string().optional(),
   "dateTo": zod.coerce.string().optional(),
   "status": zod.coerce.string().optional().describe('Status filter: 2xx, 4xx, 5xx, 429, 403'),
@@ -2508,7 +2509,9 @@ export const GetScanTelemetryStatsResponse = zod.object({
   "requests": zod.number().optional(),
   "avgLatencyMs": zod.number().optional(),
   "wafCount": zod.number().optional(),
-  "retryCount": zod.number().optional()
+  "retryCount": zod.number().optional(),
+  "count429": zod.number().optional(),
+  "count403": zod.number().optional()
 })).optional(),
   "proxies": zod.object({
   "activeProxies": zod.number().optional(),

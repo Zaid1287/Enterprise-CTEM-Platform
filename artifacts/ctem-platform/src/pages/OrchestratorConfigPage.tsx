@@ -34,12 +34,14 @@ interface KnobDef {
 }
 
 const KNOBS: KnobDef[] = [
-  /* ── Master switches (5 booleans) ─────────────────────────────────────── */
-  { key: "enabled",             type: "boolean", label: "Enable Orchestration Engine",   description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
-  { key: "use_proxies",         type: "boolean", label: "Use Proxy Pool",                description: "Route outbound scan requests through the configured proxy/IP pool." },
-  { key: "rotate_fingerprints", type: "boolean", label: "Rotate Browser Fingerprints",   description: "Cycle through active fingerprint profiles on each request." },
-  { key: "adaptive_rate_limit", type: "boolean", label: "Adaptive Rate Limiting",        description: "Dynamically throttle per-host request rate when 429/503 responses are observed." },
-  { key: "log_all_requests",    type: "boolean", label: "Log All Requests to Telemetry", description: "Write every HTTP request to the telemetry table. Disable to reduce DB writes." },
+  /* ── Master switches & feature toggles (7 booleans) ────────────────────── */
+  { key: "enabled",              type: "boolean", label: "Enable Orchestration Engine",   description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
+  { key: "use_proxies",          type: "boolean", label: "Use Proxy Pool",                description: "Route outbound scan requests through the configured proxy/IP pool." },
+  { key: "rotate_fingerprints",  type: "boolean", label: "Rotate Browser Fingerprints",   description: "Cycle through active fingerprint profiles on each request." },
+  { key: "adaptive_rate_limit",  type: "boolean", label: "Adaptive Rate Limiting",        description: "Dynamically throttle per-host request rate when 429/503 responses are observed." },
+  { key: "proxy_health_scoring", type: "boolean", label: "Enable Proxy Health Scoring",   description: "Track success rate and latency per proxy; weight selection accordingly." },
+  { key: "circuit_breaker_enabled", type: "boolean", label: "Enable Circuit Breakers",    description: "Open circuit for a host after repeated failures; auto-closes after cool-down period." },
+  { key: "log_all_requests",     type: "boolean", label: "Log All Requests to Telemetry", description: "Write every HTTP request to the telemetry table. Disable to reduce DB writes." },
   /* ── Rotation & delay strategies (4 selects) ───────────────────────────── */
   { key: "proxy_rotation_strategy",
     type: "select", label: "Proxy Rotation Strategy",
@@ -57,14 +59,11 @@ const KNOBS: KnobDef[] = [
     type: "select", label: "Scan Delay Intensity",
     description: "Inter-request delay profile — passive is slowest/stealthiest, heavy is fastest/most aggressive.",
     options: ["passive", "discovery", "fuzzing", "heavy"] },
-  /* ── Throttling & concurrency (3 integers) ──────────────────────────────── */
-  { key: "max_requests_per_host",  type: "integer", label: "Max Requests per Host",          description: "Total request cap per target hostname per scan run.",                              min: 1,   max: 100000 },
-  { key: "max_requests_per_proxy", type: "integer", label: "Max Requests per Proxy",          description: "Maximum requests routed through one proxy before rotating to the next.",          min: 1,   max: 10000 },
-  { key: "max_concurrent_requests",type: "integer", label: "Max Concurrent Requests",         description: "Global concurrency cap across all proxies and target hosts.",                      min: 1,   max: 500 },
-  /* ── Health, retry & backoff (3 integers) ───────────────────────────────── */
-  { key: "proxy_health_threshold", type: "integer", label: "Health Score Threshold",          description: "Minimum proxy health score (0–100) to stay active; below this triggers cooldown.", min: 0,   max: 100 },
-  { key: "retry_base_delay_ms",    type: "integer", label: "Retry Base Delay (ms)",           description: "Initial delay before the first retry; doubles each subsequent attempt.",           min: 100, max: 10000 },
-  { key: "max_retries",            type: "integer", label: "Max Retries per Request",          description: "Number of retry attempts before giving up on a request.",                         min: 0,   max: 10 },
+  /* ── Health, cooldown, retry & backoff (4 integers) ─────────────────────── */
+  { key: "proxy_health_threshold",  type: "integer", label: "Health Score Threshold",    description: "Minimum proxy health score (0–100) to stay active; below this triggers cooldown.", min: 0,   max: 100 },
+  { key: "proxy_cooldown_minutes",  type: "integer", label: "Cooldown Duration (min)",   description: "Minutes a proxy stays in cooldown after falling below the health threshold.",        min: 1,   max: 1440 },
+  { key: "max_retries",             type: "integer", label: "Max Retries per Request",   description: "Number of retry attempts before giving up on a request.",                            min: 0,   max: 10 },
+  { key: "max_backoff_ms",          type: "integer", label: "Max Backoff (ms)",           description: "Upper bound on exponential retry backoff delay between attempts.",                    min: 500, max: 60000 },
 ];
 
 /* ─── Main Page ───────────────────────────────────────────────────────── */
