@@ -250,7 +250,13 @@ export default function AuditLogsPage() {
                     {timeAgo(log.createdAt)}
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="text-xs font-medium">{log.userEmail ?? `User #${log.userId}`}</span>
+                    {(log.userId === 0 || log.userId === null) ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-400 bg-sky-400/10 border border-sky-400/20 rounded px-1.5 py-0.5">
+                        System (Scheduler)
+                      </span>
+                    ) : (
+                      <span className="text-xs font-medium">{log.userEmail ?? `User #${log.userId}`}</span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     <ActionBadge action={log.action} />

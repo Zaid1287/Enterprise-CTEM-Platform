@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { runWithTenant } from "../lib/tenantContext";
+import { runWithScanIntensity } from "../lib/scanIntensityContext";
 import { exec } from "child_process";
 import { writeFile, unlink } from "fs/promises";
 import { promisify } from "util";
@@ -97,11 +98,31 @@ interface QueueEntry {
   allTools: (typeof securityToolsTable.$inferSelect)[];
   enabledTools: (typeof securityToolsTable.$inferSelect)[];
   scheduleId?: number;
+  /** Per-scan intensity override — overrides the tenant's orchestrator config default */
+  intensity?: string;
   resolve: () => void;
 }
 
 const scanQueue: QueueEntry[] = [];
 let activeScans = 0;
+
+// ── Per-tenant active-scan counter ─────────────────────────────────────────
+// BUG FIXED: previously there was no per-tenant concurrency tracking, so a
+// single tenant could fill all MAX_CONCURRENT_SCANS slots and starve every
+// other tenant.  Now drainQueue() uses fair scheduling: it always picks the
+// queued entry whose tenant currently has the fewest running scans, ensuring
+// that when multiple tenants have work queued, the slots are distributed
+// fairly across them rather than first-in-first-all.
+const activePerTenant = new Map<number, number>();
+
+function _incTenant(tenantId: number): void {
+  activePerTenant.set(tenantId, (activePerTenant.get(tenantId) ?? 0) + 1);
+}
+function _decTenant(tenantId: number): void {
+  const n = (activePerTenant.get(tenantId) ?? 1) - 1;
+  if (n <= 0) activePerTenant.delete(tenantId);
+  else activePerTenant.set(tenantId, n);
+}
 
 // ── In-process pause state ─────────────────────────────────────────────────────
 let _inProcessPaused = false;
@@ -163,6 +184,15 @@ export class QueueFullError extends Error {
 }
 
 export function getInProcessQueueStats() {
+  // Build per-tenant pending count for queue-monitor visibility
+  const pendingByTenant: Record<number, number> = {};
+  for (const e of scanQueue) {
+    pendingByTenant[e.tenantId] = (pendingByTenant[e.tenantId] ?? 0) + 1;
+  }
+  const activeByTenant: Record<number, number> = {};
+  for (const [tid, cnt] of activePerTenant) {
+    if (cnt > 0) activeByTenant[tid] = cnt;
+  }
   return {
     activeScans,
     pendingCount: scanQueue.length,
@@ -170,6 +200,8 @@ export function getInProcessQueueStats() {
     queueCap: MAX_QUEUE_DEPTH,
     pendingScanIds: scanQueue.map(e => e.scanId),
     paused: _inProcessPaused,
+    pendingByTenant,
+    activeByTenant,
   };
 }
 
@@ -192,9 +224,27 @@ export function queuePosition(scanId: number): number {
 function drainQueue() {
   if (_inProcessPaused) return;
   while (activeScans < MAX_CONCURRENT_SCANS && scanQueue.length > 0) {
-    const entry = scanQueue.shift()!;
+    // Fair scheduling: pick the queued entry whose tenant currently has the
+    // fewest active scans.  This prevents one tenant from monopolising all
+    // concurrent slots when other tenants also have work waiting.
+    //
+    // If all tenants are tied (e.g. queue has only one tenant), bestIdx=0
+    // and we behave identically to the original FIFO approach.
+    let bestIdx = 0;
+    let bestCount = activePerTenant.get(scanQueue[0]!.tenantId) ?? 0;
+    for (let i = 1; i < scanQueue.length; i++) {
+      const count = activePerTenant.get(scanQueue[i]!.tenantId) ?? 0;
+      if (count < bestCount) { bestCount = count; bestIdx = i; }
+    }
+
+    const [entry] = scanQueue.splice(bestIdx, 1);
     activeScans++;
-    logger.info({ scanId: entry.scanId, activeScans, remaining: scanQueue.length }, "Scan dequeued — starting");
+    _incTenant(entry.tenantId);
+    logger.info(
+      { scanId: entry.scanId, tenantId: entry.tenantId, activeScans,
+        tenantActive: activePerTenant.get(entry.tenantId), remaining: scanQueue.length },
+      "Scan dequeued — starting (fair scheduler)",
+    );
     db.update(scansTable)
       .set({ status: "running", startedAt: new Date() })
       .where(eq(scansTable.id, entry.scanId))
@@ -250,9 +300,14 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
         }
       });
 
-      const { findingsCount } = await runWithTenant(entry.tenantId, () => executePipeline(
-        entry.tenantId, entry.scanId, entry.configs, entry.allTools, entry.enabledTools,
-      ));
+      // Wrap with per-scan intensity context so orchestratedFetch picks it up via
+      // getCurrentScanIntensity() without any call-site changes inside executePipeline.
+      const _intensity = (entry.intensity ?? "endpoint-discovery") as import("../lib/delayEngine.js").ScanIntensity;
+      const { findingsCount } = await runWithTenant(entry.tenantId, () =>
+        runWithScanIntensity(_intensity, () =>
+          executePipeline(entry.tenantId, entry.scanId, entry.configs, entry.allTools, entry.enabledTools)
+        )
+      );
       const current = await db.select({ status: scansTable.status }).from(scansTable)
         .where(eq(scansTable.id, entry.scanId)).then(r => r[0]);
       if (current?.status !== "cancelled") {
@@ -263,8 +318,13 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
         await db.update(scanSchedulesTable).set({ lastRunAt: new Date(), lastScanId: entry.scanId })
           .where(eq(scanSchedulesTable.id, entry.scheduleId));
       }
-      await logAudit(entry.tenantId, entry.userId as any, "scan.pipeline_run", "scan", entry.scanId, {
+      // userId=0 means the scan was triggered by the beat scheduler (system-initiated).
+      // Use a descriptive action name so audit logs clearly distinguish scheduled from
+      // manual runs without needing a separate userId value.
+      const auditAction = entry.userId === 0 ? "scan.scheduled_run" : "scan.pipeline_run";
+      await logAudit(entry.tenantId, entry.userId as any, auditAction, "scan", entry.scanId, {
         assetCount: entry.configs.length, findingsCount,
+        triggeredBy: entry.userId === 0 ? "system:scheduler" : `user:${entry.userId}`,
       });
       logger.info({ scanId: entry.scanId, findingsCount }, "Scan completed");
 
@@ -317,6 +377,7 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
         .where(eq(scansTable.id, entry.scanId)).catch(() => {});
     } finally {
       activeScans--;
+      _decTenant(entry.tenantId);
       scanProgressMap.delete(entry.scanId);
       cancelledScanIds.delete(entry.scanId); // cleanup registry
       drainQueue();

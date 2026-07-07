@@ -26,6 +26,14 @@ import { useToast } from "@/hooks/use-toast";
 import ScheduledScansList from "@/components/scan/ScheduledScansList";
 
 const SCAN_TYPES = ["passive", "active", "vulnerability", "full"];
+
+const SCAN_INTENSITIES: { value: string; label: string; description: string }[] = [
+  { value: "passive",             label: "Passive (Stealthiest)",   description: "300–900 ms delays — minimal footprint, slowest" },
+  { value: "endpoint-discovery",  label: "Endpoint Discovery",      description: "700–1800 ms delays — balanced default" },
+  { value: "dir-fuzzing",         label: "Directory Fuzzing",       description: "1–3 s delays — moderate aggression" },
+  { value: "heavy-enumeration",   label: "Heavy Enumeration",       description: "1.5–4 s delays — comprehensive but loud" },
+  { value: "vuln-scan",           label: "Vulnerability Scan",      description: "800–2000 ms delays — CVE / Nuclei focused" },
+];
 const PAGE_SIZE = 10;
 
 const PIPELINE_PHASES = ["Passive Recon", "Port & SSL", "Tech & Screenshots", "Nuclei & Secrets", "Scoring"];
@@ -108,7 +116,7 @@ export default function ScansPage() {
   const [activeTab, setActiveTab] = useState<TabId>("history");
   const [showCreate, setShowCreate] = useState(false);
   const [customName, setCustomName] = useState("");
-  const [form, setForm] = useState({ type: "full", assetIds: [] as number[] });
+  const [form, setForm] = useState({ type: "full", assetIds: [] as number[], intensity: "endpoint-discovery" });
   const [createError, setCreateError] = useState<{ message: string; unverified?: { id: number; name: string }[] } | null>(null);
   const [page, setPage] = useState(1);
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
@@ -230,7 +238,7 @@ export default function ScansPage() {
       await createScan.mutateAsync({ data: { name: effectiveName, ...form } } as any);
       queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
       setShowCreate(false);
-      setForm({ type: "full", assetIds: [] });
+      setForm({ type: "full", assetIds: [], intensity: "endpoint-discovery" });
       setCustomName("");
       setCreateError(null);
       toast({ title: "Scan started", description: effectiveName });
@@ -498,7 +506,7 @@ export default function ScansPage() {
 
       <Dialog open={showCreate} onOpenChange={v => {
         setShowCreate(v);
-        if (!v) { setForm({ type: "full", assetIds: [] }); setCustomName(""); setCreateError(null); }
+        if (!v) { setForm({ type: "full", assetIds: [], intensity: "endpoint-discovery" }); setCustomName(""); setCreateError(null); }
       }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Create Scan</DialogTitle></DialogHeader>
@@ -524,6 +532,25 @@ export default function ScansPage() {
                   {SCAN_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t)} Scan</SelectItem>)}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">Scan Intensity</Label>
+              <Select value={form.intensity} onValueChange={v => setForm(p => ({ ...p, intensity: v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SCAN_INTENSITIES.map(s => (
+                    <SelectItem key={s.value} value={s.value}>
+                      <div className="flex flex-col">
+                        <span>{s.label}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                {SCAN_INTENSITIES.find(s => s.value === form.intensity)?.description}
+              </p>
             </div>
 
             <div className="space-y-1.5">

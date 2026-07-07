@@ -299,6 +299,7 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
           configs,
           allTools,
           enabledTools: toolsToRun,
+          intensity: typeof req.body?.intensity === "string" ? req.body.intensity : undefined,
         });
       } catch {
         await db.update(scansTable).set({ status: "failed", completedAt: new Date() })

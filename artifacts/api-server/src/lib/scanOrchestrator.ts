@@ -1,6 +1,7 @@
 import { db, scanFingerprintProfilesTable, scanRequestTelemetryTable, orchestratorConfigTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getCurrentTenantId } from "./tenantContext.js";
+import { getCurrentScanIntensity } from "./scanIntensityContext.js";
 import { selectHealthiestProxy, recordProxyOutcome, type ProxyOutcome } from "./proxyManager.js";
 import { waitForRateLimitToken, recordRateLimitSuccess, recordRateLimitFailure } from "./adaptiveRateLimiter.js";
 import { getCircuitState, isCircuitOpen, recordCircuitResult } from "./circuitBreaker.js";
@@ -41,15 +42,22 @@ interface OrchConfig {
 const _configCache = new Map<number, { config: OrchConfig; loadedAt: number }>();
 const CONFIG_TTL_MS = 60_000;
 
-// ── Issue 7: per-module alert debounce state ───────────────────────────────────
-// Proxy pool exhausted alert — debounced to 30 min to avoid flooding operators.
-let _lastLowProxyAlertAt = 0;
+// ── Per-tenant alert debounce state ──────────────────────────────────────────
+// BUG FIXED: was a single global timestamp — one tenant's alert silenced all
+// other tenants for 30 min.  Now keyed by tenantId so each tenant has its own
+// independent debounce window.
+//
+// Key = tenantId.  Value = last alert timestamp (ms since epoch).
+const _lastLowProxyAlertAt = new Map<number, number>();
 const LOW_PROXY_ALERT_COOLDOWN_MS = 30 * 60_000;
 
 // WAF rate rolling-window alert — fires when >50% of the last WAF_RATE_WINDOW
-// requests to a hostname were WAF-blocked, debounced per-host at 30 min.
+// requests to a hostname were WAF-blocked, debounced per-host per-tenant.
+// BUG FIXED: was keyed by hostname only — Tenant A's WAF hits on example.com
+// polluted Tenant B's rolling window for the same host.
+// Now keyed by "{tenantId}:{hostname}" for full per-tenant isolation.
 interface WafRateEntry { outcomes: boolean[]; lastAlertAt: number; }
-const _hostWafRates          = new Map<string, WafRateEntry>();
+const _hostWafRates              = new Map<string, WafRateEntry>();
 const WAF_RATE_WINDOW            = 20;
 const WAF_RATE_ALERT_COOLDOWN_MS = 30 * 60_000;
 
@@ -76,8 +84,10 @@ async function loadConfig(tenantId: number): Promise<OrchConfig> {
       delayMultiplier:           parseFloat(map["scan_delay_multiplier"] ?? "1.0"),
       defaultIntensity:          toScanIntensity(map["scan_delay_intensity"]),
     };
-    // propagate multiplier to delayEngine immediately after each config load
-    setDelayMultiplier(config.delayMultiplier);
+    // Propagate multiplier to delayEngine with the tenant's ID so each tenant's
+    // scan speed is controlled independently.  Previously this was a global set
+    // that whichever tenant loaded config last would overwrite for everyone.
+    setDelayMultiplier(config.delayMultiplier, tenantId);
     _configCache.set(tenantId, { config, loadedAt: Date.now() });
     return config;
   } catch {
@@ -337,7 +347,7 @@ export async function orchestratedFetch(
   }
 
   const hostname = extractHostname(url);
-  const intensity = ctx.intensity ?? config.defaultIntensity;
+  const intensity = ctx.intensity ?? getCurrentScanIntensity() ?? config.defaultIntensity;
   const method = (init.method ?? "GET").toUpperCase();
 
   if (config.circuitBreakerEnabled && isCircuitOpen(tenantId, hostname)) {
@@ -363,8 +373,9 @@ export async function orchestratedFetch(
   // none are healthy/active).  Debounced per-process to 30 min.
   if (config.useProxies && config.enabled && !proxy) {
     const now = Date.now();
-    if (ctx.tenantId && now - _lastLowProxyAlertAt > LOW_PROXY_ALERT_COOLDOWN_MS) {
-      _lastLowProxyAlertAt = now;
+    const _lastAlert = _lastLowProxyAlertAt.get(tenantId) ?? 0;
+    if (ctx.tenantId && now - _lastAlert > LOW_PROXY_ALERT_COOLDOWN_MS) {
+      _lastLowProxyAlertAt.set(tenantId, now);
       dispatchNotifications({
         tenantId:       ctx.tenantId,
         eventType:      "orchestrator_event",
@@ -380,7 +391,7 @@ export async function orchestratedFetch(
   }
 
   let profile = pickRandomProfile(profiles);
-  const baseDelay = getDelay(intensity);
+  const baseDelay = getDelay(intensity, tenantId);
 
   if (config.adaptiveRateLimitEnabled) {
     await waitForRateLimitToken(tenantId, url);
@@ -478,10 +489,12 @@ export async function orchestratedFetch(
       // Issue 7: rolling WAF-rate alert — fire when >50% of the last WAF_RATE_WINDOW
       // requests to this hostname were WAF-blocked (debounced 30 min per host).
       {
-        const rateEntry = _hostWafRates.get(hostname) ?? { outcomes: [], lastAlertAt: 0 };
+        // Per-tenant WAF rate tracking: key = "{tenantId}:{hostname}"
+        const wafRateKey = `${tenantId}:${hostname}`;
+        const rateEntry = _hostWafRates.get(wafRateKey) ?? { outcomes: [], lastAlertAt: 0 };
         rateEntry.outcomes.push(wafDetected);
         if (rateEntry.outcomes.length > WAF_RATE_WINDOW) rateEntry.outcomes.shift();
-        _hostWafRates.set(hostname, rateEntry);
+        _hostWafRates.set(wafRateKey, rateEntry);
 
         if (rateEntry.outcomes.length >= 10 && ctx.tenantId) {
           const wafHits = rateEntry.outcomes.filter(Boolean).length;
