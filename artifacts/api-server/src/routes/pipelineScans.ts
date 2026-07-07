@@ -30,6 +30,7 @@ import { scanPorts, type PortScanReport } from "../lib/portScanner";
 import { scanSubdomains, type SubdomainScanReport } from "../lib/subdomainScanner";
 import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, UpdateScanScheduleBody, UpdateScanScheduleParams, RunScheduleNowParams, StopScanParams } from "@workspace/api-zod";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
+import { getPrivilegedTenantIds } from "../lib/tenantScoping";
 import { logAudit } from "../lib/audit";
 import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
@@ -3946,7 +3947,14 @@ router.get("/scans/:scanId/asset-report", requireAuth, async (req: Authenticated
 // ── Schedule CRUD ─────────────────────────────────────────────────────────────
 
 router.get("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.user!.role;
   const tenantId = req.user!.tenantId;
+  if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    const allIds = [...new Set([...privIds, tenantId])];
+    const schedules = await db.select().from(scanSchedulesTable).where(inArray(scanSchedulesTable.tenantId, allIds));
+    res.json(schedules.map(toScheduleResponse)); return;
+  }
   const schedules = await db.select().from(scanSchedulesTable).where(eq(scanSchedulesTable.tenantId, tenantId));
   res.json(schedules.map(toScheduleResponse));
 });
@@ -3954,26 +3962,44 @@ router.get("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, re
 router.post("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateScanScheduleBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const tenantId = req.user!.tenantId;
-  const userId   = req.user!.userId;
+  const role    = req.user!.role;
+  const userId  = req.user!.userId;
   const { name, assetToolConfig, frequency, runTime, dayOfWeek, dayOfMonth } = parsed.data as any;
   const timezone = typeof req.body.timezone === "string" ? req.body.timezone : "+00:00";
-  const groupId = typeof req.body.groupId === "number" ? req.body.groupId : null;
+  const groupId  = typeof req.body.groupId === "number" ? req.body.groupId : null;
+
+  // For SA/Admin: derive tenantId from the assets in the schedule so the schedule
+  // is stored under the correct (possibly client) tenant rather than the caller's tenant.
+  let scheduleTenantId = req.user!.tenantId;
+  if ((role === "super_admin" || role === "admin") && Array.isArray(assetToolConfig) && assetToolConfig.length > 0) {
+    const assetIds = (assetToolConfig as Array<{ assetId: number }>).map(c => c.assetId);
+    const [firstAsset] = await db.select({ tenantId: assetsTable.tenantId })
+      .from(assetsTable).where(inArray(assetsTable.id, assetIds));
+    if (firstAsset?.tenantId) scheduleTenantId = firstAsset.tenantId;
+  }
+
   const nextRunAt = computeNextRunAt(frequency ?? "once", runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone);
   const [schedule] = await db.insert(scanSchedulesTable).values({
-    tenantId, name, assetToolConfig, frequency: frequency ?? "once",
+    tenantId: scheduleTenantId, name, assetToolConfig, frequency: frequency ?? "once",
     runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone, status: "active", nextRunAt,
     createdBy: userId as any, ...(groupId ? { groupId } : {}),
   } as any).returning();
-  await logAudit(tenantId, userId as any, "schedule.create", "scan_schedule", schedule.id, { name });
+  await logAudit(scheduleTenantId, userId as any, "schedule.create", "scan_schedule", schedule.id, { name });
   res.status(201).json(toScheduleResponse(schedule));
 });
 
 router.get("/scans/schedules/:scheduleId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const scheduleId = Number(req.params.scheduleId);
+  const role       = req.user!.role;
   const tenantId   = req.user!.tenantId;
-  const schedule   = await db.select().from(scanSchedulesTable)
-    .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
+  let schedule;
+  if (role === "super_admin" || role === "admin") {
+    schedule = await db.select().from(scanSchedulesTable)
+      .where(eq(scanSchedulesTable.id, scheduleId)).then(r => r[0]);
+  } else {
+    schedule = await db.select().from(scanSchedulesTable)
+      .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
+  }
   if (!schedule) { res.status(404).json({ error: "Schedule not found" }); return; }
   res.json(toScheduleResponse(schedule));
 });
@@ -3983,10 +4009,17 @@ router.patch("/scans/schedules/:scheduleId", requireAuth, async (req: Authentica
   if (!paramsP.success) { res.status(400).json({ error: "Invalid schedule ID" }); return; }
   const bodyP = UpdateScanScheduleBody.safeParse(req.body);
   if (!bodyP.success) { res.status(400).json({ error: bodyP.error.message }); return; }
+  const role     = req.user!.role;
   const tenantId = req.user!.tenantId;
   const { scheduleId } = paramsP.data;
-  const existing = await db.select().from(scanSchedulesTable)
-    .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
+  let existing;
+  if (role === "super_admin" || role === "admin") {
+    existing = await db.select().from(scanSchedulesTable)
+      .where(eq(scanSchedulesTable.id, scheduleId)).then(r => r[0]);
+  } else {
+    existing = await db.select().from(scanSchedulesTable)
+      .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
+  }
   if (!existing) { res.status(404).json({ error: "Schedule not found" }); return; }
   const updates: Record<string, unknown> = { ...bodyP.data };
   if (typeof req.body.timezone === "string") updates.timezone = req.body.timezone;
@@ -4005,9 +4038,16 @@ router.patch("/scans/schedules/:scheduleId", requireAuth, async (req: Authentica
 
 router.delete("/scans/schedules/:scheduleId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const scheduleId = Number(req.params.scheduleId);
+  const role       = req.user!.role;
   const tenantId   = req.user!.tenantId;
-  const schedule   = await db.select().from(scanSchedulesTable)
-    .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
+  let schedule;
+  if (role === "super_admin" || role === "admin") {
+    schedule = await db.select().from(scanSchedulesTable)
+      .where(eq(scanSchedulesTable.id, scheduleId)).then(r => r[0]);
+  } else {
+    schedule = await db.select().from(scanSchedulesTable)
+      .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
+  }
   if (!schedule) { res.status(404).json({ error: "Schedule not found" }); return; }
   await db.delete(scanSchedulesTable).where(eq(scanSchedulesTable.id, scheduleId));
   res.status(204).send();
@@ -4016,22 +4056,35 @@ router.delete("/scans/schedules/:scheduleId", requireAuth, async (req: Authentic
 router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = RunScheduleNowParams.safeParse({ scheduleId: Number(req.params.scheduleId) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid schedule ID" }); return; }
-  const tenantId = req.user!.tenantId;
+  const role     = req.user!.role;
   const userId   = req.user!.userId;
   const { scheduleId } = parsed.data;
-  const schedule = await db.select().from(scanSchedulesTable)
-    .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, tenantId))).then(r => r[0]);
+
+  // SA/Admin can run schedules for any tenant; others are restricted to their own.
+  let schedule;
+  if (role === "super_admin" || role === "admin") {
+    schedule = await db.select().from(scanSchedulesTable)
+      .where(eq(scanSchedulesTable.id, scheduleId)).then(r => r[0]);
+  } else {
+    schedule = await db.select().from(scanSchedulesTable)
+      .where(and(eq(scanSchedulesTable.id, scheduleId), eq(scanSchedulesTable.tenantId, req.user!.tenantId))).then(r => r[0]);
+  }
   if (!schedule) { res.status(404).json({ error: "Schedule not found" }); return; }
-  const configs        = schedule.assetToolConfig as AssetToolConfigItem[];
-  const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
+
+  // Use the schedule's own tenantId — this is the tenant the assets belong to.
+  const scheduleTenantId = schedule.tenantId!;
+  const configs = schedule.assetToolConfig as AssetToolConfigItem[];
+  // Pipeline tool config is loaded from the caller's tenant (SA/admin have the tools configured).
+  const callerTenantId = req.user!.tenantId;
+  const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, callerTenantId));
   const pipelineSteps = await db.select({ tool: securityToolsTable })
     .from(toolPipelineStepsTable)
     .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
-    .where(and(eq(toolPipelineStepsTable.tenantId, tenantId), eq(toolPipelineStepsTable.isEnabled, true)));
+    .where(and(eq(toolPipelineStepsTable.tenantId, callerTenantId), eq(toolPipelineStepsTable.isEnabled, true)));
   const enabledTools = pipelineSteps.map(p => p.tool);
   const willQueue = activeScans >= MAX_CONCURRENT_SCANS;
   const [scan] = await db.insert(scansTable).values({
-    tenantId, name: `${schedule.name} — ${new Date().toLocaleDateString()}`,
+    tenantId: scheduleTenantId, name: `${schedule.name} — ${new Date().toLocaleDateString()}`,
     type: "pipeline", status: willQueue ? "pending" : "running",
     assetIds: configs.map(c => c.assetId), startedAt: willQueue ? null : new Date(), findingsCount: 0,
   }).returning();
@@ -4040,7 +4093,7 @@ router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: Aut
     queued: willQueue, queuePosition: willQueue ? scanQueue.length + 1 : 0,
   });
   setImmediate(() => {
-    enqueueAndRun({ scanId: scan.id, tenantId, userId, configs, allTools, enabledTools, scheduleId }).catch(() => {});
+    enqueueAndRun({ scanId: scan.id, tenantId: scheduleTenantId, userId, configs, allTools, enabledTools, scheduleId }).catch(() => {});
   });
 });
 

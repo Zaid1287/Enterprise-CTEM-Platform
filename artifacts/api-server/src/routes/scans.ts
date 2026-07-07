@@ -206,11 +206,9 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
       res.status(403).json({ error: "No client tenants assigned" }); return;
     }
   } else if (role === "super_admin" || role === "admin") {
-    // Scope to accessible client tenants (non-platform); never unrestricted
-    allowedTenantIds = await getPrivilegedTenantIds(req.user!);
-    if (allowedTenantIds.length === 0) {
-      res.status(403).json({ error: "No accessible client tenants" }); return;
-    }
+    // Include both client tenants AND the caller's own tenant (platform or otherwise)
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    allowedTenantIds = [...new Set([...privIds, req.user!.tenantId])];
   } else {
     // Regular users: restrict to own tenant
     allowedTenantIds = [req.user!.tenantId];
