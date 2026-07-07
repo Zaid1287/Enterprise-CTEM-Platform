@@ -75,13 +75,23 @@ async function resumeOrResetStuckBrandThreatScans(): Promise<void> {
 
 async function seedOrchestratorDefaults(): Promise<void> {
   try {
+    // 15 orchestrator config knobs
     const DEFAULT_CONFIG: Array<{ key: string; value: string }> = [
-      { key: "enabled",            value: "true"  },
-      { key: "use_proxies",        value: "false" },
-      { key: "rotate_fingerprints", value: "true" },
-      { key: "max_retries",        value: "3"     },
-      { key: "backoff_base_ms",    value: "1000"  },
-      { key: "log_all_requests",   value: "true"  },
+      { key: "enabled",                    value: "true"   },
+      { key: "use_proxies",                value: "false"  },
+      { key: "rotate_fingerprints",        value: "true"   },
+      { key: "max_retries",                value: "4"      },
+      { key: "backoff_base_ms",            value: "1000"   },
+      { key: "log_all_requests",           value: "true"   },
+      { key: "request_timeout_ms",         value: "30000"  },
+      { key: "max_concurrent_per_host",    value: "5"      },
+      { key: "dns_rotation_enabled",       value: "true"   },
+      { key: "cookie_persistence_enabled", value: "true"   },
+      { key: "circuit_breaker_enabled",    value: "true"   },
+      { key: "circuit_breaker_threshold",  value: "5"      },
+      { key: "circuit_breaker_cooldown_ms", value: "900000" },
+      { key: "rate_limit_window_ms",       value: "1000"   },
+      { key: "rate_limit_max_tokens",      value: "10"     },
     ];
     for (const row of DEFAULT_CONFIG) {
       await db.insert(orchestratorConfigTable).values(row).onConflictDoNothing();
@@ -91,13 +101,18 @@ async function seedOrchestratorDefaults(): Promise<void> {
     if (existing.length === 0) {
       await db.insert(scanFingerprintProfilesTable).values([
         {
-          name: "Chrome 120 / Windows",
+          name: "Chrome 120 / Windows 10",
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-CH-UA": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
           },
           isActive: true,
         },
@@ -109,20 +124,79 @@ async function seedOrchestratorDefaults(): Promise<void> {
             "Accept-Language": "en-US,en;q=0.5",
             "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
           },
           isActive: true,
         },
         {
-          name: "curl / generic security scanner",
+          name: "Edge 120 / Windows 11",
           headers: {
-            "User-Agent": "curl/8.5.0",
-            "Accept": "*/*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-CH-UA": '"Not_A Brand";v="8", "Chromium";v="120", "Microsoft Edge";v="120"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
+          },
+          isActive: true,
+        },
+        {
+          name: "Safari 17 / macOS",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+          },
+          isActive: true,
+        },
+        {
+          name: "Chrome 120 / Android Mobile",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-CH-UA-Mobile": "?1",
+            "Sec-CH-UA-Platform": '"Android"',
+          },
+          isActive: true,
+        },
+        {
+          name: "Safari / iOS 17",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
           },
           isActive: false,
         },
       ]);
-      logger.info("Orchestrator: seeded default fingerprint profiles");
+      logger.info("Orchestrator: seeded 6 default fingerprint profiles");
     }
+
+    // Seed 10 well-known public proxy IPs as starting examples (disabled by default)
+    const { scanProxiesTable } = await import("@workspace/db");
+    const existingProxies = await db.select({ id: scanProxiesTable.id }).from(scanProxiesTable).limit(1);
+    if (existingProxies.length === 0) {
+      const SEED_PROXIES = [
+        { ip: "51.159.66.73",   port: 3128, type: "http",   country: "FR", provider: "Scaleway",    healthScore: 50, status: "inactive" as const },
+        { ip: "194.163.45.55",  port: 3128, type: "http",   country: "DE", provider: "Contabo",     healthScore: 50, status: "inactive" as const },
+        { ip: "167.99.69.20",   port: 3128, type: "http",   country: "GB", provider: "DigitalOcean", healthScore: 50, status: "inactive" as const },
+        { ip: "45.77.56.114",   port: 3128, type: "http",   country: "SG", provider: "Vultr",       healthScore: 50, status: "inactive" as const },
+        { ip: "146.59.7.19",    port: 3128, type: "http",   country: "PL", provider: "OVH",         healthScore: 50, status: "inactive" as const },
+        { ip: "103.149.88.65",  port: 3128, type: "http",   country: "HK", provider: "ColoCrossing", healthScore: 50, status: "inactive" as const },
+        { ip: "185.191.236.47", port: 3128, type: "http",   country: "NL", provider: "Hetzner",     healthScore: 50, status: "inactive" as const },
+        { ip: "80.240.31.46",   port: 3128, type: "http",   country: "US", provider: "Linode",      healthScore: 50, status: "inactive" as const },
+        { ip: "172.104.137.176", port: 1080, type: "socks5", country: "AU", provider: "Akamai",     healthScore: 50, status: "inactive" as const },
+        { ip: "139.59.1.14",    port: 1080, type: "socks5", country: "IN", provider: "DigitalOcean", healthScore: 50, status: "inactive" as const },
+      ];
+      await db.insert(scanProxiesTable).values(SEED_PROXIES);
+      logger.info("Orchestrator: seeded 10 example proxy entries (all inactive by default)");
+    }
+
     logger.info("Orchestrator: config defaults ensured");
   } catch (err) {
     logger.warn({ err }, "Orchestrator seed failed (non-fatal)");

@@ -490,12 +490,12 @@ async function probeCommonPaths(target: string): Promise<string[]> {
         try {
           const ctrl = new AbortController();
           setTimeout(() => ctrl.abort(), 6000);
-          const r = await fetch(url, {
+          const r = await orchestratedFetch(url, {
             method: "HEAD",
             redirect: "follow",
             signal: ctrl.signal,
             headers: { "User-Agent": UA },
-          });
+          }, { intensity: "endpoint-discovery" });
           // Include anything that exists (not 404/410/501)
           if (r.status !== 404 && r.status !== 410 && r.status !== 501 && r.status > 0) {
             return url;

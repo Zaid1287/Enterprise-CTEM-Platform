@@ -23,6 +23,7 @@ import {
 import { runDirFuzz, type DirFuzzResult } from "../lib/dirFuzzer";
 import { runNucleiScan, runCustomNucleiTemplatesBinary, type VulnScanResult, type CustomNucleiTemplate } from "../lib/nucleiScanner";
 import { runHarvesterScan } from "../lib/harvesterScanner";
+import { orchestratedFetch } from "../lib/scanOrchestrator";
 import { runParamScan } from "../lib/paramScanner";
 import { runSslTest } from "../lib/sslTestScanner";
 import { runWpScan } from "../lib/wpScanner";
@@ -702,7 +703,7 @@ async function runCtLogLookup(domain: string): Promise<SubdomainFinding[]> {
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 10000);
-    const res = await fetch(`https://crt.sh/?q=%.${domain}&output=json`, { signal: ctrl.signal });
+    const res = await orchestratedFetch(`https://crt.sh/?q=%.${domain}&output=json`, { signal: ctrl.signal });
     if (!res.ok) return [];
     const data: any[] = await res.json().catch(() => []);
     const seen = new Set<string>();
@@ -735,7 +736,7 @@ async function runGeoIntel(target: string): Promise<IntelItem[]> {
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,org,as,hosting,proxy,isp,lon,lat`, { signal: ctrl.signal });
+    const res = await orchestratedFetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,org,as,hosting,proxy,isp,lon,lat`, { signal: ctrl.signal });
     if (res.ok) {
       const d: any = await res.json();
       if (d.status === "success") {
@@ -756,7 +757,7 @@ async function runGeoIntel(target: string): Promise<IntelItem[]> {
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(`https://ipinfo.io/${ip}/json`, {
+    const res = await orchestratedFetch(`https://ipinfo.io/${ip}/json`, {
       signal: ctrl.signal,
       headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
     });
@@ -772,7 +773,7 @@ async function runGeoIntel(target: string): Promise<IntelItem[]> {
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 8000);
-    const rdapRes = await fetch(`https://rdap.arin.net/registry/ip/${ip}`, {
+    const rdapRes = await orchestratedFetch(`https://rdap.arin.net/registry/ip/${ip}`, {
       signal: ctrl.signal,
       redirect: "follow",
       headers: { "Accept": "application/rdap+json", "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
@@ -928,7 +929,7 @@ async function runActiveWafProbe(target: string): Promise<WafDetection | null> {
   try {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 14000);
-    const resp = await fetch(`${baseUrl}${triggerPath}`, {
+    const resp = await orchestratedFetch(`${baseUrl}${triggerPath}`, {
       signal: ctrl.signal,
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
       redirect: "follow",
@@ -963,7 +964,7 @@ function isCdnOrg(text: string): boolean {
 
 async function shodanIpEnrich(ip: string): Promise<{ ports: number[]; org: string; reverseDns: string; tags: string[] } | null> {
   try {
-    const r = await fetch(`https://internetdb.shodan.io/${ip}`, { signal: AbortSignal.timeout(6000) });
+    const r = await orchestratedFetch(`https://internetdb.shodan.io/${ip}`, { signal: AbortSignal.timeout(6000) });
     if (!r.ok) return null;
     const d = await r.json() as any;
     return { ports: d.ports ?? [], org: (d.hostnames ?? []).join(", "), reverseDns: (d.hostnames ?? [])[0] ?? "", tags: d.tags ?? [] };
@@ -975,7 +976,7 @@ async function quickWafCheck(host: string): Promise<string | null> {
   try {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 5000);
-    const resp = await fetch(`https://${host}`, { signal: ctrl.signal, method: "HEAD", redirect: "follow" });
+    const resp = await orchestratedFetch(`https://${host}`, { signal: ctrl.signal, method: "HEAD", redirect: "follow" });
     clearTimeout(tid);
     const headers: Record<string, string> = {};
     resp.headers.forEach((v, k) => { headers[k] = v; });
@@ -1018,7 +1019,7 @@ async function discoverOriginIps(domain: string, dnsRecords: DnsRecord[], subdom
 
   // Method 3: HackerTarget historical host search (free, no API key)
   try {
-    const resp = await fetch(`https://api.hackertarget.com/hostsearch/?q=${encodeURIComponent(domain)}`, { signal: AbortSignal.timeout(10000) });
+    const resp = await orchestratedFetch(`https://api.hackertarget.com/hostsearch/?q=${encodeURIComponent(domain)}`, { signal: AbortSignal.timeout(10000) });
     const text = await resp.text();
     if (!text.startsWith("error") && !text.startsWith("API count") && !text.startsWith("<?")) {
       for (const line of text.trim().split("\n")) {
@@ -1033,7 +1034,7 @@ async function discoverOriginIps(domain: string, dnsRecords: DnsRecord[], subdom
     try {
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), 5000);
-      const resp = await fetch(`https://${c.ip}`, {
+      const resp = await orchestratedFetch(`https://${c.ip}`, {
         signal: ctrl.signal,
         headers: { "Host": domain },
         redirect: "manual",
@@ -1050,7 +1051,7 @@ async function discoverOriginIps(domain: string, dnsRecords: DnsRecord[], subdom
   const stKey = _platformSecurityTrailsKey ?? process.env["SECURITYTRAILS_API_KEY"];
   if (stKey) {
     try {
-      const resp = await fetch(`https://api.securitytrails.com/v1/history/${domain}/dns/a`, {
+      const resp = await orchestratedFetch(`https://api.securitytrails.com/v1/history/${domain}/dns/a`, {
         signal: AbortSignal.timeout(8000),
         headers: { apikey: stKey, Accept: "application/json" },
       });
@@ -1090,7 +1091,7 @@ async function runHttpProbe(target: string): Promise<HttpInfo | null> {
     try {
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), 15000);
-      const response = await fetch(url, { signal: ctrl.signal, redirect: "follow" });
+      const response = await orchestratedFetch(url, { signal: ctrl.signal, redirect: "follow" });
       clearTimeout(tid);
 
       const headers: Record<string, string> = {};
@@ -1163,7 +1164,7 @@ async function runEndpointProbe(target: string, extraPaths: string[] = []): Prom
     paths.map(async (path) => {
       const ctrl = new AbortController();
       setTimeout(() => ctrl.abort(), 7000);
-      const r = await fetch(`${base}${path}`, { signal: ctrl.signal, redirect: "follow" });
+      const r = await orchestratedFetch(`${base}${path}`, { signal: ctrl.signal, redirect: "follow" });
       const snippet = r.status === 200 ? await r.text().then(t => t.slice(0, 200)) : "";
       const titleM = snippet.match(/<title[^>]*>([^<]{0,100})<\/title>/i);
       return { url: path, method: "GET", status: r.status, title: titleM?.[1]?.trim() };
@@ -1198,7 +1199,7 @@ async function runSecretsScanner(target: string, endpoints: EndpointFinding[], h
     try {
       const ctrl = new AbortController();
       setTimeout(() => ctrl.abort(), 8000);
-      const res = await fetch(`${base}/`, { signal: ctrl.signal });
+      const res = await orchestratedFetch(`${base}/`, { signal: ctrl.signal });
       const html = await res.text();
       const matches = [...html.matchAll(/(?:src|href)=['"]([^'"]*\.js(?:\?[^'"]*)?)['"]/gi)];
       for (const m of matches) {
@@ -1220,7 +1221,7 @@ async function runSecretsScanner(target: string, endpoints: EndpointFinding[], h
       try {
         const ctrl = new AbortController();
         setTimeout(() => ctrl.abort(), 8000);
-        const res = await fetch(url, { signal: ctrl.signal });
+        const res = await orchestratedFetch(url, { signal: ctrl.signal });
         if (!res.ok) return;
         const content = await res.text();
         const path = url.replace(base, "");
@@ -1377,7 +1378,7 @@ async function runCloudSurfaceScan(target: string): Promise<IntelItem[]> {
       try {
         const ctrl = new AbortController();
         setTimeout(() => ctrl.abort(), 4000);
-        const res = await fetch(url, { signal: ctrl.signal });
+        const res = await orchestratedFetch(url, { signal: ctrl.signal });
         const text = await res.text().catch(() => "");
         if (res.status === 200 || text.includes("ListBucketResult")) {
           intel.push({ type: "Cloud", key: "Exposed S3 Bucket", value: `${url} — PUBLICLY ACCESSIBLE`, severity: "critical" });
@@ -1616,7 +1617,7 @@ async function executePipeline(
         try {
           const ctrl = new AbortController();
           const t = setTimeout(() => ctrl.abort(), 10_000);
-          const resp = await fetch(lookupUrl, { signal: ctrl.signal });
+          const resp = await orchestratedFetch(lookupUrl, { signal: ctrl.signal });
           clearTimeout(t);
           if (resp.ok) {
             const data = (await resp.json()) as any;
@@ -1649,7 +1650,7 @@ async function executePipeline(
         try {
           const ctrl = new AbortController();
           const t = setTimeout(() => ctrl.abort(), 15_000);
-          const resp = await fetch(
+          const resp = await orchestratedFetch(
             `https://play.google.com/store/apps/details?id=${encodeURIComponent(bundleId)}&hl=en`,
             { signal: ctrl.signal, headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" } },
           );
@@ -2122,7 +2123,7 @@ async function executePipeline(
         try {
           const ctrl = new AbortController();
           const t2 = setTimeout(() => ctrl.abort(), 12000);
-          const r = await fetch(`${scheme}://${hostToCheck}`, { signal: ctrl.signal, redirect: "follow" });
+          const r = await orchestratedFetch(`${scheme}://${hostToCheck}`, { signal: ctrl.signal, redirect: "follow" });
           clearTimeout(t2);
           isHostLive = true;
           hostLiveStatus = r.status;

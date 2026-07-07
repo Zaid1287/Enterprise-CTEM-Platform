@@ -40,8 +40,7 @@ export async function selectHealthiestProxy(): Promise<{ id: number; ip: string;
     if (active.length === 0) return null;
 
     active.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0));
-    const top5 = active.slice(0, Math.min(5, active.length));
-    return top5[Math.floor(Math.random() * top5.length)] ?? null;
+    return active[0] ?? null;
   } catch (err) {
     logger.warn({ err }, "proxyManager: selectHealthiestProxy failed");
     return null;

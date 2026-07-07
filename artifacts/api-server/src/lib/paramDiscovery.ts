@@ -179,7 +179,7 @@ async function fetchArchivedParams(domain: string, baseUrl: string): Promise<Dis
     const cdxUrl = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain)}/*&output=text&fl=original&collapse=urlkey&limit=3000&filter=statuscode:200&matchType=domain`;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 20000);
-    const res = await fetch(cdxUrl, { signal: ctrl.signal, headers: { "User-Agent": UA } });
+    const res = await orchestratedFetch(cdxUrl, { signal: ctrl.signal, headers: { "User-Agent": UA } }, { intensity: "passive" });
     clearTimeout(t);
     if (!res.ok) return results;
 
@@ -329,7 +329,7 @@ async function bruteForceParams(baseUrl: string): Promise<DiscoveredParam[]> {
 
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 10000);
-        const res = await fetch(batchUrl, { signal: ctrl.signal, headers: { "User-Agent": UA } });
+        const res = await orchestratedFetch(batchUrl, { signal: ctrl.signal, headers: { "User-Agent": UA } }, { intensity: "endpoint-discovery" });
         clearTimeout(t);
         if (!res.ok && res.status >= 500) return; // server error — skip
 
@@ -351,7 +351,7 @@ async function bruteForceParams(baseUrl: string): Promise<DiscoveredParam[]> {
 
             const ctrl2 = new AbortController();
             const t2 = setTimeout(() => ctrl2.abort(), 8000);
-            const res2 = await fetch(singleUrl, { signal: ctrl2.signal, headers: { "User-Agent": UA } });
+            const res2 = await orchestratedFetch(singleUrl, { signal: ctrl2.signal, headers: { "User-Agent": UA } }, { intensity: "endpoint-discovery" });
             clearTimeout(t2);
             if (!res2.ok && res2.status >= 500) return;
 

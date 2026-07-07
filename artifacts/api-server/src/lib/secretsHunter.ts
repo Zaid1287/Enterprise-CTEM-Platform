@@ -145,7 +145,7 @@ async function ghFetch(path: string, remainingRef: { v: number }): Promise<{ ok:
     const t = setTimeout(() => ctrl.abort(), 10000);
     const headers: Record<string, string> = { "User-Agent": UA, "Accept": "application/vnd.github+json" };
     if (_githubToken) headers.Authorization = `Bearer ${_githubToken}`;
-    const res = await fetch(`https://api.github.com${path}`, { signal: ctrl.signal, headers });
+    const res = await orchestratedFetch(`https://api.github.com${path}`, { signal: ctrl.signal, headers }, { intensity: "passive" });
     clearTimeout(t);
     remainingRef.v = parseInt(res.headers.get("X-RateLimit-Remaining") ?? "50", 10);
     if (!res.ok) return { ok: false, data: null };
@@ -362,9 +362,10 @@ export async function runGitlabExposure(domain: string, apiKey: string | null): 
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 10_000);
-      const res = await fetch(
+      const res = await orchestratedFetch(
         `${BASE}/projects?search=${encodeURIComponent(q)}&visibility=public&order_by=last_activity_at&per_page=10`,
-        { headers, signal: ctrl.signal }
+        { headers, signal: ctrl.signal },
+        { intensity: "passive" }
       );
       clearTimeout(t);
       if (!res.ok) continue;
@@ -393,9 +394,10 @@ export async function runGitlabExposure(domain: string, apiKey: string | null): 
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 10_000);
-      const res = await fetch(
+      const res = await orchestratedFetch(
         `${BASE}/search?scope=blobs&search=${encodeURIComponent(domain)}&per_page=5`,
-        { headers, signal: ctrl.signal }
+        { headers, signal: ctrl.signal },
+        { intensity: "passive" }
       );
       clearTimeout(t);
       if (res.ok) {

@@ -196,6 +196,22 @@ router.get("/api/scan-fingerprints", requireAuth, requireAdmin, async (req, res)
   }
 });
 
+router.get("/api/scan-fingerprints/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    const [profile] = await db
+      .select()
+      .from(scanFingerprintProfilesTable)
+      .where(eq(scanFingerprintProfilesTable.id, id));
+    if (!profile) { res.status(404).json({ error: "Profile not found" }); return; }
+    res.json(profile);
+  } catch (err) {
+    logger.error({ err }, "GET /api/scan-fingerprints/:id error");
+    res.status(500).json({ error: "Failed to fetch fingerprint profile" });
+  }
+});
+
 router.patch("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
@@ -250,21 +266,45 @@ router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) =>
 
 router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const since = new Date(Date.now() - 60 * 60_000);
+    const now = Date.now();
+    const since60m = new Date(now - 60 * 60_000);
+    const since5m  = new Date(now -  5 * 60_000);
 
     const [totals] = await db
       .select({
-        totalRequests:     sql<number>`count(*)::int`,
-        avgLatencyMs:      sql<number>`round(avg(latency_ms))::int`,
-        count429:          sql<number>`count(*) filter (where status_code = 429)::int`,
-        count403:          sql<number>`count(*) filter (where status_code = 403)::int`,
-        countWaf:          sql<number>`count(*) filter (where waf_detected)::int`,
-        countCaptcha:      sql<number>`count(*) filter (where captcha_detected)::int`,
-        totalRetries:      sql<number>`sum(retries)::int`,
-        avgBytesDownloaded:sql<number>`round(avg(bytes_downloaded))::int`,
+        totalRequests:      sql<number>`count(*)::int`,
+        avgLatencyMs:       sql<number>`round(avg(latency_ms))::int`,
+        p95LatencyMs:       sql<number>`round(percentile_cont(0.95) within group (order by latency_ms))::int`,
+        count429:           sql<number>`count(*) filter (where status_code = 429)::int`,
+        count403:           sql<number>`count(*) filter (where status_code = 403)::int`,
+        countWaf:           sql<number>`count(*) filter (where waf_detected)::int`,
+        countCaptcha:       sql<number>`count(*) filter (where captcha_detected)::int`,
+        totalRetries:       sql<number>`coalesce(sum(retries),0)::int`,
+        avgBytesDownloaded: sql<number>`round(avg(bytes_downloaded))::int`,
       })
       .from(scanRequestTelemetryTable)
-      .where(gte(scanRequestTelemetryTable.createdAt, since));
+      .where(gte(scanRequestTelemetryTable.createdAt, since60m));
+
+    // Requests in last 5 minutes → req/s
+    const [recent] = await db
+      .select({ count5m: sql<number>`count(*)::int` })
+      .from(scanRequestTelemetryTable)
+      .where(gte(scanRequestTelemetryTable.createdAt, since5m));
+    const reqPerSecond = Math.round((recent.count5m ?? 0) / 300 * 100) / 100;
+
+    // Per-minute trend for the last 60 minutes (1-min buckets)
+    const trend = await db
+      .select({
+        minute:       sql<string>`date_trunc('minute', created_at)::text`,
+        requests:     sql<number>`count(*)::int`,
+        avgLatencyMs: sql<number>`round(avg(latency_ms))::int`,
+        wafCount:     sql<number>`count(*) filter (where waf_detected)::int`,
+        retryCount:   sql<number>`coalesce(sum(retries),0)::int`,
+      })
+      .from(scanRequestTelemetryTable)
+      .where(gte(scanRequestTelemetryTable.createdAt, since60m))
+      .groupBy(sql`date_trunc('minute', created_at)`)
+      .orderBy(sql`date_trunc('minute', created_at)`);
 
     const [proxyStats] = await db
       .select({
@@ -275,14 +315,23 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
       })
       .from(scanProxiesTable);
 
-    const circuits        = getAllCircuits();
-    const openCircuits    = circuits.filter(c => c.state === "open").length;
+    const circuits         = getAllCircuits();
+    const openCircuits     = circuits.filter(c => c.state === "open").length;
     const rateLimiterStats = getAllRateLimiterStats();
-    const dnsStats        = getDnsResolverStats();
+    const dnsStats         = getDnsResolverStats();
+
+    // Retry queue size — count requests still being retried (retries > 0 in last 5 min)
+    const [retryQueue] = await db
+      .select({ size: sql<number>`count(*) filter (where retries > 0)::int` })
+      .from(scanRequestTelemetryTable)
+      .where(gte(scanRequestTelemetryTable.createdAt, since5m));
 
     res.json({
       window: "last_60_minutes",
-      requests:  totals,
+      generatedAt: new Date().toISOString(),
+      requests:  { ...totals, reqPerSecond },
+      retryQueueSize: retryQueue.size ?? 0,
+      trend: trend.slice(-60),
       proxies:   proxyStats,
       circuits: { open: openCircuits, total: circuits.length, details: circuits.slice(0, 20) },
       rateLimiters: rateLimiterStats.slice(0, 20),

@@ -41,14 +41,14 @@ async function loadConfig(): Promise<OrchConfig> {
       enabled:            map["enabled"]             !== "false",
       useProxies:         map["use_proxies"]          !== "false",
       rotateFingerprints: map["rotate_fingerprints"]  !== "false",
-      maxRetries:         parseInt(map["max_retries"] ?? "3", 10),
+      maxRetries:         parseInt(map["max_retries"] ?? "4", 10),
       backoffBaseMs:      parseInt(map["backoff_base_ms"] ?? "1000", 10),
       logAllRequests:     map["log_all_requests"]     !== "false",
     };
     _configLoadedAt = Date.now();
     return _config;
   } catch {
-    return { enabled: true, useProxies: false, rotateFingerprints: true, maxRetries: 3, backoffBaseMs: 1000, logAllRequests: true };
+    return { enabled: true, useProxies: false, rotateFingerprints: true, maxRetries: 4, backoffBaseMs: 1000, logAllRequests: true };
   }
 }
 
@@ -131,7 +131,7 @@ export async function orchestratedFetch(
   try {
     config = await loadConfig();
   } catch {
-    config = { enabled: true, useProxies: false, rotateFingerprints: false, maxRetries: 3, backoffBaseMs: 1000, logAllRequests: false };
+    config = { enabled: true, useProxies: false, rotateFingerprints: false, maxRetries: 4, backoffBaseMs: 1000, logAllRequests: false };
   }
   try {
     profiles = config.rotateFingerprints ? await loadProfiles() : [];
