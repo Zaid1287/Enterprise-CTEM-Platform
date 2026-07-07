@@ -57,8 +57,8 @@ const KNOBS: KnobDef[] = [
     options: ["round-robin", "random"] },
   { key: "scan_delay_intensity",
     type: "select", label: "Scan Delay Intensity",
-    description: "Inter-request delay profile — passive is slowest/stealthiest, heavy is fastest/most aggressive.",
-    options: ["passive", "discovery", "fuzzing", "heavy"] },
+    description: "Inter-request delay profile — passive (300–900 ms) is stealthiest; vuln-scan (800–2000 ms) is CVE-focused; heavy-enumeration (1500–4000 ms) is most thorough.",
+    options: ["passive", "endpoint-discovery", "dir-fuzzing", "heavy-enumeration", "vuln-scan"] },
   /* ── Request throttling & concurrency (3 integers) ──────────────────────── */
   { key: "max_requests_per_host",   type: "integer", label: "Max Requests per Host",         description: "Total request cap per target hostname per scan run.",                               min: 1,   max: 100000 },
   { key: "max_requests_per_proxy",  type: "integer", label: "Max Requests per Proxy",         description: "Maximum requests routed through one proxy before rotating to the next.",           min: 1,   max: 10000 },
