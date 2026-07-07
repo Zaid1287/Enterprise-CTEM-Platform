@@ -28,7 +28,7 @@ function parseId(param: string | string[] | undefined): number {
 
 // ── Proxy CRUD ─────────────────────────────────────────────────────────────────
 
-router.get("/api/scan-proxies", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/scan-proxies", requireAuth, requireAdmin, async (req, res) => {
   try {
     const proxies = await db
       .select()
@@ -183,7 +183,7 @@ router.patch("/api/orchestrator-config", requireAuth, requireSuperAdmin, async (
 
 // ── Fingerprint Profiles ───────────────────────────────────────────────────────
 
-router.get("/api/scan-fingerprints", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/scan-fingerprints", requireAuth, requireAdmin, async (req, res) => {
   try {
     const profiles = await db
       .select()
@@ -196,7 +196,7 @@ router.get("/api/scan-fingerprints", requireAuth, requireSuperAdmin, async (req,
   }
 });
 
-router.get("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/api/scan-fingerprints/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -261,6 +261,11 @@ router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) =>
     else if (status === "2xx") conds.push(sql`status_code between 200 and 299`);
     else if (status === "4xx") conds.push(sql`status_code between 400 and 499`);
     else if (status === "5xx") conds.push(sql`status_code between 500 and 599`);
+
+    const wafOnly     = req.query.waf     === "1";
+    const captchaOnly = req.query.captcha === "1";
+    if (wafOnly)     conds.push(sql`waf_detected = true`);
+    if (captchaOnly) conds.push(sql`captcha_detected = true`);
 
     const whereClause = conds.length > 0 ? and(...conds) : undefined;
 

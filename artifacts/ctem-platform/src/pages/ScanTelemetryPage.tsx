@@ -97,6 +97,8 @@ function buildQs(p: {
   if (p.dateFrom) q.set("dateFrom", p.dateFrom);
   if (p.dateTo)   q.set("dateTo",   p.dateTo);
   if (p.status !== "all") q.set("status", p.status);
+  if (p.waf)     q.set("waf",     "1");
+  if (p.captcha) q.set("captcha", "1");
   return q.toString();
 }
 
@@ -125,12 +127,10 @@ export default function ScanTelemetryPage() {
   const total   = data?.total ?? 0;
   const pages   = Math.max(1, Math.ceil(total / 50));
 
-  /* Client-side secondary filters (URL text + domain + waf + captcha) */
+  /* Client-side secondary filters (URL text + domain — WAF/captcha are server-side) */
   const filtered = allRows.filter(r => {
     if (searchUrl    && !r.url.toLowerCase().includes(searchUrl.toLowerCase())) return false;
     if (filterDomain && !extractDomain(r.url).toLowerCase().includes(filterDomain.toLowerCase())) return false;
-    if (filterWaf    && !r.wafDetected) return false;
-    if (filterCaptcha && !r.captchaDetected) return false;
     return true;
   });
 
