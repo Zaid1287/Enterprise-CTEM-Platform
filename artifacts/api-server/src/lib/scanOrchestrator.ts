@@ -7,6 +7,7 @@ import { getDelay, sleep, type ScanIntensity } from "./delayEngine.js";
 import { storeCookies, getCookieHeader } from "./cookieJar.js";
 import { analyzeResponse, type ResponseClassification } from "./responseAnalyzer.js";
 import { resolveWithRotation } from "./dnsResolverPool.js";
+import { pushWaterfallEvent } from "./sseManager.js";
 import { logger } from "./logger.js";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 
@@ -24,7 +25,11 @@ interface OrchConfig {
   rotateFingerprints: boolean;
   maxRetries: number;
   backoffBaseMs: number;
+  maxBackoffMs: number;
   logAllRequests: boolean;
+  wafBypassEnabled: boolean;
+  adaptiveRateLimitEnabled: boolean;
+  circuitBreakerEnabled: boolean;
 }
 
 let _config: OrchConfig | null = null;
@@ -38,17 +43,26 @@ async function loadConfig(): Promise<OrchConfig> {
     const map: Record<string, string> = {};
     for (const r of rows) map[r.key] = r.value;
     _config = {
-      enabled:            map["enabled"]             !== "false",
-      useProxies:         map["use_proxies"]          !== "false",
-      rotateFingerprints: map["rotate_fingerprints"]  !== "false",
-      maxRetries:         parseInt(map["max_retries"] ?? "4", 10),
-      backoffBaseMs:      parseInt(map["backoff_base_ms"] ?? "1000", 10),
-      logAllRequests:     map["log_all_requests"]     !== "false",
+      enabled:                  map["enabled"]               !== "false",
+      useProxies:               map["use_proxies"]            !== "false",
+      rotateFingerprints:       map["rotate_fingerprints"]    !== "false",
+      maxRetries:               parseInt(map["max_retries"]        ?? "4",    10),
+      backoffBaseMs:            parseInt(map["retry_base_delay_ms"] ?? "1000", 10),
+      maxBackoffMs:             parseInt(map["max_backoff_ms"]      ?? "30000", 10),
+      logAllRequests:           map["log_all_requests"]       !== "false",
+      wafBypassEnabled:         map["waf_bypass_strategy"]    !== "none" && !!map["waf_bypass_strategy"],
+      adaptiveRateLimitEnabled: map["adaptive_rate_limit"]    !== "false",
+      circuitBreakerEnabled:    map["circuit_breaker_enabled"] !== "false",
     };
     _configLoadedAt = Date.now();
     return _config;
   } catch {
-    return { enabled: true, useProxies: false, rotateFingerprints: true, maxRetries: 4, backoffBaseMs: 1000, logAllRequests: true };
+    return {
+      enabled: true, useProxies: false, rotateFingerprints: true,
+      maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
+      logAllRequests: true, wafBypassEnabled: false,
+      adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
+    };
   }
 }
 
@@ -64,7 +78,7 @@ async function loadProfiles(): Promise<Array<{ id: number; headers: Record<strin
       .from(scanFingerprintProfilesTable)
       .where(eq(scanFingerprintProfilesTable.isActive, true));
     if (rows.length > 0) {
-      _profiles = rows as Array<{ id: number; headers: Record<string, string> }>;
+      _profiles = rows.map(r => ({ id: r.id, headers: sanitizeHeaders(r.headers) }));
       _profilesLoadedAt = Date.now();
     }
     return _profiles;
@@ -73,15 +87,37 @@ async function loadProfiles(): Promise<Array<{ id: number; headers: Record<strin
   }
 }
 
-function pickRandomProfile(profiles: Array<{ id: number; headers: Record<string, string> }>): { id: number; headers: Record<string, string> } | null {
+// ── Issue 6: Fingerprint crash guard ─────────────────────────────────────────
+// Validate that headers from the DB jsonb column are a flat Record<string, string>.
+// Handles null, non-object, nested objects, numeric values, etc.
+function sanitizeHeaders(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof k === "string" && k.trim().length > 0 && v != null) {
+      // Coerce to string — headers must be strings for undici
+      const str = typeof v === "string" ? v : String(v);
+      if (str.length > 0) out[k] = str;
+    }
+  }
+  return out;
+}
+
+function pickRandomProfile(
+  profiles: Array<{ id: number; headers: Record<string, string> }>,
+  excludeId?: number,
+): { id: number; headers: Record<string, string> } | null {
   if (profiles.length === 0) return null;
-  return profiles[Math.floor(Math.random() * profiles.length)]!;
+  const candidates = excludeId != null ? profiles.filter(p => p.id !== excludeId) : profiles;
+  const pool = candidates.length > 0 ? candidates : profiles;
+  return pool[Math.floor(Math.random() * pool.length)]!;
 }
 
 function extractHostname(url: string): string {
   try { return new URL(url).hostname; } catch { return url; }
 }
 
+// ── Issue 4: Telemetry write + SSE waterfall push ────────────────────────────
 async function writeTelemetry(data: {
   tenantId?: number;
   scanId?: number;
@@ -104,6 +140,13 @@ async function writeTelemetry(data: {
 }): Promise<void> {
   try {
     await db.insert(scanRequestTelemetryTable).values(data as any);
+    // Push to real-time waterfall SSE stream for any connected admins
+    if (data.tenantId) {
+      pushWaterfallEvent(data.tenantId, {
+        ...data,
+        ts: Date.now(),
+      });
+    }
   } catch {
     // Telemetry write failure is non-fatal
   }
@@ -119,6 +162,27 @@ const RETRYABLE_CLASSES: Set<ResponseClassification> = new Set([
   "RateLimited", "TemporaryError", "Timeout", "ConnectionReset",
 ]);
 
+// ── Issue 2: Build proxy URL with credentials ─────────────────────────────────
+// Explicit interface so TypeScript can resolve this through async closures without
+// reducing to `never` via Awaited<ReturnType<...>> inference.
+interface ActiveProxy {
+  id: number;
+  ip: string;
+  port: number;
+  healthScore: number;
+  username: string | null;
+  password: string | null;
+}
+
+function buildProxyUrl(proxy: ActiveProxy): string {
+  if (proxy.username) {
+    const user = encodeURIComponent(proxy.username);
+    const pass = encodeURIComponent(proxy.password ?? "");
+    return `http://${user}:${pass}@${proxy.ip}:${proxy.port}`;
+  }
+  return `http://${proxy.ip}:${proxy.port}`;
+}
+
 export async function orchestratedFetch(
   url: string,
   init: RequestInit = {},
@@ -131,7 +195,12 @@ export async function orchestratedFetch(
   try {
     config = await loadConfig();
   } catch {
-    config = { enabled: true, useProxies: false, rotateFingerprints: false, maxRetries: 4, backoffBaseMs: 1000, logAllRequests: false };
+    config = {
+      enabled: true, useProxies: false, rotateFingerprints: false,
+      maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
+      logAllRequests: false, wafBypassEnabled: false,
+      adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
+    };
   }
   try {
     profiles = config.rotateFingerprints ? await loadProfiles() : [];
@@ -143,47 +212,64 @@ export async function orchestratedFetch(
   const intensity = ctx.intensity ?? "endpoint-discovery";
   const method = (init.method ?? "GET").toUpperCase();
 
-  if (isCircuitOpen(hostname)) {
+  if (config.circuitBreakerEnabled && isCircuitOpen(hostname)) {
     throw new Error(`Circuit breaker OPEN for ${hostname} (state: ${getCircuitState(hostname)})`);
   }
 
-  // Select proxy — always attempt selection but only use when enabled
-  let proxy: Awaited<ReturnType<typeof selectHealthiestProxy>> = null;
-  let proxyAgent: ProxyAgent | undefined;
-  if (config.useProxies && config.enabled) {
+  // Select proxy — only when orchestrator is enabled and use_proxies is true.
+  // Returns a value instead of mutating outer vars so TypeScript can track the type.
+  const pickProxy = async (excludeProxyId?: number): Promise<{ proxy: ActiveProxy | null; proxyAgent: ProxyAgent | undefined }> => {
+    if (!config.useProxies || !config.enabled) return { proxy: null, proxyAgent: undefined };
     try {
-      proxy = await selectHealthiestProxy();
-      if (proxy) {
-        proxyAgent = new ProxyAgent(`http://${proxy.ip}:${proxy.port}`);
+      const p = await selectHealthiestProxy(excludeProxyId);
+      if (p) {
+        return { proxy: p, proxyAgent: new ProxyAgent(buildProxyUrl(p)) };
       }
-    } catch {
-      proxy = null;
-      proxyAgent = undefined;
-    }
+    } catch { /* fall through */ }
+    return { proxy: null, proxyAgent: undefined };
+  };
+
+  let { proxy, proxyAgent } = await pickProxy();
+
+  let profile = pickRandomProfile(profiles);
+  const baseDelay = getDelay(intensity);
+
+  if (config.adaptiveRateLimitEnabled) {
+    await waitForRateLimitToken(url);
   }
-
-  const profile = pickRandomProfile(profiles);
-  const delay = getDelay(intensity);
-
-  await waitForRateLimitToken(url);
-  await sleep(delay);
+  await sleep(baseDelay);
 
   const existingCookies = getCookieHeader(url);
-  const fingerprintHeaders: Record<string, string> = profile?.headers ?? {};
-
-  const mergedHeaders: Record<string, string> = {
-    ...fingerprintHeaders,
-    ...(existingCookies ? { "Cookie": existingCookies } : {}),
-    ...(init.headers as Record<string, string> ?? {}),
-  };
 
   let lastError: Error | undefined;
   let attemptNumber = 0;
   let backoffMs = 0;
   let statusCode: number | undefined;
   const maxRetries = config.maxRetries;
+  // ── Issue 7: WAF bypass state ─────────────────────────────────────────────
+  let lastWafDetected = false;
 
   while (attemptNumber <= maxRetries) {
+    // ── Issue 7: WAF bypass — on next retry after WAF, rotate profile + proxy ──
+    if (lastWafDetected && config.wafBypassEnabled && attemptNumber > 0) {
+      const prevProfileId = profile?.id;
+      profile = pickRandomProfile(profiles, prevProfileId);
+      const prevProxyId = proxy?.id;
+      ({ proxy, proxyAgent } = await pickProxy(prevProxyId));
+      // Double the delay for WAF bypass — makes the request look less robotic
+      backoffMs = Math.min(backoffMs * 2 || baseDelay * 2, config.maxBackoffMs);
+      logger.debug({ url, prevProfileId, newProfileId: profile?.id, prevProxyId, newProxyId: proxy?.id }, "WAF bypass: rotated fingerprint + proxy");
+    }
+
+    // ── Issue 6: Fingerprint crash guard — sanitizeHeaders already called at load,
+    //    but guard here too in case profile was somehow set externally.
+    const fingerprintHeaders: Record<string, string> = profile ? sanitizeHeaders(profile.headers) : {};
+    const mergedHeaders: Record<string, string> = {
+      ...fingerprintHeaders,
+      ...(existingCookies ? { "Cookie": existingCookies } : {}),
+      ...(init.headers as Record<string, string> ?? {}),
+    };
+
     const requestStart = Date.now();
     let wafDetected = false;
     let captchaDetected = false;
@@ -217,6 +303,7 @@ export async function orchestratedFetch(
       const analysis = analyzeResponse(statusCode, bodyText, responseHeaders);
       wafDetected     = analysis.wafDetected;
       captchaDetected = analysis.captchaDetected;
+      lastWafDetected = wafDetected;
 
       const setCookieHeader = response.headers.get("set-cookie");
       if (setCookieHeader) storeCookies(url, [setCookieHeader]);
@@ -248,7 +335,7 @@ export async function orchestratedFetch(
           statusCode,
           latencyMs,
           retries: attemptNumber,
-          delayAppliedMs: delay,
+          delayAppliedMs: baseDelay,
           backoffAppliedMs: backoffMs,
           healthScoreAtDispatch: proxy?.healthScore,
           circuitBreakerState: getCircuitState(hostname),
@@ -259,13 +346,13 @@ export async function orchestratedFetch(
       }
 
       if (analysis.isSuccess) {
-        recordRateLimitSuccess(url);
-        recordCircuitResult(hostname, true);
+        if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(url);
+        if (config.circuitBreakerEnabled) recordCircuitResult(hostname, true);
         return response;
       }
 
       // Only trip circuit breaker for rate-limit or active block responses
-      if (CIRCUIT_TRIP_CLASSES.has(analysis.classification)) {
+      if (config.circuitBreakerEnabled && CIRCUIT_TRIP_CLASSES.has(analysis.classification)) {
         recordCircuitResult(hostname, false);
       }
 
@@ -274,13 +361,15 @@ export async function orchestratedFetch(
         return response;
       }
 
-      recordRateLimitFailure(url, analysis.retryAfterMs);
+      if (config.adaptiveRateLimitEnabled) {
+        recordRateLimitFailure(url, analysis.retryAfterMs);
+      }
 
       attemptNumber++;
       if (attemptNumber > maxRetries) break;
 
       const jitter = Math.random() * config.backoffBaseMs;
-      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, attemptNumber - 1) + jitter, 30_000);
+      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, attemptNumber - 1) + jitter, config.maxBackoffMs);
       if (analysis.retryAfterMs) backoffMs = Math.max(backoffMs, analysis.retryAfterMs);
       logger.debug({ url, attemptNumber, backoffMs, classification: analysis.classification }, "Orchestrator retrying");
       await sleep(backoffMs);
@@ -288,8 +377,9 @@ export async function orchestratedFetch(
     } catch (err: any) {
       latencyMs = Date.now() - requestStart;
       lastError = err;
+      lastWafDetected = false;
 
-      recordCircuitResult(hostname, false);
+      if (config.circuitBreakerEnabled) recordCircuitResult(hostname, false);
       if (proxy) {
         const outcome: ProxyOutcome = err?.name === "AbortError" ? "timeout" : "connection_error";
         recordProxyOutcome(proxy.id, outcome, latencyMs).catch(() => {});
@@ -308,7 +398,7 @@ export async function orchestratedFetch(
           fingerprintProfileId: profile?.id,
           latencyMs,
           retries: attemptNumber,
-          delayAppliedMs: delay,
+          delayAppliedMs: baseDelay,
           backoffAppliedMs: backoffMs,
           healthScoreAtDispatch: proxy?.healthScore,
           circuitBreakerState: getCircuitState(hostname),
@@ -321,7 +411,7 @@ export async function orchestratedFetch(
       if (attemptNumber > maxRetries) break;
 
       const jitter = Math.random() * config.backoffBaseMs;
-      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, attemptNumber - 1) + jitter, 30_000);
+      backoffMs = Math.min(config.backoffBaseMs * Math.pow(2, attemptNumber - 1) + jitter, config.maxBackoffMs);
       logger.debug({ url, attemptNumber, backoffMs, err: err?.message }, "Orchestrator retrying after error");
       await sleep(backoffMs);
     }

@@ -1,5 +1,5 @@
 import { db, scanProxiesTable } from "@workspace/db";
-import { eq, isNull, or, lt } from "drizzle-orm";
+import { eq, isNull, or, lt, and, sql } from "drizzle-orm";
 import { healthCheckProxy } from "./proxyHealthCheck.js";
 import { logger } from "./logger.js";
 
@@ -17,7 +17,10 @@ const LATENCY_BONUS = +1;
 const COOLDOWN_FAILURES = 5;
 const COOLDOWN_DURATION_MS = 30 * 60 * 1_000;
 
-export async function selectHealthiestProxy(): Promise<{ id: number; ip: string; port: number; healthScore: number } | null> {
+// ── Issue 2: Select proxy returning credentials too ───────────────────────────
+export async function selectHealthiestProxy(
+  excludeProxyId?: number,
+): Promise<{ id: number; ip: string; port: number; healthScore: number; username: string | null; password: string | null } | null> {
   try {
     const now = new Date();
     const proxies = await db
@@ -26,6 +29,8 @@ export async function selectHealthiestProxy(): Promise<{ id: number; ip: string;
         ip:          scanProxiesTable.ip,
         port:        scanProxiesTable.port,
         healthScore: scanProxiesTable.healthScore,
+        username:    scanProxiesTable.username,
+        password:    scanProxiesTable.password,
       })
       .from(scanProxiesTable)
       .where(
@@ -36,8 +41,14 @@ export async function selectHealthiestProxy(): Promise<{ id: number; ip: string;
       )
       .orderBy(scanProxiesTable.healthScore);
 
-    const active = proxies.filter(p => p.healthScore > 0);
-    if (active.length === 0) return null;
+    const active = proxies.filter(p => p.healthScore > 0 && p.id !== excludeProxyId);
+    if (active.length === 0) {
+      // Fall back to any active proxy if exclusion leaves nothing
+      const fallback = proxies.filter(p => p.healthScore > 0);
+      if (fallback.length === 0) return null;
+      fallback.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0));
+      return fallback[0] ?? null;
+    }
 
     active.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0));
     return active[0] ?? null;
@@ -109,7 +120,7 @@ export async function recordProxyOutcome(
 }
 
 export async function scheduleRetestCoolingProxies(): Promise<void> {
-  const INTERVAL_MS = 5 * 60 * 1_000;
+  const INTERVAL_MS = 5 * 60_000;
 
   const retest = async () => {
     try {
@@ -154,4 +165,45 @@ export async function scheduleRetestCoolingProxies(): Promise<void> {
 
   setTimeout(retest, INTERVAL_MS);
   logger.info("Proxy retest scheduler started (interval: 5 min)");
+}
+
+// ── Issue 5: Proxy score decay on idle ────────────────────────────────────────
+// Active proxies that haven't been used in 6+ hours have their health scores
+// decayed by DECAY_AMOUNT per cycle. This ensures stale proxies don't remain
+// at artificially high scores without being validated.
+export async function decayIdleProxyScores(): Promise<void> {
+  const IDLE_THRESHOLD_MS = 6 * 60 * 60_000; // 6 hours
+  const DECAY_AMOUNT = 5; // points per 6h cycle
+
+  try {
+    const idleThreshold = new Date(Date.now() - IDLE_THRESHOLD_MS);
+
+    const idleProxies = await db
+      .select({ id: scanProxiesTable.id, healthScore: scanProxiesTable.healthScore })
+      .from(scanProxiesTable)
+      .where(
+        and(
+          eq(scanProxiesTable.status, "active"),
+          // Use last_tested_at if available, otherwise fall back to created_at
+          sql`coalesce(last_tested_at, created_at) < ${idleThreshold}`,
+        )
+      );
+
+    if (idleProxies.length === 0) return;
+
+    for (const proxy of idleProxies) {
+      const newScore = Math.max(0, (proxy.healthScore ?? 100) - DECAY_AMOUNT);
+      const updates: Partial<typeof scanProxiesTable.$inferInsert> = { healthScore: newScore };
+      if (newScore <= 0) {
+        updates.status = "inactive";
+      }
+      await db.update(scanProxiesTable)
+        .set(updates as any)
+        .where(eq(scanProxiesTable.id, proxy.id));
+    }
+
+    logger.info({ count: idleProxies.length, decayAmount: DECAY_AMOUNT }, "Proxy decay: applied idle health score decay");
+  } catch (err) {
+    logger.warn({ err }, "proxyManager: decayIdleProxyScores failed");
+  }
 }

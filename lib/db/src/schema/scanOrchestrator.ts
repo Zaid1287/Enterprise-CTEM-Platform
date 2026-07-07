@@ -8,6 +8,8 @@ export const scanProxiesTable = pgTable("scan_proxies", {
   type:               text("type").notNull().default("http"),
   country:            text("country"),
   asn:                text("asn"),
+  username:           text("username"),
+  password:           text("password"),
   healthScore:        real("health_score").notNull().default(100),
   successCount:       integer("success_count").notNull().default(0),
   failCount:          integer("fail_count").notNull().default(0),

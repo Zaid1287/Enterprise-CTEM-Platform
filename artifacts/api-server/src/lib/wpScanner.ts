@@ -1,6 +1,7 @@
 import { exec } from "child_process";
 import { promisify } from "util";
 import { logger } from "./logger";
+import { orchestratedFetch } from "./scanOrchestrator";
 
 const execAsync = promisify(exec);
 const UA = "Mozilla/5.0 (compatible; CTEM-WPScan/1.0)";
@@ -33,20 +34,15 @@ export interface WpScanResult {
   };
 }
 
-// ── HTTP helper ────────────────────────────────────────────────────────────────
-
+// ── Issue 1: HTTP helper now routes through orchestratedFetch ─────────────────
 async function fetchUrl(
-  url: string, timeoutMs = 8000
+  url: string, _timeoutMs = 8000
 ): Promise<{ status: number; body: string; headers: Record<string, string> } | null> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, {
-      signal: ctrl.signal,
+    const res = await orchestratedFetch(url, {
       headers: { "User-Agent": UA },
       redirect: "follow",
-    });
-    clearTimeout(t);
+    }, { intensity: "passive" });
     const body = (await res.text()).slice(0, 200_000);
     const headers: Record<string, string> = {};
     res.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
@@ -222,7 +218,6 @@ async function enumerateThemes(baseUrl: string): Promise<string[]> {
     const matches = [...r.body.matchAll(/href="([a-zA-Z0-9][a-zA-Z0-9\-_.]+)\/"/g)];
     themes.push(...matches.map(m => m[1]).filter(t => t !== ".." && !t.startsWith(".")));
   }
-  // Also detect active theme from homepage source
   const home = await fetchUrl(baseUrl, 6000);
   if (home) {
     const themeMatch = home.body.match(/\/wp-content\/themes\/([a-zA-Z0-9\-_.]+)\//);
@@ -278,7 +273,6 @@ export async function runWpScan(target: string): Promise<WpScanResult> {
     baseUrl = `${u.protocol}//${u.hostname}`;
   } catch { return empty; }
 
-  // Detect WordPress first
   const home = await fetchUrl(baseUrl, 10000);
   if (!home) return empty;
 
@@ -287,7 +281,6 @@ export async function runWpScan(target: string): Promise<WpScanResult> {
 
   logger.info({ target, version }, "WordPress detected — running WP security checks");
 
-  // Run all checks in parallel
   const [httpFindings, nucleiFindings, plugins, themes, users] = await Promise.allSettled([
     runWpHttpChecks(baseUrl),
     runNucleiWpTemplates(baseUrl),
@@ -301,7 +294,6 @@ export async function runWpScan(target: string): Promise<WpScanResult> {
     ...(nucleiFindings.status === "fulfilled" ? nucleiFindings.value : []),
   ];
 
-  // Deduplicate findings by title
   const seen = new Set<string>();
   const dedupedFindings = allFindings.filter(f => {
     if (seen.has(f.title)) return false;

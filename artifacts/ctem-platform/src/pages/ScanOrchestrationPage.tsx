@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Activity, Server, AlertTriangle, Zap, Clock, RefreshCw,
   ShieldX, Wifi, WifiOff, RotateCcw, TrendingDown, Timer,
+  Radio, CircleDot,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -47,6 +48,21 @@ interface Proxy {
   lastTestedAt: string | null; requestsToday: number;
 }
 
+/* ─── Issue 4: Waterfall event type ─────────────────────────────────── */
+interface WaterfallEvent {
+  id: string;
+  ts: number;
+  method: string;
+  url: string;
+  statusCode?: number;
+  latencyMs?: number;
+  proxyId?: number;
+  wafDetected?: boolean;
+  captchaDetected?: boolean;
+  retries?: number;
+  target?: string;
+}
+
 /* ─── API ────────────────────────────────────────────────────────────── */
 const BASE = () => import.meta.env.BASE_URL.replace(/\/$/, "");
 const hdrs = () => ({ Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" });
@@ -86,6 +102,151 @@ function StatusBadge({ status }: { status: string }) {
   };
   const s = map[status] ?? { label: status, className: "bg-muted text-muted-foreground" };
   return <Badge variant="outline" className={cn("text-xs font-medium", s.className)}>{s.label}</Badge>;
+}
+
+/* ─── Issue 4: Waterfall Widget ──────────────────────────────────────── */
+function WaterfallWidget() {
+  const [events, setEvents] = useState<WaterfallEvent[]>([]);
+  const [connected, setConnected] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+
+    const url = `${BASE()}/api/scan-telemetry/stream`;
+    const es = new EventSource(url + `?token=${encodeURIComponent(token ?? "")}`);
+    esRef.current = es;
+
+    es.onopen = () => setConnected(true);
+    es.onerror = () => setConnected(false);
+
+    es.addEventListener("telemetry:request", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        const event: WaterfallEvent = {
+          id: `${Date.now()}-${Math.random()}`,
+          ts: data.ts ?? Date.now(),
+          method: data.method ?? "GET",
+          url: data.url ?? "",
+          statusCode: data.statusCode,
+          latencyMs: data.latencyMs,
+          proxyId: data.proxyId,
+          wafDetected: data.wafDetected,
+          captchaDetected: data.captchaDetected,
+          retries: data.retries,
+          target: data.target,
+        };
+        setEvents(prev => [event, ...prev].slice(0, 100));
+      } catch { /* ignore parse errors */ }
+    });
+
+    return () => {
+      es.close();
+      setConnected(false);
+    };
+  }, []);
+
+  // Auto-scroll to top (newest events are prepended)
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [events.length]);
+
+  const statusColor = (code?: number) => {
+    if (!code) return "text-muted-foreground";
+    if (code >= 200 && code < 300) return "text-green-600";
+    if (code === 429) return "text-amber-500";
+    if (code >= 400) return "text-red-500";
+    if (code >= 500) return "text-red-600";
+    return "text-muted-foreground";
+  };
+
+  return (
+    <div className="rounded-xl border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Radio className="w-4 h-4 text-blue-500" />
+          <h2 className="text-sm font-semibold">Real-Time Request Waterfall</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          {events.length > 0 && (
+            <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => setEvents([])}>
+              Clear
+            </Button>
+          )}
+          <Badge
+            variant="outline"
+            className={cn("text-xs gap-1", connected
+              ? "bg-green-500/15 text-green-600 border-green-500/30"
+              : "bg-muted text-muted-foreground"
+            )}
+          >
+            <CircleDot className={cn("w-2.5 h-2.5", connected && "animate-pulse")} />
+            {connected ? "Live" : "Connecting…"}
+          </Badge>
+        </div>
+      </div>
+      <div ref={listRef} className="overflow-y-auto" style={{ maxHeight: 320 }}>
+        {events.length === 0 ? (
+          <div className="px-4 py-10 text-center text-xs text-muted-foreground">
+            Waiting for requests… Start a scan to see live traffic here.
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-muted/60 backdrop-blur-sm border-b z-10">
+              <tr className="text-muted-foreground">
+                <th className="px-3 py-2 text-left font-medium w-20">Time</th>
+                <th className="px-3 py-2 text-left font-medium w-12">Method</th>
+                <th className="px-3 py-2 text-left font-medium">URL</th>
+                <th className="px-3 py-2 text-right font-medium w-14">Status</th>
+                <th className="px-3 py-2 text-right font-medium w-16">Latency</th>
+                <th className="px-3 py-2 text-right font-medium w-12">Retries</th>
+                <th className="px-3 py-2 text-left font-medium w-16">Flags</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map(ev => (
+                <tr
+                  key={ev.id}
+                  className={cn(
+                    "border-b last:border-0 transition-colors",
+                    ev.wafDetected ? "bg-red-500/5" : ev.captchaDetected ? "bg-amber-500/5" : "hover:bg-muted/30"
+                  )}
+                >
+                  <td className="px-3 py-1.5 text-muted-foreground tabular-nums">
+                    {new Date(ev.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono font-semibold">{ev.method}</td>
+                  <td className="px-3 py-1.5 font-mono max-w-0 truncate" title={ev.url}>
+                    {ev.url.replace(/^https?:\/\//, "").slice(0, 80)}
+                  </td>
+                  <td className={cn("px-3 py-1.5 text-right font-mono font-bold", statusColor(ev.statusCode))}>
+                    {ev.statusCode ?? "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-muted-foreground tabular-nums">
+                    {ev.latencyMs != null ? `${Math.round(ev.latencyMs)}ms` : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    {(ev.retries ?? 0) > 0 ? (
+                      <span className="text-amber-500 font-semibold">{ev.retries}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <div className="flex gap-1">
+                      {ev.wafDetected && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-red-500/10 text-red-600 border-red-500/30">WAF</Badge>}
+                      {ev.captchaDetected && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-amber-500/10 text-amber-600 border-amber-500/30">CAPTCHA</Badge>}
+                      {ev.proxyId && !ev.wafDetected && !ev.captchaDetected && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-blue-500/10 text-blue-600 border-blue-500/30">Proxy</Badge>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ─── Main Page ───────────────────────────────────────────────────────── */
@@ -210,7 +371,8 @@ export default function ScanOrchestrationPage() {
             <StatCard label="Healthy Proxies"   value={p?.activeProxies ?? 0}                  icon={Wifi}        color="text-green-600" />
             <StatCard label="Cooling Proxies"   value={p?.coolingProxies ?? 0}                 icon={Clock}       color="text-amber-500" />
             <StatCard label="Inactive Proxies"  value={p?.inactiveProxies ?? 0}                icon={WifiOff}     color="text-red-500" />
-            <StatCard label="Requests / sec"    value={r?.reqPerSecond ?? 0}                   icon={Zap}         color="text-blue-500" sub="last 5 min" />
+            {/* Issue 8: subtitle was "last 5 min" — actual window is last 60 s */}
+            <StatCard label="Requests / sec"    value={r?.reqPerSecond ?? 0}                   icon={Zap}         color="text-blue-500" sub="last 60 s" />
             <StatCard label="Avg Latency"       value={r?.avgLatencyMs != null ? `${r.avgLatencyMs}ms` : "—"} icon={Timer} color="text-indigo-500" sub={`p95: ${r?.p95LatencyMs != null ? `${r.p95LatencyMs}ms` : "—"}`} />
             <StatCard label="429 Rate Limited"  value={r?.count429 ?? 0}                       icon={TrendingDown} color={r?.count429 ? "text-amber-500" : "text-muted-foreground"} sub="last 30 min" />
             <StatCard label="403 Blocked"       value={r?.count403 ?? 0}                       icon={Server}      color={r?.count403 ? "text-red-500" : "text-muted-foreground"} sub="last 30 min" />
@@ -219,6 +381,9 @@ export default function ScanOrchestrationPage() {
           </>
         )}
       </div>
+
+      {/* Issue 4: Real-time Waterfall Widget */}
+      <WaterfallWidget />
 
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

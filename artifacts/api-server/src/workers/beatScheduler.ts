@@ -1059,6 +1059,23 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     _intervalHandle = setInterval(beatPoll, 60 * 1_000);
     logger.info("Beat scheduler polling started (60 s interval)");
   }, 30_000);
+
+  // Issue 5: Proxy score decay — runs every 6 hours to decay idle proxy health scores.
+  // Proxies that haven't been used for 6+ hours have their scores decayed to avoid
+  // stale high scores on proxies that haven't been validated recently.
+  const runProxyDecay = async () => {
+    try {
+      const { decayIdleProxyScores } = await import("../lib/proxyManager.js");
+      await decayIdleProxyScores();
+    } catch (err) {
+      logger.warn({ err }, "Beat: proxy decay job failed (non-fatal)");
+    }
+  };
+  // Start after 2 min (let server warm up), then every 6 hours
+  setTimeout(() => {
+    runProxyDecay().catch(() => {});
+    setInterval(runProxyDecay, 6 * 60 * 60_000);
+  }, 2 * 60_000);
 }
 
 export async function stopBeatScheduler(): Promise<void> {
