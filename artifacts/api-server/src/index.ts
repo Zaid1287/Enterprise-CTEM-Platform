@@ -7,9 +7,9 @@ import { getRedis, setRuntimeRedisUrl } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startBeatScheduler } from "./workers/beatScheduler";
-import { db, platformSettingsTable } from "@workspace/db";
+import { db, platformSettingsTable, brandThreatScansTable } from "@workspace/db";
 import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { WebSocketServer } from "ws";
 import { scanProgressSockets, attackRunSockets } from "./routes/aiMapper";
 import { verifyToken } from "./lib/auth";
@@ -24,6 +24,25 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+/** On startup: reset any brand threat scans left in running/pending state by a prior process. */
+async function resetStuckBrandThreatScans(): Promise<void> {
+  try {
+    const updated = await db.update(brandThreatScansTable)
+      .set({
+        status: "error",
+        error: "Server restarted while scan was in progress. Please start a new scan.",
+        completedAt: new Date(),
+      })
+      .where(inArray(brandThreatScansTable.status, ["running", "pending"]))
+      .returning({ id: brandThreatScansTable.id });
+    if (updated.length > 0) {
+      logger.warn({ ids: updated.map(r => r.id) }, "Startup: reset stuck brand threat scans to error");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Could not reset stuck brand threat scans on startup (non-fatal)");
+  }
 }
 
 async function initStripe() {
@@ -94,6 +113,7 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  resetStuckBrandThreatScans().catch(e => logger.error({ err: e }, "Stuck scan reset error"));
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
   initStripe().catch(e => logger.error({ err: e }, "Stripe init error"));
 

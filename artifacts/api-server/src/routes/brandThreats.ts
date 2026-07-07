@@ -510,6 +510,7 @@ router.post("/brand-threats/:id/rescan", requireAuth, async (req: AuthenticatedR
 
   const { triggerBrandThreatScan } = await import("../lib/brandThreatRunner");
   const newScan = await triggerBrandThreatScan(existing.tenantId, existing.domain);
+  if (!newScan) { res.status(409).json({ error: "A scan is already running for this domain" }); return; }
   res.status(201).json(toScanResponse(newScan));
 });
 

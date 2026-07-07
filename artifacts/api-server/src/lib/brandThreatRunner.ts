@@ -91,7 +91,7 @@ async function runDnstwistBinary(domain: string): Promise<PermResult[]> {
   const { stdout } = await execFileAsync(
     "dnstwist",
     ["--format", "json", "--threads", "20", domain],
-    { timeout: 180_000, maxBuffer: 20 * 1024 * 1024 },
+    { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 },
   );
   const raw = JSON.parse(stdout) as Array<{
     fuzzer: string;
@@ -568,14 +568,19 @@ export async function runBrandThreatScan(scanId: number, domain: string): Promis
 
     // Separate live (A-record) results for enrichment that needs IPs
     const liveResults = permResults.filter(r => r.dnsA.length > 0);
+    // Resolved = any domain with at least one DNS record (A, AAAA, MX, or NS).
+    // RDAP only runs on these — running it on all 300+ permutations is too slow.
+    const resolvedResults = permResults.filter(r =>
+      r.dnsA.length > 0 || r.dnsAaaa.length > 0 || r.dnsMx.length > 0 || r.dnsNs.length > 0,
+    );
 
-    logger.info({ scanId, domain, total: permResults.length, live: liveResults.length }, "Permutation phase done; starting enrichment");
+    logger.info({ scanId, domain, total: permResults.length, live: liveResults.length, resolved: resolvedResults.length }, "Permutation phase done; starting enrichment");
 
-    // ── Phase 2: RDAP (all permutations) + GeoIP/VT/Phishing (live only) ──────
+    // ── Phase 2: RDAP (resolved only) + GeoIP/VT/Phishing (live only) ──────────
     const allIps = [...new Set(liveResults.flatMap(r => r.dnsA))];
 
     const [rdapMap, geoMap, vtMap, phishMap] = await Promise.all([
-      runRdapEnrichment(permResults),            // RDAP runs on ALL permutations — not just live
+      runRdapEnrichment(resolvedResults),        // RDAP only on domains with DNS records
       geoIpBatch(allIps),
       vtApiKey ? runVtEnrichment(liveResults, vtApiKey) : Promise.resolve(new Map()),
       runPhishingChecks(liveResults, gsbKey),
@@ -1104,7 +1109,7 @@ export async function triggerBrandThreatScan(
   tenantId: number,
   domain: string,
   pipelineScanId?: number,
-): Promise<void> {
+): Promise<typeof brandThreatScansTable.$inferSelect | null> {
   const existing = await db
     .select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status })
     .from(brandThreatScansTable)
@@ -1116,7 +1121,7 @@ export async function triggerBrandThreatScan(
   const active = existing.find(s => s.status === "running" || s.status === "pending");
   if (active) {
     logger.info({ tenantId, domain, activeScanId: active.id }, "Brand threat scan already in progress — skipping auto-trigger");
-    return;
+    return null;
   }
 
   const [scan] = await db.insert(brandThreatScansTable).values({
@@ -1128,4 +1133,5 @@ export async function triggerBrandThreatScan(
 
   logger.info({ scanId: scan!.id, domain, pipelineScanId }, "Auto-triggered brand threat scan from pipeline");
   setImmediate(() => { void runBrandThreatScan(scan!.id, domain); });
+  return scan!;
 }
