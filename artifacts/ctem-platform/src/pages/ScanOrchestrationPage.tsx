@@ -377,7 +377,7 @@ export default function ScanOrchestrationPage() {
             <StatCard label="429 Rate Limited"  value={r?.count429 ?? 0}                       icon={TrendingDown} color={r?.count429 ? "text-amber-500" : "text-muted-foreground"} sub="last 30 min" />
             <StatCard label="403 Blocked"       value={r?.count403 ?? 0}                       icon={Server}      color={r?.count403 ? "text-red-500" : "text-muted-foreground"} sub="last 30 min" />
             <StatCard label="Open Circuits"     value={stats?.circuits?.open ?? 0}             icon={ShieldX}     color={stats?.circuits?.open ? "text-red-500" : "text-green-600"} sub={`${stats?.circuits?.total ?? 0} total`} />
-            <StatCard label="Retry Queue"       value={stats?.retryQueueSize ?? 0}             icon={RotateCcw}   color={stats?.retryQueueSize ? "text-amber-500" : "text-muted-foreground"} sub="last 5 min" />
+            <StatCard label="Retry Queue"       value={stats?.retryQueueSize ?? 0}             icon={RotateCcw}   color={stats?.retryQueueSize ? "text-amber-500" : "text-muted-foreground"} sub="last 60 s" />
           </>
         )}
       </div>

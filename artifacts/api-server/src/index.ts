@@ -1,6 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { scheduleRetestCoolingProxies } from "./lib/proxyManager";
+import { initCircuitBreaker } from "./lib/circuitBreaker";
+import { initRateLimiter } from "./lib/adaptiveRateLimiter";
 import { bootstrapNucleiTemplates } from "./lib/nucleiScanner";
 import { warmBrowser } from "./lib/screenshotEngine";
 import { seedPlatformOnStartup } from "./lib/seedPlatform";
@@ -279,6 +281,8 @@ const server = app.listen(port, (err) => {
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
   seedOrchestratorDefaults().catch(e => logger.error({ err: e }, "Orchestrator seed error"));
   scheduleRetestCoolingProxies().catch(e => logger.error({ err: e }, "Proxy retest scheduler error"));
+  initCircuitBreaker().catch(e => logger.error({ err: e }, "Circuit breaker state restore error"));
+  initRateLimiter().catch(e => logger.error({ err: e }, "Rate limiter state restore error"));
   initStripe().catch(e => logger.error({ err: e }, "Stripe init error"));
 
   // ── Load Redis URL from platform settings (if not in env), then start workers

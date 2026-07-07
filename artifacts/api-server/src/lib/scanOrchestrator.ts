@@ -87,6 +87,61 @@ async function loadProfiles(): Promise<Array<{ id: number; headers: Record<strin
   }
 }
 
+// ── Issue 4b: WAF-protected host registry ────────────────────────────────────
+// When all retries consistently return WAF responses, the hostname is persisted
+// in orchestrator_config (key "waf_host:{hostname}") with a 24h TTL. On the
+// next request to that host, WAF-bypass mode is pre-activated from attempt 1
+// (instead of waiting for the first detection), and the state survives restarts.
+
+const wafHostCache = new Map<string, number>(); // hostname → markedAt epoch ms
+const WAF_HOST_TTL_MS      = 24 * 60 * 60_000; // 24 h
+const WAF_CACHE_REFRESH_MS =  5 * 60_000;       // re-read DB every 5 min
+let _wafCacheLoadedAt      = 0;
+
+async function refreshWafHostCache(): Promise<void> {
+  try {
+    const rows = await db.select({ key: orchestratorConfigTable.key, updatedAt: orchestratorConfigTable.updatedAt })
+      .from(orchestratorConfigTable);
+    const now = Date.now();
+    wafHostCache.clear();
+    for (const row of rows) {
+      if (!row.key.startsWith("waf_host:")) continue;
+      const markedAt = row.updatedAt.getTime();
+      if (now - markedAt < WAF_HOST_TTL_MS) wafHostCache.set(row.key.slice(9), markedAt);
+    }
+    _wafCacheLoadedAt = now;
+  } catch { /* non-fatal */ }
+}
+
+async function isHostWafProtected(hostname: string): Promise<boolean> {
+  if (Date.now() - _wafCacheLoadedAt > WAF_CACHE_REFRESH_MS) {
+    await refreshWafHostCache();
+  }
+  const markedAt = wafHostCache.get(hostname);
+  return !!markedAt && (Date.now() - markedAt < WAF_HOST_TTL_MS);
+}
+
+export async function markHostWafProtected(hostname: string): Promise<void> {
+  const key   = `waf_host:${hostname}`;
+  const value = JSON.stringify({ hostname, markedAt: new Date().toISOString(), source: "auto_detection" });
+  try {
+    await db.insert(orchestratorConfigTable)
+      .values({ key, value, description: `Auto-detected WAF for ${hostname}` })
+      .onConflictDoUpdate({ target: orchestratorConfigTable.key, set: { value, updatedAt: new Date() } });
+    wafHostCache.set(hostname, Date.now());
+    logger.warn({ hostname }, "Orchestrator: host marked as WAF-protected in DB (24h TTL)");
+  } catch (err) {
+    logger.warn({ err, hostname }, "Orchestrator: failed to persist WAF host flag");
+  }
+}
+
+export function getWafProtectedHosts(): Array<{ hostname: string; markedAt: number }> {
+  const now = Date.now();
+  return [...wafHostCache.entries()]
+    .filter(([, t]) => now - t < WAF_HOST_TTL_MS)
+    .map(([hostname, markedAt]) => ({ hostname, markedAt }));
+}
+
 // ── Issue 6: Fingerprint crash guard ─────────────────────────────────────────
 // Validate that headers from the DB jsonb column are a flat Record<string, string>.
 // Handles null, non-object, nested objects, numeric values, etc.
@@ -246,8 +301,12 @@ export async function orchestratedFetch(
   let backoffMs = 0;
   let statusCode: number | undefined;
   const maxRetries = config.maxRetries;
-  // ── Issue 7: WAF bypass state ─────────────────────────────────────────────
-  let lastWafDetected = false;
+
+  // ── Issue 4: WAF bypass state — pre-activate if host is known WAF-protected ──
+  // If a previous scan already exhausted all retries with WAF detections, we skip
+  // the "cold" first attempt and go straight to bypass mode on retry 1.
+  let lastWafDetected = await isHostWafProtected(hostname);
+  let wafHitCount     = 0; // tracks how many attempts triggered WAF in this call
 
   while (attemptNumber <= maxRetries) {
     // ── Issue 7: WAF bypass — on next retry after WAF, rotate profile + proxy ──
@@ -304,6 +363,7 @@ export async function orchestratedFetch(
       wafDetected     = analysis.wafDetected;
       captchaDetected = analysis.captchaDetected;
       lastWafDetected = wafDetected;
+      if (wafDetected) wafHitCount++;
 
       const setCookieHeader = response.headers.get("set-cookie");
       if (setCookieHeader) storeCookies(url, [setCookieHeader]);
@@ -415,6 +475,13 @@ export async function orchestratedFetch(
       logger.debug({ url, attemptNumber, backoffMs, err: err?.message }, "Orchestrator retrying after error");
       await sleep(backoffMs);
     }
+  }
+
+  // ── Issue 4: Mark host as WAF-protected when all retries consistently hit WAF ──
+  // Threshold: WAF detected on ≥ 2 attempts AND > half of total attempts.
+  // Stored in orchestrator_config with 24h TTL so bypass pre-activates next time.
+  if (wafHitCount >= 2 && wafHitCount > attemptNumber / 2 && config.wafBypassEnabled) {
+    markHostWafProtected(hostname).catch(() => {});
   }
 
   throw lastError ?? new Error(`orchestratedFetch exhausted ${maxRetries + 1} attempts: ${url}`);

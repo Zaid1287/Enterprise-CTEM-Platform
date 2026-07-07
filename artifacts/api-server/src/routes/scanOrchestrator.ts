@@ -6,7 +6,7 @@ import { healthCheckProxy } from "../lib/proxyHealthCheck.js";
 import { getAllCircuits } from "../lib/circuitBreaker.js";
 import { getAllRateLimiterStats } from "../lib/adaptiveRateLimiter.js";
 import { getDnsResolverStats } from "../lib/dnsResolverPool.js";
-import { invalidateConfigCache } from "../lib/scanOrchestrator.js";
+import { invalidateConfigCache, getWafProtectedHosts } from "../lib/scanOrchestrator.js";
 import { addWaterfallSseClient, removeWaterfallSseClient } from "../lib/sseManager.js";
 import { logger } from "../lib/logger.js";
 
@@ -530,6 +530,7 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
       rateLimiters: rateLimiterStats.slice(0, 20),
       dnsResolvers: dnsStats,
       hostStats,
+      wafProtectedHosts: getWafProtectedHosts().slice(0, 50),
     });
   } catch (err) {
     logger.error({ err }, "GET /api/scan-telemetry/stats error");

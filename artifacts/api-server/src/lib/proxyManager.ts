@@ -17,7 +17,9 @@ const LATENCY_BONUS = +1;
 const COOLDOWN_FAILURES = 5;
 const COOLDOWN_DURATION_MS = 30 * 60 * 1_000;
 
-// ── Issue 2: Select proxy returning credentials too ───────────────────────────
+// Re-ping a proxy if it hasn't been tested in the last hour before trusting its score
+const STALE_TEST_THRESHOLD_MS = 60 * 60 * 1_000; // 1 hour
+
 export async function selectHealthiestProxy(
   excludeProxyId?: number,
 ): Promise<{ id: number; ip: string; port: number; healthScore: number; username: string | null; password: string | null } | null> {
@@ -31,6 +33,7 @@ export async function selectHealthiestProxy(
         healthScore: scanProxiesTable.healthScore,
         username:    scanProxiesTable.username,
         password:    scanProxiesTable.password,
+        lastTestedAt: scanProxiesTable.lastTestedAt,
       })
       .from(scanProxiesTable)
       .where(
@@ -42,16 +45,52 @@ export async function selectHealthiestProxy(
       .orderBy(scanProxiesTable.healthScore);
 
     const active = proxies.filter(p => p.healthScore > 0 && p.id !== excludeProxyId);
-    if (active.length === 0) {
-      // Fall back to any active proxy if exclusion leaves nothing
-      const fallback = proxies.filter(p => p.healthScore > 0);
-      if (fallback.length === 0) return null;
-      fallback.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0));
-      return fallback[0] ?? null;
+    let candidates = active.length > 0 ? active : proxies.filter(p => p.healthScore > 0);
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0));
+    let best = candidates[0]!;
+
+    // ── Issue 3: Force re-ping before trusting a stale score ─────────────────
+    // If the proxy hasn't been tested in the last hour, ping it now before
+    // returning it so callers don't get handed a dead proxy with an old high score.
+    const lastTested = best.lastTestedAt ? best.lastTestedAt.getTime() : 0;
+    const isStale = Date.now() - lastTested > STALE_TEST_THRESHOLD_MS;
+
+    if (isStale) {
+      logger.debug({ ip: best.ip, lastTestedAt: best.lastTestedAt }, "Proxy: stale score — re-pinging before selection");
+      const result = await healthCheckProxy(best.ip, best.port ?? 8080);
+
+      if (result.reachable) {
+        // Reward the re-ping with a small score bump toward 100
+        const reboundScore = Math.min(100, (best.healthScore ?? 50) + 3);
+        await db.update(scanProxiesTable)
+          .set({ healthScore: reboundScore, lastTestedAt: new Date(), avgLatencyMs: result.latencyMs })
+          .where(eq(scanProxiesTable.id, best.id));
+        best = { ...best, healthScore: reboundScore };
+        logger.debug({ ip: best.ip, reboundScore }, "Proxy re-ping passed — score updated");
+      } else {
+        // Re-ping failed — decay immediately and try the next candidate
+        const decayedScore = Math.max(0, (best.healthScore ?? 50) - 15);
+        const updates: Partial<typeof scanProxiesTable.$inferInsert> = {
+          healthScore: decayedScore,
+          lastTestedAt: new Date(),
+        };
+        if (decayedScore <= 0) {
+          updates.status = "inactive";
+          updates.cooldownUntil = new Date(Date.now() + COOLDOWN_DURATION_MS);
+        }
+        await db.update(scanProxiesTable).set(updates as any).where(eq(scanProxiesTable.id, best.id));
+        logger.warn({ ip: best.ip, decayedScore }, "Proxy re-ping failed — score decayed, trying next");
+
+        // Fall back to next candidate
+        const fallback = candidates.find(p => p.id !== best.id);
+        if (!fallback) return null;
+        return { id: fallback.id, ip: fallback.ip, port: fallback.port, healthScore: fallback.healthScore, username: fallback.username, password: fallback.password };
+      }
     }
 
-    active.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0));
-    return active[0] ?? null;
+    return { id: best.id, ip: best.ip, port: best.port, healthScore: best.healthScore, username: best.username, password: best.password };
   } catch (err) {
     logger.warn({ err }, "proxyManager: selectHealthiestProxy failed");
     return null;
@@ -167,13 +206,13 @@ export async function scheduleRetestCoolingProxies(): Promise<void> {
   logger.info("Proxy retest scheduler started (interval: 5 min)");
 }
 
-// ── Issue 5: Proxy score decay on idle ────────────────────────────────────────
-// Active proxies that haven't been used in 6+ hours have their health scores
-// decayed by DECAY_AMOUNT per cycle. This ensures stale proxies don't remain
-// at artificially high scores without being validated.
+// ── Issue 3: Proxy score decay on idle ─────────────────────────────────────────
+// Every 6h: subtract (100 − currentScore) * 0.1 from active proxies not recently
+// used. This converges idle scores toward zero asymptotically — low-scored proxies
+// die fast, high-scored ones persist longer (giving them a chance to be re-pinged
+// by selectHealthiestProxy before they finally vanish).
 export async function decayIdleProxyScores(): Promise<void> {
   const IDLE_THRESHOLD_MS = 6 * 60 * 60_000; // 6 hours
-  const DECAY_AMOUNT = 5; // points per 6h cycle
 
   try {
     const idleThreshold = new Date(Date.now() - IDLE_THRESHOLD_MS);
@@ -184,25 +223,29 @@ export async function decayIdleProxyScores(): Promise<void> {
       .where(
         and(
           eq(scanProxiesTable.status, "active"),
-          // Use last_tested_at if available, otherwise fall back to created_at
           sql`coalesce(last_tested_at, created_at) < ${idleThreshold}`,
         )
       );
 
     if (idleProxies.length === 0) return;
 
+    let decayed = 0;
     for (const proxy of idleProxies) {
-      const newScore = Math.max(0, (proxy.healthScore ?? 100) - DECAY_AMOUNT);
+      const current = proxy.healthScore ?? 100;
+      // Issue 3 formula: (100 − currentScore) × 0.1 — low-scored proxies decay faster
+      const decayAmount = Math.max(1, (100 - current) * 0.1);
+      const newScore = Math.max(0, current - decayAmount);
+
       const updates: Partial<typeof scanProxiesTable.$inferInsert> = { healthScore: newScore };
-      if (newScore <= 0) {
-        updates.status = "inactive";
-      }
+      if (newScore <= 0) updates.status = "inactive";
+
       await db.update(scanProxiesTable)
         .set(updates as any)
         .where(eq(scanProxiesTable.id, proxy.id));
+      decayed++;
     }
 
-    logger.info({ count: idleProxies.length, decayAmount: DECAY_AMOUNT }, "Proxy decay: applied idle health score decay");
+    logger.info({ count: decayed }, "Proxy decay: applied idle health score decay (formula: (100-score)*0.1)");
   } catch (err) {
     logger.warn({ err }, "proxyManager: decayIdleProxyScores failed");
   }
