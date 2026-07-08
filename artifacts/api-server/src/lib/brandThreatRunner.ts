@@ -895,12 +895,27 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
     }
     const uniqueTerms = [...new Set(intelxTerms)].slice(0, 5);
 
-    const youtubeApiKey  = await getPlatformSetting("youtube_api_key");
-    const metaAdsToken   = await getPlatformSetting("meta_ads_access_token");
+    const [youtubeApiKey, metaAdsToken, twitterBearerToken, instagramGraphToken, tiktokResearchToken] = await Promise.all([
+      getPlatformSetting("youtube_api_key"),
+      getPlatformSetting("meta_ads_access_token"),
+      getPlatformSetting("twitter_x_bearer_token"),
+      getPlatformSetting("instagram_graph_api_token"),
+      getPlatformSetting("tiktok_research_api_token"),
+    ]);
 
     const [hibpResult, brandAbuseList, metaAdsList] = await Promise.all([
       hibpDomainLookup(domain, hibpKey ?? undefined),  // always runs; without key uses public /breaches fallback
-      scanBrandAbuse(brandName, domain, watchlistItems.filter(w => w.type === "social_handle").map(w => w.value), youtubeApiKey ?? undefined),
+      scanBrandAbuse(
+        brandName,
+        domain,
+        watchlistItems.filter(w => w.type === "social_handle").map(w => w.value),
+        {
+          youtubeApiKey: youtubeApiKey ?? undefined,
+          twitterBearerToken: twitterBearerToken ?? undefined,
+          instagramGraphToken: instagramGraphToken ?? undefined,
+          tiktokResearchToken: tiktokResearchToken ?? undefined,
+        },
+      ),
       metaAdsToken ? scanMetaAds(brandName, domain, metaAdsToken) : Promise.resolve([]),
     ]);
     const intelxResultArrays = intelxKey

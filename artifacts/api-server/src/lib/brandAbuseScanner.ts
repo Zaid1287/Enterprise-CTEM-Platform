@@ -2,6 +2,9 @@ import { logger } from "./logger";
 import { orchestratedFetch } from "./scanOrchestrator";
 // @ts-ignore — google-play-scraper ships CJS; the types are bundled
 import gplay from "google-play-scraper";
+import { scanTwitterBrandAbuse } from "./twitterScanner";
+import { scanInstagramBrandAbuse } from "./instagramScanner";
+import { scanTikTokBrandAbuse } from "./tiktokScanner";
 
 export interface BrandAbuseResult {
   type: string;
@@ -15,15 +18,28 @@ export interface BrandAbuseResult {
   risk: string;
 }
 
+export interface BrandAbuseScanOptions {
+  youtubeApiKey?: string;
+  twitterBearerToken?: string;
+  instagramGraphToken?: string;
+  tiktokResearchToken?: string;
+}
+
 export async function scanBrandAbuse(
   brand: string,
   domain: string,
   socialHandles: string[] = [],
-  youtubeApiKey?: string,
+  youtubeApiKeyOrOptions?: string | BrandAbuseScanOptions,
 ): Promise<BrandAbuseResult[]> {
   const results: BrandAbuseResult[] = [];
 
-  await Promise.allSettled([
+  // Accept both legacy positional string arg and new options object
+  const opts: BrandAbuseScanOptions =
+    typeof youtubeApiKeyOrOptions === "string"
+      ? { youtubeApiKey: youtubeApiKeyOrOptions }
+      : (youtubeApiKeyOrOptions ?? {});
+
+  const tasks: Promise<unknown>[] = [
     checkCertTransparencyAbuse(brand, domain, results),
     checkDNSTwistLookalikePatterns(brand, domain, results),
     checkAppleAppStore(brand, results),
@@ -34,10 +50,36 @@ export async function scanBrandAbuse(
     checkHuaweiAppGallery(brand, results),
     checkAmazonAppstore(brand, results),
     checkJailbreakRepos(brand, results),
-    checkYouTubeAbuse(brand, results, youtubeApiKey),
+    checkYouTubeAbuse(brand, results, opts.youtubeApiKey),
     checkRedditAbuse(brand, domain, results),
     ...socialHandles.map(handle => checkSocialHandle(handle, brand, results)),
-  ]);
+  ];
+
+  if (opts.twitterBearerToken) {
+    tasks.push(
+      scanTwitterBrandAbuse(brand, opts.twitterBearerToken)
+        .then(r => results.push(...r))
+        .catch(e => logger.debug({ brand, err: String(e) }, "Twitter scanner failed")),
+    );
+  }
+
+  if (opts.instagramGraphToken) {
+    tasks.push(
+      scanInstagramBrandAbuse(brand, opts.instagramGraphToken)
+        .then(r => results.push(...r))
+        .catch(e => logger.debug({ brand, err: String(e) }, "Instagram scanner failed")),
+    );
+  }
+
+  if (opts.tiktokResearchToken) {
+    tasks.push(
+      scanTikTokBrandAbuse(brand, opts.tiktokResearchToken)
+        .then(r => results.push(...r))
+        .catch(e => logger.debug({ brand, err: String(e) }, "TikTok scanner failed")),
+    );
+  }
+
+  await Promise.allSettled(tasks);
 
   return results;
 }
