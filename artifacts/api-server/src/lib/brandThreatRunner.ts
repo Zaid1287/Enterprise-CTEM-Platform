@@ -547,9 +547,11 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
         .set({ status: "running", progress: 20 })
         .where(eq(brandThreatScansTable.id, scanId));
 
-      // Clear any partial secondary data written before the server was restarted
+      // Clear any partial secondary data written before the server was restarted.
+      // Use isNull(archivedAt) so we only remove the new partial rows, never the
+      // archived rows from the previous scan run on the same scanId.
       await Promise.all([
-        db.delete(brandThreatResultsTable).where(eq(brandThreatResultsTable.scanId, scanId)),
+        db.delete(brandThreatResultsTable).where(and(eq(brandThreatResultsTable.scanId, scanId), isNull(brandThreatResultsTable.archivedAt))),
         db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, scanId)),
         db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, scanId)),
         db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, scanId)),
