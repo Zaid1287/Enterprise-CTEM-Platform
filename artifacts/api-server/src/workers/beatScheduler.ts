@@ -358,7 +358,7 @@ async function dispatchDueSchedules(): Promise<void> {
   }
 }
 
-function computeWatchlistNextScanAt(
+export function computeWatchlistNextScanAt(
   frequency: string,
   from: Date,
   scanTime?: string | null,
@@ -396,7 +396,7 @@ function computeWatchlistNextScanAt(
   return null;
 }
 
-async function dispatchDueWatchlistDomains(): Promise<void> {
+export async function dispatchDueWatchlistDomains(): Promise<void> {
   const now = new Date();
   const dueItems = await db
     .select()
