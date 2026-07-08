@@ -52,3 +52,14 @@ export function pushWaterfallEvent(tenantId: number, data: unknown): void {
   }
   for (const r of dead) removeWaterfallSseClient(tenantId, r);
 }
+
+export function pushWaterfallDegradedEvent(tenantId: number, data: unknown): void {
+  const clients = waterfallConnections.get(tenantId);
+  if (!clients || clients.size === 0) return;
+  const msg = `event: telemetry:degraded_mode\ndata: ${JSON.stringify(data)}\n\n`;
+  const dead: Response[] = [];
+  for (const res of clients) {
+    try { res.write(msg); } catch { dead.push(res); }
+  }
+  for (const r of dead) removeWaterfallSseClient(tenantId, r);
+}

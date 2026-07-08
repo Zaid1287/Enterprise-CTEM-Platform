@@ -30,6 +30,7 @@ interface TelemetryRow {
   wafDetected: boolean;
   captchaDetected: boolean;
   bytesDownloaded: number | null;
+  degradedMode: boolean;
   createdAt: string;
 }
 
@@ -241,20 +242,21 @@ export default function ScanTelemetryPage() {
                 <th className="px-3 py-2.5 text-right font-medium">Backoff</th>
                 <th className="px-3 py-2.5 text-center font-medium">WAF</th>
                 <th className="px-3 py-2.5 text-center font-medium">Captcha</th>
+                <th className="px-3 py-2.5 text-center font-medium">Degraded</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 Array.from({ length: 10 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 13 }).map((__, j) => (
+                    {Array.from({ length: 14 }).map((__, j) => (
                       <td key={j} className="px-3 py-2"><Skeleton className="h-3.5 w-full" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-12 text-center text-muted-foreground">
+                  <td colSpan={14} className="px-3 py-12 text-center text-muted-foreground">
                     {total === 0
                       ? "No telemetry yet — records appear once scans run."
                       : "No records match the current filters."}
@@ -272,7 +274,7 @@ export default function ScanTelemetryPage() {
                 return (
                   <tr key={row.id} className={cn(
                     "border-b last:border-0 hover:bg-muted/30 transition-colors",
-                    row.wafDetected && "bg-red-500/5",
+                    row.degradedMode ? "bg-orange-500/8" : row.wafDetected && "bg-red-500/5",
                   )}>
                     <td className="px-3 py-2 whitespace-nowrap font-mono text-muted-foreground">
                       {new Date(row.createdAt).toLocaleString()}
@@ -331,6 +333,12 @@ export default function ScanTelemetryPage() {
                     <td className="px-3 py-2 text-center">
                       {row.captchaDetected
                         ? <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mx-auto" />
+                        : <span className="text-muted-foreground/30">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {row.degradedMode
+                        ? <Badge variant="outline" className="text-[10px] px-1 py-0 bg-orange-500/10 text-orange-600 border-orange-500/30" title="Bootstrap failed — plain fetch() used, no proxy/fingerprint rotation">DEGRADED</Badge>
                         : <span className="text-muted-foreground/30">—</span>
                       }
                     </td>

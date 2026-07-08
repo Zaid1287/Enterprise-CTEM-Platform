@@ -9,7 +9,7 @@ import { getDelay, sleep, setDelayMultiplier, type ScanIntensity } from "./delay
 import { storeCookies, getCookieHeader } from "./cookieJar.js";
 import { analyzeResponse, type ResponseClassification } from "./responseAnalyzer.js";
 import { resolveWithRotation } from "./dnsResolverPool.js";
-import { pushWaterfallEvent } from "./sseManager.js";
+import { pushWaterfallEvent, pushWaterfallDegradedEvent } from "./sseManager.js";
 import { logger } from "./logger.js";
 import { fetch as undiciFetch, ProxyAgent, Agent } from "undici";
 import { dispatchNotifications } from "./notifier.js";
@@ -252,15 +252,18 @@ async function writeTelemetry(data: {
   wafDetected: boolean;
   captchaDetected: boolean;
   bytesDownloaded?: number;
+  degradedMode?: boolean;
 }): Promise<void> {
   try {
     await db.insert(scanRequestTelemetryTable).values(data as any);
     // Push to real-time waterfall SSE stream for any connected admins
     if (data.tenantId) {
-      pushWaterfallEvent(data.tenantId, {
-        ...data,
-        ts: Date.now(),
-      });
+      const payload = { ...data, ts: Date.now() };
+      if (data.degradedMode) {
+        pushWaterfallDegradedEvent(data.tenantId, payload);
+      } else {
+        pushWaterfallEvent(data.tenantId, payload);
+      }
     }
   } catch {
     // Telemetry write failure is non-fatal
@@ -408,6 +411,43 @@ export async function orchestratedFetch(
     // Log it, reset everything to safe defaults, and let the scan continue with
     // a direct plain fetch() so the pipeline is not silently aborted.
     logger.warn({ err: bootstrapErr, url, tenantId }, "orchestratedFetch: bootstrap error escaped all inner guards — falling back to plain fetch");
+
+    // Record the degraded-mode fallback in telemetry and notify connected admins
+    // so operators know this request bypassed proxies/fingerprint rotation.
+    const degradedPayload = {
+      tenantId: tenantId || undefined,
+      scanId:   ctx.scanId,
+      assetId:  ctx.assetId,
+      target:   ctx.target ?? (url ? extractHostname(url) : undefined),
+      method:   ((init.method ?? "GET") as string).toUpperCase(),
+      url,
+      retries:        0,
+      wafDetected:    false,
+      captchaDetected:false,
+      degradedMode:   true,
+    };
+    writeTelemetry(degradedPayload).catch(() => {});
+
+    if (tenantId) {
+      // Throttle: send the alert at most once per 5 minutes per tenant to avoid alert floods.
+      const _lastAlert = _lastLowProxyAlertAt.get(tenantId) ?? 0;
+      const now = Date.now();
+      if (now - _lastAlert > 5 * 60_000) {
+        _lastLowProxyAlertAt.set(tenantId, now);
+        dispatchNotifications({
+          tenantId,
+          eventType:      "orchestrator_event",
+          title:          "Orchestrator Degraded Mode",
+          message:        `The scan orchestrator fell back to a plain fetch() for ${url} due to an unexpected bootstrap error. Proxy rotation and fingerprint evasion are not active for this request. Check the server logs for details.`,
+          severity:       "high",
+          relatedAssetId: ctx.assetId,
+          scanId:         ctx.scanId,
+          assetName:      ctx.target ?? extractHostname(url),
+          domain:         extractHostname(url),
+        }).catch(() => {});
+      }
+    }
+
     return fetch(url, init) as Promise<Response>;
   }
   // ── End bootstrap phase ────────────────────────────────────────────────────

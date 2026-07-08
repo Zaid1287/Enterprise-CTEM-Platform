@@ -88,7 +88,7 @@ interface TelemetryResponse { rows: TelemetryRow[]; total: number; page: number;
 interface WaterfallEvent {
   id: string; ts: number; method: string; url: string; statusCode?: number;
   latencyMs?: number; proxyId?: number; wafDetected?: boolean;
-  captchaDetected?: boolean; retries?: number;
+  captchaDetected?: boolean; retries?: number; degradedMode?: boolean;
 }
 
 /* ─── Shared sub-components ──────────────────────────────────────────── */
@@ -156,7 +156,7 @@ function WaterfallWidget() {
     const es = new EventSource(url);
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
-    es.addEventListener("telemetry:request", (e: MessageEvent) => {
+    const parseWaterfallEvent = (e: MessageEvent, degradedMode?: boolean): void => {
       try {
         const data = JSON.parse(e.data);
         const event: WaterfallEvent = {
@@ -165,10 +165,13 @@ function WaterfallWidget() {
           statusCode: data.statusCode, latencyMs: data.latencyMs,
           proxyId: data.proxyId, wafDetected: data.wafDetected,
           captchaDetected: data.captchaDetected, retries: data.retries,
+          degradedMode: degradedMode ?? data.degradedMode,
         };
         setEvents(prev => [event, ...prev].slice(0, 100));
       } catch { /* ignore */ }
-    });
+    };
+    es.addEventListener("telemetry:request", (e: MessageEvent) => parseWaterfallEvent(e));
+    es.addEventListener("telemetry:degraded_mode", (e: MessageEvent) => parseWaterfallEvent(e, true));
     return () => { es.close(); setConnected(false); };
   }, []);
 
@@ -221,7 +224,7 @@ function WaterfallWidget() {
               {events.map(ev => (
                 <tr key={ev.id} className={cn(
                   "border-b last:border-0 transition-colors",
-                  ev.wafDetected ? "bg-red-500/5" : ev.captchaDetected ? "bg-amber-500/5" : "hover:bg-muted/30"
+                  ev.degradedMode ? "bg-orange-500/8" : ev.wafDetected ? "bg-red-500/5" : ev.captchaDetected ? "bg-amber-500/5" : "hover:bg-muted/30"
                 )}>
                   <td className="px-3 py-1.5 text-muted-foreground tabular-nums">
                     {new Date(ev.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -240,10 +243,11 @@ function WaterfallWidget() {
                     {(ev.retries ?? 0) > 0 ? <span className="text-amber-500 font-semibold">{ev.retries}</span> : "—"}
                   </td>
                   <td className="px-3 py-1.5">
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 flex-wrap">
+                      {ev.degradedMode && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-orange-500/10 text-orange-600 border-orange-500/30" title="Orchestrator bootstrap failed — request used plain fetch() with no proxy or fingerprint rotation">DEGRADED</Badge>}
                       {ev.wafDetected && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-red-500/10 text-red-600 border-red-500/30">WAF</Badge>}
                       {ev.captchaDetected && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-amber-500/10 text-amber-600 border-amber-500/30">CAPTCHA</Badge>}
-                      {ev.proxyId && !ev.wafDetected && !ev.captchaDetected && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-blue-500/10 text-blue-600 border-blue-500/30">Proxy</Badge>}
+                      {ev.proxyId && !ev.wafDetected && !ev.captchaDetected && !ev.degradedMode && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-blue-500/10 text-blue-600 border-blue-500/30">Proxy</Badge>}
                     </div>
                   </td>
                 </tr>

@@ -61,6 +61,7 @@ export const scanRequestTelemetryTable = pgTable("scan_request_telemetry", {
   wafDetected:           boolean("waf_detected").notNull().default(false),
   captchaDetected:       boolean("captcha_detected").notNull().default(false),
   bytesDownloaded:       integer("bytes_downloaded"),
+  degradedMode:          boolean("degraded_mode").notNull().default(false),
   createdAt:             timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
