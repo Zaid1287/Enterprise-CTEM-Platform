@@ -30,44 +30,72 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+const STUCK_SCAN_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
 /**
- * On startup: resume any brand threat scans that were interrupted by a server restart.
+ * On startup: recover brand threat scans that were interrupted by a server restart.
  *
- * - Scans that completed Phase 1 (checkpoint = "phase1_done") resume from Phase 2
- *   using the permutations already cached in DB — no re-running of dnstwist.
- * - Scans that hadn't finished Phase 1 restart from scratch (dnstwist re-runs).
- * - Scans marked "pending" (never started) also start fresh.
+ * - "running" scans older than 30 minutes are considered permanently stuck and are
+ *   reset to "error" — they will never self-recover and would block all future scans
+ *   for that domain if left in "running" state.
+ * - "running" scans younger than 30 minutes (or "pending" scans) are resumed:
+ *   - If Phase 1 completed (checkpoint = "phase1_done"), resume from Phase 2 cache.
+ *   - Otherwise restart from Phase 1 (dnstwist re-runs).
  */
 async function resumeOrResetStuckBrandThreatScans(): Promise<void> {
   try {
     const stuckScans = await db.select({
       id:                brandThreatScansTable.id,
       domain:            brandThreatScansTable.domain,
+      status:            brandThreatScansTable.status,
       checkpoint:        brandThreatScansTable.checkpoint,
       permutationsCache: brandThreatScansTable.permutationsCache,
+      createdAt:         brandThreatScansTable.createdAt,
     }).from(brandThreatScansTable)
       .where(inArray(brandThreatScansTable.status, ["running", "pending"]));
 
     if (stuckScans.length === 0) return;
 
-    logger.warn({ count: stuckScans.length }, "Startup: found interrupted brand threat scans — resuming");
+    const staleThreshold = new Date(Date.now() - STUCK_SCAN_THRESHOLD_MS);
+    const staleScans  = stuckScans.filter(s => s.status === "running" && s.createdAt < staleThreshold);
+    const freshScans  = stuckScans.filter(s => !staleScans.includes(s));
 
-    for (const scan of stuckScans) {
-      if (scan.checkpoint === "phase1_done" && scan.permutationsCache) {
-        // Phase 1 was already complete — resume from Phase 2 using cached permutations
-        const cachedPerms = scan.permutationsCache as PermResult[];
-        logger.info({ scanId: scan.id, domain: scan.domain, permCount: cachedPerms.length },
-          "Startup: resuming brand threat scan from Phase 1 checkpoint");
-        setImmediate(() => { void runBrandThreatScan(scan.id, scan.domain, cachedPerms); });
-      } else {
-        // Phase 1 never completed (or no cache) — restart from scratch
-        logger.info({ scanId: scan.id, domain: scan.domain },
-          "Startup: restarting brand threat scan from Phase 1 (no checkpoint)");
-        // Reset status so runBrandThreatScan fresh-start path can set it to "running"
+    // Reset permanently stuck scans to error
+    if (staleScans.length > 0) {
+      logger.warn({ count: staleScans.length }, "Startup: resetting brand threat scans stuck >30 min to error");
+      for (const scan of staleScans) {
+        const ageMinutes = Math.round((Date.now() - new Date(scan.createdAt).getTime()) / 60_000);
+        logger.warn({ scanId: scan.id, domain: scan.domain, ageMinutes },
+          "Startup: brand threat scan exceeded 30-minute timeout — marking as error");
         await db.update(brandThreatScansTable)
-          .set({ status: "pending", progress: 0, checkpoint: null })
+          .set({
+            status: "error",
+            error: `Scan timed out: found in 'running' state for ${ageMinutes} minutes on server restart`,
+            completedAt: new Date(),
+          })
           .where(eq(brandThreatScansTable.id, scan.id));
-        setImmediate(() => { void runBrandThreatScan(scan.id, scan.domain); });
+      }
+    }
+
+    // Resume fresh interrupted scans
+    if (freshScans.length > 0) {
+      logger.warn({ count: freshScans.length }, "Startup: found interrupted brand threat scans — resuming");
+      for (const scan of freshScans) {
+        if (scan.checkpoint === "phase1_done" && scan.permutationsCache) {
+          // Phase 1 was already complete — resume from Phase 2 using cached permutations
+          const cachedPerms = scan.permutationsCache as PermResult[];
+          logger.info({ scanId: scan.id, domain: scan.domain, permCount: cachedPerms.length },
+            "Startup: resuming brand threat scan from Phase 1 checkpoint");
+          setImmediate(() => { void runBrandThreatScan(scan.id, scan.domain, cachedPerms); });
+        } else {
+          // Phase 1 never completed (or no cache) — restart from scratch
+          logger.info({ scanId: scan.id, domain: scan.domain },
+            "Startup: restarting brand threat scan from Phase 1 (no checkpoint)");
+          await db.update(brandThreatScansTable)
+            .set({ status: "pending", progress: 0, checkpoint: null })
+            .where(eq(brandThreatScansTable.id, scan.id));
+          setImmediate(() => { void runBrandThreatScan(scan.id, scan.domain); });
+        }
       }
     }
   } catch (err) {

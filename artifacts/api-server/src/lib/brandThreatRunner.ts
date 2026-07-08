@@ -1164,13 +1164,15 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
 
 // ── Auto-trigger helper (used by pipeline scans & asset scans) ────────────────
 
+const STUCK_SCAN_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
 export async function triggerBrandThreatScan(
   tenantId: number,
   domain: string,
   pipelineScanId?: number,
 ): Promise<typeof brandThreatScansTable.$inferSelect | null> {
   const existing = await db
-    .select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status })
+    .select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status, createdAt: brandThreatScansTable.createdAt })
     .from(brandThreatScansTable)
     .where(and(
       eq(brandThreatScansTable.tenantId, tenantId),
@@ -1179,8 +1181,20 @@ export async function triggerBrandThreatScan(
 
   const active = existing.find(s => s.status === "running" || s.status === "pending");
   if (active) {
-    logger.info({ tenantId, domain, activeScanId: active.id }, "Brand threat scan already in progress — skipping auto-trigger");
-    return null;
+    const ageMs = Date.now() - new Date(active.createdAt).getTime();
+    if (active.status === "running" && ageMs > STUCK_SCAN_THRESHOLD_MS) {
+      // Stale running scan — reset it so a new scan can proceed
+      logger.warn(
+        { tenantId, domain, stuckScanId: active.id, ageMinutes: Math.round(ageMs / 60_000) },
+        "Brand threat scan stuck for >30 min — resetting to error and allowing new scan",
+      );
+      await db.update(brandThreatScansTable)
+        .set({ status: "error", error: "Scan timed out: automatically reset after 30 minutes of inactivity", completedAt: new Date() })
+        .where(eq(brandThreatScansTable.id, active.id));
+    } else {
+      logger.info({ tenantId, domain, activeScanId: active.id }, "Brand threat scan already in progress — skipping auto-trigger");
+      return null;
+    }
   }
 
   const [scan] = await db.insert(brandThreatScansTable).values({

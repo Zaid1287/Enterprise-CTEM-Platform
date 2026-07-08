@@ -16,6 +16,8 @@ import { runBrandThreatScan } from "../lib/brandThreatRunner";
 import { dispatchNotifications } from "../lib/notifier";
 import { logger } from "../lib/logger";
 
+const STUCK_SCAN_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
 const router = Router();
 router.use(denyExternalMembers);
 
@@ -501,16 +503,50 @@ router.post("/brand-threats/:id/rescan", requireAuth, async (req: AuthenticatedR
   const filter = await btScanAccessFilter(id, req.user!);
   if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
 
-  const [existing] = await db.select({ domain: brandThreatScansTable.domain, tenantId: brandThreatScansTable.tenantId, status: brandThreatScansTable.status })
-    .from(brandThreatScansTable).where(filter);
+  const [existing] = await db.select({
+    domain:    brandThreatScansTable.domain,
+    tenantId:  brandThreatScansTable.tenantId,
+    status:    brandThreatScansTable.status,
+    createdAt: brandThreatScansTable.createdAt,
+  }).from(brandThreatScansTable).where(filter);
   if (!existing) { res.status(404).json({ error: "Scan not found" }); return; }
+
   if (existing.status === "running" || existing.status === "pending") {
-    res.status(409).json({ error: "A scan is already running for this domain" }); return;
+    const ageMs = Date.now() - new Date(existing.createdAt).getTime();
+    if (existing.status === "running" && ageMs > STUCK_SCAN_THRESHOLD_MS) {
+      // Stale running scan — reset it so the rescan can proceed
+      const ageMinutes = Math.round(ageMs / 60_000);
+      logger.warn(
+        { scanId: id, domain: existing.domain, ageMinutes },
+        "Rescan requested — existing scan stuck for >30 min, resetting to error",
+      );
+      await db.update(brandThreatScansTable)
+        .set({
+          status: "error",
+          error: `Scan timed out: automatically reset after ${ageMinutes} minutes of inactivity`,
+          completedAt: new Date(),
+        })
+        .where(eq(brandThreatScansTable.id, id));
+    } else {
+      // Active scan that hasn't exceeded the timeout — block the rescan
+      const statusLabel = existing.status === "pending" ? "queued" : "running";
+      res.status(409).json({
+        error: `A scan is already ${statusLabel} for this domain. Please wait for it to complete before starting a new one.`,
+        status: existing.status,
+      });
+      return;
+    }
   }
 
   const { triggerBrandThreatScan } = await import("../lib/brandThreatRunner");
   const newScan = await triggerBrandThreatScan(existing.tenantId, existing.domain);
-  if (!newScan) { res.status(409).json({ error: "A scan is already running for this domain" }); return; }
+  if (!newScan) {
+    res.status(409).json({
+      error: "A scan is already running for this domain. Please wait for it to complete.",
+      status: "running",
+    });
+    return;
+  }
   res.status(201).json(toScanResponse(newScan));
 });
 
