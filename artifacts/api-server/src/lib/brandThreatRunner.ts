@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import dns from "node:dns/promises";
-import { eq, and, gte, isNotNull } from "drizzle-orm";
+import { eq, and, gte, isNotNull, isNull } from "drizzle-orm";
 import {
   db,
   brandThreatScansTable, brandThreatResultsTable,
@@ -730,6 +730,27 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
     }
     await flushBatch();
 
+    // ── Archived-row guard: recompute live/registered/phishing counts from DB ──
+    // We derive final counts from a DB query filtered by archivedAt IS NULL so
+    // that any archived rows from a previous run of the same scan are explicitly
+    // excluded, even if a race condition left them in the table.
+    {
+      const insertedRows = await db
+        .select({
+          dnsA:       brandThreatResultsTable.dnsA,
+          dnsMx:      brandThreatResultsTable.dnsMx,
+          isPhishing: brandThreatResultsTable.isPhishing,
+        })
+        .from(brandThreatResultsTable)
+        .where(and(
+          eq(brandThreatResultsTable.scanId, scanId),
+          isNull(brandThreatResultsTable.archivedAt),
+        ));
+      liveCount       = insertedRows.filter(r => r.dnsA && r.dnsA.length > 0).length;
+      registeredCount = insertedRows.filter(r => (r.dnsA && r.dnsA.length > 0) || (r.dnsMx && r.dnsMx.length > 0)).length;
+      phishingCount   = insertedRows.filter(r => r.isPhishing).length;
+    }
+
     await db.update(brandThreatScansTable).set({ progress: 65 }).where(eq(brandThreatScansTable.id, scanId));
 
     // ── Phase 3b: Screenshots for high-risk domains (score ≥ 70) ─────────────
@@ -741,6 +762,7 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
           eq(brandThreatResultsTable.scanId, scanId),
           gte(brandThreatResultsTable.riskScore, 70),
           isNotNull(brandThreatResultsTable.dnsA),
+          isNull(brandThreatResultsTable.archivedAt),
         ));
       if (highRiskRows.length > 0) {
         await captureHighRiskScreenshots(scanId, highRiskRows);

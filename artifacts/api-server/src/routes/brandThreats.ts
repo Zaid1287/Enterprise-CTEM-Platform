@@ -200,7 +200,7 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
     try {
       await runBrandThreatScan(scanId, raw);
       const results = await db.select().from(brandThreatResultsTable)
-        .where(eq(brandThreatResultsTable.scanId, scanId));
+        .where(and(eq(brandThreatResultsTable.scanId, scanId), isNull(brandThreatResultsTable.archivedAt)));
       const highRiskCount = results.filter(r => (r.riskScore ?? 0) >= 60).length;
       const phishCount = results.filter(r => r.isPhishing).length;
       await dispatchNotifications({
@@ -305,7 +305,11 @@ router.get("/brand-threats/:scanId/permutations/:permutationId", requireAuth, as
   const [scan] = await db.select({ id: brandThreatScansTable.id }).from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
   const [result] = await db.select().from(brandThreatResultsTable)
-    .where(and(eq(brandThreatResultsTable.id, permId), eq(brandThreatResultsTable.scanId, scanId)));
+    .where(and(
+      eq(brandThreatResultsTable.id, permId),
+      eq(brandThreatResultsTable.scanId, scanId),
+      isNull(brandThreatResultsTable.archivedAt),
+    ));
   if (!result) { res.status(404).json({ error: "Permutation not found" }); return; }
   res.json({ ...result, createdAt: result.createdAt.toISOString() });
 });
