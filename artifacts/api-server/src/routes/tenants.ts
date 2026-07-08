@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, inArray, and, or, isNull } from "drizzle-orm";
 import {
   db, tenantsTable, usersTable, assetsTable, findingsTable, findingCommentsTable,
-  accountManagerClientsTable, scanAssetResultsTable, assetGroupMembersTable,
+  accountManagerClientsTable, scanAssetResultsTable, assetGroupMembersTable, assetGroupsTable,
   riskScoresTable, discoveryResultsTable, scansTable, scanJobsTable, scanSchedulesTable,
   alertsTable, alertRulesTable, brandThreatScansTable, brandThreatResultsTable,
   brandWatchlistItemsTable, takedownRequestsTable, securityToolsTable, toolPipelineStepsTable,
@@ -10,7 +10,8 @@ import {
   invitationsTable, sessionsTable, screenshotsTable, technologyDetectionsTable,
   auditLogsTable, reportsTable, userAiSettingsTable,
   dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable, adMonitoringResultsTable,
-  aiMapperModuleAssignmentsTable,
+  aiMapperModuleAssignmentsTable, scanSuppressionsTable, packagesTable, tenantPackagesTable,
+  orchestratorConfigTable, scanRequestTelemetryTable,
 } from "@workspace/db";
 import { CreateTenantBody, UpdateTenantBody, GetTenantParams, UpdateTenantParams } from "@workspace/api-zod";
 import { requireAuth, requireRole, hashPassword, type AuthenticatedRequest } from "../lib/auth";
@@ -42,7 +43,7 @@ async function cascadeDeleteAsset(assetId: number, tenantId: number) {
 }
 
 /** Complete cascade delete for an entire tenant — deletes ALL related records in FK-safe order. */
-async function cascadeDeleteTenant(tenantId: number) {
+export async function cascadeDeleteTenant(tenantId: number) {
   // 1. Tool runs (reference scans, assets, security_tools)
   await db.delete(toolRunsTable).where(eq(toolRunsTable.tenantId, tenantId));
 
@@ -101,6 +102,9 @@ async function cascadeDeleteTenant(tenantId: number) {
   }
   await db.delete(assetsTable).where(eq(assetsTable.tenantId, tenantId));
 
+  // 7b. Asset groups (members deleted above; groups themselves have tenantId FK without cascade)
+  await db.delete(assetGroupsTable).where(eq(assetGroupsTable.tenantId, tenantId));
+
   // 8. Alerts and alert rules
   await db.delete(alertsTable).where(eq(alertsTable.tenantId, tenantId));
   await db.delete(alertRulesTable).where(eq(alertRulesTable.tenantId, tenantId));
@@ -114,6 +118,21 @@ async function cascadeDeleteTenant(tenantId: number) {
   // 11. Security tools and pipeline
   await db.delete(toolPipelineStepsTable).where(eq(toolPipelineStepsTable.tenantId, tenantId));
   await db.delete(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
+
+  // 11b. Orchestrator config (seeded by seedNewTenantData; has tenantId FK without cascade)
+  await db.delete(orchestratorConfigTable).where(eq(orchestratorConfigTable.tenantId, tenantId));
+
+  // 11c. Scan suppressions and tenant package assignments (tenant-scoped; no DB cascade)
+  // Note: packagesTable is a global catalog (no tenantId) — not deleted here.
+  await db.delete(scanSuppressionsTable).where(eq(scanSuppressionsTable.tenantId, tenantId));
+  await db.delete(tenantPackagesTable).where(eq(tenantPackagesTable.tenantId, tenantId));
+
+  // 11d. Scan request telemetry (optional tenantId; clean up to avoid stale references)
+  await db.delete(scanRequestTelemetryTable).where(eq(scanRequestTelemetryTable.tenantId, tenantId));
+
+  // 11e. AI Mapper module assignment — FK has onDelete:cascade but that fires only when the
+  //      tenant row is deleted. Delete explicitly so cascadeDeleteTenant is fully self-contained.
+  await db.delete(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, tenantId));
 
   // 12. User AI settings — keyed by userId (no tenantId column)
   // platformSettingsTable is global (no tenantId column) — skip
