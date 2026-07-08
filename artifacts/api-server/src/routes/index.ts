@@ -40,13 +40,18 @@ const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(authRouter);
+// assetsRouter and findingsRouter must be registered before any router that
+// uses router.use(denyExternalMembers) without a path prefix (e.g. usersRouter).
+// denyExternalMembers without a path prefix runs for every request that passes
+// through that router — including /assets and /findings — blocking vendors before
+// the correct router can handle them.
+router.use(assetsRouter);
+router.use(findingsRouter);
 router.use(tenantsRouter);
 router.use(usersRouter);
-router.use(assetsRouter);
 router.use(assetGroupsRouter);
 router.use(pipelineScansRouter);
 router.use(scansRouter);
-router.use(findingsRouter);
 router.use(complianceRouter);
 router.use(reportsRouter);
 router.use(alertsRouter);

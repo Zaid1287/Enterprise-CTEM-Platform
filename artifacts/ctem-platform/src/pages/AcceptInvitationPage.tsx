@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/apiFetch";
@@ -35,6 +35,7 @@ export default function AcceptInvitationPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const submittedRef = useRef(false);
 
   useEffect(() => {
     if (!token) { setLoadError("No invitation token found in the URL."); setLoading(false); return; }
@@ -50,7 +51,11 @@ export default function AcceptInvitationPage() {
           setFirstName(parts[0]);
         }
       })
-      .catch(err => setLoadError(err?.message ?? "Invalid or expired invitation link."))
+      .catch(err => {
+        if (!submittedRef.current) {
+          setLoadError(err?.message ?? "Invalid or expired invitation link.");
+        }
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -67,6 +72,7 @@ export default function AcceptInvitationPage() {
       }) as { accessToken: string; refreshToken: string; user: any };
       login(data.accessToken, data.refreshToken, data.user);
       sessionStorage.setItem("ctem_token", data.accessToken);
+      submittedRef.current = true;
       setDone(true);
       const isExternal = ["vendor", "employee", "third_party"].includes(data.user?.role);
       setTimeout(() => navigate(isExternal ? "/assets" : "/dashboard"), 1200);
