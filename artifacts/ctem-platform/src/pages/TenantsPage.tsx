@@ -293,6 +293,10 @@ export default function TenantsPage() {
   const [assignTarget, setAssignTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
   const [selectedAmId, setSelectedAmId] = useState("");
 
+  // AM reassign dialog (atomic replace — removes old AM, sets new one)
+  const [reassignTarget, setReassignTarget] = useState<{ tenantId: number; tenantName: string; currentManagers: Array<{ id: number; name: string; email: string }> } | null>(null);
+  const [reassignAmId, setReassignAmId] = useState("");
+
   // Add asset dialog
   const [assetTarget, setAssetTarget] = useState<{ tenantId: number; tenantName: string } | null>(null);
   const [assetForm, setAssetForm] = useState({ ...emptyAssetForm });
@@ -402,6 +406,25 @@ export default function TenantsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
       toast({ title: "Account manager unassigned" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const reassignMutation = useMutation({
+    mutationFn: ({ tenantId, amId }: { tenantId: number; amId: number | null }) =>
+      apiFetch(`${BASE}/api/tenants/${tenantId}/assign-manager`, {
+        method: "POST",
+        body: JSON.stringify({ accountManagerUserId: amId }),
+      }),
+    onSuccess: (_data, { amId }) => {
+      queryClient.invalidateQueries({ queryKey: ["platform-tenants"] });
+      setReassignTarget(null); setReassignAmId("");
+      toast({
+        title: amId ? "Account manager reassigned" : "Account manager removed",
+        description: amId
+          ? "All previous assignments replaced. The old AM no longer has access to this client."
+          : "All account manager assignments cleared for this tenant.",
+      });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -764,12 +787,22 @@ export default function TenantsPage() {
                                 </div>
                               )}
                             </div>
-                            <Button
-                              size="sm" variant="outline" className="text-xs h-8 shrink-0"
-                              onClick={e => { e.stopPropagation(); setAssignTarget({ tenantId: t.id, tenantName: t.name }); setSelectedAmId(""); }}
-                            >
-                              <Plus className="w-3.5 h-3.5 mr-1" /> Assign Manager
-                            </Button>
+                            <div className="flex flex-col gap-1.5 shrink-0">
+                              <Button
+                                size="sm" variant="outline" className="text-xs h-8"
+                                onClick={e => { e.stopPropagation(); setAssignTarget({ tenantId: t.id, tenantName: t.name }); setSelectedAmId(""); }}
+                              >
+                                <Plus className="w-3.5 h-3.5 mr-1" /> Assign Manager
+                              </Button>
+                              {t.assignedManagers.length > 0 && (
+                                <Button
+                                  size="sm" variant="outline" className="text-xs h-8 text-amber-400 hover:text-amber-300 border-amber-500/30 hover:bg-amber-500/10"
+                                  onClick={e => { e.stopPropagation(); setReassignTarget({ tenantId: t.id, tenantName: t.name, currentManagers: t.assignedManagers }); setReassignAmId(""); }}
+                                >
+                                  <ArrowRightLeft className="w-3.5 h-3.5 mr-1" /> Reassign
+                                </Button>
+                              )}
+                            </div>
                           </div>
                         )}
 
@@ -1067,6 +1100,54 @@ export default function TenantsPage() {
               onClick={() => deleteTarget && deleteTenantMutation.mutate(deleteTarget.id)}
             >
               {deleteTenantMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Deleting…</> : "Delete Tenant"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Reassign Account Manager Dialog ───────────────────────────────── */}
+      <Dialog open={!!reassignTarget} onOpenChange={v => { if (!v) { setReassignTarget(null); setReassignAmId(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reassign Account Manager</DialogTitle>
+            <DialogDescription>
+              Replace all current account managers for <strong>{reassignTarget?.tenantName}</strong> with a single new one.
+              The previous AM will immediately lose access to this client's assets and findings.
+            </DialogDescription>
+          </DialogHeader>
+          {reassignTarget && reassignTarget.currentManagers.length > 0 && (
+            <div className="bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 text-xs text-amber-300 space-y-1">
+              <p className="font-medium">Currently assigned:</p>
+              {reassignTarget.currentManagers.map(m => (
+                <p key={m.id} className="text-amber-300/70">{m.name || m.email} ({m.email})</p>
+              ))}
+              <p className="text-amber-300/50 pt-0.5">These assignments will be removed on save.</p>
+            </div>
+          )}
+          <div className="space-y-1.5 mt-1">
+            <Label className="text-xs">New Account Manager</Label>
+            <Select value={reassignAmId} onValueChange={setReassignAmId}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Select account manager…" />
+              </SelectTrigger>
+              <SelectContent>
+                {amUsers.length === 0
+                  ? <SelectItem value="-1" disabled>No account managers available</SelectItem>
+                  : amUsers.map(u => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.email}
+                      </SelectItem>
+                    ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => { setReassignTarget(null); setReassignAmId(""); }}>Cancel</Button>
+            <Button
+              disabled={!reassignAmId || reassignMutation.isPending}
+              onClick={() => reassignTarget && reassignMutation.mutate({ tenantId: reassignTarget.tenantId, amId: Number(reassignAmId) })}
+            >
+              {reassignMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Reassigning…</> : "Reassign"}
             </Button>
           </DialogFooter>
         </DialogContent>

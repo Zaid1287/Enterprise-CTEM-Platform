@@ -421,6 +421,42 @@ router.get("/tenants/:tenantId", requireAuth, async (req: AuthenticatedRequest, 
   res.json(toTenantResponse(tenant));
 });
 
+// ── Reassign a client tenant to a different account manager (atomic replace) ──
+// Removes ALL existing AM assignments for the tenant and adds the new one.
+// If accountManagerUserId is null / omitted, all AMs are cleared (unassign all).
+router.post("/tenants/:tenantId/assign-manager", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const tenantId = Number(req.params.tenantId);
+  if (isNaN(tenantId)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
+
+  if (req.user!.role === "admin" && !(await adminCanAccessTenant(req.user!.tenantId, tenantId))) {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
+
+  const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
+  if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
+
+  const rawAmUserId = req.body?.accountManagerUserId;
+  const amUserId = rawAmUserId != null ? Number(rawAmUserId) : null;
+
+  if (amUserId !== null) {
+    const [amUser] = await db.select().from(usersTable)
+      .where(and(eq(usersTable.id, amUserId), eq(usersTable.role, "account_manager")));
+    if (!amUser) { res.status(404).json({ error: "Account manager not found" }); return; }
+  }
+
+  // Atomically: delete all existing assignments for this client tenant, then insert the new one.
+  await db.delete(accountManagerClientsTable)
+    .where(eq(accountManagerClientsTable.clientTenantId, tenantId));
+
+  if (amUserId !== null) {
+    await db.insert(accountManagerClientsTable)
+      .values({ accountManagerUserId: amUserId, clientTenantId: tenantId });
+    res.json({ tenantId, accountManagerUserId: amUserId, reassigned: true });
+  } else {
+    res.json({ tenantId, accountManagerUserId: null, reassigned: true, cleared: true });
+  }
+});
+
 // ── Assign an account manager to a tenant ────────────────────────────────────
 router.post("/tenants/:tenantId/managers", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = Number(req.params.tenantId);
