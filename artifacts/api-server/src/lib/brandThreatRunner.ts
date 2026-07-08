@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import dns from "node:dns/promises";
-import { eq, and, gte, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, gte, isNotNull, isNull, lt } from "drizzle-orm";
 import {
   db,
   brandThreatScansTable, brandThreatResultsTable,
@@ -1244,4 +1244,75 @@ export async function triggerBrandThreatScan(
   logger.info({ scanId: scan!.id, domain, pipelineScanId }, "Auto-triggered brand threat scan from pipeline");
   setImmediate(() => { void runBrandThreatScan(scan!.id, domain); });
   return scan!;
+}
+
+// ── Brand threat watchdog ──────────────────────────────────────────────────────
+
+const WATCHDOG_POLL_INTERVAL_MS  = 5  * 60 * 1000; // 5 minutes
+const WATCHDOG_STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Periodic watchdog that catches brand threat scans stuck in "running" state
+ * mid-run (e.g. dnstwist subprocess hang, VT API timeout) without requiring
+ * a server restart.
+ *
+ * Every 5 minutes it queries for scans in "running" state whose `createdAt`
+ * is older than 30 minutes and resets them to "error" with `completedAt` set.
+ *
+ * Returns a cleanup function that clears the interval (call on SIGTERM/SIGINT).
+ */
+export function startBrandThreatWatchdog(): () => void {
+  async function tick(): Promise<void> {
+    try {
+      const threshold = new Date(Date.now() - WATCHDOG_STUCK_THRESHOLD_MS);
+      const stuckScans = await db
+        .select({ id: brandThreatScansTable.id, domain: brandThreatScansTable.domain, createdAt: brandThreatScansTable.createdAt })
+        .from(brandThreatScansTable)
+        .where(
+          and(
+            eq(brandThreatScansTable.status, "running"),
+            lt(brandThreatScansTable.createdAt, threshold),
+          ),
+        );
+
+      if (stuckScans.length === 0) return;
+
+      logger.warn({ count: stuckScans.length }, "Brand threat watchdog: found stuck scans — resetting to error");
+
+      for (const scan of stuckScans) {
+        const ageMinutes = Math.round((Date.now() - new Date(scan.createdAt).getTime()) / 60_000);
+        logger.warn(
+          { scanId: scan.id, domain: scan.domain, ageMinutes },
+          "Brand threat watchdog: scan stuck >30 min — marking as error",
+        );
+        await db
+          .update(brandThreatScansTable)
+          .set({
+            status: "error",
+            error: `Scan timed out: still in 'running' state after ${ageMinutes} minutes (watchdog)`,
+            completedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(brandThreatScansTable.id, scan.id),
+              eq(brandThreatScansTable.status, "running"),
+            ),
+          );
+      }
+    } catch (err) {
+      logger.warn({ err }, "Brand threat watchdog tick failed (non-fatal)");
+    }
+  }
+
+  const handle = setInterval(() => { void tick(); }, WATCHDOG_POLL_INTERVAL_MS);
+
+  logger.info(
+    { intervalMinutes: WATCHDOG_POLL_INTERVAL_MS / 60_000, thresholdMinutes: WATCHDOG_STUCK_THRESHOLD_MS / 60_000 },
+    "Brand threat watchdog started",
+  );
+
+  return () => {
+    clearInterval(handle);
+    logger.info("Brand threat watchdog stopped");
+  };
 }

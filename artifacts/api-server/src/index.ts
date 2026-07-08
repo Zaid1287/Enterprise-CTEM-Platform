@@ -13,7 +13,7 @@ import { startBeatScheduler } from "./workers/beatScheduler";
 import { db, platformSettingsTable, brandThreatScansTable, orchestratorConfigTable, scanFingerprintProfilesTable, tenantsTable } from "@workspace/db";
 import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { runBrandThreatScan, PermResult } from "./lib/brandThreatRunner";
+import { runBrandThreatScan, startBrandThreatWatchdog, PermResult } from "./lib/brandThreatRunner";
 import { WebSocketServer } from "ws";
 import { scanProgressSockets, attackRunSockets } from "./routes/aiMapper";
 import { verifyToken } from "./lib/auth";
@@ -337,6 +337,15 @@ const server = app.listen(port, (err) => {
 
   // Beat scheduler handles asset-frequency and schedule-based scans
   startBeatScheduler(port).catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
+
+  // Watchdog: periodically reset brand threat scans stuck in "running" mid-run
+  const stopBrandThreatWatchdog = startBrandThreatWatchdog();
+  const shutdown = () => {
+    stopBrandThreatWatchdog();
+    process.exit(0);
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT",  shutdown);
 
   // Download official nuclei-templates in the background (non-blocking)
   bootstrapNucleiTemplates().catch(() => {});
