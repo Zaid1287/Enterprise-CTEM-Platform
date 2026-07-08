@@ -404,12 +404,14 @@ interface SocialSourceStatus {
   twitter_x: boolean;
   instagram: boolean;
   tiktok: boolean;
+  youtube: boolean;
 }
 
 const SOCIAL_SOURCES: { key: keyof SocialSourceStatus; label: string; settingsPath: string }[] = [
   { key: "twitter_x", label: "Twitter/X", settingsPath: "/settings/platform" },
   { key: "instagram", label: "Instagram",  settingsPath: "/settings/platform" },
   { key: "tiktok",   label: "TikTok",     settingsPath: "/settings/platform" },
+  { key: "youtube",  label: "YouTube",    settingsPath: "/settings/platform" },
 ];
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
