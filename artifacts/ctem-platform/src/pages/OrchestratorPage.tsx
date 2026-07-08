@@ -1033,11 +1033,13 @@ function FingerprintsTab() {
 interface KnobDef {
   key: string; label: string; description: string;
   type: "boolean" | "integer" | "select"; options?: string[]; min?: number; max?: number;
+  defaultValue?: string;
 }
 
 const KNOBS: KnobDef[] = [
   { key: "enabled",                 type: "boolean", label: "Enable Orchestration Engine",   description: "Master switch. When off, orchestratedFetch falls back to direct fetch." },
   { key: "use_proxies",             type: "boolean", label: "Use Proxy Pool",                description: "Route outbound scan requests through the configured proxy/IP pool." },
+  { key: "require_proxies",         type: "boolean", label: "Require Proxies",               description: "When enabled, scans that cannot route through a proxy will abort instead of falling back to a direct connection.", defaultValue: "false" },
   { key: "rotate_fingerprints",     type: "boolean", label: "Rotate Browser Fingerprints",   description: "Cycle through active fingerprint profiles on each request." },
   { key: "adaptive_rate_limit",     type: "boolean", label: "Adaptive Rate Limiting",        description: "Dynamically throttle per-host request rate when 429/503 responses are observed." },
   { key: "proxy_health_scoring",    type: "boolean", label: "Enable Proxy Health Scoring",   description: "Track success rate and latency per proxy; weight selection accordingly." },
@@ -1095,7 +1097,7 @@ function ConfigTab() {
   const set = (key: string, val: string) => { setValues(v => ({ ...v, [key]: val })); setDirty(true); };
 
   const renderKnob = (k: KnobDef) => {
-    const val = values[k.key] ?? "";
+    const val = values[k.key] ?? k.defaultValue ?? "";
     if (k.type === "boolean") {
       return <Switch checked={val !== "false"} onCheckedChange={v => set(k.key, v ? "true" : "false")} />;
     }
