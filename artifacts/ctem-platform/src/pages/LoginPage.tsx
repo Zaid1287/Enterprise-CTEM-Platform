@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useLogin } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
-import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
+import { Eye, EyeOff, ArrowRight, Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { PASSWORD_RESET_REQUIRED_KEY } from "@/lib/auth";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -24,6 +25,15 @@ export default function LoginPage() {
   const [twoFaCode, setTwoFaCode] = useState("");
   const [twoFaLoading, setTwoFaLoading] = useState(false);
   const [pendingTokens, setPendingTokens] = useState<{ accessToken: string; refreshToken: string; user: any } | null>(null);
+
+  const [passwordResetBanner, setPasswordResetBanner] = useState(false);
+
+  useEffect(() => {
+    if (sessionStorage.getItem(PASSWORD_RESET_REQUIRED_KEY)) {
+      sessionStorage.removeItem(PASSWORD_RESET_REQUIRED_KEY);
+      setPasswordResetBanner(true);
+    }
+  }, []);
 
   // Force password reset state
   const [resetRequired, setResetRequired] = useState(false);
@@ -163,6 +173,16 @@ export default function LoginPage() {
               onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
           </div>
+
+          {passwordResetBanner && !resetRequired && !twoFaRequired && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-3 text-sm text-amber-400">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Your session was ended because your account requires a password change.
+                Please sign in to set a new password.
+              </span>
+            </div>
+          )}
 
           <div>
             <h1 className="text-2xl font-bold tracking-tight">

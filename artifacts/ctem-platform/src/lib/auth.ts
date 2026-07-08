@@ -40,6 +40,8 @@ export function persistToken(token: string | null): void {
   }
 }
 
+export const PASSWORD_RESET_REQUIRED_KEY = "ctem_password_reset_required";
+
 export async function attemptTokenRefresh(): Promise<boolean> {
   const refreshToken = sessionStorage.getItem("ctem_refresh_token");
   if (!refreshToken) return false;
@@ -59,6 +61,15 @@ export async function attemptTokenRefresh(): Promise<boolean> {
     });
 
     if (!res.ok) {
+      if (res.status === 403) {
+        const body = await res.json().catch(() => ({}));
+        if (body?.requiresPasswordReset) {
+          persistToken(null);
+          sessionStorage.removeItem("ctem_refresh_token");
+          sessionStorage.removeItem("ctem_user");
+          sessionStorage.setItem(PASSWORD_RESET_REQUIRED_KEY, "1");
+        }
+      }
       _refreshQueue.forEach((cb) => cb(false));
       _refreshQueue = [];
       return false;
