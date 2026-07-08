@@ -95,11 +95,11 @@ async function loadConfig(tenantId: number): Promise<OrchConfig> {
     return config;
   } catch {
     return {
-      enabled: true, useProxies: false, rotateFingerprints: true,
-      maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
-      logAllRequests: true, wafBypassEnabled: true,
-      adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
-      proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
+      enabled: true, useProxies: false, rotateFingerprints: false,
+      maxRetries: 2, backoffBaseMs: 1000, maxBackoffMs: 30_000,
+      logAllRequests: false, wafBypassEnabled: false,
+      adaptiveRateLimitEnabled: false, circuitBreakerEnabled: false,
+      proxyHealthScoringEnabled: false, delayMultiplier: 1.0,
       defaultIntensity: "endpoint-discovery",
     };
   }
@@ -325,66 +325,104 @@ function buildProxyUrl(proxy: ActiveProxy): string {
   return `${scheme}://${proxy.ip}:${proxy.port}`;
 }
 
+// Safe defaults applied when the orchestrator's own bootstrap throws unexpectedly.
+// Conservative: no proxies, no fingerprint rotation, no adaptive features, few retries.
+const ORCHESTRATOR_SAFE_DEFAULTS: OrchConfig = {
+  enabled: true, useProxies: false, rotateFingerprints: false,
+  maxRetries: 2, backoffBaseMs: 1000, maxBackoffMs: 30_000,
+  logAllRequests: false, wafBypassEnabled: false,
+  adaptiveRateLimitEnabled: false, circuitBreakerEnabled: false,
+  proxyHealthScoringEnabled: false, delayMultiplier: 1.0,
+  defaultIntensity: "endpoint-discovery" as const,
+};
+
 export async function orchestratedFetch(
   url: string,
   init: RequestInit = {},
   ctx: OrchestratorContext = {},
 ): Promise<Response> {
-  let config: OrchConfig;
-  let profiles: Array<{ id: number; headers: Record<string, string> }>;
-
-  // Bootstrap with safe fallbacks so orchestration errors never kill the scan
   const tenantId = ctx.tenantId ?? getCurrentTenantId() ?? 0;
+
+  // ── Bootstrap phase ────────────────────────────────────────────────────────
+  // Every step has its own guard. The outer catch is the last-resort safety net:
+  // if anything slips through all inner guards, we degrade to a plain fetch()
+  // rather than letting an orchestration error abort the scan pipeline.
+  let config: OrchConfig = ORCHESTRATOR_SAFE_DEFAULTS;
+  let profiles: Array<{ id: number; headers: Record<string, string> }> = [];
+  let proxy: ActiveProxy | null = null;
+  let proxyAgent: Agent | undefined = undefined;
+  let lastWafDetected = false;
+  let currentTlsDispatcher: Agent | undefined;
+
   try {
-    config = await loadConfig(tenantId);
-  } catch {
-    config = {
-      enabled: true, useProxies: false, rotateFingerprints: false,
-      maxRetries: 4, backoffBaseMs: 1000, maxBackoffMs: 30_000,
-      logAllRequests: false, wafBypassEnabled: true,
-      adaptiveRateLimitEnabled: true, circuitBreakerEnabled: true,
-      proxyHealthScoringEnabled: true, delayMultiplier: 1.0,
-      defaultIntensity: "endpoint-discovery" as const,
+    // Step 1: load tenant config — falls back internally; outer catch is extra safety
+    try {
+      config = await loadConfig(tenantId);
+    } catch {
+      config = { ...ORCHESTRATOR_SAFE_DEFAULTS };
+    }
+
+    // Step 2: load fingerprint profiles — non-fatal; empty = no rotation
+    try {
+      profiles = config.rotateFingerprints ? await loadProfiles() : [];
+    } catch {
+      profiles = [];
+    }
+
+    // Step 3: proxy selection — selectHealthiestProxy is already guarded inside pickProxy
+    const pickProxy = async (excludeProxyId?: number): Promise<{ proxy: ActiveProxy | null; proxyAgent: Agent | undefined }> => {
+      if (!config.useProxies || !config.enabled) return { proxy: null, proxyAgent: undefined };
+      try {
+        const p = await selectHealthiestProxy(excludeProxyId);
+        if (p) {
+          if (p.type === "socks5" || p.type === "socks4") {
+            const socksType = p.type === "socks5" ? 5 : 4;
+            const tlsProf = getRandomTlsProfile();
+            const socksAgent = await buildSocksDispatcher(p.ip, p.port, socksType, p.username, p.password, tlsProf);
+            return { proxy: p, proxyAgent: socksAgent };
+          }
+          return { proxy: p, proxyAgent: new ProxyAgent(buildProxyUrl(p)) as unknown as Agent };
+        }
+      } catch { /* fall through — use no proxy */ }
+      return { proxy: null, proxyAgent: undefined };
     };
+
+    ({ proxy, proxyAgent } = await pickProxy());
+
+    // Step 4: WAF host cache — non-fatal; false means no pre-activation
+    try {
+      lastWafDetected = await isHostWafProtected(tenantId, extractHostname(url));
+    } catch {
+      lastWafDetected = false;
+    }
+
+    // Step 5: TLS dispatcher — non-fatal; undefined → falls back to plain Agent below
+    try {
+      currentTlsDispatcher = getTlsDispatcher(tenantId);
+    } catch {
+      currentTlsDispatcher = undefined;
+    }
+
+  } catch (bootstrapErr) {
+    // Unexpected error slipped through all inner guards (e.g. total DB loss).
+    // Log it, reset everything to safe defaults, and let the scan continue with
+    // a direct plain fetch() so the pipeline is not silently aborted.
+    logger.warn({ err: bootstrapErr, url, tenantId }, "orchestratedFetch: bootstrap error escaped all inner guards — falling back to plain fetch");
+    return fetch(url, init) as Promise<Response>;
   }
-  try {
-    profiles = config.rotateFingerprints ? await loadProfiles() : [];
-  } catch {
-    profiles = [];
-  }
+  // ── End bootstrap phase ────────────────────────────────────────────────────
 
   const hostname = extractHostname(url);
   const intensity = ctx.intensity ?? getCurrentScanIntensity() ?? config.defaultIntensity;
   const method = (init.method ?? "GET").toUpperCase();
 
+  // Circuit breaker check is intentionally outside the bootstrap try/catch —
+  // an open circuit is a deliberate signal that callers must handle.
   if (config.circuitBreakerEnabled && isCircuitOpen(tenantId, hostname)) {
     throw new Error(`Circuit breaker OPEN for ${hostname} (state: ${getCircuitState(tenantId, hostname)})`);
   }
 
-  // Select proxy — only when orchestrator is enabled and use_proxies is true.
-  // SOCKS4/5 proxies get a custom SocksDispatcher (requires the `socks` package);
-  // HTTP/HTTPS proxies use undici's native ProxyAgent.
-  const pickProxy = async (excludeProxyId?: number): Promise<{ proxy: ActiveProxy | null; proxyAgent: Agent | undefined }> => {
-    if (!config.useProxies || !config.enabled) return { proxy: null, proxyAgent: undefined };
-    try {
-      const p = await selectHealthiestProxy(excludeProxyId);
-      if (p) {
-        if (p.type === "socks5" || p.type === "socks4") {
-          const socksType = p.type === "socks5" ? 5 : 4;
-          const tlsProf = getRandomTlsProfile();
-          const socksAgent = await buildSocksDispatcher(p.ip, p.port, socksType, p.username, p.password, tlsProf);
-          return { proxy: p, proxyAgent: socksAgent };
-        }
-        return { proxy: p, proxyAgent: new ProxyAgent(buildProxyUrl(p)) as unknown as Agent };
-      }
-    } catch { /* fall through */ }
-    return { proxy: null, proxyAgent: undefined };
-  };
-
-  let { proxy, proxyAgent } = await pickProxy();
-
-  // Issue 7: alert when proxy pool is exhausted (operator has proxies enabled but
-  // none are healthy/active).  Debounced per-process to 30 min.
+  // Alert when proxy pool is exhausted (operator has proxies enabled but none healthy).
   if (config.useProxies && config.enabled && !proxy) {
     const now = Date.now();
     const _lastAlert = _lastLowProxyAlertAt.get(tenantId) ?? 0;
@@ -407,9 +445,13 @@ export async function orchestratedFetch(
   let profile = pickRandomProfile(profiles);
   const baseDelay = getDelay(intensity, tenantId);
 
-  if (config.adaptiveRateLimitEnabled) {
-    await waitForRateLimitToken(tenantId, url);
-  }
+  // Rate limit token — non-fatal; skip token if the limiter itself throws
+  try {
+    if (config.adaptiveRateLimitEnabled) {
+      await waitForRateLimitToken(tenantId, url);
+    }
+  } catch { /* non-fatal — proceed without rate-limit token */ }
+
   await sleep(baseDelay);
 
   let lastError: Error | undefined;
@@ -418,16 +460,33 @@ export async function orchestratedFetch(
   let statusCode: number | undefined;
   const maxRetries = config.maxRetries;
 
-  // ── Issue 4: WAF bypass state — pre-activate if host is known WAF-protected ──
-  // If a previous scan already exhausted all retries with WAF detections, we skip
-  // the "cold" first attempt and go straight to bypass mode on retry 1.
-  let lastWafDetected = await isHostWafProtected(tenantId, hostname);
-  let wafHitCount     = 0; // tracks how many attempts triggered WAF in this call
+  // WAF bypass state set during bootstrap; wafHitCount tracks detections this call.
+  let wafHitCount = 0;
 
-  // TLS dispatcher rotates each attempt: Chrome → Firefox → Safari → Edge → …
-  // When a SOCKS proxy is active it supplies its own TLS handling so we fall back
-  // to the pool only when going direct.
-  let currentTlsDispatcher: Agent = getTlsDispatcher(tenantId);
+  // TLS dispatcher: use the bootstrapped one or fall back to a plain Agent.
+  // When a SOCKS proxy is active it supplies its own TLS handling so we only need
+  // this dispatcher for direct connections.
+  const _fallbackAgent = new Agent();
+  let currentTlsDispatcherResolved: Agent = currentTlsDispatcher ?? _fallbackAgent;
+
+  // pickProxy is needed inside the retry loop — re-declare with the same logic
+  // so the loop can call it to rotate proxies on WAF/retry.
+  const pickProxy = async (excludeProxyId?: number): Promise<{ proxy: ActiveProxy | null; proxyAgent: Agent | undefined }> => {
+    if (!config.useProxies || !config.enabled) return { proxy: null, proxyAgent: undefined };
+    try {
+      const p = await selectHealthiestProxy(excludeProxyId);
+      if (p) {
+        if (p.type === "socks5" || p.type === "socks4") {
+          const socksType = p.type === "socks5" ? 5 : 4;
+          const tlsProf = getRandomTlsProfile();
+          const socksAgent = await buildSocksDispatcher(p.ip, p.port, socksType, p.username, p.password, tlsProf);
+          return { proxy: p, proxyAgent: socksAgent };
+        }
+        return { proxy: p, proxyAgent: new ProxyAgent(buildProxyUrl(p)) as unknown as Agent };
+      }
+    } catch { /* fall through — use no proxy */ }
+    return { proxy: null, proxyAgent: undefined };
+  };
 
   while (attemptNumber <= maxRetries) {
     // ── Issue 7: WAF bypass — on next retry after WAF, rotate profile + proxy + TLS ──
@@ -437,7 +496,9 @@ export async function orchestratedFetch(
       const prevProxyId = proxy?.id;
       ({ proxy, proxyAgent } = await pickProxy(prevProxyId));
       // Rotate TLS fingerprint alongside HTTP fingerprint so JA3 hash also changes
-      if (!proxyAgent) currentTlsDispatcher = getTlsDispatcher(tenantId);
+      if (!proxyAgent) {
+        try { currentTlsDispatcherResolved = getTlsDispatcher(tenantId); } catch { /* keep existing */ }
+      }
       // Double the delay for WAF bypass — makes the request look less robotic
       backoffMs = Math.min(backoffMs * 2 || baseDelay * 2, config.maxBackoffMs);
       logger.debug({ url, prevProfileId, newProfileId: profile?.id, prevProxyId, newProxyId: proxy?.id }, "WAF bypass: rotated fingerprint + proxy + TLS profile");
@@ -473,7 +534,7 @@ export async function orchestratedFetch(
         ...init,
         headers: mergedHeaders,
         signal: controller.signal,
-        dispatcher: proxyAgent ?? currentTlsDispatcher,
+        dispatcher: proxyAgent ?? currentTlsDispatcherResolved,
       }) as Response;
 
       clearTimeout(timeoutId);
@@ -712,7 +773,7 @@ export async function orchestratedFetch(
               ...init,
               headers:    captchaRetryHeaders,
               signal:     captchaController.signal,
-              dispatcher: proxyAgent ?? currentTlsDispatcher,
+              dispatcher: proxyAgent ?? currentTlsDispatcherResolved,
             }) as Response;
             clearTimeout(captchaTimeoutId);
             const captchaBodyText  = await captchaResponse.clone().text().catch(() => "");
