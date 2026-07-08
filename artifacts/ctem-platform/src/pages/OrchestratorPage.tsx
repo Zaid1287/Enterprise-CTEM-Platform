@@ -689,12 +689,36 @@ function ProxiesTab() {
   const testProxy = async (proxy: Proxy) => {
     setTestingId(proxy.id);
     try {
-      const result = await api<{ reachable: boolean; latencyMs?: number }>(`/api/scan-proxies/${proxy.id}/health`);
+      // Always do the auth-aware test so we can surface credential failures.
+      // The test URL only needs to be reachable by the proxy — we use the
+      // CONNECT tunnel response code (or SOCKS handshake) to check auth, so
+      // the target itself doesn't need to respond.
+      const url = `/api/scan-proxies/${proxy.id}/health?testUrl=${encodeURIComponent("http://example.com")}`;
+      const result = await api<{
+        reachable: boolean; authOk?: boolean; httpStatus?: number; latencyMs?: number; error?: string;
+      }>(url);
       qc.invalidateQueries({ queryKey: ["orch-proxies"] });
-      if (result.reachable) {
-        toast({ title: "Proxy reachable", description: `Latency: ${result.latencyMs ?? "?"}ms` });
+
+      if (!result.reachable) {
+        toast({
+          title: "Proxy unreachable",
+          description: result.error ?? "TCP connection failed.",
+          variant: "destructive",
+        });
+      } else if (proxy.hasAuth && result.authOk === false) {
+        toast({
+          title: "Auth Failed",
+          description: result.error ?? `Proxy rejected credentials (HTTP ${result.httpStatus ?? "?"})`,
+          variant: "destructive",
+        });
+      } else if (proxy.hasAuth && result.authOk) {
+        toast({
+          title: "Auth OK",
+          description: `Credentials accepted — latency ${result.latencyMs ?? "?"}ms`,
+        });
       } else {
-        toast({ title: "Proxy unreachable", description: "TCP connection failed.", variant: "destructive" });
+        // No credentials — just a connectivity check
+        toast({ title: "Proxy reachable", description: `Latency: ${result.latencyMs ?? "?"}ms` });
       }
     } catch { toast({ title: "Health check failed", variant: "destructive" }); }
     finally { setTestingId(null); }
@@ -790,7 +814,8 @@ function ProxiesTab() {
                     <td className="px-4 py-3 text-right text-xs text-muted-foreground">{proxy.requestsToday ?? 0}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="w-7 h-7" title="Test Health"
+                        <Button variant="ghost" size="icon" className="w-7 h-7"
+                          title={proxy.hasAuth ? "Test connectivity & verify credentials" : "Test connectivity"}
                           onClick={() => testProxy(proxy)} disabled={testingId === proxy.id}>
                           {testingId === proxy.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube2 className="w-3.5 h-3.5" />}
                         </Button>

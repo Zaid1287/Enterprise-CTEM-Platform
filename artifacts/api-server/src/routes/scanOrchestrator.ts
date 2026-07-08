@@ -2,14 +2,14 @@ import { Router } from "express";
 import { requireAuth, verifyToken } from "../lib/auth.js";
 import { db, scanProxiesTable, orchestratorConfigTable, scanFingerprintProfilesTable, scanRequestTelemetryTable } from "@workspace/db";
 import { eq, desc, sql, gte, and, isNotNull } from "drizzle-orm";
-import { healthCheckProxy } from "../lib/proxyHealthCheck.js";
+import { healthCheckProxy, testProxyWithAuth } from "../lib/proxyHealthCheck.js";
 import { getAllCircuits } from "../lib/circuitBreaker.js";
 import { getAllRateLimiterStats } from "../lib/adaptiveRateLimiter.js";
 import { getDnsResolverStats } from "../lib/dnsResolverPool.js";
 import { invalidateConfigCache, getWafProtectedHosts } from "../lib/scanOrchestrator.js";
 import { addWaterfallSseClient, removeWaterfallSseClient } from "../lib/sseManager.js";
 import { logger } from "../lib/logger.js";
-import { encryptCredential, decryptCredentialWithSecret } from "../lib/proxyCredentialEncryption.js";
+import { encryptCredential, decryptCredential, decryptCredentialWithSecret } from "../lib/proxyCredentialEncryption.js";
 import { logAudit, getClientIp } from "../lib/audit.js";
 
 const router = Router();
@@ -141,24 +141,60 @@ router.get("/api/scan-proxies/:id/health", requireAuth, requireAdmin, async (req
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
+    const testUrl = typeof req.query.testUrl === "string" ? req.query.testUrl.trim() : null;
+
     const [proxy] = await db
-      .select({ id: scanProxiesTable.id, ip: scanProxiesTable.ip, port: scanProxiesTable.port })
+      .select({
+        id: scanProxiesTable.id,
+        ip: scanProxiesTable.ip,
+        port: scanProxiesTable.port,
+        type: scanProxiesTable.type,
+        username: scanProxiesTable.username,
+        password: scanProxiesTable.password,
+      })
       .from(scanProxiesTable)
       .where(eq(scanProxiesTable.id, id));
 
     if (!proxy) { res.status(404).json({ error: "Proxy not found" }); return; }
 
-    const health = await healthCheckProxy(proxy.ip, proxy.port ?? 8080);
+    const proxyPort = proxy.port ?? 8080;
 
-    await db.update(scanProxiesTable)
-      .set({
-        lastTestedAt: new Date(),
-        status: health.reachable ? "active" : "inactive",
-        avgLatencyMs: health.reachable ? health.latencyMs : undefined,
-      } as any)
-      .where(eq(scanProxiesTable.id, id));
+    if (testUrl) {
+      // Auth-aware test: decrypt credentials and make a real connection through the proxy
+      const plainPassword = proxy.password ? decryptCredential(proxy.password) : null;
 
-    res.json({ proxyId: id, ...health });
+      const result = await testProxyWithAuth(
+        proxy.ip,
+        proxyPort,
+        proxy.type ?? "http",
+        proxy.username ?? null,
+        plainPassword,
+        testUrl,
+      );
+
+      await db.update(scanProxiesTable)
+        .set({
+          lastTestedAt: new Date(),
+          status: result.reachable ? "active" : "inactive",
+          avgLatencyMs: result.reachable ? result.latencyMs : undefined,
+        } as any)
+        .where(eq(scanProxiesTable.id, id));
+
+      res.json({ proxyId: id, ...result });
+    } else {
+      // TCP-only reachability check (legacy behaviour)
+      const health = await healthCheckProxy(proxy.ip, proxyPort);
+
+      await db.update(scanProxiesTable)
+        .set({
+          lastTestedAt: new Date(),
+          status: health.reachable ? "active" : "inactive",
+          avgLatencyMs: health.reachable ? health.latencyMs : undefined,
+        } as any)
+        .where(eq(scanProxiesTable.id, id));
+
+      res.json({ proxyId: id, ...health });
+    }
   } catch (err) {
     logger.error({ err }, "GET /api/scan-proxies/:id/health error");
     res.status(500).json({ error: "Failed to health-check proxy" });
