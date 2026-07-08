@@ -971,6 +971,121 @@ async function recoverStalePendingScans(): Promise<void> {
   }
 }
 
+/**
+ * On startup, recover brand threat scans that were interrupted by a server restart.
+ *
+ * Three cases:
+ *  1. status="running" + checkpoint="phase1_done" + permutationsCache present
+ *     → Resume from Phase 2 (permutations already computed; skip the slow dnstwist step).
+ *  2. status="running" + no checkpoint (interrupted before Phase 1 finished)
+ *     → Mark "error"; the scan lost its in-flight data and cannot be safely resumed.
+ *  3. status="pending" (server died before the scan ever started)
+ *     → Re-trigger a fresh scan via setImmediate.
+ *
+ * The 15-second startup grace period in startBeatScheduler() ensures the DB
+ * connection pool is ready before this function runs.
+ */
+export async function recoverStaleBrandThreatScans(): Promise<void> {
+  try {
+    // ── Case 1 & 2: All "running" scans ──────────────────────────────────────
+    //
+    // At startup time, ALL brand threat scans in "running" state are orphaned —
+    // the Node.js process (and any setImmediate callbacks) that was executing
+    // them no longer exists.  We must NOT gate by age here: a scan interrupted
+    // 30 seconds before the restart is just as orphaned as one from 2 hours ago.
+    //
+    // Age gating is appropriate in the periodic beat loop (to avoid racing
+    // against scans that just started), but NOT at startup where we have
+    // authoritative knowledge that all in-process work is gone.
+    const staleRunning = await db
+      .select({
+        id:                brandThreatScansTable.id,
+        tenantId:          brandThreatScansTable.tenantId,
+        domain:            brandThreatScansTable.domain,
+        checkpoint:        brandThreatScansTable.checkpoint,
+        permutationsCache: brandThreatScansTable.permutationsCache,
+        createdAt:         brandThreatScansTable.createdAt,
+      })
+      .from(brandThreatScansTable)
+      .where(eq(brandThreatScansTable.status, "running"));
+
+    if (staleRunning.length > 0) {
+      logger.warn(
+        { count: staleRunning.length },
+        "Beat: found stale brand threat scans in 'running' state — starting recovery",
+      );
+
+      const { runBrandThreatScan } = await import("../lib/brandThreatRunner");
+      type PermResult = Parameters<typeof runBrandThreatScan>[2];
+
+      for (const scan of staleRunning) {
+        const hasCheckpoint = scan.checkpoint === "phase1_done" && Array.isArray(scan.permutationsCache) && scan.permutationsCache.length > 0;
+
+        if (hasCheckpoint) {
+          // Resume from Phase 2 — Phase 1 permutations are safely cached in DB.
+          logger.info(
+            { scanId: scan.id, domain: scan.domain, cachedPerms: (scan.permutationsCache as unknown[]).length },
+            "Beat: resuming interrupted brand threat scan from Phase 1 checkpoint",
+          );
+          const cached = scan.permutationsCache as unknown as PermResult;
+          setImmediate(() => {
+            runBrandThreatScan(scan.id, scan.domain, cached).catch(err => {
+              logger.error({ err, scanId: scan.id }, "Beat: resumed brand threat scan failed");
+            });
+          });
+        } else {
+          // No checkpoint — Phase 1 data is lost; mark as error so the user can re-trigger.
+          logger.warn(
+            { scanId: scan.id, domain: scan.domain },
+            "Beat: brand threat scan interrupted before Phase 1 checkpoint — marking error",
+          );
+          await db.update(brandThreatScansTable)
+            .set({
+              status: "error",
+              error: "Scan interrupted by server restart before Phase 1 checkpoint; please re-run the scan.",
+              completedAt: new Date(),
+            })
+            .where(eq(brandThreatScansTable.id, scan.id))
+            .catch(() => {});
+        }
+      }
+    } else {
+      logger.info("Beat: no stale brand threat running scans to recover");
+    }
+
+    // ── Case 3: All "pending" scans ──────────────────────────────────────────
+    //
+    // Same rationale: at startup, a scan in "pending" state was never picked up
+    // by the in-process queue.  Regardless of age, we should re-trigger it.
+    const stalePending = await db
+      .select({
+        id:       brandThreatScansTable.id,
+        tenantId: brandThreatScansTable.tenantId,
+        domain:   brandThreatScansTable.domain,
+      })
+      .from(brandThreatScansTable)
+      .where(eq(brandThreatScansTable.status, "pending"));
+
+    if (stalePending.length > 0) {
+      logger.info({ count: stalePending.length }, "Beat: re-triggering stale pending brand threat scans");
+      const { runBrandThreatScan } = await import("../lib/brandThreatRunner");
+
+      for (const scan of stalePending) {
+        setImmediate(() => {
+          runBrandThreatScan(scan.id, scan.domain).catch(err => {
+            logger.error({ err, scanId: scan.id }, "Beat: re-triggered brand threat scan failed");
+          });
+        });
+        logger.info({ scanId: scan.id, domain: scan.domain }, "Beat: re-triggered stale pending brand threat scan");
+      }
+    } else {
+      logger.info("Beat: no stale brand threat pending scans to recover");
+    }
+  } catch (err) {
+    logger.error({ err }, "Beat: brand threat stale scan recovery error (non-fatal)");
+  }
+}
+
 // ── AI Mapper orphan recovery — marks "running" scans stale after 45 min ──────
 async function recoverStaleAiMapperScans(): Promise<void> {
   try {
@@ -1047,6 +1162,7 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
   setTimeout(() => {
     recoverStalePendingScans().catch(() => {});
     recoverStaleAiMapperScans().catch(() => {});
+    recoverStaleBrandThreatScans().catch(() => {});
   }, 15_000);
 
   const beatPoll = async () => {
