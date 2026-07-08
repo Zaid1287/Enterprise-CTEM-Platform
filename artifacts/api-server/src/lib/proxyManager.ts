@@ -4,7 +4,7 @@ import { healthCheckProxy } from "./proxyHealthCheck.js";
 import { logger } from "./logger.js";
 import { decryptCredential } from "./proxyCredentialEncryption.js";
 
-export type ProxyOutcome = "success" | "rate_limited" | "forbidden" | "timeout" | "connection_error";
+export type ProxyOutcome = "success" | "rate_limited" | "forbidden" | "timeout" | "connection_error" | "auth_failed";
 
 const SCORE_DELTAS: Record<ProxyOutcome, number> = {
   success:          +2,
@@ -12,6 +12,7 @@ const SCORE_DELTAS: Record<ProxyOutcome, number> = {
   forbidden:        -8,
   timeout:          -6,
   connection_error: -5,
+  auth_failed:      -100, // immediately kills the proxy
 };
 
 const LATENCY_BONUS = +1;
@@ -164,7 +165,13 @@ export async function recordProxyOutcome(
       timeoutCount:        outcome === "timeout"      ? (current.timeoutCount ?? 0) + 1 : current.timeoutCount ?? 0,
     };
 
-    if (enteredCooldown) {
+    // auth_failed: immediately mark inactive — credentials are wrong, cooldown won't fix it
+    if (outcome === "auth_failed") {
+      updates.status = "auth_failed";
+      updates.healthScore = 0;
+      updates.cooldownUntil = new Date(Date.now() + 365 * 24 * 60 * 60_000); // far future — won't auto-recover
+      logger.warn({ proxyId }, "Proxy marked auth_failed: 407 Proxy Auth Required — credentials rejected by upstream proxy");
+    } else if (enteredCooldown) {
       updates.cooldownUntil = new Date(Date.now() + COOLDOWN_DURATION_MS);
       updates.status = "cooldown";
       logger.warn({ proxyId, newConsecutive }, "Proxy entering cooldown after repeated failures");

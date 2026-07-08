@@ -28,6 +28,7 @@ export interface OrchestratorContext {
 interface OrchConfig {
   enabled: boolean;
   useProxies: boolean;
+  requireProxies: boolean;
   rotateFingerprints: boolean;
   maxRetries: number;
   backoffBaseMs: number;
@@ -75,6 +76,7 @@ async function loadConfig(tenantId: number): Promise<OrchConfig> {
     const config: OrchConfig = {
       enabled:                  map["enabled"]               !== "false",
       useProxies:               map["use_proxies"]            !== "false",
+      requireProxies:            map["require_proxies"]        === "true",
       rotateFingerprints:       map["rotate_fingerprints"]    !== "false",
       maxRetries:               parseInt(map["max_retries"]        ?? "4",    10),
       backoffBaseMs:            parseInt(map["retry_base_delay_ms"] ?? "1000", 10),
@@ -95,7 +97,7 @@ async function loadConfig(tenantId: number): Promise<OrchConfig> {
     return config;
   } catch {
     return {
-      enabled: true, useProxies: false, rotateFingerprints: false,
+      enabled: true, useProxies: false, requireProxies: false, rotateFingerprints: false,
       maxRetries: 2, backoffBaseMs: 1000, maxBackoffMs: 30_000,
       logAllRequests: false, wafBypassEnabled: false,
       adaptiveRateLimitEnabled: false, circuitBreakerEnabled: false,
@@ -331,7 +333,7 @@ function buildProxyUrl(proxy: ActiveProxy): string {
 // Safe defaults applied when the orchestrator's own bootstrap throws unexpectedly.
 // Conservative: no proxies, no fingerprint rotation, no adaptive features, few retries.
 const ORCHESTRATOR_SAFE_DEFAULTS: OrchConfig = {
-  enabled: true, useProxies: false, rotateFingerprints: false,
+  enabled: true, useProxies: false, requireProxies: false, rotateFingerprints: false,
   maxRetries: 2, backoffBaseMs: 1000, maxBackoffMs: 30_000,
   logAllRequests: false, wafBypassEnabled: false,
   adaptiveRateLimitEnabled: false, circuitBreakerEnabled: false,
@@ -581,6 +583,43 @@ export async function orchestratedFetch(
 
       latencyMs = Date.now() - requestStart;
       statusCode = response.status;
+
+      // ── 407 Proxy Authentication Required ──────────────────────────────────
+      // The upstream proxy rejected our credentials.  This is not a transient
+      // failure — the credentials are wrong and retrying won't help.  Mark the
+      // proxy permanently inactive so it is never selected again and alert the
+      // tenant immediately.
+      if (statusCode === 407 && proxy) {
+        const failedProxy = proxy;
+        recordProxyOutcome(failedProxy.id, "auth_failed").catch(() => {});
+        logger.warn({ proxyId: failedProxy.id, ip: failedProxy.ip, port: failedProxy.port, url },
+          "Orchestrator: 407 Proxy Auth Required — proxy credentials rejected; marking auth_failed");
+        if (ctx.tenantId) {
+          dispatchNotifications({
+            tenantId:       ctx.tenantId,
+            eventType:      "orchestrator_event",
+            title:          `Proxy Auth Failed: ${failedProxy.ip}:${failedProxy.port}`,
+            message:        `Proxy ${failedProxy.ip}:${failedProxy.port} returned 407 Proxy Auth Required. The configured credentials were rejected by the upstream proxy. The proxy has been marked as Auth Failed and will not be used again until credentials are corrected.`,
+            severity:       "high",
+            relatedAssetId: ctx.assetId,
+            scanId:         ctx.scanId,
+            assetName:      ctx.target ?? hostname,
+            domain:         hostname,
+          }).catch(() => {});
+        }
+        if (config.requireProxies) {
+          throw new Error(
+            `Proxy auth failed (407) on ${failedProxy.ip}:${failedProxy.port} and require_proxies=true — aborting scan to prevent direct traffic.`
+          );
+        }
+        // Fall back to direct fetch: clear proxy state and retry once without a proxy
+        proxy = null;
+        proxyAgent = undefined;
+        logger.warn({ url }, "Orchestrator: falling back to direct fetch after 407 (require_proxies=false)");
+        attemptNumber++;
+        if (attemptNumber > maxRetries) break;
+        continue;
+      }
 
       const bodyText = await response.clone().text().catch(() => "");
       bytesDownloaded = bodyText.length;
@@ -876,6 +915,49 @@ export async function orchestratedFetch(
       latencyMs = Date.now() - requestStart;
       lastError = err;
       lastWafDetected = false;
+
+      // ── 407 surfaced as a thrown error ──────────────────────────────────────
+      // undici's ProxyAgent may throw rather than return a 407 Response when the
+      // proxy rejects auth at the CONNECT tunnel level.  Detect by message/code.
+      const errMsg: string = (err?.message ?? "") + (err?.cause?.message ?? "");
+      const is407Error = proxy && (
+        errMsg.includes("407") ||
+        err?.statusCode === 407 ||
+        errMsg.toLowerCase().includes("proxy authentication")
+      );
+      if (is407Error) {
+        const failedProxy = proxy!;
+        recordProxyOutcome(failedProxy.id, "auth_failed").catch(() => {});
+        logger.warn({ proxyId: failedProxy.id, ip: failedProxy.ip, port: failedProxy.port, url, errMsg },
+          "Orchestrator: 407 Proxy Auth Required (thrown) — proxy credentials rejected; marking auth_failed");
+        if (ctx.tenantId) {
+          dispatchNotifications({
+            tenantId:       ctx.tenantId,
+            eventType:      "orchestrator_event",
+            title:          `Proxy Auth Failed: ${failedProxy.ip}:${failedProxy.port}`,
+            message:        `Proxy ${failedProxy.ip}:${failedProxy.port} rejected authentication (407 Proxy Auth Required). The configured credentials were rejected. The proxy has been marked as Auth Failed and will not be used again until credentials are corrected.`,
+            severity:       "high",
+            relatedAssetId: ctx.assetId,
+            scanId:         ctx.scanId,
+            assetName:      ctx.target ?? hostname,
+            domain:         hostname,
+          }).catch(() => {});
+        }
+        if (config.requireProxies) {
+          throw new Error(
+            `Proxy auth failed (407 thrown) on ${failedProxy.ip}:${failedProxy.port} and require_proxies=true — aborting scan to prevent direct traffic.`
+          );
+        }
+        proxy = null;
+        proxyAgent = undefined;
+        logger.warn({ url }, "Orchestrator: falling back to direct fetch after 407 error (require_proxies=false)");
+        attemptNumber++;
+        if (attemptNumber > maxRetries) break;
+        const jitter407 = Math.random() * config.backoffBaseMs;
+        backoffMs = Math.min(config.backoffBaseMs + jitter407, config.maxBackoffMs);
+        await sleep(backoffMs);
+        continue;
+      }
 
       // Issue 9: catch-path circuit breaker trip alert
       if (config.circuitBreakerEnabled) {

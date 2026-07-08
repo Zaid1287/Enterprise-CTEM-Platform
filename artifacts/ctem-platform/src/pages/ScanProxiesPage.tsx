@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Trash2, Pencil, Wifi, WifiOff, Clock, RefreshCw,
-  Loader2, TestTube2, Upload, Check, X, KeyRound, Eye, EyeOff,
+  Loader2, TestTube2, Upload, Check, X, KeyRound, Eye, EyeOff, ShieldAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ interface Proxy {
   hasAuth: boolean;
   healthScore: number; successCount: number; failCount: number;
   count429: number; count403: number; avgLatencyMs: number | null;
-  status: "active" | "cooldown" | "inactive"; lastTestedAt: string | null;
+  status: "active" | "cooldown" | "inactive" | "auth_failed"; lastTestedAt: string | null;
   requestsToday?: number;
 }
 
@@ -50,9 +50,10 @@ async function api<T>(path: string, opts?: RequestInit): Promise<T> {
 /* ─── StatusBadge ─────────────────────────────────────────────────────── */
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; icon: React.ElementType; cls: string }> = {
-    active:   { label: "Healthy",      icon: Wifi,    cls: "bg-green-500/15 text-green-600 border-green-500/30" },
-    cooldown: { label: "Cooling Down", icon: Clock,   cls: "bg-amber-500/15 text-amber-600 border-amber-500/30" },
-    inactive: { label: "Inactive",     icon: WifiOff, cls: "bg-red-500/15 text-red-600 border-red-500/30"   },
+    active:     { label: "Healthy",     icon: Wifi,        cls: "bg-green-500/15 text-green-600 border-green-500/30"   },
+    cooldown:   { label: "Cooling Down",icon: Clock,       cls: "bg-amber-500/15 text-amber-600 border-amber-500/30"   },
+    inactive:   { label: "Inactive",    icon: WifiOff,     cls: "bg-red-500/15 text-red-600 border-red-500/30"         },
+    auth_failed:{ label: "Auth Failed", icon: ShieldAlert, cls: "bg-orange-500/15 text-orange-600 border-orange-500/30"},
   };
   const s = map[status] ?? { label: status, icon: RefreshCw, cls: "bg-muted text-muted-foreground" };
   const Icon = s.icon;
@@ -449,9 +450,10 @@ export default function ScanProxiesPage() {
     }
   };
 
-  const activeCount   = proxies.filter(p => p.status === "active").length;
-  const cooldownCount = proxies.filter(p => p.status === "cooldown").length;
-  const inactiveCount = proxies.filter(p => p.status === "inactive").length;
+  const activeCount     = proxies.filter(p => p.status === "active").length;
+  const cooldownCount   = proxies.filter(p => p.status === "cooldown").length;
+  const inactiveCount   = proxies.filter(p => p.status === "inactive").length;
+  const authFailedCount = proxies.filter(p => p.status === "auth_failed").length;
 
   return (
     <div className="p-6 space-y-6 max-w-screen-xl mx-auto">
@@ -487,6 +489,11 @@ export default function ScanProxiesPage() {
         <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/25 gap-1.5 px-3 py-1 text-sm">
           <WifiOff className="w-3.5 h-3.5" /> {inactiveCount} Inactive
         </Badge>
+        {authFailedCount > 0 && (
+          <Badge variant="outline" className="bg-orange-500/10 text-orange-600 border-orange-500/25 gap-1.5 px-3 py-1 text-sm">
+            <ShieldAlert className="w-3.5 h-3.5" /> {authFailedCount} Auth Failed
+          </Badge>
+        )}
       </div>
 
       {/* Proxy Table */}
