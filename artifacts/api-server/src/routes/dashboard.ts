@@ -207,9 +207,12 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   const allClientTenants = await db.select().from(tenantsTable)
     .where(and(eq(tenantsTable.isPlatform, false), ne(tenantsTable.id, req.user!.tenantId)));
 
-  // Fetch caller's own tenant for name lookup and role-based filtering
-  const [ownTenant] = await db.select({ id: tenantsTable.id, name: tenantsTable.name, isPlatform: tenantsTable.isPlatform })
-    .from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId));
+  // Fetch caller's own tenant for name lookup, role-based filtering, and platform-org metrics
+  const [ownTenant] = await db.select({
+    id: tenantsTable.id, name: tenantsTable.name, isPlatform: tenantsTable.isPlatform,
+    slug: tenantsTable.slug, plan: tenantsTable.plan, isActive: tenantsTable.isActive,
+    createdAt: tenantsTable.createdAt,
+  }).from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId));
 
   // Super admin and platform-admin see all client tenants.
   // Non-platform admin sees only direct child tenants.
@@ -319,6 +322,18 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
 
   const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r.score]));
 
+  // ── Platform tenant (SA's own org) metrics ────────────────────────────────
+  // The SA's own assets/findings live under the platform tenant. Include this
+  // org in client-facing views so the SA always sees their own data.
+  const platformAssets = allAssets.filter(a => a.tenantId === req.user!.tenantId);
+  const platformAssetIdSet = new Set(platformAssets.map(a => a.id));
+  const platformFindings = allFindings.filter(f => f.assetId != null && platformAssetIdSet.has(f.assetId));
+  const platformScores = platformAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
+  const platformAvgRisk = platformScores.length > 0
+    ? Math.round(platformScores.reduce((s, r) => s + r, 0) / platformScores.length)
+    : 0;
+  const platformRiskLevel = platformAvgRisk >= 70 ? "critical" : platformAvgRisk >= 40 ? "high" : platformAvgRisk >= 20 ? "medium" : "low";
+
   // Top risky assets platform-wide (SA view across all tenants)
   const assetRiskRankings = allAssets
     .map(a => ({
@@ -362,52 +377,86 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     };
   });
 
-  // clientRiskRankings: include ALL client tenants ranked by risk (SA sees full picture)
-  // Use asset-based finding counts so platform-admin scans attribute correctly to client tenant assets
-  const clientRiskRankings = allTenantsRaw.map(t => {
-    const clientAssets = allAssets.filter(a => a.tenantId === t.id);
-    const scores = clientAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
-    const avgRisk = scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r, 0) / scores.length) : 0;
-    const clientAssetIdSet = new Set(clientAssets.map(a => a.id));
-    const tFindings = allFindings.filter(f => f.assetId != null && clientAssetIdSet.has(f.assetId));
-    return {
-      id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
-      riskScore: avgRisk,
-      riskLevel: avgRisk >= 70 ? "critical" : avgRisk >= 40 ? "high" : avgRisk >= 20 ? "medium" : "low",
-      assetCount: clientAssets.length,
-      criticalCount: tFindings.filter(f => f.severity === "critical").length,
-      openFindingCount: tFindings.filter(f => f.status === "open").length,
-      userCount: allUsers.filter(u => u.tenantId === t.id).length,
-    };
-  }).sort((a, b) => b.riskScore - a.riskScore);
+  // clientRiskRankings: platform org first (SA's own data) + all client tenants, sorted by risk
+  const clientRiskRankings = [
+    // Platform org always appears so SA sees their own org's risk ranking
+    ...(ownTenant ? [{
+      id: ownTenant.id,
+      name: ownTenant.name,
+      plan: ownTenant.plan ?? "enterprise",
+      isActive: ownTenant.isActive ?? true,
+      riskScore: platformAvgRisk,
+      riskLevel: platformRiskLevel,
+      assetCount: platformAssets.length,
+      criticalCount: platformFindings.filter(f => f.severity === "critical").length,
+      openFindingCount: platformFindings.filter(f => f.status === "open").length,
+      userCount: allUsers.filter(u => u.tenantId === req.user!.tenantId).length,
+    }] : []),
+    // Client tenants (non-platform orgs)
+    ...allTenantsRaw.map(t => {
+      const clientAssets = allAssets.filter(a => a.tenantId === t.id);
+      const scores = clientAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
+      const avgRisk = scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r, 0) / scores.length) : 0;
+      const clientAssetIdSet = new Set(clientAssets.map(a => a.id));
+      const tFindings = allFindings.filter(f => f.assetId != null && clientAssetIdSet.has(f.assetId));
+      return {
+        id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
+        riskScore: avgRisk,
+        riskLevel: avgRisk >= 70 ? "critical" : avgRisk >= 40 ? "high" : avgRisk >= 20 ? "medium" : "low",
+        assetCount: clientAssets.length,
+        criticalCount: tFindings.filter(f => f.severity === "critical").length,
+        openFindingCount: tFindings.filter(f => f.status === "open").length,
+        userCount: allUsers.filter(u => u.tenantId === t.id).length,
+      };
+    }),
+  ].sort((a, b) => b.riskScore - a.riskScore);
 
-  const recentAlerts = allAlerts.filter(a => !a.isRead).slice(0, 8).map(a => ({
-    id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
-    type: a.type,
-    createdAt: a.createdAt.toISOString(),
-    clientName: tenantNameMap.get(a.tenantId) ?? "Unknown",
-  }));
+  // recentAlerts: only SA's own tenant — matches Alerts page scope so "mark as read" removes them here too
+  const recentAlerts = allAlerts
+    .filter(a => !a.isRead && a.tenantId === req.user!.tenantId)
+    .slice(0, 8)
+    .map(a => ({
+      id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
+      type: a.type,
+      createdAt: a.createdAt.toISOString(),
+      clientName: tenantNameMap.get(a.tenantId) ?? ownTenant?.name ?? "Unknown",
+    }));
 
-  // tenantMetrics: show ALL client tenants with per-tenant risk score
-  // Use asset-based finding counts so platform-admin scans attribute correctly to the asset's tenant
-  const tenantMetrics = allTenantsRaw.map(t => {
-    const tAssets = allAssets.filter(a => a.tenantId === t.id);
-    const tScores = tAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
-    const avgRisk = tScores.length > 0 ? Math.round(tScores.reduce((a, b) => a + b, 0) / tScores.length) : 0;
-    const tAssetIdSet = new Set(tAssets.map(a => a.id));
-    const tFindings = allFindings.filter(f => f.assetId != null && tAssetIdSet.has(f.assetId));
-    return {
-      id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
-      createdAt: t.createdAt.toISOString(),
-      userCount: allUsers.filter(u => u.tenantId === t.id).length,
-      assetCount: tAssets.length,
-      findingCount: tFindings.length,
-      criticalCount: tFindings.filter(f => f.severity === "critical").length,
-      openFindingCount: tFindings.filter(f => f.status === "open").length,
-      activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
-      avgRisk,
-    };
-  });
+  // tenantMetrics: platform org first, then all client tenants
+  // SA's own org is always shown so they can see their own asset/finding data
+  const tenantMetrics = [
+    // Platform org row (SA's own org)
+    ...(ownTenant ? [{
+      id: ownTenant.id, name: ownTenant.name, slug: ownTenant.slug ?? "", plan: ownTenant.plan ?? "enterprise",
+      isActive: ownTenant.isActive ?? true, createdAt: ownTenant.createdAt.toISOString(),
+      userCount: allUsers.filter(u => u.tenantId === req.user!.tenantId).length,
+      assetCount: platformAssets.length,
+      findingCount: platformFindings.length,
+      criticalCount: platformFindings.filter(f => f.severity === "critical").length,
+      openFindingCount: platformFindings.filter(f => f.status === "open").length,
+      activeScans: allScans.filter(s => s.tenantId === req.user!.tenantId && (s.status === "running" || s.status === "pending")).length,
+      avgRisk: platformAvgRisk,
+    }] : []),
+    // Client tenant rows
+    ...allTenantsRaw.map(t => {
+      const tAssets = allAssets.filter(a => a.tenantId === t.id);
+      const tScores = tAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
+      const avgRisk = tScores.length > 0 ? Math.round(tScores.reduce((a, b) => a + b, 0) / tScores.length) : 0;
+      const tAssetIdSet = new Set(tAssets.map(a => a.id));
+      const tFindings = allFindings.filter(f => f.assetId != null && tAssetIdSet.has(f.assetId));
+      return {
+        id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
+        createdAt: t.createdAt.toISOString(),
+        userCount: allUsers.filter(u => u.tenantId === t.id).length,
+        assetCount: tAssets.length,
+        findingCount: tFindings.length,
+        criticalCount: tFindings.filter(f => f.severity === "critical").length,
+        openFindingCount: tFindings.filter(f => f.status === "open").length,
+        activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
+        avgRisk,
+      };
+    }),
+  ];
 
   res.json({
     // "Total Clients" = non-platform client orgs only
