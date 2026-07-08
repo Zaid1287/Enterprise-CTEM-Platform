@@ -184,7 +184,7 @@ export default function ScanFingerprintsPage() {
   });
 
   return (
-    <div className="p-6 space-y-6 max-w-screen-lg mx-auto">
+    <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Browser Fingerprint Profiles</h1>
         <p className="text-sm text-muted-foreground mt-0.5">

@@ -9,7 +9,7 @@ import {
   ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
   Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -133,17 +133,30 @@ const navGroups: NavGroup[] = [
 ];
 
 let _collapsed = false;
+let _scrollTop = 0;
 
 export function Sidebar() {
   const [location] = useLocation();
   const { user, aiMapperEnabled } = useAuth();
   const role = user?.role ?? "client";
   const [collapsed, setCollapsed] = useState(_collapsed);
+  const asideRef = useRef<HTMLElement>(null);
 
   const toggle = () => {
     _collapsed = !collapsed;
     setCollapsed(!collapsed);
   };
+
+  // Persist scroll position across re-renders caused by navigation
+  const handleScroll = useCallback(() => {
+    _scrollTop = asideRef.current?.scrollTop ?? 0;
+  }, []);
+
+  // Restore scroll position after navigation (location change triggers re-render)
+  useEffect(() => {
+    const el = asideRef.current;
+    if (el) el.scrollTop = _scrollTop;
+  }, [location]);
 
   const isExternalMember = ["vendor", "employee", "third_party"].includes(role);
 
@@ -186,6 +199,8 @@ export function Sidebar() {
 
   return (
     <aside
+      ref={asideRef as React.RefObject<HTMLDivElement>}
+      onScroll={handleScroll}
       className={cn(
         "flex flex-col shrink-0 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 overflow-y-auto transition-all duration-200",
         collapsed ? "w-14" : "w-60",

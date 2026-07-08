@@ -569,7 +569,7 @@ export default function TenantsPage() {
             <thead>
               <tr className="border-b border-border bg-muted/20">
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground w-12">ID</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Organization</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground min-w-[200px]">Organization</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Plan</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Users</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Assets</th>

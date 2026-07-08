@@ -468,8 +468,25 @@ function FindingDrawer({
           )}
 
           {activeTab === "screenshots" && (
-            <div className="text-xs text-muted-foreground/60">
-              Screenshot data is available in the Asset Detail view for the associated asset.
+            <div className="space-y-3">
+              <div className="rounded-lg border border-border bg-muted/20 p-4 flex flex-col items-center gap-3 text-center">
+                <Camera className="w-8 h-8 text-muted-foreground/40" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Screenshots are stored per asset</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Screenshots captured during scans are attached to the asset, not individual findings.
+                  </p>
+                </div>
+                {finding.assetId && (
+                  <a
+                    href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/assets/${finding.assetId}#screenshots`}
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium underline underline-offset-2"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    View screenshots for {finding.assetName ?? "this asset"}
+                  </a>
+                )}
+              </div>
             </div>
           )}
 
