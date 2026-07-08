@@ -322,10 +322,11 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
       // Use a descriptive action name so audit logs clearly distinguish scheduled from
       // manual runs without needing a separate userId value.
       const auditAction = entry.userId === 0 ? "scan.scheduled_run" : "scan.pipeline_run";
-      await logAudit(entry.tenantId, entry.userId as any, auditAction, "scan", entry.scanId, {
-        assetCount: entry.configs.length, findingsCount,
-        triggeredBy: entry.userId === 0 ? "system:scheduler" : `user:${entry.userId}`,
-      });
+      await logAudit(
+        { tenantId: entry.tenantId, userId: entry.userId, email: "" } as any,
+        auditAction, "scan", entry.scanId,
+        JSON.stringify({ assetCount: entry.configs.length, findingsCount, triggeredBy: entry.userId === 0 ? "system:scheduler" : `user:${entry.userId}` }),
+      );
       logger.info({ scanId: entry.scanId, findingsCount }, "Scan completed");
 
       // Recompute risk scores and lastScannedAt for all scanned assets (includes businessImpact)
@@ -353,7 +354,7 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
           // Collect all unique tenant IDs that own assets in this scan — so
           // AM-triggered scans fire rules for client tenants, not just tenant 5.
           const tenantIdsToNotify = new Set<number>([entry.tenantId]);
-          for (const row of assetTenantRows) tenantIdsToNotify.add(row.tenantId);
+          for (const row of assetTenantRows) if (row.tenantId != null) tenantIdsToNotify.add(row.tenantId);
 
           // dispatchMultiTenantNotifications fires tenant rules for each tenant
           // and platform-level fallbacks exactly ONCE — no duplicates.
@@ -832,7 +833,7 @@ async function runCtLogLookup(domain: string): Promise<SubdomainFinding[]> {
     setTimeout(() => ctrl.abort(), 10000);
     const res = await orchestratedFetch(`https://crt.sh/?q=%.${domain}&output=json`, { signal: ctrl.signal });
     if (!res.ok) return [];
-    const data: any[] = await res.json().catch(() => []);
+    const data = await res.json().catch(() => []) as any[];
     const seen = new Set<string>();
     const subs: SubdomainFinding[] = [];
     for (const entry of data.slice(0, 200)) {
@@ -1389,10 +1390,10 @@ async function runSslAnalysis(target: string): Promise<{ intel: IntelItem[]; vul
       try {
         const cert = sock.getPeerCertificate(true);
         if (cert) {
-          if (cert.issuer?.O)     intel.push({ type: "Certificate", key: "Issuer",        value: cert.issuer.O });
-          if (cert.issuer?.CN)    intel.push({ type: "Certificate", key: "Issuer CN",     value: cert.issuer.CN });
-          if (cert.subject?.CN)   intel.push({ type: "Certificate", key: "Subject CN",    value: cert.subject.CN });
-          if (cert.subject?.O)    intel.push({ type: "Certificate", key: "Subject Org",   value: cert.subject.O });
+          if (cert.issuer?.O)     intel.push({ type: "Certificate", key: "Issuer",        value: String(cert.issuer.O) });
+          if (cert.issuer?.CN)    intel.push({ type: "Certificate", key: "Issuer CN",     value: String(cert.issuer.CN) });
+          if (cert.subject?.CN)   intel.push({ type: "Certificate", key: "Subject CN",    value: String(cert.subject.CN) });
+          if (cert.subject?.O)    intel.push({ type: "Certificate", key: "Subject Org",   value: String(cert.subject.O) });
           if (cert.valid_from)    intel.push({ type: "Certificate", key: "Valid From",    value: cert.valid_from });
           if (cert.valid_to)      intel.push({ type: "Certificate", key: "Expires",       value: cert.valid_to });
           if (cert.serialNumber)  intel.push({ type: "Certificate", key: "Serial",        value: cert.serialNumber });
@@ -2313,6 +2314,18 @@ async function executePipeline(
           ? (async () => { vulnScan = await runNucleiScan(target, dnsResult.subdomains.map(s => s.name)); })()
           : Promise.resolve(),
       ]);
+
+      // Re-assert types: TypeScript 5.x narrows let-variables that are only assigned inside
+      // async closures to their pre-closure type (null). Re-assigning through a cast resets
+      // the control-flow narrowing so subsequent truthiness checks work correctly at runtime.
+      httpInfo       = httpInfo       as unknown as HttpInfo | null;
+      wafProbeResult = wafProbeResult as unknown as WafDetection | null;
+      jsAnalysis     = jsAnalysis     as unknown as JsAnalysisResult | null;
+      paramDiscovery = paramDiscovery as unknown as ParamDiscoveryResult | null;
+      cloudRecon     = cloudRecon     as unknown as CloudReconResult | null;
+      secretsHunt    = secretsHunt    as unknown as SecretsHuntResult | null;
+      dirFuzz        = dirFuzz        as unknown as DirFuzzResult | null;
+      vulnScan       = vulnScan       as unknown as VulnScanResult | null;
 
       // Merge active WAF probe result if header detection didn't find a high-confidence WAF
       if (httpInfo) {
@@ -4120,13 +4133,13 @@ router.post("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, r
     if (firstAsset?.tenantId) scheduleTenantId = firstAsset.tenantId;
   }
 
-  const nextRunAt = computeNextRunAt(frequency ?? "once", runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone);
+  const nextRunAt = computeNextRunAt(frequency ?? "once", runTime ?? "09:00", dayOfWeek, dayOfMonth);
   const [schedule] = await db.insert(scanSchedulesTable).values({
     tenantId: scheduleTenantId, name, assetToolConfig, frequency: frequency ?? "once",
     runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone, status: "active", nextRunAt,
     createdBy: userId as any, ...(groupId ? { groupId } : {}),
   } as any).returning();
-  await logAudit(scheduleTenantId, userId as any, "schedule.create", "scan_schedule", schedule.id, { name });
+  await logAudit({ tenantId: scheduleTenantId, userId, email: "" } as any, "schedule.create", "scan_schedule", schedule.id, JSON.stringify({ name }));
   res.status(201).json(toScheduleResponse(schedule));
 });
 
@@ -4171,7 +4184,6 @@ router.patch("/scans/schedules/:scheduleId", requireAuth, async (req: Authentica
     (updates.runTime as string) ?? existing.runTime,
     (updates.dayOfWeek as number | undefined) ?? existing.dayOfWeek,
     (updates.dayOfMonth as number | undefined) ?? existing.dayOfMonth,
-    tz,
   );
   const [updated] = await db.update(scanSchedulesTable).set(updates as any)
     .where(eq(scanSchedulesTable.id, scheduleId)).returning();
