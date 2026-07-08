@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, ilike, sql, inArray, desc, isNull, or } from "drizzle-orm";
+import { eq, and, ilike, sql, inArray, desc, isNull, or, ne } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db, assetsTable, usersTable, findingsTable, findingCommentsTable, riskScoresTable,
@@ -32,6 +32,27 @@ function normalizeDomain(v: string): string {
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
     .split("/")[0]!.split("?")[0]!.split(":")[0]!;
+}
+
+/**
+ * When an admin/super_admin verifies a domain, automatically mark all other
+ * assets with the same domain value as verified across all tenants.
+ * This keeps platform tenant and client tenant assets in sync so neither
+ * remains blocked from scanning after the admin proves domain ownership.
+ * Returns the number of additional assets that were synced.
+ */
+async function syncDomainVerification(verifiedAssetId: number, assetValue: string): Promise<number> {
+  const normalized = normalizeDomain(assetValue);
+  if (!normalized) return 0;
+  const synced = await db.update(assetsTable)
+    .set({ verificationStatus: "verified", verificationToken: null })
+    .where(and(
+      sql`LOWER(REGEXP_REPLACE(${assetsTable.value}, '^(https?://)?(www\\.)?', '')) = ${normalized}`,
+      ne(assetsTable.id, verifiedAssetId),
+      ne(assetsTable.verificationStatus, "verified")
+    ))
+    .returning({ id: assetsTable.id });
+  return synced.length;
 }
 
 const router = Router();
@@ -426,7 +447,11 @@ router.get("/assets/:assetId/verify/email-confirm", async (req, res): Promise<vo
   await db.update(assetsTable)
     .set({ verificationStatus: "verified", verificationEmailToken: null, verificationEmailExpiry: null })
     .where(eq(assetsTable.id, assetId));
-  res.send(confirmHtml("success", `Asset <strong>${asset.name}</strong> (${asset.value}) has been successfully verified.`));
+  // Sync: if this asset belongs to a platform tenant, mark all matching assets across all tenants as verified
+  const [assetTenant] = await db.select({ isPlatform: tenantsTable.isPlatform })
+    .from(tenantsTable).where(eq(tenantsTable.id, asset.tenantId));
+  const syncedCount = assetTenant?.isPlatform ? await syncDomainVerification(assetId, asset.value) : 0;
+  res.send(confirmHtml("success", `Asset <strong>${asset.name}</strong> (${asset.value}) has been successfully verified.${syncedCount > 0 ? ` ${syncedCount} matching asset(s) in other tenants also verified.` : ""}`));
 });
 
 function confirmHtml(type: "success" | "error", message: string): string {
@@ -598,7 +623,9 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
           .set({ verificationStatus: "verified" })
           .where(eq(assetsTable.id, params.data.assetId));
         await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
-        res.json({ verified: true, message: `File found at ${fileUrl}. Asset ownership verified.` });
+        const isAdminRole = req.user!.role === "super_admin" || req.user!.role === "admin";
+        const synced = isAdminRole ? await syncDomainVerification(params.data.assetId, asset.value) : 0;
+        res.json({ verified: true, message: `File found at ${fileUrl}. Asset ownership verified.${synced > 0 ? ` ${synced} matching asset(s) in other tenants also verified.` : ""}` });
       } else {
         res.json({ verified: false, message: `File found but content does not match. Expected: ${token}` });
       }
@@ -623,7 +650,9 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
             .set({ verificationStatus: "verified" })
             .where(eq(assetsTable.id, params.data.assetId));
           await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
-          res.json({ verified: true, message: "DNS TXT record found. Cloud asset ownership verified." });
+          const isAdminRole = req.user!.role === "super_admin" || req.user!.role === "admin";
+          const synced = isAdminRole ? await syncDomainVerification(params.data.assetId, asset.value) : 0;
+          res.json({ verified: true, message: `DNS TXT record found. Cloud asset ownership verified.${synced > 0 ? ` ${synced} matching asset(s) in other tenants also verified.` : ""}` });
           return;
         }
       } catch { /* no DNS record — fall through */ }
@@ -639,7 +668,9 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
       .set({ verificationStatus: "verified" })
       .where(eq(assetsTable.id, params.data.assetId));
     await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
-    res.json({ verified: true, message: "Cloud asset ownership confirmed by administrator." });
+    const isAdminRoleCloud = req.user!.role === "super_admin" || req.user!.role === "admin";
+    const syncedCloud = isAdminRoleCloud ? await syncDomainVerification(params.data.assetId, asset.value) : 0;
+    res.json({ verified: true, message: `Cloud asset ownership confirmed by administrator.${syncedCloud > 0 ? ` ${syncedCloud} matching asset(s) in other tenants also verified.` : ""}` });
     return;
   }
 
@@ -653,7 +684,9 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
           .set({ verificationStatus: "verified" })
           .where(eq(assetsTable.id, params.data.assetId));
         await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
-        res.json({ verified: true, message: "DNS TXT record found. Asset ownership verified." });
+        const isAdminRole = req.user!.role === "super_admin" || req.user!.role === "admin";
+        const synced = isAdminRole ? await syncDomainVerification(params.data.assetId, asset.value) : 0;
+        res.json({ verified: true, message: `DNS TXT record found. Asset ownership verified.${synced > 0 ? ` ${synced} matching asset(s) in other tenants also verified.` : ""}` });
       } else {
         res.json({ verified: false, message: `TXT record not found yet. Expected value: ${token} at sentinelwares.${domain}` });
       }
@@ -673,7 +706,9 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
     .set({ verificationStatus: "verified" })
     .where(eq(assetsTable.id, params.data.assetId));
   await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
-  res.json({ verified: true, message: "Asset ownership successfully verified." });
+  const isAdminRoleFallback = req.user!.role === "super_admin" || req.user!.role === "admin";
+  const syncedFallback = isAdminRoleFallback ? await syncDomainVerification(params.data.assetId, asset.value) : 0;
+  res.json({ verified: true, message: `Asset ownership successfully verified.${syncedFallback > 0 ? ` ${syncedFallback} matching asset(s) in other tenants also verified.` : ""}` });
 });
 
 // ── Manual Verification (admin / super_admin only) ────────────────────────
@@ -690,8 +725,16 @@ router.post("/assets/:assetId/verify/manual", requireAuth, async (req: Authentic
     .where(assetAccessFilter(assetId, req.user!));
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
+  const isAdminRoleManual = role === "super_admin" || role === "admin";
+
   if (asset.verificationStatus === "verified") {
-    res.json({ verified: true, message: "Asset is already verified." });
+    // Asset itself is already verified — but still sync counterparts in case they aren't
+    const syncedAlready = isAdminRoleManual ? await syncDomainVerification(assetId, asset.value) : 0;
+    res.json({
+      verified: true,
+      message: `Asset is already verified.${syncedAlready > 0 ? ` ${syncedAlready} matching asset(s) in other tenants also verified.` : ""}`,
+      syncedTenantAssets: syncedAlready,
+    });
     return;
   }
 
@@ -700,7 +743,12 @@ router.post("/assets/:assetId/verify/manual", requireAuth, async (req: Authentic
     .where(eq(assetsTable.id, assetId));
 
   await logAudit(req.user!, "manual_verify_asset", "asset", assetId);
-  res.json({ verified: true, message: "Asset ownership manually verified by administrator." });
+  const syncedManual = isAdminRoleManual ? await syncDomainVerification(assetId, asset.value) : 0;
+  res.json({
+    verified: true,
+    message: `Asset ownership manually verified by administrator.${syncedManual > 0 ? ` ${syncedManual} matching asset(s) in other tenants also verified.` : ""}`,
+    syncedTenantAssets: syncedManual,
+  });
 });
 
 // ── Technology Detection ─────────────────────────────────────────────────
