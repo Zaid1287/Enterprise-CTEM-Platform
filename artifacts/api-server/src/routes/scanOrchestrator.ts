@@ -9,7 +9,8 @@ import { getDnsResolverStats } from "../lib/dnsResolverPool.js";
 import { invalidateConfigCache, getWafProtectedHosts } from "../lib/scanOrchestrator.js";
 import { addWaterfallSseClient, removeWaterfallSseClient } from "../lib/sseManager.js";
 import { logger } from "../lib/logger.js";
-import { encryptCredential } from "../lib/proxyCredentialEncryption.js";
+import { encryptCredential, decryptCredentialWithSecret } from "../lib/proxyCredentialEncryption.js";
+import { logAudit, getClientIp } from "../lib/audit.js";
 
 const router = Router();
 
@@ -243,6 +244,67 @@ router.post("/api/scan-proxies/bulk", requireAuth, requireSuperAdmin, async (req
   } catch (err) {
     logger.error({ err }, "POST /api/scan-proxies/bulk error");
     res.status(500).json({ error: "Bulk import failed" });
+  }
+});
+
+// ── Key rotation ──────────────────────────────────────────────────────────────
+// POST /api/scan-proxies/rotate-key
+// Decrypts all stored proxy passwords with the supplied old SESSION_SECRET and
+// re-encrypts them with the current SESSION_SECRET.  super_admin only.
+// Body: { oldSecret: string }
+// Response: { reencrypted: number, failed: number, failures: { id, error }[] }
+
+router.post("/api/scan-proxies/rotate-key", requireAuth, requireSuperAdmin, async (req: any, res) => {
+  try {
+    const { oldSecret } = req.body ?? {};
+    if (!oldSecret || typeof oldSecret !== "string") {
+      res.status(400).json({ error: "oldSecret is required" });
+      return;
+    }
+
+    const proxies = await db
+      .select({ id: scanProxiesTable.id, password: scanProxiesTable.password })
+      .from(scanProxiesTable)
+      .where(isNotNull(scanProxiesTable.password));
+
+    let reencrypted = 0;
+    const failures: { id: number; error: string }[] = [];
+
+    for (const proxy of proxies) {
+      const stored = proxy.password!;
+      const plaintext = decryptCredentialWithSecret(stored, oldSecret);
+      if (plaintext === null) {
+        failures.push({ id: proxy.id, error: "Decryption failed — wrong key or corrupted data" });
+        continue;
+      }
+      try {
+        const newEncrypted = encryptCredential(plaintext);
+        await db
+          .update(scanProxiesTable)
+          .set({ password: newEncrypted } as any)
+          .where(eq(scanProxiesTable.id, proxy.id));
+        reencrypted++;
+      } catch (err: any) {
+        failures.push({ id: proxy.id, error: err?.message ?? "DB update failed" });
+      }
+    }
+
+    logger.info({ reencrypted, failed: failures.length }, "Proxy key rotation complete");
+
+    await logAudit(
+      req.user!,
+      "rotate_proxy_encryption_key",
+      "scan_proxy",
+      undefined,
+      JSON.stringify({ reencrypted, failed: failures.length }),
+      getClientIp(req),
+      { userAgent: req.headers["user-agent"] }
+    );
+
+    res.json({ reencrypted, failed: failures.length, failures });
+  } catch (err) {
+    logger.error({ err }, "POST /api/scan-proxies/rotate-key error");
+    res.status(500).json({ error: "Key rotation failed" });
   }
 });
 
