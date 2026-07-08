@@ -116,8 +116,30 @@ function AiMapperBootstrap() {
 }
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const { toast } = useToast();
+  const [location, navigate] = useLocation();
+
+  const isExternalMember = EXTERNAL_ROLES.includes(user?.role ?? "");
+  const isAllowed =
+    !isExternalMember ||
+    EXTERNAL_MEMBER_ALLOWED_PATHS.some(
+      (p) => location === p || location.startsWith(p + "/")
+    );
+
+  useEffect(() => {
+    if (isAuthenticated && isExternalMember && !isAllowed) {
+      toast({
+        title: "Access restricted",
+        description: "Your account does not have permission to view that page.",
+        variant: "destructive",
+      });
+      navigate("/assets");
+    }
+  }, [isAuthenticated, isExternalMember, isAllowed]);
+
   if (!isAuthenticated) return <Redirect to="/login" />;
+  if (isExternalMember && !isAllowed) return null;
   return (
     <AppLayout>
       <Suspense fallback={<PageLoader />}>
@@ -184,6 +206,9 @@ function AiMapperRoute({ component: Component }: { component: React.ComponentTyp
 }
 
 const EXTERNAL_ROLES = ["vendor", "employee", "third_party"];
+
+/** Routes external members (vendor / employee / third_party) are allowed to visit. */
+const EXTERNAL_MEMBER_ALLOWED_PATHS = ["/assets", "/settings/account"];
 
 function useDefaultPath() {
   const { user } = useAuth();
