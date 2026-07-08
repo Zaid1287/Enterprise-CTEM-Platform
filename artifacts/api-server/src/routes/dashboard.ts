@@ -393,8 +393,10 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       userCount: allUsers.filter(u => u.tenantId === req.user!.tenantId).length,
     }] : []),
     // Client tenants (non-platform orgs)
+    // Include both the client's own assets AND platform assets assigned to this client (assignedClientId)
+    // so that SA-scanned assets for a client appear in that client's metrics.
     ...allTenantsRaw.map(t => {
-      const clientAssets = allAssets.filter(a => a.tenantId === t.id);
+      const clientAssets = allAssets.filter(a => a.tenantId === t.id || a.assignedClientId === t.id);
       const scores = clientAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
       const avgRisk = scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r, 0) / scores.length) : 0;
       const clientAssetIdSet = new Set(clientAssets.map(a => a.id));
@@ -438,12 +440,19 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       avgRisk: platformAvgRisk,
     }] : []),
     // Client tenant rows
+    // Include both the client's own assets AND platform assets assigned to this client (assignedClientId)
+    // so that SA-scanned assets for a client appear in that client's metrics.
     ...allTenantsRaw.map(t => {
-      const tAssets = allAssets.filter(a => a.tenantId === t.id);
+      const tAssets = allAssets.filter(a => a.tenantId === t.id || a.assignedClientId === t.id);
       const tScores = tAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
       const avgRisk = tScores.length > 0 ? Math.round(tScores.reduce((a, b) => a + b, 0) / tScores.length) : 0;
       const tAssetIdSet = new Set(tAssets.map(a => a.id));
       const tFindings = allFindings.filter(f => f.assetId != null && tAssetIdSet.has(f.assetId));
+      // Active scans: check by tenantId OR by assetIds overlap with this client's assets
+      const activeScans = allScans.filter(s =>
+        (s.status === "running" || s.status === "pending") &&
+        (s.tenantId === t.id || (s.assetIds ?? []).some(aid => tAssetIdSet.has(aid)))
+      ).length;
       return {
         id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
         createdAt: t.createdAt.toISOString(),
@@ -452,7 +461,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
         findingCount: tFindings.length,
         criticalCount: tFindings.filter(f => f.severity === "critical").length,
         openFindingCount: tFindings.filter(f => f.status === "open").length,
-        activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
+        activeScans,
         avgRisk,
       };
     }),
