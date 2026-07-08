@@ -207,16 +207,17 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   const allClientTenants = await db.select().from(tenantsTable)
     .where(and(eq(tenantsTable.isPlatform, false), ne(tenantsTable.id, req.user!.tenantId)));
 
+  // Fetch caller's own tenant for name lookup and role-based filtering
+  const [ownTenant] = await db.select({ id: tenantsTable.id, name: tenantsTable.name, isPlatform: tenantsTable.isPlatform })
+    .from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId));
+
   // Super admin and platform-admin see all client tenants.
   // Non-platform admin sees only direct child tenants.
   let visibleClientTenants: typeof allClientTenants;
   if (callerRole === "super_admin") {
     visibleClientTenants = allClientTenants;
   } else {
-    // Check if this admin belongs to the platform tenant
-    const [myTenant] = await db.select({ isPlatform: tenantsTable.isPlatform })
-      .from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId));
-    visibleClientTenants = myTenant?.isPlatform
+    visibleClientTenants = ownTenant?.isPlatform
       ? allClientTenants
       : allClientTenants.filter(t => t.parentTenantId === req.user!.tenantId);
   }
@@ -228,6 +229,11 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   // For platform-wide data aggregation (assets, findings, risk scores, alerts) include the
   // caller's own tenant so scans/findings created under it are always visible
   const allDataTenantIds = [...new Set([req.user!.tenantId, ...clientTenantIds])];
+  // Comprehensive tenant name map: client tenants + caller's own platform tenant
+  const tenantNameMap = new Map<number, string>([
+    ...clientTenants.map(t => [t.id, t.name] as [number, string]),
+    ...(ownTenant ? [[ownTenant.id, ownTenant.name] as [number, string]] : []),
+  ]);
 
   // Allow empty client list but still show data from caller's own tenant
   const [allUsers, allAssets, allFindings, allScans, allAlerts, brandThreats, allTakedowns] = await Promise.all([
@@ -319,7 +325,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       id: a.id,
       name: a.name,
       type: a.type,
-      tenantName: allTenantsRaw.find(t => t.id === a.tenantId)?.name ?? "Unknown",
+      tenantName: tenantNameMap.get(a.tenantId) ?? "Unknown",
       riskScore: riskScoreMap.get(a.id) ?? 0,
       riskLevel: a.riskLevel ?? "low",
       criticalCount: allFindings.filter(f => f.assetId === a.id && f.severity === "critical").length,
@@ -356,12 +362,14 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     };
   });
 
-  // clientRiskRankings: include ALL tenants ranked by risk (SA sees full picture)
+  // clientRiskRankings: include ALL client tenants ranked by risk (SA sees full picture)
+  // Use asset-based finding counts so platform-admin scans attribute correctly to client tenant assets
   const clientRiskRankings = allTenantsRaw.map(t => {
     const clientAssets = allAssets.filter(a => a.tenantId === t.id);
     const scores = clientAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
     const avgRisk = scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r, 0) / scores.length) : 0;
-    const tFindings = allFindings.filter(f => f.tenantId === t.id);
+    const clientAssetIdSet = new Set(clientAssets.map(a => a.id));
+    const tFindings = allFindings.filter(f => f.assetId != null && clientAssetIdSet.has(f.assetId));
     return {
       id: t.id, name: t.name, plan: t.plan, isActive: t.isActive,
       riskScore: avgRisk,
@@ -377,20 +385,29 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
     type: a.type,
     createdAt: a.createdAt.toISOString(),
-    clientName: allTenantsRaw.find(t => t.id === a.tenantId)?.name ?? "Unknown",
+    clientName: tenantNameMap.get(a.tenantId) ?? "Unknown",
   }));
 
-  // tenantMetrics: show ALL tenants (SA can see own platform tenant too)
-  const tenantMetrics = allTenantsRaw.map(t => ({
-    id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
-    createdAt: t.createdAt.toISOString(),
-    userCount: allUsers.filter(u => u.tenantId === t.id).length,
-    assetCount: allAssets.filter(a => a.tenantId === t.id).length,
-    findingCount: allFindings.filter(f => f.tenantId === t.id).length,
-    criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
-    openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
-    activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
-  }));
+  // tenantMetrics: show ALL client tenants with per-tenant risk score
+  // Use asset-based finding counts so platform-admin scans attribute correctly to the asset's tenant
+  const tenantMetrics = allTenantsRaw.map(t => {
+    const tAssets = allAssets.filter(a => a.tenantId === t.id);
+    const tScores = tAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
+    const avgRisk = tScores.length > 0 ? Math.round(tScores.reduce((a, b) => a + b, 0) / tScores.length) : 0;
+    const tAssetIdSet = new Set(tAssets.map(a => a.id));
+    const tFindings = allFindings.filter(f => f.assetId != null && tAssetIdSet.has(f.assetId));
+    return {
+      id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
+      createdAt: t.createdAt.toISOString(),
+      userCount: allUsers.filter(u => u.tenantId === t.id).length,
+      assetCount: tAssets.length,
+      findingCount: tFindings.length,
+      criticalCount: tFindings.filter(f => f.severity === "critical").length,
+      openFindingCount: tFindings.filter(f => f.status === "open").length,
+      activeScans: allScans.filter(s => s.tenantId === t.id && (s.status === "running" || s.status === "pending")).length,
+      avgRisk,
+    };
+  });
 
   res.json({
     // "Total Clients" = non-platform client orgs only
@@ -419,6 +436,16 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     recentAlerts,
     riskTrend,
     tenants: tenantMetrics,
+    allClientOrganizations: tenantMetrics.map(t => ({
+      tenantId: t.id,
+      tenantName: t.name,
+      plan: t.plan,
+      assetCount: t.assetCount,
+      openFindingCount: t.openFindingCount,
+      criticalCount: t.criticalCount,
+      avgRisk: t.avgRisk,
+      isActive: t.isActive,
+    })),
     amPortfolio,
   });
 });

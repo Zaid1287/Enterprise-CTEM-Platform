@@ -346,9 +346,8 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     .from(aiMapperModuleAssignmentsTable)
     .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
     .limit(1);
-  // Admin and super_admin always have AI Mapper access; other roles respect the tenant module setting.
-  const aiMapperEnabled =
-    (user.role === "admin" || user.role === "super_admin") ? true : (moduleRow?.isEnabled ?? false);
+  // All roles respect the tenant module setting (admin/SA can enable/disable per-tenant).
+  const aiMapperEnabled = moduleRow?.isEnabled ?? false;
   res.json({ ...toUserResponse(user), aiMapperEnabled });
 });
 
@@ -747,9 +746,9 @@ export async function seedNewTenantData(tenantId: number): Promise<void> {
     ]).returning();
   }
 
-  // Seed AI Mapper module as enabled for new tenants (idempotent)
+  // Seed AI Mapper module as disabled for new tenants (idempotent — admin can enable per-tenant)
   await db.insert(aiMapperModuleAssignmentsTable)
-    .values({ tenantId, isEnabled: true })
+    .values({ tenantId, isEnabled: false })
     .onConflictDoNothing();
 
   // Default tools for every tenant — errors propagate to the caller

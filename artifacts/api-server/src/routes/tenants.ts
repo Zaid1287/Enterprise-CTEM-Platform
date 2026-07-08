@@ -178,32 +178,42 @@ function toTenantResponse(t: typeof tenantsTable.$inferSelect) {
 
 async function buildRichTenantList(tenantIds: number[]) {
   if (tenantIds.length === 0) return [];
-  const [allTenants, allUsers, allAssets, allFindings, allAssignments] = await Promise.all([
+  const [allTenants, allUsers, allAssets, allAssignments] = await Promise.all([
     db.select().from(tenantsTable).where(inArray(tenantsTable.id, tenantIds)),
     db.select().from(usersTable).where(inArray(usersTable.tenantId, tenantIds)),
     db.select().from(assetsTable).where(inArray(assetsTable.tenantId, tenantIds)),
-    db.select().from(findingsTable).where(inArray(findingsTable.tenantId, tenantIds)),
     db.select().from(accountManagerClientsTable).where(inArray(accountManagerClientsTable.clientTenantId, tenantIds)),
   ]);
+  // Fetch findings by asset ID so scans run by the platform admin are correctly attributed
+  // to the asset's owner tenant (not the scanner's tenantId)
+  const allAssetIds = allAssets.map(a => a.id);
+  const allFindings = allAssetIds.length > 0
+    ? await db.select({ assetId: findingsTable.assetId, severity: findingsTable.severity, status: findingsTable.status })
+        .from(findingsTable).where(inArray(findingsTable.assetId, allAssetIds))
+    : [];
   const amUserIds = [...new Set(allAssignments.map(a => a.accountManagerUserId))];
   const amUsers = amUserIds.length > 0
     ? await db.select({ id: usersTable.id, email: usersTable.email, firstName: usersTable.firstName, lastName: usersTable.lastName })
         .from(usersTable).where(inArray(usersTable.id, amUserIds))
     : [];
-  return allTenants.map(t => ({
-    ...toTenantResponse(t),
-    userCount: allUsers.filter(u => u.tenantId === t.id).length,
-    assetCount: allAssets.filter(a => a.tenantId === t.id).length,
-    findingCount: allFindings.filter(f => f.tenantId === t.id).length,
-    criticalCount: allFindings.filter(f => f.tenantId === t.id && f.severity === "critical").length,
-    openFindingCount: allFindings.filter(f => f.tenantId === t.id && f.status === "open").length,
-    assignedManagers: allAssignments
-      .filter(a => a.clientTenantId === t.id)
-      .map(a => {
-        const u = amUsers.find(m => m.id === a.accountManagerUserId);
-        return u ? { id: u.id, name: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.email, email: u.email } : null;
-      }).filter(Boolean),
-  }));
+  return allTenants.map(t => {
+    const tenantAssetIdSet = new Set(allAssets.filter(a => a.tenantId === t.id).map(a => a.id));
+    const tenantFindings = allFindings.filter(f => f.assetId != null && tenantAssetIdSet.has(f.assetId));
+    return {
+      ...toTenantResponse(t),
+      userCount: allUsers.filter(u => u.tenantId === t.id).length,
+      assetCount: tenantAssetIdSet.size,
+      findingCount: tenantFindings.length,
+      criticalCount: tenantFindings.filter(f => f.severity === "critical").length,
+      openFindingCount: tenantFindings.filter(f => f.status === "open").length,
+      assignedManagers: allAssignments
+        .filter(a => a.clientTenantId === t.id)
+        .map(a => {
+          const u = amUsers.find(m => m.id === a.accountManagerUserId);
+          return u ? { id: u.id, name: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.email, email: u.email } : null;
+        }).filter(Boolean),
+    };
+  });
 }
 
 /**
