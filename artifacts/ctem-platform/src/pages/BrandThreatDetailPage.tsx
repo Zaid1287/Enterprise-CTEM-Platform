@@ -924,6 +924,7 @@ export default function BrandThreatDetailPage() {
   const [confirmDeleteScan, setConfirmDeleteScan] = useState(false);
   const deleteScan = useDeleteBrandThreatScan();
   const qc = useQueryClient();
+  const { toast } = useToast();
   const PAGE_SIZE = 50;
 
   const { data: scan, isLoading, refetch } = useGetBrandThreatScan(id, {
@@ -1235,15 +1236,59 @@ export default function BrandThreatDetailPage() {
           </div>
         </div>
       )}
-      {s.status === "error" && (
-        <div className="mx-6 mt-4 bg-red-500/5 border border-red-500/20 rounded-xl p-4 flex items-center gap-3 shrink-0">
-          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-red-400">Scan failed</p>
-            <p className="text-xs text-muted-foreground">{s.error ?? "Unknown error"}</p>
+      {s.status === "error" && (() => {
+        const isTimeout = s.error?.toLowerCase().includes("timed out");
+        return (
+          <div className="mx-6 mt-4 bg-red-500/5 border border-red-500/20 rounded-xl p-4 shrink-0">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-400">
+                  {isTimeout ? "Scan timed out" : "Scan failed"}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1 font-mono">
+                  {s.error ?? "An unexpected error occurred during the scan."}
+                </p>
+                {isTimeout && (
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    This scan was automatically stopped after exceeding the 30-minute limit. Click Retry Scan to start a fresh scan and get up-to-date results.
+                  </p>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0 h-8 gap-1.5 border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/brand-threats/${id}/rescan`, {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+                    });
+                    if (!res.ok) {
+                      const body = await res.json().catch(() => ({}));
+                      toast({ title: body?.error ?? "Failed to start retry", variant: "destructive" });
+                      return;
+                    }
+                    const newScan = await res.json();
+                    toast({ title: "Scan restarted", description: `A fresh scan has been queued for ${newScan.domain ?? s.domain}.` });
+                    if (newScan.id && newScan.id !== id) {
+                      navigate(`/brand-threats/${newScan.id}`);
+                    } else {
+                      void refetch();
+                    }
+                  } catch {
+                    toast({ title: "Failed to retry scan", variant: "destructive" });
+                  }
+                }}
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry Scan
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       {s.status === "done" && (

@@ -244,8 +244,8 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
   );
 }
 
-function ScanCard({ scan, onDelete, onView, deleting }: {
-  scan: any; onDelete: (id: number) => void; onView: (id: number) => void; deleting: boolean;
+function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
+  scan: any; onDelete: (id: number) => void; onView: (id: number) => void; onRetry: (id: number) => void; deleting: boolean; retrying: boolean;
 }) {
   const status = STATUS_CONFIG[scan.status] ?? STATUS_CONFIG.pending;
   const risk   = RISK_META[scan.phishingRisk] ?? RISK_META.low;
@@ -378,12 +378,29 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
         )}
 
         {/* Error */}
-        {scan.status === "error" && (
-          <div className="mb-4 bg-red-500/5 border border-red-500/20 rounded-xl p-3 flex items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-            <p className="text-xs text-red-400 truncate">{scan.error ?? "Scan failed"}</p>
-          </div>
-        )}
+        {scan.status === "error" && (() => {
+          const isTimeout = scan.error?.toLowerCase().includes("timed out");
+          return (
+            <div className="mb-4 bg-red-500/5 border border-red-500/20 rounded-xl p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-red-400">
+                    {isTimeout ? "Scan timed out" : "Scan failed"}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed font-mono">
+                    {scan.error ?? "An unexpected error occurred."}
+                  </p>
+                  {isTimeout && (
+                    <p className="text-[11px] text-muted-foreground/70 mt-1 leading-relaxed">
+                      Click Retry Scan to start a fresh scan for this domain.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Footer row */}
         <div className="flex items-center justify-between gap-2">
@@ -400,6 +417,17 @@ function ScanCard({ scan, onDelete, onView, deleting }: {
             {scan.status === "done" && (
               <Button size="sm" variant="ghost" onClick={() => onView(scan.id)} className="h-7 text-xs gap-1">
                 View <ChevronRight className="w-3 h-3" />
+              </Button>
+            )}
+            {scan.status === "error" && (
+              <Button
+                size="sm" variant="ghost"
+                onClick={() => onRetry(scan.id)}
+                disabled={retrying}
+                className="h-7 text-xs gap-1 text-red-400 hover:text-red-300"
+              >
+                {retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}
+                Retry Scan
               </Button>
             )}
             <Button
@@ -1219,6 +1247,7 @@ export default function BrandThreatPage() {
   const { toast } = useToast();
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"scans" | "watchlist" | "schedules">("scans");
 
@@ -1241,6 +1270,31 @@ export default function BrandThreatPage() {
       toast({ title: "Failed to delete scan", variant: "destructive" });
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleRetry(id: number) {
+    setRetryingId(id);
+    try {
+      const res = await fetch(`/api/brand-threats/${id}/rescan`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast({ title: body?.error ?? "Failed to start retry scan", variant: "destructive" });
+        return;
+      }
+      const newScan = await res.json();
+      queryClient.invalidateQueries({ queryKey: getListBrandThreatsQueryKey() });
+      toast({ title: "Scan restarted", description: `A fresh scan has been queued for ${newScan.domain ?? "this domain"}.` });
+      if (newScan.id && newScan.id !== id) {
+        navigate(`/brand-threats/${newScan.id}`);
+      }
+    } catch {
+      toast({ title: "Failed to retry scan", variant: "destructive" });
+    } finally {
+      setRetryingId(null);
     }
   }
 
@@ -1419,7 +1473,9 @@ export default function BrandThreatPage() {
                   scan={scan}
                   onDelete={handleDelete}
                   onView={id => navigate(`/brand-threats/${id}`)}
+                  onRetry={handleRetry}
                   deleting={deletingId === scan.id}
+                  retrying={retryingId === scan.id}
                 />
               ))}
             </div>
