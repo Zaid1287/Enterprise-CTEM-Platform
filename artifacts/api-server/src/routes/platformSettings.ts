@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db, platformSettingsTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { reinitRedis, setRuntimeRedisUrl } from "../lib/redis";
@@ -132,6 +132,19 @@ router.put("/platform/settings", requireAuth, async (req: AuthenticatedRequest, 
   }
 
   res.json({ ok: true, workersRestarted: redisUrlChanged });
+});
+
+router.get("/platform/social-source-status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const SOCIAL_KEYS = ["twitter_x_bearer_token", "instagram_graph_api_token", "tiktok_research_api_token"] as const;
+  const rows = await db.select().from(platformSettingsTable).where(
+    inArray(platformSettingsTable.key, [...SOCIAL_KEYS])
+  );
+  const map = new Map(rows.map(r => [r.key, !!r.value]));
+  res.json({
+    twitter_x:  map.get("twitter_x_bearer_token")    ?? false,
+    instagram:  map.get("instagram_graph_api_token") ?? false,
+    tiktok:     map.get("tiktok_research_api_token") ?? false,
+  });
 });
 
 router.get("/platform/settings/raw/:key", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

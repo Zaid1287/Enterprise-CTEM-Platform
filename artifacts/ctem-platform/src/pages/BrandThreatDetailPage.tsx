@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
 import { downloadBrandThreatPdf, downloadBrandThreatCsv } from "@/lib/pdfReport";
 import { getToken } from "@/lib/auth";
+import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/hooks/use-toast";
 
 const RISK_META: Record<string, { label: string; color: string; bg: string; border: string; bar: string }> = {
@@ -399,6 +400,58 @@ function PlatformBadge({ platform }: { platform: string }) {
   );
 }
 
+interface SocialSourceStatus {
+  twitter_x: boolean;
+  instagram: boolean;
+  tiktok: boolean;
+}
+
+const SOCIAL_SOURCES: { key: keyof SocialSourceStatus; label: string; settingsPath: string }[] = [
+  { key: "twitter_x", label: "Twitter/X", settingsPath: "/settings/platform" },
+  { key: "instagram", label: "Instagram",  settingsPath: "/settings/platform" },
+  { key: "tiktok",   label: "TikTok",     settingsPath: "/settings/platform" },
+];
+
+const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function SocialSourceBadges() {
+  const [status, setStatus] = useState<SocialSourceStatus | null>(null);
+
+  useEffect(() => {
+    apiFetch<SocialSourceStatus>(`${BASE_URL}/api/platform/social-source-status`)
+      .then(data => setStatus(data))
+      .catch(() => {});
+  }, []);
+
+  if (!status) return null;
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {SOCIAL_SOURCES.map(({ key, label, settingsPath }) =>
+        status[key] ? (
+          <span
+            key={key}
+            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-emerald-500/10 border-emerald-500/25 text-emerald-400"
+          >
+            <CheckCircle2 className="w-2.5 h-2.5" />
+            {label}
+          </span>
+        ) : (
+          <a
+            key={key}
+            href={settingsPath}
+            className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border bg-muted/40 border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/40 transition-colors"
+            title={`${label} API key not configured — click to set up`}
+          >
+            <XCircle className="w-2.5 h-2.5" />
+            {label}
+          </a>
+        )
+      )}
+    </div>
+  );
+}
+
 function BrandAbuseTab({ abuse }: { abuse: any[] }) {
   if (!abuse.length) {
     return (
@@ -408,6 +461,9 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
         <p className="text-sm text-muted-foreground mt-1">
           Certificate transparency, DNS lookalike, and app store checks found no brand abuse.
         </p>
+        <div className="mt-4">
+          <SocialSourceBadges />
+        </div>
       </div>
     );
   }
@@ -457,9 +513,15 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
 
   return (
     <div className="p-5 space-y-6">
-      <div className="flex items-center gap-2 mb-2">
-        <Target className="w-4 h-4 text-orange-400" />
-        <span className="font-semibold">{abuse.length} brand abuse finding{abuse.length !== 1 ? "s" : ""}</span>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2">
+          <Target className="w-4 h-4 text-orange-400" />
+          <span className="font-semibold">{abuse.length} brand abuse finding{abuse.length !== 1 ? "s" : ""}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Live sources:</span>
+          <SocialSourceBadges />
+        </div>
       </div>
 
       {/* App Store section — per-platform grouping */}
