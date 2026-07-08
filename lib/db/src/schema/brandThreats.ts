@@ -34,6 +34,7 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
 
   checkpoint:        text("checkpoint"),
   permutationsCache: jsonb("permutations_cache"),
+  scanWarnings:      jsonb("scan_warnings"),
 
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:       timestamp("completed_at", { withTimezone: true }),

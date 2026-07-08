@@ -1,5 +1,6 @@
 import { logger } from "./logger";
 import type { BrandAbuseResult } from "./brandAbuseScanner";
+import type { ScanWarning } from "./brandAbuseScanner";
 
 const TIKTOK_RESEARCH_BASE = "https://open.tiktokapis.com/v2/research";
 
@@ -26,10 +27,14 @@ function formatDate(d: Date): string {
  *
  * The TikTok Research API token must be a valid Research API bearer token
  * (approved through the TikTok Developer Portal Research program).
+ *
+ * Rate-limit responses (HTTP 429) are detected and recorded as structured
+ * warnings so the caller can persist them and surface them in the UI.
  */
 export async function scanTikTokBrandAbuse(
   brand: string,
   apiToken: string,
+  warnings: ScanWarning[],
 ): Promise<BrandAbuseResult[]> {
   const results: BrandAbuseResult[] = [];
   const brandLower = brand.toLowerCase();
@@ -42,8 +47,8 @@ export async function scanTikTokBrandAbuse(
   const endDateStr = formatDate(endDate);
 
   await Promise.allSettled([
-    searchBrandScamVideos(brand, brandLower, apiToken, startDateStr, endDateStr, results),
-    searchBrandHashtagVideos(brand, brandLower, apiToken, startDateStr, endDateStr, results),
+    searchBrandScamVideos(brand, brandLower, apiToken, startDateStr, endDateStr, results, warnings),
+    searchBrandHashtagVideos(brand, brandLower, apiToken, startDateStr, endDateStr, results, warnings),
   ]);
 
   return results;
@@ -116,6 +121,7 @@ async function searchBrandScamVideos(
   startDate: string,
   endDate: string,
   out: BrandAbuseResult[],
+  warnings: ScanWarning[],
 ): Promise<void> {
   try {
     const body = {
@@ -137,7 +143,14 @@ async function searchBrandScamVideos(
     const res = await researchPost("/video/query/", body, apiToken);
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      logger.warn({ status: res.status, brand, body: text.slice(0, 300) }, "TikTok Research video/query failed");
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("x-ratelimit-reset") ?? res.headers.get("retry-after");
+        const msg = `TikTok Research API rate limit hit during video search — results may be incomplete.${retryAfter ? ` Retry after: ${retryAfter}` : ""}`;
+        logger.warn({ status: 429, brand, retryAfter }, "TikTok Research video/query rate-limited (429)");
+        warnings.push({ platform: "TikTok", code: "rate_limited", message: msg, timestamp: new Date().toISOString() });
+      } else {
+        logger.warn({ status: res.status, brand, body: text.slice(0, 300) }, "TikTok Research video/query failed");
+      }
       return;
     }
 
@@ -177,6 +190,7 @@ async function searchBrandHashtagVideos(
   startDate: string,
   endDate: string,
   out: BrandAbuseResult[],
+  warnings: ScanWarning[],
 ): Promise<void> {
   try {
     const brandSlug = brandLower.replace(/\s+/g, "");
@@ -205,7 +219,17 @@ async function searchBrandHashtagVideos(
     };
 
     const res = await researchPost("/video/query/", body, apiToken);
-    if (!res.ok) return;
+    if (!res.ok) {
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("x-ratelimit-reset") ?? res.headers.get("retry-after");
+        const msg = `TikTok Research API rate limit hit during hashtag search — results may be incomplete.${retryAfter ? ` Retry after: ${retryAfter}` : ""}`;
+        logger.warn({ status: 429, brand, retryAfter }, "TikTok Research hashtag video/query rate-limited (429)");
+        if (!warnings.some(w => w.platform === "TikTok" && w.code === "rate_limited")) {
+          warnings.push({ platform: "TikTok", code: "rate_limited", message: msg, timestamp: new Date().toISOString() });
+        }
+      }
+      return;
+    }
 
     const data = await res.json() as {
       data?: { videos?: TikTokVideo[] };

@@ -110,7 +110,7 @@ describe("scanTikTokBrandAbuse — happy path", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));      // hashtag search
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-api-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-api-token", []);
 
     expect(results.length).toBeGreaterThan(0);
     const r = results[0]!;
@@ -131,7 +131,7 @@ describe("scanTikTokBrandAbuse — happy path", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    await scanTikTokBrandAbuse("Acme", "my-research-token");
+    await scanTikTokBrandAbuse("Acme", "my-research-token", []);
 
     const headers = fetchMock.mock.calls[0]![1]?.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer my-research-token");
@@ -143,7 +143,7 @@ describe("scanTikTokBrandAbuse — happy path", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    await scanTikTokBrandAbuse("Acme", "any-token");
+    await scanTikTokBrandAbuse("Acme", "any-token", []);
 
     expect(fetchMock.mock.calls[0]![1]?.method).toBe("POST");
   });
@@ -154,7 +154,7 @@ describe("scanTikTokBrandAbuse — happy path", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    await scanTikTokBrandAbuse("Acme", "any-token");
+    await scanTikTokBrandAbuse("Acme", "any-token", []);
 
     const body = JSON.parse(fetchMock.mock.calls[0]![1]?.body as string);
     expect(body.start_date).toMatch(/^\d{8}$/);
@@ -168,7 +168,7 @@ describe("scanTikTokBrandAbuse — happy path", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    await scanTikTokBrandAbuse("Acme", "any-token");
+    await scanTikTokBrandAbuse("Acme", "any-token", []);
 
     const body = JSON.parse(fetchMock.mock.calls[0]![1]?.body as string);
     const fieldValues: string[] = body.query?.and?.[0]?.field_values ?? [];
@@ -184,7 +184,7 @@ describe("scanTikTokBrandAbuse — error cases", () => {
       .mockResolvedValueOnce(errorResponse(401));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "bad-token");
+    const results = await scanTikTokBrandAbuse("Acme", "bad-token", []);
 
     expect(results).toEqual([]);
   });
@@ -195,7 +195,7 @@ describe("scanTikTokBrandAbuse — error cases", () => {
       .mockResolvedValueOnce(tiktokApiError("invalid_token", "Token invalid"));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "bad-token");
+    const results = await scanTikTokBrandAbuse("Acme", "bad-token", []);
 
     expect(results).toEqual([]);
   });
@@ -204,7 +204,7 @@ describe("scanTikTokBrandAbuse — error cases", () => {
     fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "any-token");
+    const results = await scanTikTokBrandAbuse("Acme", "any-token", []);
 
     expect(results).toEqual([]);
   });
@@ -216,7 +216,7 @@ describe("scanTikTokBrandAbuse — error cases", () => {
       .mockResolvedValueOnce(tiktokSuccess([video])); // hashtag search succeeds
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     expect(results.filter(r => r.platform === "TikTok").length).toBeGreaterThan(0);
   });
@@ -230,7 +230,7 @@ describe("scanTikTokBrandAbuse — signal filtering", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     expect(results.filter(r => r.platform === "TikTok" && r.type === "fake_social")).toHaveLength(0);
   });
@@ -242,7 +242,7 @@ describe("scanTikTokBrandAbuse — signal filtering", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     // Scam search produces nothing (no scam keyword); hashtag search is also empty
     expect(results.filter(r => r.type === "fake_social")).toHaveLength(0);
@@ -261,7 +261,7 @@ describe("scanTikTokBrandAbuse — risk scoring", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     const r = results.find(r => r.platform === "TikTok");
     expect(r).toBeDefined();
@@ -280,7 +280,7 @@ describe("scanTikTokBrandAbuse — risk scoring", () => {
       .mockResolvedValueOnce(tiktokSuccess([video]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     const r = results.find(r => r.platform === "TikTok");
     expect(r).toBeDefined();
@@ -298,7 +298,7 @@ describe("scanTikTokBrandAbuse — risk scoring", () => {
       .mockResolvedValueOnce(tiktokSuccess([video]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     const r = results.find(r => r.platform === "TikTok");
     expect(r).toBeDefined();
@@ -316,7 +316,7 @@ describe("scanTikTokBrandAbuse — deduplication", () => {
       .mockResolvedValueOnce(tiktokSuccess([video]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     const dupUrl = `https://www.tiktok.com/@scammer_user/video/vid_dup`;
     const matchingUrls = results.map(r => r.url).filter(u => u === dupUrl);
@@ -331,7 +331,7 @@ describe("scanTikTokBrandAbuse — deduplication", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     // The scanner should deduplicate by video ID — total TikTok results must be ≤ 1
     expect(results.filter(r => r.platform === "TikTok").length).toBeLessThanOrEqual(1);
@@ -353,7 +353,7 @@ describe("scanTikTokBrandAbuse — result caps", () => {
       .mockResolvedValueOnce(tiktokSuccess([]));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     expect(results.filter(r => r.platform === "TikTok").length).toBeLessThanOrEqual(8);
   });
@@ -367,7 +367,7 @@ describe("scanTikTokBrandAbuse — result caps", () => {
       .mockResolvedValueOnce(tiktokSuccess(hashtagVideos));
 
     const { scanTikTokBrandAbuse } = await import("../../lib/tiktokScanner");
-    const results = await scanTikTokBrandAbuse("Acme", "valid-token");
+    const results = await scanTikTokBrandAbuse("Acme", "valid-token", []);
 
     expect(results.filter(r => r.platform === "TikTok").length).toBeLessThanOrEqual(12);
   });

@@ -103,7 +103,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
       .mockResolvedValueOnce(jsonResponse({ data: [], includes: { users: [] } }));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     const acct = results.find(r => r.platform === "Twitter/X" && r.type === "fake_social");
     expect(acct).toBeDefined();
@@ -118,7 +118,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
       .mockResolvedValueOnce(jsonResponse({ data: [], includes: { users: [] } }));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    await scanTwitterBrandAbuse("Acme", "my-secret-bearer-token");
+    await scanTwitterBrandAbuse("Acme", "my-secret-bearer-token", []);
 
     const firstCallHeaders = fetchMock.mock.calls[0]![1]?.headers as Record<string, string>;
     expect(firstCallHeaders?.Authorization).toBe("Bearer my-secret-bearer-token");
@@ -130,7 +130,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
       .mockResolvedValueOnce(errorResponse(401));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "bad-token");
+    const results = await scanTwitterBrandAbuse("Acme", "bad-token", []);
 
     expect(results).toEqual([]);
   });
@@ -139,7 +139,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
     fetchMock.mockRejectedValue(new Error("Network failure"));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "any-token");
+    const results = await scanTwitterBrandAbuse("Acme", "any-token", []);
 
     expect(results).toEqual([]);
   });
@@ -152,7 +152,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
       .mockResolvedValueOnce(jsonResponse({ data: [], includes: { users: [] } }));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     expect(results.filter(r => r.url?.includes("twitter.com/acme"))).toHaveLength(0);
   });
@@ -171,7 +171,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
       .mockResolvedValueOnce(jsonResponse({ data: [], includes: { users: [] } }));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     expect(results).toHaveLength(0);
   });
@@ -189,7 +189,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
       .mockResolvedValueOnce(jsonResponse({ data: [], includes: { users: [] } }));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     const acct = results.find(r => r.url?.includes("acmesupport"));
     expect(acct).toBeDefined();
@@ -208,7 +208,7 @@ describe("scanTwitterBrandAbuse — account search", () => {
       .mockResolvedValueOnce(jsonResponse({ data: [], includes: { users: [] } }));
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     const acct = results.find(r => r.url?.includes("acmegiveaway"));
     expect(acct).toBeDefined();
@@ -239,7 +239,7 @@ describe("scanTwitterBrandAbuse — scam tweet search", () => {
       );
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     const tw = results.find(r => r.type === "brand_abuse" && r.platform === "Twitter/X");
     expect(tw).toBeDefined();
@@ -260,7 +260,7 @@ describe("scanTwitterBrandAbuse — scam tweet search", () => {
       );
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     const abuseTweets = results.filter(r => r.type === "brand_abuse" && r.platform === "Twitter/X");
     expect(abuseTweets).toHaveLength(1);
@@ -279,7 +279,7 @@ describe("scanTwitterBrandAbuse — scam tweet search", () => {
       );
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     const tw = results.find(r => r.type === "brand_abuse");
     expect(tw).toBeDefined();
@@ -299,7 +299,7 @@ describe("scanTwitterBrandAbuse — scam tweet search", () => {
       );
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     const tw = results.find(r => r.type === "brand_abuse");
     expect(tw).toBeDefined();
@@ -318,7 +318,7 @@ describe("scanTwitterBrandAbuse — scam tweet search", () => {
       );
 
     const { scanTwitterBrandAbuse } = await import("../../lib/twitterScanner");
-    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token");
+    const results = await scanTwitterBrandAbuse("Acme", "valid-bearer-token", []);
 
     expect(results.filter(r => r.type === "brand_abuse")).toHaveLength(0);
   });

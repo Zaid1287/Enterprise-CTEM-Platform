@@ -182,6 +182,7 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
         phishingCount: 0,
         brandAbuseCount: 0,
         darkWebCount: 0,
+        scanWarnings: null,
       })
       .where(eq(brandThreatScansTable.id, existing.id))
       .returning();

@@ -1,5 +1,6 @@
 import { logger } from "./logger";
 import type { BrandAbuseResult } from "./brandAbuseScanner";
+import type { ScanWarning } from "./brandAbuseScanner";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v19.0";
 
@@ -20,16 +21,20 @@ const IMPERSONATION_HASHTAGS = (brand: string) => [
  *  2. Search brand-related hashtags (official, real, scam, fake, giveaway)
  *  3. Retrieve recent media for each hashtag
  *  4. Flag posts that contain brand impersonation signals in their captions
+ *
+ * Rate-limit responses (HTTP 429) are detected and recorded as structured
+ * warnings so the caller can persist them and surface them in the UI.
  */
 export async function scanInstagramBrandAbuse(
   brand: string,
   accessToken: string,
+  warnings: ScanWarning[],
 ): Promise<BrandAbuseResult[]> {
   const results: BrandAbuseResult[] = [];
 
   let igUserId: string | null = null;
   try {
-    igUserId = await getIgUserId(accessToken);
+    igUserId = await getIgUserId(accessToken, warnings);
   } catch (e: any) {
     logger.warn({ brand, err: e.message }, "Instagram: could not retrieve IG user ID — skipping scan");
     return results;
@@ -41,7 +46,7 @@ export async function scanInstagramBrandAbuse(
   const hashtags = IMPERSONATION_HASHTAGS(brandLower.replace(/\s+/g, ""));
 
   const hashtagScans = hashtags.map(tag =>
-    scanHashtag(tag, brand, brandLower, igUserId!, accessToken, results),
+    scanHashtag(tag, brand, brandLower, igUserId!, accessToken, results, warnings),
   );
   await Promise.allSettled(hashtagScans);
 
@@ -55,11 +60,16 @@ async function graphFetch(url: string): Promise<Response> {
   });
 }
 
-async function getIgUserId(accessToken: string): Promise<string | null> {
+async function getIgUserId(accessToken: string, warnings: ScanWarning[]): Promise<string | null> {
   const res = await graphFetch(
     `${GRAPH_API_BASE}/me?access_token=${accessToken}&fields=id,instagram_business_account`,
   );
   if (!res.ok) {
+    if (res.status === 429) {
+      const msg = "Instagram Graph API rate limit hit during authentication — results may be incomplete.";
+      logger.warn({ status: 429 }, "Instagram /me rate-limited (429)");
+      warnings.push({ platform: "Instagram", code: "rate_limited", message: msg, timestamp: new Date().toISOString() });
+    }
     const body = await res.text().catch(() => "");
     throw new Error(`Graph API /me returned ${res.status}: ${body.slice(0, 200)}`);
   }
@@ -91,6 +101,7 @@ async function scanHashtag(
   igUserId: string,
   accessToken: string,
   out: BrandAbuseResult[],
+  warnings: ScanWarning[],
 ): Promise<void> {
   try {
     const hashtagId = await getHashtagId(tag, igUserId, accessToken);
@@ -99,7 +110,16 @@ async function scanHashtag(
     const mediaRes = await graphFetch(
       `${GRAPH_API_BASE}/${hashtagId}/recent_media?user_id=${igUserId}&access_token=${accessToken}&fields=id,caption,permalink,timestamp,media_type&limit=20`,
     );
-    if (!mediaRes.ok) return;
+    if (!mediaRes.ok) {
+      if (mediaRes.status === 429) {
+        const msg = `Instagram Graph API rate limit hit while scanning hashtag #${tag} — results may be incomplete.`;
+        logger.warn({ status: 429, brand, tag }, "Instagram hashtag media fetch rate-limited (429)");
+        if (!warnings.some(w => w.platform === "Instagram" && w.code === "rate_limited")) {
+          warnings.push({ platform: "Instagram", code: "rate_limited", message: msg, timestamp: new Date().toISOString() });
+        }
+      }
+      return;
+    }
     const mediaData = await mediaRes.json() as {
       data?: Array<{
         id: string;

@@ -905,7 +905,7 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
       getPlatformSetting("tiktok_research_api_token"),
     ]);
 
-    const [hibpResult, brandAbuseList, metaAdsList] = await Promise.all([
+    const [hibpResult, brandAbuseData, metaAdsList] = await Promise.all([
       hibpDomainLookup(domain, hibpKey ?? undefined),  // always runs; without key uses public /breaches fallback
       scanBrandAbuse(
         brandName,
@@ -920,6 +920,8 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
       ),
       metaAdsToken ? scanMetaAds(brandName, domain, metaAdsToken) : Promise.resolve([]),
     ]);
+    const brandAbuseList = brandAbuseData.results;
+    const socialWarnings = brandAbuseData.warnings;
     const intelxResultArrays = intelxKey
       ? await Promise.all(uniqueTerms.map(term => intelxSearch(term, intelxKey, 10)))
       : [];
@@ -1170,6 +1172,7 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
       completedAt: new Date(),
       checkpoint: null,
       permutationsCache: null,
+      scanWarnings: socialWarnings.length > 0 ? (socialWarnings as any) : null,
     }).where(eq(brandThreatScansTable.id, scanId));
 
     // ── Scan completion notification (fires alert rules with triggerType "brand_threat") ──

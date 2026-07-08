@@ -18,6 +18,19 @@ export interface BrandAbuseResult {
   risk: string;
 }
 
+/**
+ * A structured warning recorded when a social media API returns a rate-limit
+ * response (HTTP 429) or otherwise cannot complete the scan. These are stored
+ * in the brand_threat_scans.scan_warnings jsonb column so the UI can surface
+ * "Twitter/X rate limited — results may be incomplete" banners.
+ */
+export interface ScanWarning {
+  platform: string;
+  code: "rate_limited" | "api_error" | "no_credentials";
+  message: string;
+  timestamp: string;
+}
+
 export interface BrandAbuseScanOptions {
   youtubeApiKey?: string;
   twitterBearerToken?: string;
@@ -25,13 +38,19 @@ export interface BrandAbuseScanOptions {
   tiktokResearchToken?: string;
 }
 
+export interface BrandAbuseScanResult {
+  results: BrandAbuseResult[];
+  warnings: ScanWarning[];
+}
+
 export async function scanBrandAbuse(
   brand: string,
   domain: string,
   socialHandles: string[] = [],
   youtubeApiKeyOrOptions?: string | BrandAbuseScanOptions,
-): Promise<BrandAbuseResult[]> {
+): Promise<BrandAbuseScanResult> {
   const results: BrandAbuseResult[] = [];
+  const warnings: ScanWarning[] = [];
 
   // Accept both legacy positional string arg and new options object
   const opts: BrandAbuseScanOptions =
@@ -57,7 +76,7 @@ export async function scanBrandAbuse(
 
   if (opts.twitterBearerToken) {
     tasks.push(
-      scanTwitterBrandAbuse(brand, opts.twitterBearerToken)
+      scanTwitterBrandAbuse(brand, opts.twitterBearerToken, warnings)
         .then(r => results.push(...r))
         .catch(e => logger.debug({ brand, err: String(e) }, "Twitter scanner failed")),
     );
@@ -65,7 +84,7 @@ export async function scanBrandAbuse(
 
   if (opts.instagramGraphToken) {
     tasks.push(
-      scanInstagramBrandAbuse(brand, opts.instagramGraphToken)
+      scanInstagramBrandAbuse(brand, opts.instagramGraphToken, warnings)
         .then(r => results.push(...r))
         .catch(e => logger.debug({ brand, err: String(e) }, "Instagram scanner failed")),
     );
@@ -73,7 +92,7 @@ export async function scanBrandAbuse(
 
   if (opts.tiktokResearchToken) {
     tasks.push(
-      scanTikTokBrandAbuse(brand, opts.tiktokResearchToken)
+      scanTikTokBrandAbuse(brand, opts.tiktokResearchToken, warnings)
         .then(r => results.push(...r))
         .catch(e => logger.debug({ brand, err: String(e) }, "TikTok scanner failed")),
     );
@@ -81,7 +100,7 @@ export async function scanBrandAbuse(
 
   await Promise.allSettled(tasks);
 
-  return results;
+  return { results, warnings };
 }
 
 /**

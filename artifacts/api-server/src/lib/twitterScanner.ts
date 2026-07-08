@@ -1,5 +1,6 @@
 import { logger } from "./logger";
 import type { BrandAbuseResult } from "./brandAbuseScanner";
+import type { ScanWarning } from "./brandAbuseScanner";
 
 const TWITTER_API_BASE = "https://api.twitter.com/2";
 
@@ -22,17 +23,21 @@ function riskFromSignals(usernameContainsBrand: boolean, hasScam: boolean, follo
  * Two searches are performed:
  *  1. Recent tweets containing the brand name alongside scam/fraud signals
  *  2. User accounts whose username or display name contains the brand name
+ *
+ * Rate-limit responses (HTTP 429) are detected and recorded as structured
+ * warnings so the caller can persist them and surface them in the UI.
  */
 export async function scanTwitterBrandAbuse(
   brand: string,
   bearerToken: string,
+  warnings: ScanWarning[],
 ): Promise<BrandAbuseResult[]> {
   const results: BrandAbuseResult[] = [];
   const brandLower = brand.toLowerCase();
 
   await Promise.allSettled([
-    searchImpersonatingAccounts(brand, brandLower, bearerToken, results),
-    searchScamTweets(brand, brandLower, bearerToken, results),
+    searchImpersonatingAccounts(brand, brandLower, bearerToken, results, warnings),
+    searchScamTweets(brand, brandLower, bearerToken, results, warnings),
   ]);
 
   return results;
@@ -53,6 +58,7 @@ async function searchImpersonatingAccounts(
   brandLower: string,
   bearerToken: string,
   out: BrandAbuseResult[],
+  warnings: ScanWarning[],
 ): Promise<void> {
   try {
     // Twitter v2 user search — finds users whose name or bio contains the brand
@@ -63,7 +69,14 @@ async function searchImpersonatingAccounts(
     const res = await twitterFetch(url, bearerToken);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn({ status: res.status, brand, body: body.slice(0, 200) }, "Twitter user search failed");
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("x-rate-limit-reset") ?? res.headers.get("retry-after");
+        const msg = `Twitter/X API rate limit hit during user search — results may be incomplete.${retryAfter ? ` Retry after: ${new Date(Number(retryAfter) * 1000).toISOString()}` : ""}`;
+        logger.warn({ status: 429, brand, retryAfter }, "Twitter user search rate-limited (429)");
+        warnings.push({ platform: "Twitter/X", code: "rate_limited", message: msg, timestamp: new Date().toISOString() });
+      } else {
+        logger.warn({ status: res.status, brand, body: body.slice(0, 200) }, "Twitter user search failed");
+      }
       return;
     }
 
@@ -135,6 +148,7 @@ async function searchScamTweets(
   brandLower: string,
   bearerToken: string,
   out: BrandAbuseResult[],
+  warnings: ScanWarning[],
 ): Promise<void> {
   try {
     // Recent tweet search: brand + scam/fraud signals, exclude retweets, last 7 days
@@ -148,7 +162,17 @@ async function searchScamTweets(
     const res = await twitterFetch(url, bearerToken);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn({ status: res.status, brand, body: body.slice(0, 200) }, "Twitter tweet search failed");
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("x-rate-limit-reset") ?? res.headers.get("retry-after");
+        const msg = `Twitter/X API rate limit hit during tweet search — results may be incomplete.${retryAfter ? ` Retry after: ${new Date(Number(retryAfter) * 1000).toISOString()}` : ""}`;
+        logger.warn({ status: 429, brand, retryAfter }, "Twitter tweet search rate-limited (429)");
+        // Only push one Twitter/X warning total (user-search warning may already exist)
+        if (!warnings.some(w => w.platform === "Twitter/X" && w.code === "rate_limited")) {
+          warnings.push({ platform: "Twitter/X", code: "rate_limited", message: msg, timestamp: new Date().toISOString() });
+        }
+      } else {
+        logger.warn({ status: res.status, brand, body: body.slice(0, 200) }, "Twitter tweet search failed");
+      }
       return;
     }
 

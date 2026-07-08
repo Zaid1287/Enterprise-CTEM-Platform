@@ -452,7 +452,16 @@ function SocialSourceBadges() {
   );
 }
 
-function BrandAbuseTab({ abuse }: { abuse: any[] }) {
+interface ScanWarning {
+  platform: string;
+  code: string;
+  message: string;
+  timestamp: string;
+}
+
+function BrandAbuseTab({ abuse, warnings }: { abuse: any[]; warnings?: ScanWarning[] }) {
+  const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
+
   if (!abuse.length) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -461,6 +470,19 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
         <p className="text-sm text-muted-foreground mt-1">
           Certificate transparency, DNS lookalike, and app store checks found no brand abuse.
         </p>
+        {activeWarnings.length > 0 && (
+          <div className="mt-6 w-full max-w-lg text-left space-y-2">
+            {activeWarnings.map((w, i) => (
+              <div key={i} className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-300">{w.platform} rate limited</p>
+                  <p className="text-xs text-amber-200/80 mt-0.5">{w.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="mt-4">
           <SocialSourceBadges />
         </div>
@@ -523,6 +545,21 @@ function BrandAbuseTab({ abuse }: { abuse: any[] }) {
           <SocialSourceBadges />
         </div>
       </div>
+
+      {/* Rate-limit warnings */}
+      {activeWarnings.length > 0 && (
+        <div className="space-y-2">
+          {activeWarnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-amber-300">{w.platform} rate limited — results may be incomplete</p>
+                <p className="text-xs text-amber-200/80 mt-0.5">{w.message}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* App Store section — per-platform grouping */}
       {sortedPlatforms.length > 0 && (
@@ -1406,7 +1443,7 @@ export default function BrandThreatDetailPage() {
         {/* ── BRAND ABUSE tab ── */}
         {activeTab === "brand_abuse" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <BrandAbuseTab abuse={brandAbuse} />
+            <BrandAbuseTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} />
           </div>
         )}
 

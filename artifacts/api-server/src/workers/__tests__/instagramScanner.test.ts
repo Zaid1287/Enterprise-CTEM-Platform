@@ -147,7 +147,7 @@ describe("scanInstagramBrandAbuse — happy path", () => {
     );
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "valid-access-token");
+    const results = await scanInstagramBrandAbuse("Acme", "valid-access-token", []);
 
     expect(results.length).toBeGreaterThan(0);
     const r = results[0]!;
@@ -162,7 +162,7 @@ describe("scanInstagramBrandAbuse — happy path", () => {
     buildMockSequence(fetchMock, "ig_biz_789", {}, {});
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    await scanInstagramBrandAbuse("Acme", "valid-access-token");
+    await scanInstagramBrandAbuse("Acme", "valid-access-token", []);
 
     const hashtagSearchCall = fetchMock.mock.calls.find(
       call => typeof call[0] === "string" && (call[0] as string).includes("ig_hashtag_search"),
@@ -180,7 +180,7 @@ describe("scanInstagramBrandAbuse — happy path", () => {
     }
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    await scanInstagramBrandAbuse("Acme", "valid-access-token");
+    await scanInstagramBrandAbuse("Acme", "valid-access-token", []);
 
     const hashtagSearchCall = fetchMock.mock.calls.find(
       call => typeof call[0] === "string" && (call[0] as string).includes("ig_hashtag_search"),
@@ -195,7 +195,7 @@ describe("scanInstagramBrandAbuse — error cases", () => {
     fetchMock.mockResolvedValueOnce(errorResponse(403));
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "bad-token");
+    const results = await scanInstagramBrandAbuse("Acme", "bad-token", []);
 
     expect(results).toEqual([]);
   });
@@ -204,7 +204,7 @@ describe("scanInstagramBrandAbuse — error cases", () => {
     fetchMock.mockRejectedValueOnce(new Error("Network failure"));
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "any-token");
+    const results = await scanInstagramBrandAbuse("Acme", "any-token", []);
 
     expect(results).toEqual([]);
   });
@@ -229,7 +229,7 @@ describe("scanInstagramBrandAbuse — error cases", () => {
     // Both media endpoints (9 total fetch calls) must be attempted.
     let caughtError: unknown;
     try {
-      await scanInstagramBrandAbuse("Acme", "valid-token");
+      await scanInstagramBrandAbuse("Acme", "valid-token", []);
     } catch (e) {
       caughtError = e;
     }
@@ -249,7 +249,7 @@ describe("scanInstagramBrandAbuse — signal filtering", () => {
     );
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "valid-token");
+    const results = await scanInstagramBrandAbuse("Acme", "valid-token", []);
 
     expect(results).toHaveLength(0);
   });
@@ -263,7 +263,7 @@ describe("scanInstagramBrandAbuse — signal filtering", () => {
     );
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "valid-token");
+    const results = await scanInstagramBrandAbuse("Acme", "valid-token", []);
 
     expect(results).toHaveLength(0);
   });
@@ -278,7 +278,7 @@ describe("scanInstagramBrandAbuse — signal filtering", () => {
     );
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "valid-token");
+    const results = await scanInstagramBrandAbuse("Acme", "valid-token", []);
 
     expect(results.length).toBeGreaterThan(0);
     const highRisk = results.find(r => r.risk === "high");
@@ -295,7 +295,7 @@ describe("scanInstagramBrandAbuse — signal filtering", () => {
     );
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "valid-token");
+    const results = await scanInstagramBrandAbuse("Acme", "valid-token", []);
 
     const r = results.find(r => r.platform === "Instagram");
     expect(r).toBeDefined();
@@ -320,7 +320,7 @@ describe("scanInstagramBrandAbuse — signal filtering", () => {
     );
 
     const { scanInstagramBrandAbuse } = await import("../../lib/instagramScanner");
-    const results = await scanInstagramBrandAbuse("Acme", "valid-token");
+    const results = await scanInstagramBrandAbuse("Acme", "valid-token", []);
 
     expect(results.filter(r => r.platform === "Instagram").length).toBeLessThanOrEqual(10);
   });

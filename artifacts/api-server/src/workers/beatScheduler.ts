@@ -664,7 +664,8 @@ async function dispatchDueWatchlistNonDomainItems(): Promise<void> {
       if (item.type === "social_handle" || item.type === "mobile_app") {
         const brandName = item.value.replace(/^@/, "");
         const handles = item.type === "social_handle" ? [item.value] : [];
-        const abuseResults = await scanBrandAbuse(brandName, "", handles, youtubeKey ?? undefined).catch(() => []);
+        const abuseData = await scanBrandAbuse(brandName, "", handles, youtubeKey ?? undefined).catch(() => ({ results: [], warnings: [] }));
+        const abuseResults = abuseData.results;
         if (abuseResults.length) {
           await db.insert(brandAbuseResultsTable).values(
             abuseResults.map(a => ({
