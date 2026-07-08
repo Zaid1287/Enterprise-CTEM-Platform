@@ -7,7 +7,7 @@ import {
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
   ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
-  Cpu, Radio, ScrollText, Fingerprint, Sliders,
+  Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -100,11 +100,12 @@ const navGroups: NavGroup[] = [
     title: "Scan Orchestration",
     onlyFor: ["admin", "super_admin"],
     items: [
-      { label: "Dashboard",        href: "/scan-orchestration",         icon: Cpu },
-      { label: "Proxy Pool",       href: "/settings/scan-proxies",      icon: Radio,        onlyFor: ["super_admin"] },
-      { label: "Fingerprints",     href: "/settings/scan-fingerprints", icon: Fingerprint,  onlyFor: ["super_admin"] },
-      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders,    onlyFor: ["super_admin"] },
-      { label: "Telemetry Logs",   href: "/scan-telemetry",             icon: ScrollText },
+      { label: "Orchestration",    href: "/settings/orchestration",      icon: SlidersHorizontal },
+      { label: "Dashboard",        href: "/scan-orchestration",          icon: Cpu },
+      { label: "Proxy Pool",       href: "/settings/scan-proxies",       icon: Radio,        onlyFor: ["super_admin"] },
+      { label: "Fingerprints",     href: "/settings/scan-fingerprints",  icon: Fingerprint,  onlyFor: ["super_admin"] },
+      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders,     onlyFor: ["super_admin"] },
+      { label: "Telemetry Logs",   href: "/scan-telemetry",              icon: ScrollText },
     ],
   },
   {

@@ -63,6 +63,7 @@ const ScanProxiesPage        = lazy(() => import("@/pages/ScanProxiesPage"));
 const ScanFingerprintsPage   = lazy(() => import("@/pages/ScanFingerprintsPage"));
 const OrchestratorConfigPage = lazy(() => import("@/pages/OrchestratorConfigPage"));
 const ScanTelemetryPage      = lazy(() => import("@/pages/ScanTelemetryPage"));
+const OrchestratorPage       = lazy(() => import("@/pages/OrchestratorPage"));
 
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
@@ -267,6 +268,7 @@ function Router() {
       <Route path="/settings/scan-fingerprints" component={() => <SuperAdminRoute component={ScanFingerprintsPage} />} />
       <Route path="/settings/orchestrator-config" component={() => <SuperAdminRoute component={OrchestratorConfigPage} />} />
       <Route path="/scan-telemetry" component={() => <AdminRoute component={ScanTelemetryPage} />} />
+      <Route path="/settings/orchestration" component={() => <AdminRoute component={OrchestratorPage} />} />
 
       {/* Fallback */}
       <Route component={() => <Redirect to={defaultPath} />} />
