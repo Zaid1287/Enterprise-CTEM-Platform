@@ -2,6 +2,7 @@ import { db, scanProxiesTable } from "@workspace/db";
 import { eq, isNull, or, lt, and, sql } from "drizzle-orm";
 import { healthCheckProxy } from "./proxyHealthCheck.js";
 import { logger } from "./logger.js";
+import { decryptCredential } from "./proxyCredentialEncryption.js";
 
 export type ProxyOutcome = "success" | "rate_limited" | "forbidden" | "timeout" | "connection_error";
 
@@ -87,11 +88,27 @@ export async function selectHealthiestProxy(
         // Fall back to next candidate
         const fallback = candidates.find(p => p.id !== best.id);
         if (!fallback) return null;
-        return { id: fallback.id, ip: fallback.ip, port: fallback.port, type: fallback.type ?? "http", healthScore: fallback.healthScore, username: fallback.username, password: fallback.password };
+        return {
+          id: fallback.id,
+          ip: fallback.ip,
+          port: fallback.port,
+          type: fallback.type ?? "http",
+          healthScore: fallback.healthScore,
+          username: fallback.username,
+          password: fallback.password ? decryptCredential(fallback.password) : null,
+        };
       }
     }
 
-    return { id: best.id, ip: best.ip, port: best.port, type: best.type ?? "http", healthScore: best.healthScore, username: best.username, password: best.password };
+    return {
+      id: best.id,
+      ip: best.ip,
+      port: best.port,
+      type: best.type ?? "http",
+      healthScore: best.healthScore,
+      username: best.username,
+      password: best.password ? decryptCredential(best.password) : null,
+    };
   } catch (err) {
     logger.warn({ err }, "proxyManager: selectHealthiestProxy failed");
     return null;

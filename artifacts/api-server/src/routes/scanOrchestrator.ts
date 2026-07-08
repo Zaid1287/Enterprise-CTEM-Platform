@@ -9,6 +9,7 @@ import { getDnsResolverStats } from "../lib/dnsResolverPool.js";
 import { invalidateConfigCache, getWafProtectedHosts } from "../lib/scanOrchestrator.js";
 import { addWaterfallSseClient, removeWaterfallSseClient } from "../lib/sseManager.js";
 import { logger } from "../lib/logger.js";
+import { encryptCredential } from "../lib/proxyCredentialEncryption.js";
 
 const router = Router();
 
@@ -74,7 +75,7 @@ router.post("/api/scan-proxies", requireAuth, requireSuperAdmin, async (req, res
       .values({
         ip, port, label, type, country, asn,
         username: username || null,
-        password: password || null,
+        password: password ? encryptCredential(password) : null,
         status:      health.reachable ? "active" : "inactive",
         healthScore: health.reachable ? 100 : 0,
         avgLatencyMs: health.reachable ? health.latencyMs : undefined,
@@ -105,7 +106,7 @@ router.patch("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req
     if (asn      !== undefined) updates.asn      = asn;
     if (status   !== undefined) updates.status   = status;
     if (username !== undefined) updates.username = username || null;
-    if (password !== undefined) updates.password = password || null;
+    if (password !== undefined) updates.password = password ? encryptCredential(password) : null;
 
     const [updated] = await db
       .update(scanProxiesTable)
@@ -220,7 +221,7 @@ router.post("/api/scan-proxies/bulk", requireAuth, requireSuperAdmin, async (req
                 type:        entry.type  ?? "http",
                 country:     entry.country ?? null,
                 username:    entry.username ?? null,
-                password:    entry.password ?? null,
+                password:    entry.password ? encryptCredential(entry.password) : null,
                 status:      health.reachable ? "active" : "inactive",
                 healthScore: health.reachable ? 100 : 0,
                 avgLatencyMs: health.reachable ? health.latencyMs : undefined,
