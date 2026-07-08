@@ -96,8 +96,7 @@ router.patch("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-    // Issue 2: support username/password updates
-    const { ip, port, label, type, country, asn, status, username, password } = req.body;
+    const { ip, port, label, type, country, asn, status, username, password, resetAuthFailed } = req.body;
     const updates: Record<string, any> = {};
     if (ip       !== undefined) updates.ip       = ip;
     if (port     !== undefined) updates.port     = port;
@@ -108,6 +107,22 @@ router.patch("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req
     if (status   !== undefined) updates.status   = status;
     if (username !== undefined) updates.username = username || null;
     if (password !== undefined) updates.password = password ? encryptCredential(password) : null;
+
+    // If the caller wants to re-enable an auth-failed proxy, verify it is actually
+    // in that state first and then reset its health/cooldown fields.
+    if (resetAuthFailed === true) {
+      const [existing] = await db
+        .select({ status: scanProxiesTable.status })
+        .from(scanProxiesTable)
+        .where(eq(scanProxiesTable.id, id));
+      if (!existing) { res.status(404).json({ error: "Proxy not found" }); return; }
+      if (existing.status !== "auth_failed") {
+        res.status(400).json({ error: "Proxy is not in auth_failed state" }); return;
+      }
+      updates.status        = "active";
+      updates.healthScore   = 50;
+      updates.cooldownUntil = null;
+    }
 
     const [updated] = await db
       .update(scanProxiesTable)

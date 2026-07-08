@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Trash2, Pencil, Wifi, WifiOff, Clock, RefreshCw,
-  Loader2, TestTube2, Upload, Check, X, KeyRound, Eye, EyeOff, ShieldAlert,
+  Loader2, TestTube2, Upload, Check, X, KeyRound, Eye, EyeOff, ShieldAlert, RotateCcw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -312,6 +312,92 @@ function BulkImportDialog({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
+/* ─── Fix Auth Dialog ────────────────────────────────────────────────── */
+function FixAuthDialog({ open, onClose, proxy }: { open: boolean; onClose: () => void; proxy: Proxy }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [username, setUsername] = useState(proxy.username ?? "");
+  const [password, setPassword] = useState("");
+  const [showPwd, setShowPwd]   = useState(false);
+
+  const fixMut = useMutation({
+    mutationFn: (body: object) =>
+      api(`/api/scan-proxies/${proxy.id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["scan-proxies"] });
+      toast({ title: "Proxy re-enabled", description: "Status reset to active with health score 50." });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const handleSubmit = () => {
+    if (!password.trim()) {
+      toast({ title: "New password required", variant: "destructive" });
+      return;
+    }
+    fixMut.mutate({ username: username || null, password, resetAuthFailed: true });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-orange-500" />
+            Fix Credentials & Re-enable
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2.5 text-xs text-orange-700 dark:text-orange-400">
+            Proxy <span className="font-mono font-semibold">{proxy.ip}:{proxy.port}</span> failed authentication.
+            Update the credentials below and click Re-enable to restore it to active status.
+          </div>
+          <div className="space-y-1.5">
+            <Label>Username</Label>
+            <Input
+              placeholder="user"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>New Password <span className="text-destructive">*</span></Label>
+            <div className="relative">
+              <Input
+                type={showPwd ? "text" : "password"}
+                placeholder="new password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="new-password"
+                className="pr-8"
+              />
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowPwd(v => !v)}
+              >
+                {showPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={fixMut.isPending}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={fixMut.isPending} className="gap-1.5">
+            {fixMut.isPending
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <RotateCcw className="w-4 h-4" />
+            }
+            Re-enable Proxy
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ─── Issue 9: Inline Editable Row ──────────────────────────────────── */
 interface InlineEdit {
   ip: string; port: string; label: string; type: string;
@@ -416,10 +502,11 @@ export default function ScanProxiesPage() {
   const isSuperAdmin = user?.role === "super_admin";
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [showAdd, setShowAdd]     = useState(false);
-  const [showBulk, setShowBulk]   = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null); // Issue 9: inline edit
-  const [testingId, setTestingId] = useState<number | null>(null);
+  const [showAdd, setShowAdd]         = useState(false);
+  const [showBulk, setShowBulk]       = useState(false);
+  const [editingId, setEditingId]     = useState<number | null>(null);
+  const [fixAuthProxy, setFixAuthProxy] = useState<Proxy | null>(null);
+  const [testingId, setTestingId]     = useState<number | null>(null);
 
   const { data: proxies = [], isLoading } = useQuery<Proxy[]>({
     queryKey: ["scan-proxies"],
@@ -595,7 +682,16 @@ export default function ScanProxiesPage() {
                         </Button>
                         {isSuperAdmin && (
                           <>
-                            {/* Issue 9: Edit button triggers inline edit mode */}
+                            {proxy.status === "auth_failed" && (
+                              <Button
+                                variant="ghost" size="icon"
+                                className="w-7 h-7 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
+                                title="Fix Credentials & Re-enable"
+                                onClick={() => setFixAuthProxy(proxy)}
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost" size="icon" className="w-7 h-7" title="Edit inline"
                               onClick={() => setEditingId(proxy.id)}
@@ -623,8 +719,14 @@ export default function ScanProxiesPage() {
 
       {/* Dialogs */}
       {showAdd && <ProxyDialog open onClose={() => setShowAdd(false)} />}
-      {/* Issue 3: Bulk import dialog */}
       {showBulk && <BulkImportDialog open onClose={() => setShowBulk(false)} />}
+      {fixAuthProxy && (
+        <FixAuthDialog
+          open
+          proxy={fixAuthProxy}
+          onClose={() => setFixAuthProxy(null)}
+        />
+      )}
     </div>
   );
 }
