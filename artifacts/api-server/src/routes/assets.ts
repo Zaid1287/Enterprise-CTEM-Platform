@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { eq, and, ilike, sql, inArray, desc, isNull, or, ne } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
+import { getPrivilegedTenantIds } from "../lib/tenantScoping";
 import {
   db, assetsTable, usersTable, findingsTable, findingCommentsTable, riskScoresTable,
   technologyDetectionsTable, scanAssetResultsTable, assetGroupMembersTable, discoveryResultsTable,
@@ -256,7 +257,11 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(assetsTable.tenantId, ids);
   } else if (role === "super_admin" || role === "admin") {
-    tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
+    // SA/Admin see their own tenant's assets PLUS all client self-managed assets
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    tenantFilter = privIds.length > 0
+      ? or(eq(assetsTable.tenantId, req.user!.tenantId), inArray(assetsTable.tenantId, privIds))
+      : eq(assetsTable.tenantId, req.user!.tenantId);
   } else if (role === "client") {
     // Clients see only their assigned assets — cross-tenant, no tenantId restriction
     tenantFilter = undefined;
