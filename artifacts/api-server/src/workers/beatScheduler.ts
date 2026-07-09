@@ -1193,6 +1193,22 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     runProxyDecay().catch(() => {});
     setInterval(runProxyDecay, 6 * 60 * 60_000);
   }, 2 * 60_000);
+
+  // Auto-tuner: adjusts scan_delay_multiplier and waf_bypass_strategy per-tenant
+  // based on observed WAF hit rates in orchestrator_waf_stats.  Runs every 10 minutes
+  // starting 3 minutes after boot (let initial traffic accumulate first).
+  const runAutoTuner = async () => {
+    try {
+      const { runAutoTunerCycle } = await import("../lib/autoTuner.js");
+      await runAutoTunerCycle();
+    } catch (err) {
+      logger.warn({ err }, "Beat: auto-tuner cycle failed (non-fatal)");
+    }
+  };
+  setTimeout(() => {
+    runAutoTuner().catch(() => {});
+    setInterval(runAutoTuner, 10 * 60_000);
+  }, 3 * 60_000);
 }
 
 export async function stopBeatScheduler(): Promise<void> {

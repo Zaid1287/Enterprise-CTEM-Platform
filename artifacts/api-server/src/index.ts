@@ -322,6 +322,7 @@ const server = app.listen(port, (err) => {
   scheduleRetestCoolingProxies().catch(e => logger.error({ err: e }, "Proxy retest scheduler error"));
   initCircuitBreaker().catch(e => logger.error({ err: e }, "Circuit breaker state restore error"));
   initRateLimiter().catch(e => logger.error({ err: e }, "Rate limiter state restore error"));
+  import("./lib/wafStatsRecorder.js").then(m => m.initWafStatsRecorder()).catch(e => logger.error({ err: e }, "WAF stats recorder init error"));
   initStripe().catch(e => logger.error({ err: e }, "Stripe init error"));
 
   // ── Load Redis URL from platform settings (if not in env), then start workers

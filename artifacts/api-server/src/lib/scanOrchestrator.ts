@@ -1,5 +1,6 @@
-import { db, scanFingerprintProfilesTable, scanRequestTelemetryTable, orchestratorConfigTable } from "@workspace/db";
+import { db, scanFingerprintProfilesTable, scanRequestTelemetryTable, orchestratorConfigTable, orchestratorProfileStatsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
+import { recordWafOutcome, recordProfileOutcome } from "./wafStatsRecorder.js";
 import { getCurrentTenantId } from "./tenantContext.js";
 import { getCurrentScanIntensity } from "./scanIntensityContext.js";
 import { selectHealthiestProxy, recordProxyOutcome, type ProxyOutcome } from "./proxyManager.js";
@@ -119,6 +120,29 @@ let _profiles: Array<{ id: number; headers: Record<string, string> }> = [];
 let _profilesLoadedAt = 0;
 const PROFILES_TTL_MS = 5 * 60_000;
 
+// ── UCB1 profile stats cache — loaded alongside profiles, same 5-min TTL ──────
+interface ProfileStatEntry { profileId: number; totalUses: number; successes: number; wafBlocked: number; }
+let _profileStats: ProfileStatEntry[] = [];
+let _profileStatsLoadedAt = 0;
+
+async function loadProfileStats(tenantId: number): Promise<ProfileStatEntry[]> {
+  if (_profileStats.length > 0 && Date.now() - _profileStatsLoadedAt < PROFILES_TTL_MS) return _profileStats;
+  try {
+    const rows = await db
+      .select({
+        profileId:  orchestratorProfileStatsTable.profileId,
+        totalUses:  orchestratorProfileStatsTable.totalUses,
+        successes:  orchestratorProfileStatsTable.successes,
+        wafBlocked: orchestratorProfileStatsTable.wafBlocked,
+      })
+      .from(orchestratorProfileStatsTable)
+      .where(eq(orchestratorProfileStatsTable.tenantId, tenantId));
+    _profileStats = rows;
+    _profileStatsLoadedAt = Date.now();
+    return _profileStats;
+  } catch { return _profileStats; }
+}
+
 async function loadProfiles(): Promise<Array<{ id: number; headers: Record<string, string> }>> {
   if (_profiles.length > 0 && Date.now() - _profilesLoadedAt < PROFILES_TTL_MS) return _profiles;
   try {
@@ -228,6 +252,51 @@ function pickRandomProfile(
   const candidates = excludeId != null ? profiles.filter(p => p.id !== excludeId) : profiles;
   const pool = candidates.length > 0 ? candidates : profiles;
   return pool[Math.floor(Math.random() * pool.length)]!;
+}
+
+/**
+ * UCB1-based profile picker.
+ *
+ * Upper Confidence Bound 1 (UCB1) balances exploitation (prefer high-success
+ * profiles) with exploration (try under-tested profiles).  Formula:
+ *   score_i = (successes_i / total_i) + √2 × √(ln(N) / total_i)
+ * where N = total uses across all profiles.
+ *
+ * Profiles with zero uses get ∞ score so they are always explored first.
+ * 10% epsilon: randomly pick any profile to prevent over-exploitation.
+ */
+function pickBestProfile(
+  profiles: Array<{ id: number; headers: Record<string, string> }>,
+  stats:    ProfileStatEntry[],
+  excludeId?: number,
+): { id: number; headers: Record<string, string> } | null {
+  if (profiles.length === 0) return null;
+  const candidates = excludeId != null ? profiles.filter(p => p.id !== excludeId) : profiles;
+  const pool = candidates.length > 0 ? candidates : profiles;
+
+  // ε-greedy exploration: 10% random pick
+  if (stats.length === 0 || Math.random() < 0.10) {
+    return pool[Math.floor(Math.random() * pool.length)]!;
+  }
+
+  const totalUses = stats.reduce((s, x) => s + x.totalUses, 0) || 1;
+  const C = Math.SQRT2;
+
+  let best: { id: number; headers: Record<string, string> } | null = null;
+  let bestScore = -Infinity;
+
+  for (const p of pool) {
+    const s = stats.find(st => st.profileId === p.id);
+    if (!s || s.totalUses === 0) {
+      // Unexplored profile → always prioritise
+      return p;
+    }
+    const successRate = s.successes / s.totalUses;
+    const ucb1 = successRate + C * Math.sqrt(Math.log(totalUses) / s.totalUses);
+    if (ucb1 > bestScore) { bestScore = ucb1; best = p; }
+  }
+
+  return best ?? pool[Math.floor(Math.random() * pool.length)]!;
 }
 
 function extractHostname(url: string): string {
@@ -354,6 +423,7 @@ export async function orchestratedFetch(
   // rather than letting an orchestration error abort the scan pipeline.
   let config: OrchConfig = ORCHESTRATOR_SAFE_DEFAULTS;
   let profiles: Array<{ id: number; headers: Record<string, string> }> = [];
+  let profileStats: ProfileStatEntry[] = [];
   let proxy: ActiveProxy | null = null;
   let proxyAgent: Agent | undefined = undefined;
   let lastWafDetected = false;
@@ -372,6 +442,11 @@ export async function orchestratedFetch(
       profiles = config.rotateFingerprints ? await loadProfiles() : [];
     } catch {
       profiles = [];
+    }
+
+    // Step 2b: load UCB1 profile stats for A/B selection (non-fatal)
+    if (profiles.length > 0) {
+      profileStats = await loadProfileStats(tenantId).catch(() => []);
     }
 
     // Step 3: proxy selection — selectHealthiestProxy is already guarded inside pickProxy
@@ -484,7 +559,7 @@ export async function orchestratedFetch(
     }
   }
 
-  let profile = pickRandomProfile(profiles);
+  let profile = pickBestProfile(profiles, profileStats);
   const baseDelay = getDelay(intensity, tenantId);
 
   // Rate limit token — non-fatal; skip token if the limiter itself throws
@@ -504,6 +579,10 @@ export async function orchestratedFetch(
 
   // WAF bypass state set during bootstrap; wafHitCount tracks detections this call.
   let wafHitCount = 0;
+  // Tracks whether ANY previous attempt in this call saw a WAF hit.
+  // Used to distinguish "bypass_success" (WAF was hit earlier, now got through)
+  // from "success" (clean first-attempt success) when recording WAF stats.
+  let _hadWafHitAnyAttempt = false;
 
   // TLS dispatcher: use the bootstrapped one or fall back to a plain Agent.
   // When a SOCKS proxy is active it supplies its own TLS handling so we only need
@@ -534,7 +613,7 @@ export async function orchestratedFetch(
     // ── Issue 7: WAF bypass — on next retry after WAF, rotate profile + proxy + TLS ──
     if (lastWafDetected && config.wafBypassEnabled && attemptNumber > 0) {
       const prevProfileId = profile?.id;
-      profile = pickRandomProfile(profiles, prevProfileId);
+      profile = pickBestProfile(profiles, profileStats, prevProfileId);
       const prevProxyId = proxy?.id;
       ({ proxy, proxyAgent } = await pickProxy(prevProxyId));
       // Rotate TLS fingerprint alongside HTTP fingerprint so JA3 hash also changes
@@ -631,6 +710,12 @@ export async function orchestratedFetch(
       wafDetected     = analysis.wafDetected;
       captchaDetected = analysis.captchaDetected;
       lastWafDetected = wafDetected;
+      if (wafDetected) {
+        _hadWafHitAnyAttempt = true;
+        // Record WAF hit outcome and profile failure immediately
+        if (tenantId) recordWafOutcome(tenantId, hostname, captchaDetected ? "captcha" : "waf_hit");
+        if (profile && tenantId) recordProfileOutcome(profile.id, tenantId, false, true);
+      }
       if (wafDetected) {
         wafHitCount++;
         // Issue 8: fire WAF alert on the very first detection for this request
@@ -743,6 +828,9 @@ export async function orchestratedFetch(
       if (analysis.isSuccess) {
         if (config.adaptiveRateLimitEnabled) recordRateLimitSuccess(tenantId, url);
         if (config.circuitBreakerEnabled) await recordCircuitResult(tenantId, hostname, true);
+        // Record WAF bypass success (or clean success) and profile win
+        if (tenantId) recordWafOutcome(tenantId, hostname, _hadWafHitAnyAttempt ? "bypass_success" : "success");
+        if (profile && tenantId) recordProfileOutcome(profile.id, tenantId, true, false);
         return response;
       }
 

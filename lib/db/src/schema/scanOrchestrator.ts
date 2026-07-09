@@ -65,7 +65,57 @@ export const scanRequestTelemetryTable = pgTable("scan_request_telemetry", {
   createdAt:             timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export type ScanProxy           = typeof scanProxiesTable.$inferSelect;
-export type OrchestratorConfig  = typeof orchestratorConfigTable.$inferSelect;
+// ── WAF bypass stats — per-tenant/hostname/day aggregated counters ─────────────
+// Incremented atomically on every orchestrated request; used by:
+//   • Auto-tuner: reads last-24h WAF rate to adjust scan_delay_multiplier
+//   • Dashboard:  drives the "WAF Bypass Success %" chart per domain over time
+//   • A/B tests:  one counter per profile via orchestratorProfileStatsTable
+export const orchestratorWafStatsTable = pgTable("orchestrator_waf_stats", {
+  id:              serial("id").primaryKey(),
+  tenantId:        integer("tenant_id").notNull(),
+  hostname:        text("hostname").notNull(),
+  statDate:        text("stat_date").notNull(), // YYYY-MM-DD UTC
+  totalRequests:   integer("total_requests").notNull().default(0),
+  wafHits:         integer("waf_hits").notNull().default(0),
+  bypassSuccesses: integer("bypass_successes").notNull().default(0),
+  captchaHits:     integer("captcha_hits").notNull().default(0),
+  directSuccesses: integer("direct_successes").notNull().default(0),
+  updatedAt:       timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("orchestrator_waf_stats_unique").on(t.tenantId, t.hostname, t.statDate)]);
+
+// ── Fingerprint profile A/B stats — per-profile success/WAF-block counters ────
+// UCB1 (Upper Confidence Bound) algorithm uses these to pick the highest-
+// performing profile while still exploring under-tested ones.
+export const orchestratorProfileStatsTable = pgTable("orchestrator_profile_stats", {
+  id:          serial("id").primaryKey(),
+  profileId:   integer("profile_id").notNull(),
+  tenantId:    integer("tenant_id").notNull(),
+  totalUses:   integer("total_uses").notNull().default(0),
+  successes:   integer("successes").notNull().default(0),
+  wafBlocked:  integer("waf_blocked").notNull().default(0),
+  lastUsedAt:  timestamp("last_used_at", { withTimezone: true }),
+  updatedAt:   timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("orchestrator_profile_stats_unique").on(t.profileId, t.tenantId)]);
+
+// ── Auto-tuner action log — immutable record of every tuning decision ──────────
+// Written whenever the auto-tuner adjusts scan_delay_multiplier or enables/
+// disables WAF bypass.  Surfaced in the "Auto-Tuner" dashboard tab so operators
+// can audit what the system changed and why.
+export const orchestratorTuningLogTable = pgTable("orchestrator_tuning_log", {
+  id:        serial("id").primaryKey(),
+  tenantId:  integer("tenant_id").notNull(),
+  hostname:  text("hostname"),
+  action:    text("action").notNull(),
+  oldValue:  text("old_value"),
+  newValue:  text("new_value"),
+  reason:    text("reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ScanProxy              = typeof scanProxiesTable.$inferSelect;
+export type OrchestratorConfig     = typeof orchestratorConfigTable.$inferSelect;
 export type ScanFingerprintProfile = typeof scanFingerprintProfilesTable.$inferSelect;
-export type ScanRequestTelemetry = typeof scanRequestTelemetryTable.$inferSelect;
+export type ScanRequestTelemetry   = typeof scanRequestTelemetryTable.$inferSelect;
+export type OrchestratorWafStats   = typeof orchestratorWafStatsTable.$inferSelect;
+export type OrchestratorProfileStats = typeof orchestratorProfileStatsTable.$inferSelect;
+export type OrchestratorTuningLog  = typeof orchestratorTuningLogTable.$inferSelect;

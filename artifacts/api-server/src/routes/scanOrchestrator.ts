@@ -1,12 +1,12 @@
 import { Router } from "express";
 import { requireAuth, verifyToken } from "../lib/auth.js";
-import { db, scanProxiesTable, orchestratorConfigTable, scanFingerprintProfilesTable, scanRequestTelemetryTable } from "@workspace/db";
-import { eq, desc, sql, gte, and, isNotNull } from "drizzle-orm";
+import { db, scanProxiesTable, orchestratorConfigTable, scanFingerprintProfilesTable, scanRequestTelemetryTable, orchestratorWafStatsTable, orchestratorProfileStatsTable, orchestratorTuningLogTable } from "@workspace/db";
+import { eq, desc, sql, gte, and, isNotNull, asc } from "drizzle-orm";
 import { healthCheckProxy, testProxyWithAuth } from "../lib/proxyHealthCheck.js";
 import { getAllCircuits } from "../lib/circuitBreaker.js";
 import { getAllRateLimiterStats } from "../lib/adaptiveRateLimiter.js";
 import { getDnsResolverStats } from "../lib/dnsResolverPool.js";
-import { invalidateConfigCache, getWafProtectedHosts } from "../lib/scanOrchestrator.js";
+import { invalidateConfigCache, getWafProtectedHosts, orchestratedFetch } from "../lib/scanOrchestrator.js";
 import { addWaterfallSseClient, removeWaterfallSseClient } from "../lib/sseManager.js";
 import { logger } from "../lib/logger.js";
 import { encryptCredential, decryptCredential, decryptCredentialWithSecret } from "../lib/proxyCredentialEncryption.js";
@@ -657,6 +657,351 @@ router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, r
   } catch (err) {
     logger.error({ err }, "GET /api/scan-telemetry/stats error");
     res.status(500).json({ error: "Failed to fetch telemetry stats" });
+  }
+});
+
+// ── WAF Bypass Dashboard: per-hostname, per-day stats ─────────────────────────
+router.get("/waf-bypass-stats", requireAuth, requireAdmin, async (req: any, res) => {
+  try {
+    const tenantId = req.user!.tenantId as number;
+    const days = Math.min(parseInt(String(req.query.days ?? "30"), 10) || 30, 90);
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60_000).toISOString().slice(0, 10);
+
+    const rows = await db
+      .select()
+      .from(orchestratorWafStatsTable)
+      .where(and(
+        eq(orchestratorWafStatsTable.tenantId, tenantId),
+        gte(orchestratorWafStatsTable.statDate, sinceDate),
+      ))
+      .orderBy(asc(orchestratorWafStatsTable.statDate));
+
+    // Aggregate totals across all hostnames
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.totalRequests   += r.totalRequests;
+        acc.wafHits         += r.wafHits;
+        acc.bypassSuccesses += r.bypassSuccesses;
+        acc.captchaHits     += r.captchaHits;
+        acc.directSuccesses += r.directSuccesses;
+        return acc;
+      },
+      { totalRequests: 0, wafHits: 0, bypassSuccesses: 0, captchaHits: 0, directSuccesses: 0 },
+    );
+
+    // Per-hostname summary
+    const byHost: Record<string, typeof totals> = {};
+    for (const r of rows) {
+      if (!byHost[r.hostname]) {
+        byHost[r.hostname] = { totalRequests: 0, wafHits: 0, bypassSuccesses: 0, captchaHits: 0, directSuccesses: 0 };
+      }
+      const h = byHost[r.hostname]!;
+      h.totalRequests   += r.totalRequests;
+      h.wafHits         += r.wafHits;
+      h.bypassSuccesses += r.bypassSuccesses;
+      h.captchaHits     += r.captchaHits;
+      h.directSuccesses += r.directSuccesses;
+    }
+
+    // Per-day trend (aggregated across all hosts)
+    const byDay: Record<string, typeof totals> = {};
+    for (const r of rows) {
+      if (!byDay[r.statDate]) {
+        byDay[r.statDate] = { totalRequests: 0, wafHits: 0, bypassSuccesses: 0, captchaHits: 0, directSuccesses: 0 };
+      }
+      const d = byDay[r.statDate]!;
+      d.totalRequests   += r.totalRequests;
+      d.wafHits         += r.wafHits;
+      d.bypassSuccesses += r.bypassSuccesses;
+      d.captchaHits     += r.captchaHits;
+      d.directSuccesses += r.directSuccesses;
+    }
+
+    const computeBypassRate = (b: typeof totals) =>
+      b.wafHits + b.bypassSuccesses > 0
+        ? Math.round((b.bypassSuccesses / (b.wafHits + b.bypassSuccesses)) * 1000) / 10
+        : null;
+
+    const trend = Object.entries(byDay)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, b]) => ({
+        date,
+        totalRequests:   b.totalRequests,
+        wafHits:         b.wafHits,
+        bypassSuccesses: b.bypassSuccesses,
+        captchaHits:     b.captchaHits,
+        directSuccesses: b.directSuccesses,
+        bypassRate:      computeBypassRate(b),
+        wafRate:         b.totalRequests > 0 ? Math.round(b.wafHits / b.totalRequests * 1000) / 10 : 0,
+      }));
+
+    const hostSummary = Object.entries(byHost).map(([hostname, b]) => ({
+      hostname,
+      totalRequests:   b.totalRequests,
+      wafHits:         b.wafHits,
+      bypassSuccesses: b.bypassSuccesses,
+      captchaHits:     b.captchaHits,
+      directSuccesses: b.directSuccesses,
+      bypassRate:      computeBypassRate(b),
+      wafRate:         b.totalRequests > 0 ? Math.round(b.wafHits / b.totalRequests * 1000) / 10 : 0,
+    })).sort((a, b) => b.totalRequests - a.totalRequests);
+
+    res.json({
+      days,
+      sinceDate,
+      totals: { ...totals, bypassRate: computeBypassRate(totals), wafRate: totals.totalRequests > 0 ? Math.round(totals.wafHits / totals.totalRequests * 1000) / 10 : 0 },
+      trend,
+      hostSummary,
+    });
+  } catch (err) {
+    logger.error({ err }, "GET /api/waf-bypass-stats error");
+    res.status(500).json({ error: "Failed to fetch WAF bypass stats" });
+  }
+});
+
+// ── A/B Profile Stats: UCB1 performance per fingerprint profile ───────────────
+router.get("/fingerprint-profile-stats", requireAuth, requireAdmin, async (req: any, res) => {
+  try {
+    const tenantId = req.user!.tenantId as number;
+
+    // Join profile stats with profile names
+    const profiles = await db
+      .select({
+        id:        scanFingerprintProfilesTable.id,
+        name:      scanFingerprintProfilesTable.name,
+        isActive:  scanFingerprintProfilesTable.isActive,
+        updatedAt: scanFingerprintProfilesTable.updatedAt,
+      })
+      .from(scanFingerprintProfilesTable);
+
+    const stats = await db
+      .select()
+      .from(orchestratorProfileStatsTable)
+      .where(eq(orchestratorProfileStatsTable.tenantId, tenantId));
+
+    const statsMap = new Map(stats.map(s => [s.profileId, s]));
+
+    // Compute UCB1 scores for display
+    const totalUses = stats.reduce((sum, s) => sum + s.totalUses, 0) || 1;
+    const C = Math.SQRT2;
+
+    const result = profiles.map(p => {
+      const s = statsMap.get(p.id);
+      let ucb1Score: number | null = null;
+      let successRate: number | null = null;
+      let wafBlockRate: number | null = null;
+      if (s && s.totalUses > 0) {
+        successRate  = Math.round(s.successes / s.totalUses * 1000) / 10;
+        wafBlockRate = Math.round(s.wafBlocked / s.totalUses * 1000) / 10;
+        ucb1Score    = Math.round((s.successes / s.totalUses + C * Math.sqrt(Math.log(totalUses) / s.totalUses)) * 1000) / 1000;
+      }
+      return {
+        profileId:    p.id,
+        name:         p.name,
+        isActive:     p.isActive,
+        totalUses:    s?.totalUses ?? 0,
+        successes:    s?.successes ?? 0,
+        wafBlocked:   s?.wafBlocked ?? 0,
+        lastUsedAt:   s?.lastUsedAt ?? null,
+        successRate,
+        wafBlockRate,
+        ucb1Score,
+        status: !s || s.totalUses === 0 ? "untested" : ucb1Score! > 0.8 ? "excellent" : ucb1Score! > 0.5 ? "good" : "poor",
+      };
+    }).sort((a, b) => (b.ucb1Score ?? Infinity) - (a.ucb1Score ?? Infinity));
+
+    res.json({ profiles: result, totalUses });
+  } catch (err) {
+    logger.error({ err }, "GET /api/fingerprint-profile-stats error");
+    res.status(500).json({ error: "Failed to fetch profile stats" });
+  }
+});
+
+// ── Dry-Run Test Bypass: validate bypass effectiveness on a real URL ───────────
+// Runs one real HTTP request through the full orchestrator stack (proxy, fingerprint
+// rotation, WAF detection, retry logic) and returns detailed diagnostics.  Does NOT
+// store any findings or create scans — purely a readiness test.
+router.post("/orchestrator/test-bypass", requireAuth, requireAdmin, async (req: any, res) => {
+  try {
+    const tenantId = req.user!.tenantId as number;
+    const { url } = req.body as { url?: string };
+    if (!url || typeof url !== "string") {
+      res.status(400).json({ error: "url is required" }); return;
+    }
+
+    // Validate URL
+    let parsedUrl: URL;
+    try { parsedUrl = new URL(url.startsWith("http") ? url : `https://${url}`); }
+    catch { res.status(400).json({ error: "Invalid URL" }); return; }
+
+    const targetUrl = parsedUrl.href;
+    const startMs   = Date.now();
+    let statusCode: number | null = null;
+    let wafDetected = false;
+    let bypassSuccess = false;
+    let responseHeaders: Record<string, string> = {};
+    let bodyExcerpt = "";
+    let error: string | null = null;
+    let retries = 0;
+
+    // Peek at the most recent telemetry for this tenant+url after the fetch
+    try {
+      const resp = await orchestratedFetch(
+        targetUrl,
+        { method: "GET" },
+        {
+          tenantId,
+          target:    parsedUrl.hostname,
+          isDryRun:  true,
+        } as any,
+      );
+
+      statusCode = resp.status;
+      resp.headers.forEach((v, k) => { responseHeaders[k.toLowerCase()] = v; });
+      const body = await resp.text().catch(() => "");
+      bodyExcerpt = body.slice(0, 600);
+    } catch (err: any) {
+      error = err?.message ?? "Request failed";
+    }
+
+    const latencyMs = Date.now() - startMs;
+
+    // Query most recent telemetry row for this URL to get orchestrator internals
+    const [tel] = await db
+      .select()
+      .from(scanRequestTelemetryTable)
+      .where(
+        and(
+          eq(scanRequestTelemetryTable.tenantId, tenantId),
+          eq(scanRequestTelemetryTable.url, targetUrl),
+        )
+      )
+      .orderBy(desc(scanRequestTelemetryTable.createdAt))
+      .limit(1);
+
+    if (tel) {
+      wafDetected   = tel.wafDetected;
+      retries       = tel.retries;
+      // bypass successful = WAF was detected but we eventually got through (200)
+      bypassSuccess = tel.wafDetected && (statusCode !== null && statusCode < 400);
+    } else {
+      wafDetected   = statusCode !== null && (statusCode === 403 || statusCode === 429);
+      bypassSuccess = false;
+    }
+
+    // Also query WAF bypass stats to get historical bypass rate for this hostname
+    const sinceDate = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const [hostStats] = await db
+      .select({
+        totalRequests:   sql<number>`sum(total_requests)::int`,
+        wafHits:         sql<number>`sum(waf_hits)::int`,
+        bypassSuccesses: sql<number>`sum(bypass_successes)::int`,
+      })
+      .from(orchestratorWafStatsTable)
+      .where(and(
+        eq(orchestratorWafStatsTable.tenantId, tenantId),
+        eq(orchestratorWafStatsTable.hostname, parsedUrl.hostname),
+        gte(orchestratorWafStatsTable.statDate, sinceDate),
+      ));
+
+    const historicalBypassRate = hostStats && (hostStats.wafHits ?? 0) + (hostStats.bypassSuccesses ?? 0) > 0
+      ? Math.round((hostStats.bypassSuccesses ?? 0) / ((hostStats.wafHits ?? 0) + (hostStats.bypassSuccesses ?? 0)) * 1000) / 10
+      : null;
+
+    res.json({
+      url:                targetUrl,
+      hostname:           parsedUrl.hostname,
+      statusCode,
+      latencyMs,
+      wafDetected,
+      bypassSuccess,
+      retries,
+      error,
+      responseHeaders,
+      bodyExcerpt,
+      proxyUsed:          tel?.proxyId != null,
+      profileUsed:        tel?.fingerprintProfileId ?? null,
+      circuitBreakerState: tel?.circuitBreakerState ?? null,
+      historicalBypassRate,
+      historicalWafHits:  hostStats?.wafHits ?? 0,
+      testedAt:           new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error({ err }, "POST /api/orchestrator/test-bypass error");
+    res.status(500).json({ error: "Test failed" });
+  }
+});
+
+// ── Auto-Tuner Log: recent tuning decisions ───────────────────────────────────
+router.get("/orchestrator/tuning-log", requireAuth, requireAdmin, async (req: any, res) => {
+  try {
+    const tenantId = req.user!.tenantId as number;
+    const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
+
+    const rows = await db
+      .select()
+      .from(orchestratorTuningLogTable)
+      .where(eq(orchestratorTuningLogTable.tenantId, tenantId))
+      .orderBy(desc(orchestratorTuningLogTable.createdAt))
+      .limit(limit);
+
+    // Current delay multiplier from config
+    const [multiplierRow] = await db
+      .select({ value: orchestratorConfigTable.value })
+      .from(orchestratorConfigTable)
+      .where(and(
+        eq(orchestratorConfigTable.tenantId, tenantId),
+        eq(orchestratorConfigTable.key, "scan_delay_multiplier"),
+      ));
+
+    const [bypassRow] = await db
+      .select({ value: orchestratorConfigTable.value })
+      .from(orchestratorConfigTable)
+      .where(and(
+        eq(orchestratorConfigTable.tenantId, tenantId),
+        eq(orchestratorConfigTable.key, "waf_bypass_strategy"),
+      ));
+
+    // Last 24h WAF rate for this tenant
+    const sinceDate = new Date(Date.now() - 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const [agg24h] = await db
+      .select({
+        total:   sql<number>`coalesce(sum(total_requests), 0)::int`,
+        wafHits: sql<number>`coalesce(sum(waf_hits), 0)::int`,
+      })
+      .from(orchestratorWafStatsTable)
+      .where(and(
+        eq(orchestratorWafStatsTable.tenantId, tenantId),
+        gte(orchestratorWafStatsTable.statDate, sinceDate),
+      ));
+
+    const wafRate24h = (agg24h?.total ?? 0) > 0
+      ? Math.round((agg24h?.wafHits ?? 0) / (agg24h?.total ?? 1) * 1000) / 10
+      : null;
+
+    res.json({
+      currentMultiplier:     parseFloat(multiplierRow?.value ?? "1.0"),
+      currentBypassStrategy: bypassRow?.value ?? "none",
+      wafRate24h,
+      totalRequests24h:      agg24h?.total ?? 0,
+      wafHits24h:            agg24h?.wafHits ?? 0,
+      log: rows,
+    });
+  } catch (err) {
+    logger.error({ err }, "GET /api/orchestrator/tuning-log error");
+    res.status(500).json({ error: "Failed to fetch tuning log" });
+  }
+});
+
+// ── Trigger manual auto-tuner run ─────────────────────────────────────────────
+router.post("/orchestrator/run-tuner", requireAuth, requireAdmin, async (req: any, res) => {
+  try {
+    const { runAutoTunerCycle } = await import("../lib/autoTuner.js");
+    await runAutoTunerCycle();
+    res.json({ ok: true, message: "Auto-tuner cycle completed" });
+  } catch (err) {
+    logger.error({ err }, "POST /api/orchestrator/run-tuner error");
+    res.status(500).json({ error: "Tuner run failed" });
   }
 });
 

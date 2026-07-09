@@ -1378,17 +1378,629 @@ function TelemetryLogTab() {
   );
 }
 
+/* ─── WAF Dashboard Tab ───────────────────────────────────────────────── */
+interface WafDayPoint {
+  date: string; totalRequests: number; wafHits: number;
+  bypassSuccesses: number; captchaHits: number; directSuccesses: number;
+  bypassRate: number | null; wafRate: number;
+}
+interface WafHostRow {
+  hostname: string; totalRequests: number; wafHits: number;
+  bypassSuccesses: number; captchaHits: number; directSuccesses: number;
+  bypassRate: number | null; wafRate: number;
+}
+interface WafStatsResp {
+  days: number; sinceDate: string;
+  totals: WafDayPoint & { bypassRate: number | null; wafRate: number };
+  trend: WafDayPoint[];
+  hostSummary: WafHostRow[];
+}
+
+function WafDashboardTab() {
+  const [days, setDays] = useState(30);
+  const { data, isLoading, refetch } = useQuery<WafStatsResp>({
+    queryKey: ["waf-bypass-stats", days],
+    queryFn: () => api(`/api/waf-bypass-stats?days=${days}`),
+  });
+
+  const trend   = data?.trend ?? [];
+  const hosts   = data?.hostSummary ?? [];
+  const totals  = data?.totals;
+
+  return (
+    <div className="space-y-5">
+      {/* Controls */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="font-semibold text-base">WAF Bypass Dashboard</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Real observed WAF detection and bypass outcomes from the scan orchestrator</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={String(days)} onValueChange={v => setDays(Number(v))}>
+            <SelectTrigger className="h-8 text-xs w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">Last 7 days</SelectItem>
+              <SelectItem value="14">Last 14 days</SelectItem>
+              <SelectItem value="30">Last 30 days</SelectItem>
+              <SelectItem value="90">Last 90 days</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => refetch()}>
+            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* Summary tiles */}
+      {totals && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {[
+            { label: "Total Requests",    value: totals.totalRequests.toLocaleString(), color: "text-foreground" },
+            { label: "WAF Hits",          value: totals.wafHits.toLocaleString(),       color: "text-red-500" },
+            { label: "Bypass Successes",  value: totals.bypassSuccesses.toLocaleString(), color: "text-emerald-500" },
+            { label: "Captcha Hits",      value: totals.captchaHits.toLocaleString(),   color: "text-amber-500" },
+            { label: "Bypass Rate",       value: totals.bypassRate != null ? `${totals.bypassRate}%` : "—", color: "text-blue-500" },
+          ].map(s => (
+            <div key={s.label} className="border rounded-lg p-3">
+              <div className={cn("text-xl font-bold tabular-nums", s.color)}>{s.value}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Trend chart */}
+      {isLoading ? (
+        <Skeleton className="h-56 w-full" />
+      ) : trend.length === 0 ? (
+        <div className="border rounded-lg p-8 text-center text-muted-foreground text-sm">
+          No WAF stats yet — run scans to populate data
+        </div>
+      ) : (
+        <div className="border rounded-lg p-4">
+          <h3 className="text-sm font-medium mb-3">WAF Hit Rate &amp; Bypass Rate — daily trend</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={trend} margin={{ top: 4, right: 12, left: -10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted))" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+              <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v: number) => `${v}%`} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line dataKey="wafRate"    name="WAF Hit %"    stroke="#ef4444" dot={false} strokeWidth={1.5} />
+              <Line dataKey="bypassRate" name="Bypass Rate %" stroke="#10b981" dot={false} strokeWidth={1.5} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Per-hostname table */}
+      {hosts.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="px-4 py-2.5 border-b bg-muted/30">
+            <span className="text-sm font-medium">By Hostname</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground bg-muted/20 border-b">
+                  <th className="px-3 py-2 text-left">Hostname</th>
+                  <th className="px-3 py-2 text-right">Requests</th>
+                  <th className="px-3 py-2 text-right">WAF Hits</th>
+                  <th className="px-3 py-2 text-right">WAF %</th>
+                  <th className="px-3 py-2 text-right">Bypass</th>
+                  <th className="px-3 py-2 text-right">Bypass %</th>
+                  <th className="px-3 py-2 text-right">Captcha</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hosts.map(h => (
+                  <tr key={h.hostname} className="border-b last:border-b-0 hover:bg-muted/10 transition-colors">
+                    <td className="px-3 py-2 font-mono text-xs">{h.hostname}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{h.totalRequests.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-red-500">{h.wafHits}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{h.wafRate}%</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-emerald-500">{h.bypassSuccesses}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {h.bypassRate != null ? (
+                        <span className={cn("font-medium", h.bypassRate >= 60 ? "text-emerald-500" : h.bypassRate >= 30 ? "text-amber-500" : "text-red-500")}>
+                          {h.bypassRate}%
+                        </span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-amber-500">{h.captchaHits}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Dry-Run Test Tab ───────────────────────────────────────────────── */
+interface DryRunResult {
+  url: string; hostname: string; statusCode: number | null; latencyMs: number;
+  wafDetected: boolean; bypassSuccess: boolean; retries: number; error: string | null;
+  responseHeaders: Record<string, string>; bodyExcerpt: string;
+  proxyUsed: boolean; profileUsed: number | null; circuitBreakerState: string | null;
+  historicalBypassRate: number | null; historicalWafHits: number;
+  testedAt: string;
+}
+
+function DryRunTab() {
+  const { toast } = useToast();
+  const [url, setUrl] = useState("");
+  const [result, setResult] = useState<DryRunResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showHeaders, setShowHeaders] = useState(false);
+  const [showBody, setShowBody] = useState(false);
+
+  async function runTest() {
+    if (!url.trim()) { toast({ title: "URL required", variant: "destructive" }); return; }
+    setLoading(true); setResult(null);
+    try {
+      const r = await api<DryRunResult>("/api/orchestrator/test-bypass", {
+        method: "POST",
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      setResult(r);
+    } catch (e: any) {
+      toast({ title: "Test failed", description: e.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5 max-w-3xl">
+      <div>
+        <h2 className="font-semibold text-base">Dry-Run Bypass Test</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Send a real HTTP request through the full orchestrator stack — proxy routing, fingerprint selection,
+          WAF detection — without creating scans or findings.
+        </p>
+      </div>
+
+      {/* Input */}
+      <div className="border rounded-lg p-4 space-y-3">
+        <Label className="text-sm font-medium">Target URL</Label>
+        <div className="flex gap-2">
+          <Input
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && runTest()}
+            placeholder="https://example.com or example.com"
+            className="font-mono text-sm"
+          />
+          <Button onClick={runTest} disabled={loading} className="shrink-0">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <TestTube2 className="w-4 h-4" />}
+            {loading ? "Testing…" : "Run Test"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          The request is sent through your configured orchestrator (proxy, fingerprint rotation,
+          WAF bypass). Results are real — no mocking.
+        </p>
+      </div>
+
+      {/* Results */}
+      {loading && (
+        <div className="border rounded-lg p-6 flex items-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+          Sending request through orchestrator…
+        </div>
+      )}
+
+      {result && (
+        <div className="border rounded-lg overflow-hidden">
+          {/* Status bar */}
+          <div className={cn(
+            "px-4 py-3 flex items-center justify-between flex-wrap gap-2",
+            result.error ? "bg-red-500/10 border-b border-red-500/20" :
+            result.wafDetected && !result.bypassSuccess ? "bg-amber-500/10 border-b border-amber-500/20" :
+            result.wafDetected && result.bypassSuccess ? "bg-blue-500/10 border-b border-blue-500/20" :
+            "bg-emerald-500/10 border-b border-emerald-500/20"
+          )}>
+            <div className="flex items-center gap-2">
+              {result.error ? (
+                <X className="w-4 h-4 text-red-500" />
+              ) : result.wafDetected && !result.bypassSuccess ? (
+                <ShieldX className="w-4 h-4 text-amber-500" />
+              ) : result.wafDetected && result.bypassSuccess ? (
+                <Shield className="w-4 h-4 text-blue-500" />
+              ) : (
+                <Check className="w-4 h-4 text-emerald-500" />
+              )}
+              <span className="font-medium text-sm">
+                {result.error ? "Request Error" :
+                 result.wafDetected && !result.bypassSuccess ? "WAF Blocked" :
+                 result.wafDetected && result.bypassSuccess ? "Bypassed WAF" :
+                 "Clean Success"}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              {result.statusCode != null && (
+                <span className={cn("font-mono font-bold", result.statusCode < 400 ? "text-emerald-500" : "text-red-500")}>
+                  HTTP {result.statusCode}
+                </span>
+              )}
+              <span>{result.latencyMs}ms</span>
+              {result.retries > 0 && <span>{result.retries} retr{result.retries === 1 ? "y" : "ies"}</span>}
+            </div>
+          </div>
+
+          {/* Detail grid */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-0 divide-x divide-y text-sm">
+            {[
+              { label: "Hostname",         value: result.hostname },
+              { label: "Proxy Used",       value: result.proxyUsed ? "Yes" : "No" },
+              { label: "Profile Used",     value: result.profileUsed != null ? `#${result.profileUsed}` : "None" },
+              { label: "Circuit Breaker",  value: result.circuitBreakerState ?? "—" },
+              { label: "Historical WAF Hits (7d)", value: String(result.historicalWafHits) },
+              { label: "Historical Bypass Rate", value: result.historicalBypassRate != null ? `${result.historicalBypassRate}%` : "—" },
+            ].map(({ label, value }) => (
+              <div key={label} className="px-4 py-2.5">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="font-medium mt-0.5 truncate">{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {result.error && (
+            <div className="px-4 py-3 border-t bg-red-500/5 text-xs text-red-500 font-mono">{result.error}</div>
+          )}
+
+          {/* Response headers toggle */}
+          {Object.keys(result.responseHeaders).length > 0 && (
+            <div className="border-t">
+              <button
+                onClick={() => setShowHeaders(h => !h)}
+                className="w-full px-4 py-2.5 text-xs font-medium text-left flex items-center gap-1.5 hover:bg-muted/30 transition-colors"
+              >
+                {showHeaders ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                Response Headers ({Object.keys(result.responseHeaders).length})
+              </button>
+              {showHeaders && (
+                <div className="px-4 pb-3 grid grid-cols-1 md:grid-cols-2 gap-1 text-xs font-mono">
+                  {Object.entries(result.responseHeaders).map(([k, v]) => (
+                    <div key={k} className="flex gap-2 overflow-hidden">
+                      <span className="text-muted-foreground shrink-0">{k}:</span>
+                      <span className="truncate">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Body excerpt toggle */}
+          {result.bodyExcerpt && (
+            <div className="border-t">
+              <button
+                onClick={() => setShowBody(b => !b)}
+                className="w-full px-4 py-2.5 text-xs font-medium text-left flex items-center gap-1.5 hover:bg-muted/30 transition-colors"
+              >
+                {showBody ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                Response Body (first 600 chars)
+              </button>
+              {showBody && (
+                <pre className="px-4 pb-3 text-xs font-mono whitespace-pre-wrap break-all text-muted-foreground overflow-x-auto max-h-48">
+                  {result.bodyExcerpt}
+                </pre>
+              )}
+            </div>
+          )}
+
+          <div className="border-t px-4 py-2 text-xs text-muted-foreground">
+            Tested at {new Date(result.testedAt).toLocaleString()}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── A/B Profiles Tab ───────────────────────────────────────────────── */
+interface ProfileStatRow {
+  profileId: number; name: string; isActive: boolean;
+  totalUses: number; successes: number; wafBlocked: number;
+  lastUsedAt: string | null; successRate: number | null;
+  wafBlockRate: number | null; ucb1Score: number | null;
+  status: "untested" | "excellent" | "good" | "poor";
+}
+interface ProfileStatsResp { profiles: ProfileStatRow[]; totalUses: number; }
+
+function AbProfilesTab() {
+  const { data, isLoading, refetch } = useQuery<ProfileStatsResp>({
+    queryKey: ["fingerprint-profile-stats"],
+    queryFn: () => api("/api/fingerprint-profile-stats"),
+    refetchInterval: 60_000,
+  });
+
+  const profiles = data?.profiles ?? [];
+
+  const statusBadge = (s: ProfileStatRow["status"]) => {
+    const map: Record<string, string> = {
+      untested: "bg-muted text-muted-foreground",
+      excellent: "bg-emerald-500/15 text-emerald-600",
+      good:      "bg-blue-500/15 text-blue-600",
+      poor:      "bg-red-500/15 text-red-600",
+    };
+    return (
+      <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium capitalize", map[s] ?? map.untested)}>
+        {s}
+      </span>
+    );
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-semibold text-base">A/B Profile Performance</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            UCB1 bandit scores — the orchestrator auto-selects the best-performing fingerprint profile
+            for each request, balancing exploitation and exploration (10% random)
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => refetch()}>
+          <RefreshCw className="w-3.5 h-3.5" /> Refresh
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+      ) : profiles.length === 0 ? (
+        <div className="border rounded-lg p-8 text-center text-muted-foreground text-sm">
+          No fingerprint profiles found — add profiles in the Fingerprints tab
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground bg-muted/20 border-b">
+                  <th className="px-3 py-2 text-left">Profile</th>
+                  <th className="px-3 py-2 text-center">Status</th>
+                  <th className="px-3 py-2 text-right">Total Uses</th>
+                  <th className="px-3 py-2 text-right">Success Rate</th>
+                  <th className="px-3 py-2 text-right">WAF Block Rate</th>
+                  <th className="px-3 py-2 text-right">UCB1 Score</th>
+                  <th className="px-3 py-2 text-left">Last Used</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map(p => (
+                  <tr key={p.profileId} className="border-b last:border-b-0 hover:bg-muted/10 transition-colors">
+                    <td className="px-3 py-2.5">
+                      <div className="font-medium">{p.name}</div>
+                      <div className="text-xs text-muted-foreground">#{p.profileId} · {p.isActive ? "Active" : "Inactive"}</div>
+                    </td>
+                    <td className="px-3 py-2.5 text-center">{statusBadge(p.status)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{p.totalUses.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {p.successRate != null ? (
+                        <span className={cn("font-medium", p.successRate >= 80 ? "text-emerald-500" : p.successRate >= 50 ? "text-amber-500" : "text-red-500")}>
+                          {p.successRate}%
+                        </span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {p.wafBlockRate != null ? (
+                        <span className={cn("font-medium", p.wafBlockRate <= 5 ? "text-emerald-500" : p.wafBlockRate <= 20 ? "text-amber-500" : "text-red-500")}>
+                          {p.wafBlockRate}%
+                        </span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-mono text-xs">
+                      {p.ucb1Score != null
+                        ? <span className="font-bold text-blue-500">{p.ucb1Score.toFixed(3)}</span>
+                        : <span className="text-emerald-500 font-bold">∞</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                      {p.lastUsedAt ? new Date(p.lastUsedAt).toLocaleString() : "Never"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
+            UCB1 = success_rate + √2 × √(ln(N) / uses). Profiles with ∞ score (untested) are always explored first.
+            N = {(data?.totalUses ?? 0).toLocaleString()} total requests.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Auto-Tuner Tab ─────────────────────────────────────────────────── */
+interface TuningLogRow {
+  id: number; tenantId: number; action: string; oldValue: string | null;
+  newValue: string | null; reason: string; wafRatePct: number | null;
+  windowHours: number | null; createdAt: string;
+}
+interface TunerStatusResp {
+  currentMultiplier: number; currentBypassStrategy: string;
+  wafRate24h: number | null; totalRequests24h: number; wafHits24h: number;
+  log: TuningLogRow[];
+}
+
+function AutoTunerTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [running, setRunning] = useState(false);
+
+  const { data, isLoading, refetch } = useQuery<TunerStatusResp>({
+    queryKey: ["orchestrator-tuning-log"],
+    queryFn: () => api("/api/orchestrator/tuning-log"),
+    refetchInterval: 60_000,
+  });
+
+  async function triggerManual() {
+    setRunning(true);
+    try {
+      await api("/api/orchestrator/run-tuner", { method: "POST" });
+      toast({ title: "Auto-tuner cycle completed", description: "Config may have been adjusted." });
+      await refetch();
+      qc.invalidateQueries({ queryKey: ["waf-bypass-stats"] });
+    } catch (e: any) {
+      toast({ title: "Tuner run failed", description: e.message, variant: "destructive" });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const actionLabel: Record<string, string> = {
+    increase_delay:  "Increased delay multiplier",
+    decrease_delay:  "Decreased delay multiplier",
+    enable_bypass:   "Enabled WAF bypass",
+    disable_bypass:  "Disabled WAF bypass",
+    no_change:       "No change",
+  };
+
+  const actionColor: Record<string, string> = {
+    increase_delay: "text-amber-500",
+    decrease_delay: "text-emerald-500",
+    enable_bypass:  "text-blue-500",
+    disable_bypass: "text-muted-foreground",
+    no_change:      "text-muted-foreground",
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="font-semibold text-base">Auto-Tuner</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Automatically adjusts scan delay and WAF bypass strategy based on observed block rates.
+            Runs every 10 minutes in the background.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => refetch()}>
+            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          </Button>
+          <Button size="sm" className="h-8 gap-1.5" onClick={triggerManual} disabled={running}>
+            {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+            Run Now
+          </Button>
+        </div>
+      </div>
+
+      {/* Current state */}
+      {data && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: "Delay Multiplier",     value: `×${data.currentMultiplier.toFixed(2)}`, sub: "scan_delay_multiplier" },
+            { label: "WAF Bypass Strategy",  value: data.currentBypassStrategy || "none",   sub: "waf_bypass_strategy" },
+            { label: "WAF Rate (24h)",        value: data.wafRate24h != null ? `${data.wafRate24h}%` : "—", sub: `${data.wafHits24h} hits / ${data.totalRequests24h} reqs` },
+            { label: "Next Auto-Tune",        value: "Every 10 min",                         sub: "beatScheduler interval" },
+          ].map(s => (
+            <div key={s.label} className="border rounded-lg p-3">
+              <div className="text-base font-bold tabular-nums">{s.value}</div>
+              <div className="text-xs font-medium mt-0.5">{s.label}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{s.sub}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Thresholds legend */}
+      <div className="border rounded-lg p-4 text-xs space-y-1.5">
+        <div className="font-medium text-sm mb-2">Tuning Thresholds</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+          {[
+            { cond: "WAF rate &gt; 60%", action: "Enable bypass + increase delay ×1.5", color: "text-red-500" },
+            { cond: "WAF rate &gt; 30%", action: "Enable bypass (delay unchanged)", color: "text-amber-500" },
+            { cond: "WAF rate &lt; 15%", action: "Decrease delay ×0.85 (min ×0.5)", color: "text-emerald-500" },
+            { cond: "WAF rate &lt; 5% for 48h", action: "Disable bypass strategy", color: "text-blue-500" },
+          ].map(t => (
+            <div key={t.cond} className="flex gap-2">
+              <span className={cn("shrink-0 font-mono", t.color)} dangerouslySetInnerHTML={{ __html: t.cond }} />
+              <span className="text-muted-foreground">→ {t.action}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tuning log */}
+      {isLoading ? (
+        <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+      ) : (data?.log ?? []).length === 0 ? (
+        <div className="border rounded-lg p-8 text-center text-muted-foreground text-sm">
+          No tuning actions yet — the auto-tuner will fire after enough WAF data accumulates
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="px-4 py-2.5 border-b bg-muted/30 flex items-center justify-between">
+            <span className="text-sm font-medium">Recent Tuning Actions</span>
+            <span className="text-xs text-muted-foreground">{data!.log.length} records</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground bg-muted/20 border-b">
+                  <th className="px-3 py-2 text-left">Time</th>
+                  <th className="px-3 py-2 text-left">Action</th>
+                  <th className="px-3 py-2 text-right">Old Value</th>
+                  <th className="px-3 py-2 text-right">New Value</th>
+                  <th className="px-3 py-2 text-right">WAF Rate</th>
+                  <th className="px-3 py-2 text-left">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data!.log.map(row => (
+                  <tr key={row.id} className="border-b last:border-b-0 hover:bg-muted/10 transition-colors">
+                    <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                      {new Date(row.createdAt).toLocaleString()}
+                    </td>
+                    <td className={cn("px-3 py-2 font-medium text-xs", actionColor[row.action] ?? "text-foreground")}>
+                      {actionLabel[row.action] ?? row.action}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                      {row.oldValue ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs font-bold">
+                      {row.newValue ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-xs">
+                      {row.wafRatePct != null ? `${row.wafRatePct.toFixed(1)}%` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground max-w-xs truncate" title={row.reason}>
+                      {row.reason}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Tab definitions ────────────────────────────────────────────────── */
-type TabKey = "dashboard" | "proxies" | "fingerprints" | "config" | "logs";
+type TabKey = "dashboard" | "proxies" | "fingerprints" | "config" | "logs" | "waf-dashboard" | "dry-run" | "ab-profiles" | "auto-tuner";
 
 interface TabDef { key: TabKey; label: string; superAdminOnly?: boolean; }
 
 const TABS: TabDef[] = [
-  { key: "dashboard",    label: "Dashboard" },
-  { key: "proxies",      label: "Proxy Pool" },
-  { key: "fingerprints", label: "Fingerprints" },
-  { key: "config",       label: "Config",      superAdminOnly: true },
-  { key: "logs",         label: "Telemetry Log" },
+  { key: "dashboard",     label: "Dashboard" },
+  { key: "proxies",       label: "Proxy Pool" },
+  { key: "fingerprints",  label: "Fingerprints" },
+  { key: "config",        label: "Config",          superAdminOnly: true },
+  { key: "logs",          label: "Telemetry Log" },
+  { key: "waf-dashboard", label: "WAF Dashboard" },
+  { key: "dry-run",       label: "Dry-Run Test" },
+  { key: "ab-profiles",   label: "A/B Profiles" },
+  { key: "auto-tuner",    label: "Auto-Tuner" },
 ];
 
 /* ─── Main Page ───────────────────────────────────────────────────────── */
@@ -1430,11 +2042,15 @@ export default function OrchestratorPage() {
       </div>
 
       {/* Tab content */}
-      {tab === "dashboard"    && <DashboardTab />}
-      {tab === "proxies"      && <ProxiesTab />}
-      {tab === "fingerprints" && <FingerprintsTab />}
-      {tab === "config"       && <ConfigTab />}
-      {tab === "logs"         && <TelemetryLogTab />}
+      {tab === "dashboard"     && <DashboardTab />}
+      {tab === "proxies"       && <ProxiesTab />}
+      {tab === "fingerprints"  && <FingerprintsTab />}
+      {tab === "config"        && <ConfigTab />}
+      {tab === "logs"          && <TelemetryLogTab />}
+      {tab === "waf-dashboard" && <WafDashboardTab />}
+      {tab === "dry-run"       && <DryRunTab />}
+      {tab === "ab-profiles"   && <AbProfilesTab />}
+      {tab === "auto-tuner"    && <AutoTunerTab />}
     </div>
   );
 }
