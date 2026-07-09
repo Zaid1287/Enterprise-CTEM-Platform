@@ -371,7 +371,7 @@ export default function ScansPage() {
               <Layers className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
             </div>
           )}
-          {isPrivileged && activeTab === "history" && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setPage(1); }} />}
+          {isPrivileged && activeTab === "history" && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setAssetFilter(null); setGroupFilter(null); setPage(1); }} />}
           <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: getListScansQueryKey() })}>
             <RefreshCw className="w-3.5 h-3.5" />
           </Button>

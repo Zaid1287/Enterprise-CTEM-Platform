@@ -6,7 +6,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { Paperclip, Upload, FileText, X, Download, Trash2, Bot, Loader2, Layers } from "lucide-react";
+import { Paperclip, Upload, FileText, X, Trash2, Bot, Loader2, Layers, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -158,6 +158,14 @@ export default function CompliancePage() {
     queryClient.invalidateQueries({ queryKey: getGetComplianceSummaryQueryKey() });
   };
 
+  const handleGroupAssign = async (controlId: number, groupId: number | null) => {
+    await apiFetch(`${BASE}/api/compliance/controls/${controlId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ targetGroupId: groupId }),
+    });
+    queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() });
+  };
+
   const handleUploadClick = (controlId: number) => {
     setPendingControlId(controlId);
     fileInputRef.current?.click();
@@ -180,6 +188,12 @@ export default function CompliancePage() {
   };
 
   const frameworks = summary as any[] ?? [];
+
+  // Client-side: if group filter is active, show controls assigned to that group first
+  const allControls = (controls as any[] ?? []);
+  const displayControls = groupFilter
+    ? [...allControls.filter((c: any) => c.targetGroupId === groupFilter), ...allControls.filter((c: any) => c.targetGroupId !== groupFilter)]
+    : allControls;
 
   return (
     <div className="space-y-5">
@@ -212,7 +226,7 @@ export default function CompliancePage() {
       {selectedGroupObj && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-xs text-primary">
           <Layers className="w-3.5 h-3.5 shrink-0" />
-          <span>Showing compliance in the context of group <span className="font-semibold">{selectedGroupObj.name}</span> ({selectedGroupObj.assetCount} assets)</span>
+          <span>Filtering controls scoped to asset group <span className="font-semibold">{selectedGroupObj.name}</span> — controls assigned to this group are shown first</span>
           <button className="ml-auto text-muted-foreground hover:text-foreground" onClick={() => setGroupFilter(null)}>✕</button>
         </div>
       )}
@@ -299,6 +313,7 @@ export default function CompliancePage() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Control ID</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Title</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Framework</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Asset Scope</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Assigned To</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Evidence</th>
@@ -307,11 +322,11 @@ export default function CompliancePage() {
             <tbody>
               {loadingControls && [...Array(5)].map((_, i) => (
                 <tr key={i} className="border-b border-border/50">
-                  {[...Array(6)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
+                  {[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
               ))}
-              {!loadingControls && (controls as any[] ?? []).map((c: any) => (
-                <tr key={c.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
+              {!loadingControls && displayControls.map((c: any) => (
+                <tr key={c.id} className={cn("border-b border-border/50 hover:bg-accent/30 transition-colors", groupFilter && c.targetGroupId === groupFilter && "bg-primary/5")}>
                   <td className="px-4 py-2.5 text-xs font-mono font-medium text-primary">{c.controlId}</td>
                   <td className="px-4 py-2.5 text-xs max-w-xs">
                     <p className="font-medium">{c.title}</p>
@@ -322,6 +337,25 @@ export default function CompliancePage() {
                     />
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.frameworkName}</td>
+                  {/* Asset Scope — assign control to an asset group */}
+                  <td className="px-4 py-2.5 text-xs">
+                    <select
+                      value={c.targetGroupId ?? ""}
+                      onChange={e => handleGroupAssign(c.id, e.target.value ? Number(e.target.value) : null)}
+                      className="h-6 px-2 text-xs border border-border rounded bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors max-w-[130px]"
+                      title="Assign to asset group"
+                    >
+                      <option value="">— unscoped —</option>
+                      {groupList.map((g: any) => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                    {c.targetGroupName && (
+                      <p className="text-[10px] text-primary/70 mt-0.5 flex items-center gap-1">
+                        <Link2 className="w-2.5 h-2.5" />{c.targetGroupName}
+                      </p>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.assignedTo ?? "—"}</td>
                   <td className="px-4 py-2.5">
                     <Select value={c.status} onValueChange={(v) => handleStatusChange(c.id, v)}>
@@ -362,8 +396,8 @@ export default function CompliancePage() {
                   </td>
                 </tr>
               ))}
-              {!loadingControls && (controls as any[] ?? []).length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">No controls found.</td></tr>
+              {!loadingControls && displayControls.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">No controls found.</td></tr>
               )}
             </tbody>
           </table>

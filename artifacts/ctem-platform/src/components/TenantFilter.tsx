@@ -14,8 +14,14 @@ export function TenantFilter({ value, onChange }: TenantFilterProps) {
 
   if (!isPrivileged) return null;
 
-  const tenantList = ((tenants as any[]) ?? []).filter(
-    (t: any) => !t.isPlatform && t.id !== user?.tenantId
+  const allTenants = (tenants as any[]) ?? [];
+
+  // Show ALL tenants the SA/admin can access:
+  // - The user's own tenant (even if it's a platform tenant, it holds real data)
+  // - All non-platform client tenants
+  // This way SA can filter to their own org's data specifically
+  const tenantList = allTenants.filter(
+    (t: any) => !t.isPlatform || t.id === user?.tenantId
   );
 
   return (
@@ -30,7 +36,9 @@ export function TenantFilter({ value, onChange }: TenantFilterProps) {
         <SelectItem value="_all_">All Clients</SelectItem>
         {tenantList.map((t: any) => (
           <SelectItem key={t.id} value={String(t.id)}>
-            {t.name ?? `Tenant #${t.id}`}
+            {t.id === user?.tenantId
+              ? `${t.name ?? `Tenant #${t.id}`} (My Org)`
+              : (t.name ?? `Tenant #${t.id}`)}
           </SelectItem>
         ))}
       </SelectContent>

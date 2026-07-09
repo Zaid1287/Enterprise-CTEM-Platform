@@ -842,7 +842,7 @@ export default function FindingsPage() {
         <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); setGroupFilter(null); setNewOnly(false); setStaleOnly(false); resetPage(); }}>
           Clear
         </Button>
-        {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); resetPage(); }} />}
+        {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setGroupFilter(null); resetPage(); }} />}
       </div>
 
       {/* Active filter hint */}

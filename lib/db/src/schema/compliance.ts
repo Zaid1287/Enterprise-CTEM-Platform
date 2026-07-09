@@ -2,6 +2,7 @@ import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { tenantsTable } from "./tenants";
+import { assetGroupsTable } from "./assetGroups";
 
 export const complianceFrameworksTable = pgTable("compliance_frameworks", {
   id: serial("id").primaryKey(),
@@ -23,6 +24,7 @@ export const complianceControlsTable = pgTable("compliance_controls", {
   status: text("status").notNull().default("non_compliant"),
   evidence: text("evidence"),
   assignedTo: text("assigned_to"),
+  targetGroupId: integer("target_group_id").references(() => assetGroupsTable.id),
   dueDate: text("due_date"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

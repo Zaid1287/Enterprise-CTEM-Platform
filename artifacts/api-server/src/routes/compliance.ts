@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, and, count, sql, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
-import { db, complianceFrameworksTable, complianceControlsTable, tenantsTable } from "@workspace/db";
+import { db, complianceFrameworksTable, complianceControlsTable, tenantsTable, assetGroupsTable } from "@workspace/db";
 import {
   GetComplianceControlParams, UpdateComplianceControlParams,
   UpdateComplianceControlBody, ListComplianceControlsQueryParams,
@@ -33,11 +33,13 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-function toControlResponse(control: typeof complianceControlsTable.$inferSelect, frameworkName: string | null) {
+function toControlResponse(control: typeof complianceControlsTable.$inferSelect, frameworkName: string | null, groupName?: string | null) {
   return {
     id: control.id, frameworkId: control.frameworkId, frameworkName: frameworkName ?? "",
     controlId: control.controlId, title: control.title, description: control.description,
     status: control.status, evidence: control.evidence, assignedTo: control.assignedTo,
+    targetGroupId: (control as any).targetGroupId ?? null,
+    targetGroupName: groupName ?? null,
     dueDate: control.dueDate, createdAt: control.createdAt.toISOString(),
   };
 }
@@ -74,10 +76,12 @@ router.get("/compliance/controls", requireAuth, async (req: AuthenticatedRequest
   const controls = await db.select({
     control: complianceControlsTable,
     frameworkName: complianceFrameworksTable.name,
+    groupName: assetGroupsTable.name,
   }).from(complianceControlsTable)
     .leftJoin(complianceFrameworksTable, eq(complianceControlsTable.frameworkId, complianceFrameworksTable.id))
+    .leftJoin(assetGroupsTable, eq((complianceControlsTable as any).targetGroupId, assetGroupsTable.id))
     .where(and(...filters));
-  res.json(controls.map(({ control, frameworkName }) => toControlResponse(control, frameworkName)));
+  res.json(controls.map(({ control, frameworkName, groupName }) => toControlResponse(control, frameworkName, groupName)));
 });
 
 router.get("/compliance/controls/:controlId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -101,13 +105,24 @@ router.patch("/compliance/controls/:controlId", requireAuth, async (req: Authent
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateComplianceControlBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const [control] = await db.update(complianceControlsTable).set(parsed.data)
+  // Accept targetGroupId alongside the standard Zod-validated fields
+  const rawBody = req.body as any;
+  const updatePayload: any = { ...parsed.data };
+  if ("targetGroupId" in rawBody) {
+    updatePayload.targetGroupId = rawBody.targetGroupId === null ? null : parseInt(rawBody.targetGroupId, 10) || null;
+  }
+  const [control] = await db.update(complianceControlsTable).set(updatePayload)
     .where(and(eq(complianceControlsTable.id, params.data.controlId), eq(complianceControlsTable.tenantId, req.user!.tenantId)))
     .returning();
   if (!control) { res.status(404).json({ error: "Control not found" }); return; }
   await logAudit(req.user!, "update_compliance_control", "compliance", control.id, `status: ${parsed.data.status ?? "unchanged"}`);
   const [fw] = await db.select().from(complianceFrameworksTable).where(eq(complianceFrameworksTable.id, control.frameworkId));
-  res.json(toControlResponse(control, fw?.name ?? null));
+  let groupName: string | null = null;
+  if ((control as any).targetGroupId) {
+    const [grp] = await db.select({ name: assetGroupsTable.name }).from(assetGroupsTable).where(eq(assetGroupsTable.id, (control as any).targetGroupId));
+    groupName = grp?.name ?? null;
+  }
+  res.json(toControlResponse(control, fw?.name ?? null, groupName));
 });
 
 router.post(
