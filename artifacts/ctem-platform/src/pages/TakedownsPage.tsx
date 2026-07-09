@@ -19,7 +19,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { getToken } from "@/lib/auth";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -96,16 +95,9 @@ export default function TakedownsPage() {
   const createMutation = useMutation({
     mutationFn: async (body: typeof form) => {
       const fd = new FormData();
-      Object.entries(body).forEach(([k, v]) => { if (v) fd.append(k, v); });
+      Object.entries(body).forEach(([k, v]) => { if (v) fd.append(k, String(v)); });
       files.forEach(f => fd.append("evidenceFiles", f));
-      const token = getToken();
-      const res = await fetch(`${BASE}/api/takedowns`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
+      return apiFetch(`${BASE}/api/takedowns`, { method: "POST", body: fd });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["takedowns"] });
@@ -113,7 +105,7 @@ export default function TakedownsPage() {
       resetForm();
       toast({ title: "Takedown request submitted", description: "Our team will review your request shortly." });
     },
-    onError: () => toast({ title: "Failed to submit request", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Failed to submit request", description: e.message, variant: "destructive" }),
   });
 
   const updateMutation = useMutation({

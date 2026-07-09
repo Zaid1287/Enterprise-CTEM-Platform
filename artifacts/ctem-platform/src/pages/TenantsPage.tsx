@@ -733,9 +733,9 @@ export default function TenantsPage() {
                   {/* Expanded panel */}
                   {expandedId === t.id && (
                     <tr className="border-b border-border/50">
-                      <td colSpan={user?.role === "super_admin" ? 9 : 8} className="bg-muted/10 px-6 py-4">
+                      <td colSpan={user?.role === "super_admin" ? 9 : 8} className="bg-muted/10 p-0">
                         {/* Tabs */}
-                        <div className="flex gap-1 mb-4 border-b border-border pb-3">
+                        <div className="flex gap-1 px-6 pt-4 mb-4 border-b border-border pb-3">
                           {(["managers", "assets"] as ActiveTab[]).map(tab => (
                             <button
                               key={tab}
@@ -756,7 +756,7 @@ export default function TenantsPage() {
 
                         {/* Account Managers tab */}
                         {getTab(t.id) === "managers" && (
-                          <div className="w-full space-y-3">
+                          <div className="w-full space-y-3 px-4 pb-4">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-xs font-medium text-muted-foreground">
                                 {t.assignedManagers.length > 0
@@ -830,7 +830,7 @@ export default function TenantsPage() {
 
                         {/* Assets tab */}
                         {getTab(t.id) === "assets" && (
-                          <div className="space-y-3">
+                          <div className="space-y-3 px-4 pb-4">
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs text-muted-foreground flex-1">
                                 Assets belonging to this tenant. Use <strong>Assign Existing</strong> to move assets from other tenants here.
