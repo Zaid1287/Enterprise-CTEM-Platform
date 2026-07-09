@@ -27,6 +27,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { apiFetch } from "@/lib/apiFetch";
+import RunScanDialog from "@/components/scan/RunScanDialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const ASSET_TYPES = ["domain", "subdomain", "url", "ip", "cidr", "api", "ssl_cert", "cloud_asset", "host", "mobile_app", "sentinelware"];
@@ -130,8 +131,6 @@ export default function AssetsPage() {
   const [stoppingId, setStoppingId] = useState<number | null>(null);
   const [showRunScan, setShowRunScan] = useState(false);
   const [preSelectedAssetIds, setPreSelectedAssetIds] = useState<number[]>([]);
-  const [scanAssetId, setScanAssetId] = useState<number | null>(null);
-  const [showScanConfirm, setShowScanConfirm] = useState(false);
 
   // Bulk assign
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<number>>(new Set());
@@ -170,6 +169,9 @@ export default function AssetsPage() {
   const accountManagers = users.filter((u: any) => u.role === "account_manager");
   const pipeline = (pipelineData as any[]) ?? [];
   const enabledTools = pipeline.filter((s: any) => s.isEnabled);
+  const pipelineTools = pipeline.map((s: any) => ({
+    id: s.toolId, name: s.toolName, category: s.toolCategory, isActive: s.isEnabled,
+  }));
   const allAssets = (assets as any[]) ?? [];
   const runningScans = (scansData as any[]) ?? [];
 
@@ -446,31 +448,6 @@ export default function AssetsPage() {
     });
   };
 
-  async function triggerScan(assetId: number) {
-    const asset = allAssets.find((a: any) => a.id === assetId);
-    if (!asset) return;
-    try {
-      const result = await runPipeline.mutateAsync({
-        data: {
-          name: `${asset.value} Scan Report – ${new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}`,
-          assetToolConfig: [{ assetId, toolIds: enabledTools.map((t: any) => t.toolId) }],
-        } as any,
-      });
-      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
-      setShowScanConfirm(false);
-      setScanAssetId(null);
-      toast({ title: "Scan started", description: `Scanning ${asset.name}` });
-      navigate(`/scan-reports/${(result as any).scanId}`);
-    } catch (err: any) {
-      const body = err?.body ?? err?.data ?? null;
-      if (body?.unverifiedAssets?.length) {
-        const names = body.unverifiedAssets.map((a: any) => a.name).join(", ");
-        toast({ title: "Ownership not verified", description: `Verify these assets first: ${names}`, variant: "destructive" });
-      } else {
-        toast({ title: "Failed to start scan", variant: "destructive" });
-      }
-    }
-  }
 
   const activeFilters = [typeFilter, riskFilter, statusFilter].filter(Boolean).length;
 
@@ -773,12 +750,8 @@ export default function AssetsPage() {
                         className="h-7 px-2.5 text-xs bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20"
                         variant="ghost"
                         onClick={() => {
-                          if (isClient) {
-                            triggerScan(asset.id);
-                          } else {
-                            setScanAssetId(asset.id);
-                            setShowScanConfirm(true);
-                          }
+                          setPreSelectedAssetIds([asset.id]);
+                          setShowRunScan(true);
                         }}
                         disabled={enabledTools.length === 0}
                       >
@@ -1310,31 +1283,15 @@ export default function AssetsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Scan Confirm Dialog ── */}
-      <Dialog open={showScanConfirm} onOpenChange={v => { setShowScanConfirm(v); if (!v) setScanAssetId(null); }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Run Scan</DialogTitle>
-            <DialogDescription>
-              This will trigger the enabled pipeline tools against{" "}
-              <strong>{allAssets.find((a: any) => a.id === scanAssetId)?.name ?? "this asset"}</strong>.
-              The scan may take several minutes.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="rounded-lg border border-border bg-accent/20 px-3 py-2.5 text-xs text-muted-foreground">
-            <p className="font-medium text-foreground mb-1">Tools that will run:</p>
-            {enabledTools.length > 0
-              ? enabledTools.map((t: any) => <span key={t.toolId} className="inline-block bg-accent rounded px-1.5 py-0.5 mr-1 mb-1">{t.toolName}</span>)
-              : <span>No tools enabled in pipeline. Enable tools in Security Tools settings.</span>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowScanConfirm(false)}>Cancel</Button>
-            <Button onClick={() => scanAssetId && triggerScan(scanAssetId)} disabled={enabledTools.length === 0}>
-              <Zap className="w-4 h-4 mr-1.5" /> Start Scan
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ── Run Scan Dialog (full tool-selection) ── */}
+      <RunScanDialog
+        open={showRunScan}
+        onOpenChange={setShowRunScan}
+        pipelineTools={pipelineTools}
+        assets={allAssets}
+        preSelectedAssetIds={preSelectedAssetIds}
+        onRunComplete={(scanId) => { navigate(`/scan-reports/${scanId}`); }}
+      />
 
       {/* Add to Group picker */}
       <Dialog open={showGroupPicker} onOpenChange={v => { if (!v) { setShowGroupPicker(false); setGroupTargetAsset(null); } }}>

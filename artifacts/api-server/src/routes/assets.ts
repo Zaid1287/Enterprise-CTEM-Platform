@@ -157,7 +157,7 @@ async function enrichAssets(assets: (typeof assetsTable.$inferSelect)[]) {
       .from(brandThreatScansTable)
       .where(and(
         inArray(brandThreatScansTable.tenantId, tenantIds),
-        eq(brandThreatScansTable.status, "completed"),
+        eq(brandThreatScansTable.status, "done"),
       ))
       .orderBy(desc(brandThreatScansTable.createdAt));
     for (const scan of btScans) {
