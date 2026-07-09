@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { eq, and, inArray, desc, or } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable, externalMemberAssetsTable } from "@workspace/db";
@@ -127,18 +127,28 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
     res.json(extScans.map(toScanResponse)); return;
   }
 
-  // Client: only show scans that include at least one asset assigned to them
+  // Client: show scans that include any asset assigned to them OR in their own tenant
   if (role === "client") {
-    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-      .where(eq(assetsTable.assignedClientId, req.user!.userId));
-    const assignedIds = new Set(assignedAssets.map(a => a.id));
-    if (assignedIds.size === 0) { res.json([]); return; }
-    const filters: ReturnType<typeof eq>[] = [eq(scansTable.tenantId, req.user!.tenantId) as any];
+    // Platform-managed assets assigned to this client (cross-tenant, e.g. tenantId=1 assets)
+    const assignedAssets = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
+      .from(assetsTable).where(eq(assetsTable.assignedClientId, req.user!.userId));
+    // Self-managed assets in the client's own tenant
+    const ownAssets = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
+      .from(assetsTable).where(eq(assetsTable.tenantId, req.user!.tenantId));
+
+    const allClientAssets = [...assignedAssets, ...ownAssets];
+    const allClientAssetIds = new Set(allClientAssets.map(a => a.id));
+    if (allClientAssetIds.size === 0) { res.json([]); return; }
+
+    // Only search tenant IDs that the client's assets actually belong to — no full-table scan
+    const relevantTenantIds = [...new Set(allClientAssets.map(a => a.tenantId))];
+    const filters: any[] = [inArray(scansTable.tenantId, relevantTenantIds)];
     if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status) as any);
     const allScans = await db.select().from(scansTable).where(and(...filters))
       .orderBy(desc(scansTable.createdAt));
+    // In-memory filter: keep only scans that overlap with the client's asset set
     const clientScans = allScans.filter(s =>
-      Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => assignedIds.has(id))
+      Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => allClientAssetIds.has(id))
     );
     res.json(clientScans.map(toScanResponse)); return;
   }

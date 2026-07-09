@@ -358,6 +358,8 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
 
           // dispatchMultiTenantNotifications fires tenant rules for each tenant
           // and platform-level fallbacks exactly ONCE — no duplicates.
+          // For single-asset scans, set relatedAssetId so client users can see their alerts.
+          const singleAssetId = entry.configs.length === 1 ? entry.configs[0].assetId : undefined;
           await dispatchMultiTenantNotifications([...tenantIdsToNotify], {
             eventType: criticalCount > 0 ? "critical_finding" : highCount > 0 ? "high_finding" : "scan_complete",
             title: `Scan Complete — ${findingsCount} finding${findingsCount !== 1 ? "s" : ""} detected`,
@@ -367,6 +369,7 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
             findingsCount,
             criticalCount,
             highCount,
+            relatedAssetId: singleAssetId,
           });
         } catch (err) {
           logger.warn({ err, scanId: entry.scanId }, "Notification dispatch failed (non-fatal)");

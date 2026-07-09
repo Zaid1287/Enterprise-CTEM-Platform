@@ -1,8 +1,8 @@
 import { Router, type Request, type Response } from "express";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, or, isNull } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
-import { db, alertsTable, alertRulesTable, assetsTable, tenantsTable } from "@workspace/db";
+import { db, alertsTable, alertRulesTable, assetsTable, tenantsTable, findingsTable } from "@workspace/db";
 import {
   GetAlertParams, UpdateAlertParams, UpdateAlertBody, ListAlertsQueryParams,
   CreateAlertRuleBody, UpdateAlertRuleBody, UpdateAlertRuleParams,
@@ -285,11 +285,32 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   const filters: any[] = tenantFilter ? [tenantFilter] : [];
 
   if (role === "client") {
-    const assignedAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-      .where(eq(assetsTable.assignedClientId, req.user!.userId));
+    // Platform-managed assets assigned to this client (may be in a different tenant, e.g. tenantId=1)
+    const assignedAssets = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
+      .from(assetsTable).where(eq(assetsTable.assignedClientId, req.user!.userId));
     const assignedIds = assignedAssets.map(a => a.id);
     if (assignedIds.length === 0) { res.json([]); return; }
-    filters.push(inArray(alertsTable.relatedAssetId, assignedIds));
+
+    // All tenantIds the client's assigned assets belong to, plus own tenant
+    const assetTenantIds = [...new Set([...assignedAssets.map(a => a.tenantId), req.user!.tenantId])];
+
+    // Finding IDs for assigned assets — enables relatedFindingId linkage
+    const assignedFindings = await db.select({ id: findingsTable.id })
+      .from(findingsTable).where(inArray(findingsTable.assetId, assignedIds));
+    const assignedFindingIds = assignedFindings.map(f => f.id);
+
+    // Alert visibility rules (OR):
+    //  1. Alert explicitly linked to one of the client's assigned assets
+    //  2. Alert linked to a finding on one of their assigned assets
+    //  3. Scan-completion / global alerts (no asset/finding) in the same tenant scope
+    const conditions: any[] = [
+      inArray(alertsTable.relatedAssetId, assignedIds),
+      and(inArray(alertsTable.tenantId, assetTenantIds), isNull(alertsTable.relatedAssetId), isNull(alertsTable.relatedFindingId)),
+    ];
+    if (assignedFindingIds.length > 0) {
+      conditions.push(inArray(alertsTable.relatedFindingId, assignedFindingIds));
+    }
+    filters.push(or(...conditions) as any);
   }
 
   if (q.success) {

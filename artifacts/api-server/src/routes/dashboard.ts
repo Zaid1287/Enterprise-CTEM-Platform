@@ -727,12 +727,34 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
         : null)
     : eq(alertsTable.tenantId, tid);
 
-  const [findings, alerts, scans, takedowns] = await Promise.all([
+  // For client: scans live in the tenant that owns their assigned assets (cross-tenant),
+  // not necessarily in the client's own tenant.
+  const clientScanTenantIds = isClient && assignedAssetIds.length > 0
+    ? [...new Set([...assets.map(a => a.tenantId), tid])]
+    : null;
+  const clientAssetIdSet = isClient ? new Set(assignedAssetIds) : null;
+
+  // Also include alerts linked to findings on assigned assets (for clients with null relatedAssetId alerts)
+  const alertsWhereFinal = isClient && assignedAssetIds.length > 0
+    ? or(
+        inArray(alertsTable.relatedAssetId, assignedAssetIds),
+        and(inArray(alertsTable.tenantId, clientScanTenantIds!), isNull(alertsTable.relatedAssetId), isNull(alertsTable.relatedFindingId)),
+      )
+    : alertsWhere ?? undefined;
+
+  const [findings, alerts, allScans, takedowns] = await Promise.all([
     findingsWhere ? db.select().from(findingsTable).where(findingsWhere) : Promise.resolve([]),
-    alertsWhere ? db.select().from(alertsTable).where(alertsWhere) : Promise.resolve([]),
-    db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
+    alertsWhereFinal ? db.select().from(alertsTable).where(alertsWhereFinal as any) : Promise.resolve([]),
+    clientScanTenantIds
+      ? db.select().from(scansTable).where(inArray(scansTable.tenantId, clientScanTenantIds)).orderBy(desc(scansTable.createdAt))
+      : db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
     db.select().from(takedownRequestsTable).where(eq(takedownRequestsTable.tenantId, tid)),
   ]);
+
+  // For clients: further filter allScans to only those that include one of their assets
+  const scans = clientAssetIdSet
+    ? allScans.filter(s => Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => clientAssetIdSet.has(id)))
+    : allScans;
 
   const riskScoresWhere = isClient && assignedAssetIds.length > 0
     ? inArray(riskScoresTable.assetId, assignedAssetIds)
