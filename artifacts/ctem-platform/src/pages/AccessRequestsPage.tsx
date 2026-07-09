@@ -16,6 +16,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface AccessRequest {
   id: number;
+  requestType: string | null;
   fullName: string;
   companyName: string;
   email: string;
@@ -23,6 +24,8 @@ interface AccessRequest {
   teamSize: string | null;
   phone: string | null;
   message: string | null;
+  planName: string | null;
+  tenantId: string | null;
   status: "pending" | "approved" | "rejected";
   reviewedByUserId: string | null;
   reviewNotes: string | null;
@@ -134,12 +137,26 @@ export default function AccessRequestsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm">{req.fullName}</span>
-                      {req.jobTitle && <span className="text-xs text-muted-foreground">· {req.jobTitle}</span>}
+                      {req.requestType === "plan_upgrade" ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/10 text-violet-400 border-violet-500/30">
+                          Plan Upgrade
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-blue-500/10 text-blue-400 border-blue-500/30">
+                          Access Request
+                        </span>
+                      )}
+                      {req.requestType === "plan_upgrade" && req.planName && (
+                        <span className="text-xs text-muted-foreground">→ {req.planName}</span>
+                      )}
+                      {req.jobTitle && req.requestType !== "plan_upgrade" && (
+                        <span className="text-xs text-muted-foreground">· {req.jobTitle}</span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1"><Building2 className="w-3 h-3" />{req.companyName}</span>
                       <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{req.email}</span>
-                      {req.teamSize && <span className="flex items-center gap-1"><Users className="w-3 h-3" />{req.teamSize}</span>}
+                      {req.teamSize && req.requestType !== "plan_upgrade" && <span className="flex items-center gap-1"><Users className="w-3 h-3" />{req.teamSize}</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">

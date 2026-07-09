@@ -1555,8 +1555,19 @@ function DryRunTab() {
     }
   }
 
+  const statusConfig = result ? (
+    result.error
+      ? { label: "Request Error",  icon: X,       color: "text-red-500",     bg: "bg-red-500/10",     border: "border-red-500/20"    }
+      : result.wafDetected && !result.bypassSuccess
+      ? { label: "WAF Blocked",    icon: ShieldX,  color: "text-amber-500",  bg: "bg-amber-500/10",   border: "border-amber-500/20"  }
+      : result.wafDetected && result.bypassSuccess
+      ? { label: "Bypassed WAF",   icon: Shield,   color: "text-blue-500",   bg: "bg-blue-500/10",    border: "border-blue-500/20"   }
+      : { label: "Clean Success",  icon: Check,    color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" }
+  ) : null;
+
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-6 w-full">
+      {/* Header */}
       <div>
         <h2 className="font-semibold text-base">Dry-Run Bypass Test</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
@@ -1565,139 +1576,148 @@ function DryRunTab() {
         </p>
       </div>
 
-      {/* Input */}
-      <div className="border rounded-lg p-4 space-y-3">
-        <Label className="text-sm font-medium">Target URL</Label>
-        <div className="flex gap-2">
-          <Input
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && runTest()}
-            placeholder="https://example.com or example.com"
-            className="font-mono text-sm"
-          />
-          <Button onClick={runTest} disabled={loading} className="shrink-0">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <TestTube2 className="w-4 h-4" />}
+      {/* Input card — full width */}
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-end gap-3">
+          <div className="flex-1 space-y-1.5">
+            <Label className="text-sm font-medium">Target URL</Label>
+            <Input
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && runTest()}
+              placeholder="https://example.com or example.com"
+              className="font-mono text-sm h-10"
+            />
+          </div>
+          <Button onClick={runTest} disabled={loading} size="default" className="h-10 px-6 shrink-0">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <TestTube2 className="w-4 h-4 mr-2" />}
             {loading ? "Testing…" : "Run Test"}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          The request is sent through your configured orchestrator (proxy, fingerprint rotation,
-          WAF bypass). Results are real — no mocking.
+        <p className="text-xs text-muted-foreground mt-2.5">
+          Real request sent through your configured orchestrator (proxy pool, fingerprint rotation, WAF bypass). No scans or findings are created.
         </p>
       </div>
 
-      {/* Results */}
+      {/* Loading state */}
       {loading && (
-        <div className="border rounded-lg p-6 flex items-center gap-3 text-sm text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin shrink-0" />
-          Sending request through orchestrator…
+        <div className="rounded-xl border border-border bg-card p-8 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <div className="text-center">
+            <p className="font-medium text-foreground">Sending request through orchestrator…</p>
+            <p className="text-xs mt-0.5">Selecting proxy, rotating fingerprint, detecting WAF…</p>
+          </div>
         </div>
       )}
 
-      {result && (
-        <div className="border rounded-lg overflow-hidden">
-          {/* Status bar */}
-          <div className={cn(
-            "px-4 py-3 flex items-center justify-between flex-wrap gap-2",
-            result.error ? "bg-red-500/10 border-b border-red-500/20" :
-            result.wafDetected && !result.bypassSuccess ? "bg-amber-500/10 border-b border-amber-500/20" :
-            result.wafDetected && result.bypassSuccess ? "bg-blue-500/10 border-b border-blue-500/20" :
-            "bg-emerald-500/10 border-b border-emerald-500/20"
-          )}>
-            <div className="flex items-center gap-2">
-              {result.error ? (
-                <X className="w-4 h-4 text-red-500" />
-              ) : result.wafDetected && !result.bypassSuccess ? (
-                <ShieldX className="w-4 h-4 text-amber-500" />
-              ) : result.wafDetected && result.bypassSuccess ? (
-                <Shield className="w-4 h-4 text-blue-500" />
-              ) : (
-                <Check className="w-4 h-4 text-emerald-500" />
-              )}
-              <span className="font-medium text-sm">
-                {result.error ? "Request Error" :
-                 result.wafDetected && !result.bypassSuccess ? "WAF Blocked" :
-                 result.wafDetected && result.bypassSuccess ? "Bypassed WAF" :
-                 "Clean Success"}
-              </span>
+      {/* Results — full width 2-column layout */}
+      {result && statusConfig && (
+        <div className="space-y-4">
+          {/* Status banner */}
+          <div className={cn("rounded-xl border p-4 flex items-center justify-between flex-wrap gap-3", statusConfig.bg, statusConfig.border)}>
+            <div className="flex items-center gap-3">
+              <div className={cn("w-10 h-10 rounded-full flex items-center justify-center border", statusConfig.bg, statusConfig.border)}>
+                <statusConfig.icon className={cn("w-5 h-5", statusConfig.color)} />
+              </div>
+              <div>
+                <p className={cn("font-bold text-base", statusConfig.color)}>{statusConfig.label}</p>
+                <p className="text-xs text-muted-foreground">Tested {new Date(result.testedAt).toLocaleString()} · {result.hostname}</p>
+              </div>
             </div>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="flex items-center gap-4 text-sm">
               {result.statusCode != null && (
-                <span className={cn("font-mono font-bold", result.statusCode < 400 ? "text-emerald-500" : "text-red-500")}>
-                  HTTP {result.statusCode}
-                </span>
+                <div className="text-center">
+                  <p className={cn("text-xl font-bold font-mono", result.statusCode < 400 ? "text-emerald-500" : "text-red-500")}>
+                    {result.statusCode}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">HTTP</p>
+                </div>
               )}
-              <span>{result.latencyMs}ms</span>
-              {result.retries > 0 && <span>{result.retries} retr{result.retries === 1 ? "y" : "ies"}</span>}
+              <div className="text-center">
+                <p className="text-xl font-bold">{result.latencyMs}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">ms</p>
+              </div>
+              {result.retries > 0 && (
+                <div className="text-center">
+                  <p className="text-xl font-bold">{result.retries}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">retr{result.retries === 1 ? "y" : "ies"}</p>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Detail grid */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-0 divide-x divide-y text-sm">
+          {/* Detail grid — 6 cards full width */}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             {[
-              { label: "Hostname",         value: result.hostname },
-              { label: "Proxy Used",       value: result.proxyUsed ? "Yes" : "No" },
-              { label: "Profile Used",     value: result.profileUsed != null ? `#${result.profileUsed}` : "None" },
-              { label: "Circuit Breaker",  value: result.circuitBreakerState ?? "—" },
-              { label: "Historical WAF Hits (7d)", value: String(result.historicalWafHits) },
-              { label: "Historical Bypass Rate", value: result.historicalBypassRate != null ? `${result.historicalBypassRate}%` : "—" },
+              { label: "Hostname",              value: result.hostname },
+              { label: "Proxy Used",            value: result.proxyUsed ? "Yes" : "No" },
+              { label: "Profile Used",          value: result.profileUsed != null ? `#${result.profileUsed}` : "None" },
+              { label: "Circuit Breaker",       value: result.circuitBreakerState ?? "—" },
+              { label: "WAF Hits (7d)",         value: String(result.historicalWafHits) },
+              { label: "Bypass Rate (7d)",      value: result.historicalBypassRate != null ? `${result.historicalBypassRate}%` : "—" },
             ].map(({ label, value }) => (
-              <div key={label} className="px-4 py-2.5">
-                <div className="text-xs text-muted-foreground">{label}</div>
-                <div className="font-medium mt-0.5 truncate">{value}</div>
+              <div key={label} className="rounded-xl border border-border bg-card px-4 py-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
+                <p className="font-semibold text-sm truncate">{value}</p>
               </div>
             ))}
           </div>
 
-          {result.error && (
-            <div className="px-4 py-3 border-t bg-red-500/5 text-xs text-red-500 font-mono">{result.error}</div>
-          )}
-
-          {/* Response headers toggle */}
-          {Object.keys(result.responseHeaders).length > 0 && (
-            <div className="border-t">
-              <button
-                onClick={() => setShowHeaders(h => !h)}
-                className="w-full px-4 py-2.5 text-xs font-medium text-left flex items-center gap-1.5 hover:bg-muted/30 transition-colors"
-              >
-                {showHeaders ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                Response Headers ({Object.keys(result.responseHeaders).length})
-              </button>
-              {showHeaders && (
-                <div className="px-4 pb-3 grid grid-cols-1 md:grid-cols-2 gap-1 text-xs font-mono">
-                  {Object.entries(result.responseHeaders).map(([k, v]) => (
-                    <div key={k} className="flex gap-2 overflow-hidden">
-                      <span className="text-muted-foreground shrink-0">{k}:</span>
-                      <span className="truncate">{v}</span>
+          {/* Two-column: headers + body */}
+          {(Object.keys(result.responseHeaders).length > 0 || result.bodyExcerpt || result.error) && (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {/* Response Headers */}
+              {Object.keys(result.responseHeaders).length > 0 && (
+                <div className="rounded-xl border border-border bg-card overflow-hidden">
+                  <button
+                    onClick={() => setShowHeaders(h => !h)}
+                    className="w-full px-4 py-3 text-xs font-semibold text-left flex items-center gap-2 hover:bg-muted/30 transition-colors border-b border-border"
+                  >
+                    {showHeaders ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    Response Headers
+                    <span className="ml-auto bg-muted text-muted-foreground text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                      {Object.keys(result.responseHeaders).length}
+                    </span>
+                  </button>
+                  {showHeaders && (
+                    <div className="p-4 space-y-1.5 text-xs font-mono max-h-64 overflow-y-auto">
+                      {Object.entries(result.responseHeaders).map(([k, v]) => (
+                        <div key={k} className="flex gap-2 overflow-hidden">
+                          <span className="text-muted-foreground shrink-0 min-w-0">{k}:</span>
+                          <span className="truncate text-foreground/80">{v}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                </div>
+              )}
+
+              {/* Body excerpt */}
+              {result.bodyExcerpt && (
+                <div className="rounded-xl border border-border bg-card overflow-hidden">
+                  <button
+                    onClick={() => setShowBody(b => !b)}
+                    className="w-full px-4 py-3 text-xs font-semibold text-left flex items-center gap-2 hover:bg-muted/30 transition-colors border-b border-border"
+                  >
+                    {showBody ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    Response Body (first 600 chars)
+                  </button>
+                  {showBody && (
+                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap break-all text-muted-foreground max-h-64 overflow-y-auto">
+                      {result.bodyExcerpt}
+                    </pre>
+                  )}
+                </div>
+              )}
+
+              {/* Error */}
+              {result.error && (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-xs text-red-400 font-mono col-span-full">
+                  {result.error}
                 </div>
               )}
             </div>
           )}
-
-          {/* Body excerpt toggle */}
-          {result.bodyExcerpt && (
-            <div className="border-t">
-              <button
-                onClick={() => setShowBody(b => !b)}
-                className="w-full px-4 py-2.5 text-xs font-medium text-left flex items-center gap-1.5 hover:bg-muted/30 transition-colors"
-              >
-                {showBody ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                Response Body (first 600 chars)
-              </button>
-              {showBody && (
-                <pre className="px-4 pb-3 text-xs font-mono whitespace-pre-wrap break-all text-muted-foreground overflow-x-auto max-h-48">
-                  {result.bodyExcerpt}
-                </pre>
-              )}
-            </div>
-          )}
-
-          <div className="border-t px-4 py-2 text-xs text-muted-foreground">
-            Tested at {new Date(result.testedAt).toLocaleString()}
-          </div>
         </div>
       )}
     </div>

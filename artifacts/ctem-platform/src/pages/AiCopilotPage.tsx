@@ -765,7 +765,9 @@ export default function AiCopilotPage() {
                 <SelectContent className="max-h-72">
                   {scanList.map((s: any) => (
                     <SelectItem key={s.id} value={String(s.id)}>
-                      Scan #{s.id} · {s.type} · {s.completedAt ? new Date(s.completedAt).toLocaleDateString() : "—"}
+                      {s.name
+                        ? s.name
+                        : `Scan Report — ${new Date(s.createdAt ?? s.startedAt).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}`}
                     </SelectItem>
                   ))}
                 </SelectContent>

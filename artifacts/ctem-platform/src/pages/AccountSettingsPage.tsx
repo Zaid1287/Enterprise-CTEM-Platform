@@ -297,21 +297,6 @@ function ProfileTab({ user, setUser }: { user: any; setUser: (u: any) => void })
         </div>
       </div>
 
-      {/* Quick stats row */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-card border border-border rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold text-primary">—</p>
-          <p className="text-xs text-muted-foreground mt-1">Assets Assigned</p>
-        </div>
-        <div className="bg-card border border-border rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold text-orange-400">—</p>
-          <p className="text-xs text-muted-foreground mt-1">Open Findings</p>
-        </div>
-        <div className="bg-card border border-border rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold text-green-400">—</p>
-          <p className="text-xs text-muted-foreground mt-1">Scans Completed</p>
-        </div>
-      </div>
     </div>
   );
 }
@@ -896,6 +881,22 @@ function BillingTab({ user }: { user: any }) {
   const { toast } = useToast();
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
+  const [upgradeDialog, setUpgradeDialog] = useState<{ planName: string } | null>(null);
+  const [upgradeMsg, setUpgradeMsg] = useState("");
+
+  const upgradeMutation = useMutation({
+    mutationFn: (vars: { planName: string; message: string }) =>
+      apiFetch(`${BASE}/api/auth/plan-upgrade-request`, {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => {
+      toast({ title: "Upgrade request submitted", description: "An admin will review your request shortly." });
+      setUpgradeDialog(null);
+      setUpgradeMsg("");
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
   const { data: tenantData } = useQuery<any>({
     queryKey: ["tenant-billing"],
@@ -1105,11 +1106,14 @@ function BillingTab({ user }: { user: any }) {
                   <CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-green-400" /> Active Plan
                 </Button>
               ) : plan.isEnterprise || plan.priceRaw === 0 ? (
-                <a href="mailto:sales@sentinelware.io?subject=Plan Enquiry" className="block">
-                  <Button size="sm" variant="outline" className="w-full">
-                    <Mail className="w-3.5 h-3.5 mr-1.5" /> Contact Sales
-                  </Button>
-                </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => { setUpgradeDialog({ planName: plan.name }); setUpgradeMsg(""); }}
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5 mr-1.5" /> Request Upgrade
+                </Button>
               ) : plan.stripePriceId ? (
                 <Button
                   size="sm"
@@ -1124,12 +1128,14 @@ function BillingTab({ user }: { user: any }) {
                   }
                 </Button>
               ) : (
-                <a href="mailto:sales@sentinelware.io?subject=Plan Change Request" className="block">
-                  <Button size="sm" variant={plan.highlight ? "default" : "outline"} className="w-full">
-                    <ArrowUpRight className="w-3.5 h-3.5 mr-1.5" />
-                    Contact Sales
-                  </Button>
-                </a>
+                <Button
+                  size="sm"
+                  variant={plan.highlight ? "default" : "outline"}
+                  className="w-full"
+                  onClick={() => { setUpgradeDialog({ planName: plan.name }); setUpgradeMsg(""); }}
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5 mr-1.5" /> Request Upgrade
+                </Button>
               )}
             </div>
           );
@@ -1148,6 +1154,57 @@ function BillingTab({ user }: { user: any }) {
             {portalLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5 mr-1.5" />}
             Open Portal
           </Button>
+        </div>
+      )}
+
+      {/* Plan upgrade request dialog */}
+      {upgradeDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-bold text-base">Request Plan Upgrade</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Requesting upgrade to <span className="font-semibold text-foreground">{upgradeDialog.planName}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setUpgradeDialog(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors mt-0.5"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Message to admin <span className="text-muted-foreground/60">(optional)</span>
+              </Label>
+              <textarea
+                value={upgradeMsg}
+                onChange={e => setUpgradeMsg(e.target.value)}
+                placeholder="Tell us why you'd like to upgrade or any specific requirements…"
+                rows={4}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <Button
+                className="flex-1"
+                disabled={upgradeMutation.isPending}
+                onClick={() => upgradeMutation.mutate({ planName: upgradeDialog.planName, message: upgradeMsg })}
+              >
+                {upgradeMutation.isPending
+                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Submitting…</>
+                  : <><Send className="w-3.5 h-3.5 mr-1.5" /> Submit Request</>
+                }
+              </Button>
+              <Button variant="outline" onClick={() => setUpgradeDialog(null)} disabled={upgradeMutation.isPending}>
+                Cancel
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -862,4 +862,38 @@ router.patch("/auth/access-requests/:id", requireAuth, async (req: Authenticated
   res.json(updated);
 });
 
+// ── Plan upgrade requests (authenticated users submit; SA/admin review via access-requests) ──
+router.post("/auth/plan-upgrade-request", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const user = req.user!;
+  const { planName, message } = req.body ?? {};
+  if (!planName) { res.status(400).json({ error: "planName is required" }); return; }
+
+  const [userRow] = await db.select().from(usersTable).where(eq(usersTable.id, user.userId));
+  if (!userRow) { res.status(404).json({ error: "User not found" }); return; }
+  const [tenantRow] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, user.tenantId));
+
+  await db.insert(accessRequestsTable).values({
+    requestType: "plan_upgrade",
+    fullName: userRow.fullName ?? userRow.email,
+    companyName: tenantRow?.name ?? "Unknown",
+    email: userRow.email,
+    planName,
+    tenantId: String(user.tenantId),
+    message: message ?? null,
+    status: "pending",
+  });
+
+  await logAudit(db, {
+    tenantId: user.tenantId,
+    userId: user.userId as any,
+    action: "plan_upgrade_requested",
+    resourceType: "tenant",
+    resourceId: String(user.tenantId),
+    metadata: { planName },
+    ip: getClientIp(req),
+  });
+
+  res.status(201).json({ ok: true, message: "Plan upgrade request submitted. An admin will review it shortly." });
+});
+
 export default router;

@@ -182,16 +182,19 @@ function truncStr(c: CanvasRenderingContext2D, text: string, size: number, maxW:
 
 // ── Logo / branding helpers ─────────────────────────────────────────────
 async function getLogo(): Promise<HTMLImageElement | null> {
-  const imgs = document.querySelectorAll<HTMLImageElement>("img[alt='Sentinelware logo'], img[alt='logo']");
-  for (const img of imgs) {
-    if (img.complete && img.naturalWidth > 0) return img;
-  }
   return new Promise(resolve => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload  = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = "/logo.png";
+    img.onerror = () => {
+      // fallback to sidebar logo or null
+      const imgs = document.querySelectorAll<HTMLImageElement>("img[alt='Sentinelware logo'], img[alt='logo']");
+      for (const i of imgs) {
+        if (i.complete && i.naturalWidth > 0) { resolve(i); return; }
+      }
+      resolve(null);
+    };
+    img.src = "/sentinelware-logo-white.png";
   });
 }
 
