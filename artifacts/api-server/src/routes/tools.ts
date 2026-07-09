@@ -2,7 +2,8 @@ import { Router } from "express";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable, alertsTable } from "@workspace/db";
+import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable, alertsTable, tenantsTable } from "@workspace/db";
+import { syncPipelineToAllClientTenants } from "../lib/seedPlatform";
 import {
   CreateSecurityToolBody, GetSecurityToolParams,
   UpdateSecurityToolParams, UpdateSecurityToolBody,
@@ -168,6 +169,16 @@ router.put("/tools/pipeline", requireAuth, requireRole("admin", "super_admin"), 
         stepOrder: s.stepOrder,
         isEnabled: s.isEnabled,
       }))
+    );
+  }
+
+  // If the caller is on the platform tenant, propagate the new pipeline to all client tenants
+  const [callerTenant] = await db.select({ isPlatform: tenantsTable.isPlatform })
+    .from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId)).limit(1);
+  if (callerTenant?.isPlatform) {
+    // Fire-and-forget — don't block the response; errors are logged inside
+    syncPipelineToAllClientTenants().catch(err =>
+      req.log?.error({ err }, "Pipeline sync to client tenants failed")
     );
   }
 

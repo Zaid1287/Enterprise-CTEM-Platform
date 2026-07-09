@@ -7,7 +7,7 @@ import { promisify } from "util";
 import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray, lt, sql, not, gte, or, isNull } from "drizzle-orm";
-import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable, scanSuppressionsTable } from "@workspace/db";
+import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable, scanSuppressionsTable, scanJobsTable, tenantsTable } from "@workspace/db";
 import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, closeBrowser, type PageScreenshot } from "../lib/screenshotEngine";
@@ -1721,10 +1721,46 @@ async function executePipeline(
     // Phase-1 email security findings are collected here before findingInserts is initialized
     const emailSecurityFindings: Array<typeof findingsTable.$inferInsert> = [];
 
-    const toolsForAsset = config.toolIds.length > 0
+    let toolsForAsset = config.toolIds.length > 0
       ? allTools.filter(t => config.toolIds.includes(t.id))
       : enabledTools;
-    if (toolsForAsset.length === 0) return;
+
+    // If the client tenant has no pipeline steps, fall back to the platform tenant's pipeline
+    if (toolsForAsset.length === 0) {
+      const [platformTenant] = await db
+        .select({ id: tenantsTable.id })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.isPlatform, true))
+        .limit(1);
+      if (platformTenant && platformTenant.id !== tenantId) {
+        const platformSteps = await db
+          .select({ tool: securityToolsTable })
+          .from(toolPipelineStepsTable)
+          .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
+          .where(and(
+            eq(toolPipelineStepsTable.tenantId, platformTenant.id),
+            eq(toolPipelineStepsTable.isEnabled, true),
+          ))
+          .orderBy(toolPipelineStepsTable.stepOrder);
+        toolsForAsset = platformSteps.map(p => p.tool);
+        if (toolsForAsset.length > 0) {
+          logger.info(
+            { tenantId, assetId: asset.id, scanId, toolCount: toolsForAsset.length },
+            "No client pipeline configured — using platform pipeline fallback"
+          );
+        }
+      }
+    }
+
+    // Still no tools after fallback — mark scan_job as completed and skip
+    if (toolsForAsset.length === 0) {
+      await db
+        .update(scanJobsTable)
+        .set({ status: "completed", completedAt: new Date() })
+        .where(and(eq(scanJobsTable.scanId, scanId), eq(scanJobsTable.assetId, asset.id)));
+      logger.warn({ tenantId, assetId: asset.id, scanId }, "No pipeline tools available — scan skipped");
+      return;
+    }
 
     const target = asset.value;
     const domain = extractDomain(target);

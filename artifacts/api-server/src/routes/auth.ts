@@ -733,6 +733,7 @@ router.post("/auth/accept-invitation", async (req, res): Promise<void> => {
 
 export async function seedNewTenantData(tenantId: number): Promise<void> {
   const { complianceFrameworksTable, securityToolsTable, orchestratorConfigTable: orchCfgTable } = await import("@workspace/db");
+  const { syncPipelineToTenant, seedComplianceControlsForTenant, seedDefaultAlertRulesForTenant } = await import("../lib/seedPlatform");
 
   // Ensure compliance frameworks exist (shared across all tenants — idempotent)
   let frameworks = await db.select().from(complianceFrameworksTable);
@@ -758,6 +759,15 @@ export async function seedNewTenantData(tenantId: number): Promise<void> {
     { tenantId, name: "naabu", description: "Fast port scanner", githubUrl: "https://github.com/projectdiscovery/naabu", category: "port_scan", installCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", updateCommand: "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", runCommand: "naabu -host {target} -top-ports 1000 -json", outputFormat: "json", isActive: true },
     { tenantId, name: "nuclei", description: "Fast and customizable vulnerability scanner", githubUrl: "https://github.com/projectdiscovery/nuclei", category: "vuln_scan", installCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", updateCommand: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", runCommand: "nuclei -u {target} -json", outputFormat: "json", isActive: true },
   ]).onConflictDoNothing();
+
+  // Inherit pipeline configuration from platform tenant (idempotent)
+  await syncPipelineToTenant(tenantId).catch(() => {/* ignore if platform has no steps yet */});
+
+  // Seed compliance controls for this tenant
+  await seedComplianceControlsForTenant(tenantId).catch(() => {});
+
+  // Seed default alert rules for this tenant
+  await seedDefaultAlertRulesForTenant(tenantId).catch(() => {});
 
   // Seed per-tenant orchestrator config defaults
   const ORCH_DEFAULTS = [
