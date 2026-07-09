@@ -1,5 +1,5 @@
 import { eq, and, inArray as drizzleInArray } from "drizzle-orm";
-import { db, tenantsTable } from "@workspace/db";
+import { db, tenantsTable, assetsTable, usersTable } from "@workspace/db";
 import type { AuthenticatedRequest } from "./auth";
 
 /**
@@ -60,6 +60,34 @@ export function resolvePrivilegedTenantFilter(ids: number[], qTenantId: number |
     return ids.includes(qTenantId) ? [qTenantId] : [];
   }
   return ids;
+}
+
+/**
+ * Returns the effective asset IDs for a specific client tenant filter.
+ *
+ * In this platform's data model, assets live in the platform tenant (tenant 1) with
+ * assignedClientId pointing to client users. When SA/admin filters by client tenant X,
+ * this returns:
+ *  1. Assets directly owned by tenant X (tenantId = X)
+ *  2. Platform-managed assets assigned to any user whose tenantId = X
+ *
+ * Used by findings, scans, risk, and reports routes when a specific ?tenantId is requested.
+ */
+export async function getEffectiveAssetIdsForTenant(tenantId: number): Promise<number[]> {
+  const [directAssets, usersInTenant] = await Promise.all([
+    db.select({ id: assetsTable.id }).from(assetsTable).where(eq(assetsTable.tenantId, tenantId)),
+    db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.tenantId, tenantId)),
+  ]);
+
+  const userIds = usersInTenant.map(u => u.id);
+  let assignedAssets: { id: number }[] = [];
+  if (userIds.length > 0) {
+    assignedAssets = await db.select({ id: assetsTable.id })
+      .from(assetsTable)
+      .where(drizzleInArray(assetsTable.assignedClientId, userIds));
+  }
+
+  return [...new Set([...directAssets.map(a => a.id), ...assignedAssets.map(a => a.id)])];
 }
 
 /**

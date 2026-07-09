@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, and, inArray, desc, gte, sql } from "drizzle-orm";
 import { db, riskScoresTable, assetsTable, riskScoreHistoryTable } from "@workspace/db";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, getEffectiveAssetIdsForTenant } from "../lib/tenantScoping";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { finalizeScannedAssets } from "../lib/scanScheduler";
 import { logger } from "../lib/logger";
@@ -17,7 +17,15 @@ async function buildAssetFilter(req: AuthenticatedRequest) {
     const privIds = await getPrivilegedTenantIds(req.user!);
     if (privIds.length === 0) return null;
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+
+    if (!isNaN(qTenantId) && privIds.includes(qTenantId)) {
+      // Specific client: resolve effective asset IDs (direct + assigned)
+      const effectiveAssetIds = await getEffectiveAssetIdsForTenant(qTenantId);
+      if (effectiveAssetIds.length === 0) return null;
+      return inArray(assetsTable.id, effectiveAssetIds) as any;
+    }
+    // "All Clients": show assets from all accessible tenants
+    const filtered = resolvePrivilegedTenantFilter(privIds, null);
     return inArray(assetsTable.tenantId, filtered) as any;
   }
   if (role === "account_manager") {

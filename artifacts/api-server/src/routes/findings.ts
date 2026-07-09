@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, ilike, inArray, desc, isNotNull } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter, getEffectiveAssetIdsForTenant } from "../lib/tenantScoping";
 import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable, scanSuppressionsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
@@ -139,8 +139,20 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     const privIds = await getPrivilegedTenantIds(req.user!);
     if (privIds.length === 0) { res.json([]); return; }
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    const filteredTids = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
-    const saFilters: any[] = [inArray(findingsTable.tenantId, filteredTids)];
+
+    let saFilters: any[];
+    if (!isNaN(qTenantId) && privIds.includes(qTenantId)) {
+      // Specific client tenant selected: resolve to effective asset IDs.
+      // Platform assets live in tenant 1 with assignedClientId → client user in tenant X.
+      // Filtering by tenantId alone misses these cross-tenant assets.
+      const effectiveAssetIds = await getEffectiveAssetIdsForTenant(qTenantId);
+      if (effectiveAssetIds.length === 0) { res.json([]); return; }
+      saFilters = [inArray(findingsTable.assetId, effectiveAssetIds)];
+    } else {
+      // "All Clients" or invalid tenantId: show all findings across all accessible tenants
+      const filteredTids = resolvePrivilegedTenantFilter(privIds, null);
+      saFilters = [inArray(findingsTable.tenantId, filteredTids)];
+    }
     if (q.success) {
       if (q.data.status) saFilters.push(eq(findingsTable.status, q.data.status));
       if (q.data.severity) saFilters.push(eq(findingsTable.severity, q.data.severity));

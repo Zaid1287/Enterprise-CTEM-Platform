@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter, getEffectiveAssetIdsForTenant } from "../lib/tenantScoping";
 import {
   db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
   complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
@@ -86,9 +86,25 @@ router.get("/reports", requireAuth, async (req: AuthenticatedRequest, res): Prom
     const privIds = await getPrivilegedTenantIds(req.user!);
     if (privIds.length === 0) { res.json([]); return; }
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    const filtered = resolvePrivilegedTenantFilter(privIds, !isNaN(qTenantId) ? qTenantId : null);
+
+    if (!isNaN(qTenantId) && privIds.includes(qTenantId)) {
+      // Specific client: resolve effective asset IDs (direct + assigned to client users)
+      const effectiveAssetIds = await getEffectiveAssetIdsForTenant(qTenantId);
+      // Fetch all reports from all accessible tenants, filter in-memory by assetId overlap
+      const allReports = await db.select().from(reportsTable)
+        .where(inArray(reportsTable.tenantId, privIds)).orderBy(desc(reportsTable.id));
+      const assetIdSet = new Set(effectiveAssetIds);
+      // Include reports that either: belong to the target tenant directly, OR contain a client asset
+      const clientReports = allReports.filter(r =>
+        r.tenantId === qTenantId ||
+        (Array.isArray(r.assetIds) && (r.assetIds as number[]).some(id => assetIdSet.has(id)))
+      );
+      res.json(clientReports.map(toReportResponse)); return;
+    }
+
+    // "All Clients": show all reports across all accessible tenants
     const allReports = await db.select().from(reportsTable)
-      .where(inArray(reportsTable.tenantId, filtered)).orderBy(desc(reportsTable.id));
+      .where(inArray(reportsTable.tenantId, privIds)).orderBy(desc(reportsTable.id));
     res.json(allReports.map(toReportResponse)); return;
   }
   const rWhere = eq(reportsTable.tenantId, req.user!.tenantId);

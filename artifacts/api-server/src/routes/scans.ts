@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, inArray, desc, or } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, getEffectiveAssetIdsForTenant } from "../lib/tenantScoping";
 import { db, scansTable, scanJobsTable, assetsTable, findingsTable, riskScoresTable, securityToolsTable, toolPipelineStepsTable, externalMemberAssetsTable } from "@workspace/db";
 import { enqueueAndRun, queuePosition, cancelledScanIds, removeScanFromInProcessQueue, getInProcessQueueStats, MAX_QUEUE_DEPTH, type AssetToolConfigItem } from "./pipelineScans";
 import {
@@ -155,14 +155,29 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
 
   if (role === "super_admin" || role === "admin") {
     const privIds = await getPrivilegedTenantIds(req.user!);
-    // Always include the caller's own tenant so platform admins see their own scans
     const allIds = [...new Set([...privIds, req.user!.tenantId])];
     const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-    const filtered = !isNaN(qTenantId)
-      ? (allIds.includes(qTenantId) ? [qTenantId] : [])
-      : allIds;
-    if (filtered.length === 0) { res.json([]); return; }
-    const filters: any[] = [inArray(scansTable.tenantId, filtered)];
+
+    if (!isNaN(qTenantId) && allIds.includes(qTenantId)) {
+      // Specific client selected: resolve effective asset IDs (direct + assigned to client users)
+      const effectiveAssetIds = await getEffectiveAssetIdsForTenant(qTenantId);
+      if (effectiveAssetIds.length === 0) { res.json([]); return; }
+      // Fetch all scans from all accessible tenants, then filter in-memory by asset overlap
+      const filters: any[] = [inArray(scansTable.tenantId, allIds)];
+      if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
+      const allScans = await db.select().from(scansTable)
+        .where(and(...filters))
+        .orderBy(desc(scansTable.createdAt));
+      const assetIdSet = new Set(effectiveAssetIds);
+      const filtered = allScans.filter(s =>
+        Array.isArray(s.assetIds) && (s.assetIds as number[]).some(id => assetIdSet.has(id))
+      );
+      res.json(filtered.map(toScanResponse)); return;
+    }
+
+    // "All Clients": show all scans across all accessible tenants
+    if (allIds.length === 0) { res.json([]); return; }
+    const filters: any[] = [inArray(scansTable.tenantId, allIds)];
     if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status));
     const allScans = await db.select().from(scansTable)
       .where(and(...filters))
