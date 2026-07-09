@@ -2367,18 +2367,7 @@ async function executePipeline(
           ? (async () => { secretsHunt = await runSecretsHunt(target, githubToken); })()
           : Promise.resolve(),
         isWebAsset
-          ? (async () => {
-              // Hard 10-minute timeout — prevents unbounded BFS crawl on large targets
-              const PHASE3_CRAWL_TIMEOUT_MS = 10 * 60 * 1000;
-              const result = await Promise.race([
-                runDirFuzz(target, dnsResult.subdomains.map(s => s.name)),
-                new Promise<null>(res => setTimeout(() => res(null), PHASE3_CRAWL_TIMEOUT_MS)),
-              ]);
-              if (!result) {
-                logger.warn({ target, scanId }, "Phase 3: dirFuzz hit 10-min hard timeout — crawl truncated, partial results may be missing");
-              }
-              dirFuzz = result as DirFuzzResult | null;
-            })()
+          ? (async () => { dirFuzz = await runDirFuzz(target, dnsResult.subdomains.map(s => s.name)); })()
           : Promise.resolve(),
         isWebAsset
           ? (async () => { vulnScan = await runNucleiScan(target, dnsResult.subdomains.map(s => s.name)); })()
