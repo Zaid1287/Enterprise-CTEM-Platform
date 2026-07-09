@@ -10,6 +10,7 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
+import { getPlatformTenantId } from "../lib/seedPlatform";
 
 const router = Router();
 
@@ -280,10 +281,12 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
     );
     setImmediate(async () => {
       try {
+        // Pipeline is global — always load tools and steps from the platform tenant.
+        const _scanPlatformId = await getPlatformTenantId();
         const [allTools, pipelineSteps] = await Promise.all([
-          db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, scan.tenantId)),
+          db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, _scanPlatformId)),
           db.select({ toolId: toolPipelineStepsTable.toolId }).from(toolPipelineStepsTable)
-            .where(and(eq(toolPipelineStepsTable.tenantId, scan.tenantId), eq(toolPipelineStepsTable.isEnabled, true))),
+            .where(and(eq(toolPipelineStepsTable.tenantId, _scanPlatformId), eq(toolPipelineStepsTable.isEnabled, true))),
         ]);
         const enabledToolIds = new Set(pipelineSteps.map(p => p.toolId));
         const enabledTools = allTools.filter(t => enabledToolIds.has(t.id));

@@ -35,7 +35,7 @@ import { RunPipelineScanBody, GetScanAssetReportParams, CreateScanScheduleBody, 
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { getPrivilegedTenantIds } from "../lib/tenantScoping";
 import { logAudit } from "../lib/audit";
-import { BUILTIN_TOOL_DEFS } from "../lib/seedPlatform";
+import { BUILTIN_TOOL_DEFS, getPlatformTenantId } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
 import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
 import { finalizeScannedAssets } from "../lib/scanScheduler";
@@ -454,13 +454,15 @@ setImmediate(async () => {
             continue;
           }
 
+          // Pipeline is global — always load from the platform tenant
+          const platformTenantId = await getPlatformTenantId();
           const allTools = await db.select().from(securityToolsTable)
-            .where(eq(securityToolsTable.tenantId, scan.tenantId));
+            .where(eq(securityToolsTable.tenantId, platformTenantId));
           const pipelineSteps = await db.select({ tool: securityToolsTable })
             .from(toolPipelineStepsTable)
             .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
             .where(and(
-              eq(toolPipelineStepsTable.tenantId, scan.tenantId),
+              eq(toolPipelineStepsTable.tenantId, platformTenantId),
               eq(toolPipelineStepsTable.isEnabled, true),
             ))
             .orderBy(toolPipelineStepsTable.stepOrder);
@@ -1686,15 +1688,16 @@ async function executePipeline(
   if (nvdKey) setNvdApiKey(nvdKey);
   if (securityTrailsKey) _platformSecurityTrailsKey = securityTrailsKey;
 
-  // ── Auto-ensure built-in tools exist for this tenant (fallback — startup seed is primary) ──
+  // ── Auto-ensure built-in tools exist on the platform tenant (pipeline is global) ──
+  const _builtinPlatformId = await getPlatformTenantId();
   for (const def of BUILTIN_TOOL_DEFS) {
     const exists = await db.select({ id: securityToolsTable.id })
       .from(securityToolsTable)
-      .where(and(eq(securityToolsTable.tenantId, tenantId), eq(securityToolsTable.name, def.name)))
+      .where(and(eq(securityToolsTable.tenantId, _builtinPlatformId), eq(securityToolsTable.name, def.name)))
       .then(r => r.length > 0);
     if (!exists) {
       await db.insert(securityToolsTable).values({
-        tenantId, name: def.name, description: def.description, category: def.category,
+        tenantId: _builtinPlatformId, name: def.name, description: def.description, category: def.category,
         githubUrl: def.githubUrl, installCommand: "built-in (no install required)",
         updateCommand: "built-in", runCommand: def.runCommand, outputFormat: "json", isActive: true,
       });
@@ -1721,38 +1724,13 @@ async function executePipeline(
     // Phase-1 email security findings are collected here before findingInserts is initialized
     const emailSecurityFindings: Array<typeof findingsTable.$inferInsert> = [];
 
+    // Pipeline is global — enabledTools is already loaded from the platform tenant by all callers.
+    // If config specifies toolIds, filter from the global allTools; otherwise use the full enabled set.
     let toolsForAsset = config.toolIds.length > 0
       ? allTools.filter(t => config.toolIds.includes(t.id))
       : enabledTools;
 
-    // If the client tenant has no pipeline steps, fall back to the platform tenant's pipeline
-    if (toolsForAsset.length === 0) {
-      const [platformTenant] = await db
-        .select({ id: tenantsTable.id })
-        .from(tenantsTable)
-        .where(eq(tenantsTable.isPlatform, true))
-        .limit(1);
-      if (platformTenant && platformTenant.id !== tenantId) {
-        const platformSteps = await db
-          .select({ tool: securityToolsTable })
-          .from(toolPipelineStepsTable)
-          .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
-          .where(and(
-            eq(toolPipelineStepsTable.tenantId, platformTenant.id),
-            eq(toolPipelineStepsTable.isEnabled, true),
-          ))
-          .orderBy(toolPipelineStepsTable.stepOrder);
-        toolsForAsset = platformSteps.map(p => p.tool);
-        if (toolsForAsset.length > 0) {
-          logger.info(
-            { tenantId, assetId: asset.id, scanId, toolCount: toolsForAsset.length },
-            "No client pipeline configured — using platform pipeline fallback"
-          );
-        }
-      }
-    }
-
-    // Still no tools after fallback — mark scan_job as completed and skip
+    // Guard: if still no tools (e.g. empty pipeline), mark as completed and skip
     if (toolsForAsset.length === 0) {
       await db
         .update(scanJobsTable)
@@ -3924,12 +3902,13 @@ router.post("/scans/pipeline-run", requireAuth, async (req: AuthenticatedRequest
   const uniqueAssetTenantIds = [...new Set(assetRows.map(a => a.tenantId).filter((t): t is number => t != null))];
   const effectiveTenantId = uniqueAssetTenantIds.length === 1 ? uniqueAssetTenantIds[0] : tenantId;
 
-  // Pipeline config is always loaded from the CALLER's tenant (SA/admin configured the tools)
-  const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, tenantId));
+  // Pipeline is global — always load tools and steps from the platform tenant.
+  const _platformId = await getPlatformTenantId();
+  const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, _platformId));
   const pipelineSteps = await db.select({ tool: securityToolsTable })
     .from(toolPipelineStepsTable)
     .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
-    .where(and(eq(toolPipelineStepsTable.tenantId, tenantId), eq(toolPipelineStepsTable.isEnabled, true)))
+    .where(and(eq(toolPipelineStepsTable.tenantId, _platformId), eq(toolPipelineStepsTable.isEnabled, true)))
     .orderBy(toolPipelineStepsTable.stepOrder);
   const enabledTools = pipelineSteps.map(p => p.tool);
 
@@ -4264,13 +4243,13 @@ router.post("/scans/schedules/:scheduleId/run-now", requireAuth, async (req: Aut
   // Use the schedule's own tenantId — this is the tenant the assets belong to.
   const scheduleTenantId = schedule.tenantId!;
   const configs = schedule.assetToolConfig as AssetToolConfigItem[];
-  // Pipeline tool config is loaded from the caller's tenant (SA/admin have the tools configured).
-  const callerTenantId = req.user!.tenantId;
-  const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, callerTenantId));
+  // Pipeline is global — always load from the platform tenant.
+  const _schedulePlatformId = await getPlatformTenantId();
+  const allTools = await db.select().from(securityToolsTable).where(eq(securityToolsTable.tenantId, _schedulePlatformId));
   const pipelineSteps = await db.select({ tool: securityToolsTable })
     .from(toolPipelineStepsTable)
     .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
-    .where(and(eq(toolPipelineStepsTable.tenantId, callerTenantId), eq(toolPipelineStepsTable.isEnabled, true)));
+    .where(and(eq(toolPipelineStepsTable.tenantId, _schedulePlatformId), eq(toolPipelineStepsTable.isEnabled, true)));
   const enabledTools = pipelineSteps.map(p => p.tool);
 
   // Queue depth cap — reject before creating a scan record so the DB stays clean

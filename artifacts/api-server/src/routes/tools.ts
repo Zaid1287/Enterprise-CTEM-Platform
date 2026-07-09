@@ -2,8 +2,8 @@ import { Router } from "express";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable, alertsTable, tenantsTable } from "@workspace/db";
-import { syncPipelineToAllClientTenants } from "../lib/seedPlatform";
+import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable, alertsTable } from "@workspace/db";
+import { getPlatformTenantId } from "../lib/seedPlatform";
 import {
   CreateSecurityToolBody, GetSecurityToolParams,
   UpdateSecurityToolParams, UpdateSecurityToolBody,
@@ -127,14 +127,16 @@ async function enrichRuns(runs: (typeof toolRunsTable.$inferSelect)[]) {
   }));
 }
 
-async function buildPipelineResponse(tenantId: number) {
+// Pipeline is global — always reads from the platform tenant.
+async function buildPipelineResponse() {
+  const platformId = await getPlatformTenantId();
   const steps = await db.select().from(toolPipelineStepsTable)
-    .where(eq(toolPipelineStepsTable.tenantId, tenantId))
+    .where(eq(toolPipelineStepsTable.tenantId, platformId))
     .orderBy(toolPipelineStepsTable.stepOrder);
 
   const toolIds = [...new Set(steps.map(s => s.toolId))];
   const tools = toolIds.length
-    ? await db.select({ id: securityToolsTable.id, name: securityToolsTable.name, githubUrl: securityToolsTable.githubUrl, category: securityToolsTable.category }).from(securityToolsTable)
+    ? await db.select({ id: securityToolsTable.id, name: securityToolsTable.name, githubUrl: securityToolsTable.githubUrl, category: securityToolsTable.category }).from(securityToolsTable).where(eq(securityToolsTable.tenantId, platformId))
     : [];
   const toolMap = new Map(tools.map(t => [t.id, t]));
 
@@ -151,20 +153,25 @@ async function buildPipelineResponse(tenantId: number) {
 
 // ── IMPORTANT: /tools/pipeline must be registered BEFORE /tools/:toolId ──
 
+// Pipeline is global — all users see the platform pipeline.
 router.get("/tools/pipeline", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  res.json(await buildPipelineResponse(req.user!.tenantId));
+  res.json(await buildPipelineResponse());
 });
 
+// Only platform admins can modify the global pipeline.
+// All writes go to the platform tenant regardless of who calls.
 router.put("/tools/pipeline", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = SetToolPipelineBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
 
-  await db.delete(toolPipelineStepsTable).where(eq(toolPipelineStepsTable.tenantId, req.user!.tenantId));
+  const platformId = await getPlatformTenantId();
+
+  await db.delete(toolPipelineStepsTable).where(eq(toolPipelineStepsTable.tenantId, platformId));
 
   if (parsed.data.steps.length > 0) {
     await db.insert(toolPipelineStepsTable).values(
       parsed.data.steps.map(s => ({
-        tenantId: req.user!.tenantId,
+        tenantId: platformId,
         toolId: s.toolId,
         stepOrder: s.stepOrder,
         isEnabled: s.isEnabled,
@@ -172,17 +179,7 @@ router.put("/tools/pipeline", requireAuth, requireRole("admin", "super_admin"), 
     );
   }
 
-  // If the caller is on the platform tenant, propagate the new pipeline to all client tenants
-  const [callerTenant] = await db.select({ isPlatform: tenantsTable.isPlatform })
-    .from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId)).limit(1);
-  if (callerTenant?.isPlatform) {
-    // Fire-and-forget — don't block the response; errors are logged inside
-    syncPipelineToAllClientTenants().catch(err =>
-      req.log?.error({ err }, "Pipeline sync to client tenants failed")
-    );
-  }
-
-  res.json(await buildPipelineResponse(req.user!.tenantId));
+  res.json(await buildPipelineResponse());
 });
 
 const DEFAULT_TOOLS = [
@@ -243,14 +240,16 @@ const DEFAULT_TOOLS = [
   { name: "maltego", description: "Visual link analysis and OSINT platform for mapping relationships between domains, IPs, and people", githubUrl: "https://github.com/MaltegoTech/maltego-trx", category: "osint", installCommand: "pip3 install maltego-trx", updateCommand: "pip3 install --upgrade maltego-trx", runCommand: "python3 -m maltego_trx.transform {target}", outputFormat: "json" },
 ];
 
-async function seedDefaultTools(tenantId: number, userId: number): Promise<void> {
+// Tool catalog is global — always seeds into the platform tenant.
+async function seedDefaultTools(userId: number): Promise<void> {
+  const platformId = await getPlatformTenantId();
   const existing = await db.select({ name: securityToolsTable.name }).from(securityToolsTable)
-    .where(eq(securityToolsTable.tenantId, tenantId));
+    .where(eq(securityToolsTable.tenantId, platformId));
   const existingNames = new Set(existing.map(t => t.name.toLowerCase()));
   const toInsert = DEFAULT_TOOLS.filter(t => !existingNames.has(t.name.toLowerCase()));
   if (toInsert.length === 0) return;
   await db.insert(securityToolsTable).values(
-    toInsert.map(t => ({ ...t, tenantId, isActive: true, createdBy: userId }))
+    toInsert.map(t => ({ ...t, tenantId: platformId, isActive: true, createdBy: userId }))
   );
 }
 
@@ -268,35 +267,36 @@ function mapTool(t: typeof securityToolsTable.$inferSelect) {
 }
 
 router.post("/tools/seed-defaults", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const tenantId = req.user!.tenantId;
+  // Tool catalog is global — always seeds into the platform tenant.
+  const platformId = await getPlatformTenantId();
   const existing = await db.select({ name: securityToolsTable.name }).from(securityToolsTable)
-    .where(eq(securityToolsTable.tenantId, tenantId));
+    .where(eq(securityToolsTable.tenantId, platformId));
   const existingNames = new Set(existing.map(t => t.name.toLowerCase()));
   const toInsert = DEFAULT_TOOLS.filter(t => !existingNames.has(t.name.toLowerCase()));
   if (toInsert.length === 0) { res.json({ added: 0, message: "All default tools already present" }); return; }
   await db.insert(securityToolsTable).values(
-    toInsert.map(t => ({ ...t, tenantId, isActive: true, createdBy: req.user!.id }))
+    toInsert.map(t => ({ ...t, tenantId: platformId, isActive: true, createdBy: req.user!.id }))
   );
   res.json({ added: toInsert.length, message: `Added ${toInsert.length} default tool(s)` });
 });
 
+// Tool catalog is global — all reads/writes go to the platform tenant.
 router.get("/tools", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const tenantId = req.user!.tenantId;
-  await seedDefaultTools(tenantId, req.user!.id);
-
+  await seedDefaultTools(req.user!.id);
+  const platformId = await getPlatformTenantId();
   const tools = await db.select().from(securityToolsTable)
-    .where(eq(securityToolsTable.tenantId, tenantId))
+    .where(eq(securityToolsTable.tenantId, platformId))
     .orderBy(securityToolsTable.createdAt);
-
   res.json(tools.map(mapTool));
 });
 
 router.post("/tools", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const parsed = CreateSecurityToolBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
+  const platformId = await getPlatformTenantId();
   const [tool] = await db.insert(securityToolsTable).values({
     ...parsed.data,
-    tenantId: req.user!.tenantId,
+    tenantId: platformId,
     createdBy: req.user!.id,
   }).returning();
   await logAudit(req.user!, "create_tool", "security_tool", tool.id);
@@ -310,8 +310,9 @@ router.post("/tools", requireAuth, requireRole("admin", "super_admin"), async (r
 router.get("/tools/:toolId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const p = GetSecurityToolParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+  const platformId = await getPlatformTenantId();
   const [tool] = await db.select().from(securityToolsTable)
-    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)));
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, platformId)));
   if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
   res.json({ ...tool, createdAt: tool.createdAt.toISOString() });
 });
@@ -321,8 +322,9 @@ router.patch("/tools/:toolId", requireAuth, requireRole("admin", "super_admin"),
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
   const parsed = UpdateSecurityToolBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(parsed.error.issues); return; }
+  const platformId = await getPlatformTenantId();
   const [tool] = await db.update(securityToolsTable).set(parsed.data as any)
-    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)))
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, platformId)))
     .returning();
   if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
   res.json({ ...tool, createdAt: tool.createdAt.toISOString() });
@@ -331,8 +333,9 @@ router.patch("/tools/:toolId", requireAuth, requireRole("admin", "super_admin"),
 router.delete("/tools/:toolId", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const p = DeleteSecurityToolParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
+  const platformId = await getPlatformTenantId();
   const [tool] = await db.delete(securityToolsTable)
-    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)))
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, platformId)))
     .returning();
   if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
   await logAudit(req.user!, "delete_tool", "security_tool", tool.id);
@@ -345,8 +348,9 @@ router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest,
   const body = RunSecurityToolBody.safeParse(req.body);
   if (!body.success) { res.status(400).json(body.error.issues); return; }
 
+  const platformId = await getPlatformTenantId();
   const [tool] = await db.select().from(securityToolsTable)
-    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, req.user!.tenantId)));
+    .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, platformId)));
   if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
 
   const targetIds = (body.data as any).assetIds ?? ((body.data as any).assetId ? [(body.data as any).assetId] : []);

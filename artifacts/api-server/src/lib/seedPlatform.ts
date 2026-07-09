@@ -3,6 +3,18 @@ import { db, tenantsTable, usersTable, securityToolsTable, cdnWhitelistTable, to
 import { hashPassword } from "./auth";
 import { logger } from "./logger";
 
+// ── Global platform tenant ID cache ───────────────────────────────────────────
+// The tool catalog and pipeline are global — always owned by the platform tenant.
+let _cachedPlatformTenantId: number | null = null;
+export async function getPlatformTenantId(): Promise<number> {
+  if (_cachedPlatformTenantId !== null) return _cachedPlatformTenantId;
+  const [pt] = await db.select({ id: tenantsTable.id })
+    .from(tenantsTable).where(eq(tenantsTable.isPlatform, true)).limit(1);
+  if (!pt) throw new Error("Platform tenant not found — cannot resolve global pipeline");
+  _cachedPlatformTenantId = pt.id;
+  return _cachedPlatformTenantId;
+}
+
 // ── Built-in tool definitions ──────────────────────────────────────────────────
 // These are auto-seeded for every tenant on startup so they always appear in
 // the tool catalog and pipeline, even before the first scan is initiated.
