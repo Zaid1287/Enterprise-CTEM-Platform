@@ -257,11 +257,10 @@ router.get("/assets", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (ids.length === 0) { res.json([]); return; }
     tenantFilter = inArray(assetsTable.tenantId, ids);
   } else if (role === "super_admin" || role === "admin") {
-    // SA/Admin see their own tenant's assets PLUS all client self-managed assets
-    const privIds = await getPrivilegedTenantIds(req.user!);
-    tenantFilter = privIds.length > 0
-      ? or(eq(assetsTable.tenantId, req.user!.tenantId), inArray(assetsTable.tenantId, privIds))
-      : eq(assetsTable.tenantId, req.user!.tenantId);
+    // SA/Admin see only their own platform tenant's assets.
+    // Client-assigned assets live in the platform tenant with assignedClientId set —
+    // no need to also query client tenants (which would produce duplicates).
+    tenantFilter = eq(assetsTable.tenantId, req.user!.tenantId);
   } else if (role === "client") {
     // Clients see only their assigned assets — cross-tenant, no tenantId restriction
     tenantFilter = undefined;

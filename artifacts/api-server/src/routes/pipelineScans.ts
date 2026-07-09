@@ -2776,32 +2776,7 @@ async function executePipeline(
         .catch(() => {});
     }
 
-    // ── Auto-create IP asset records from DNS A/AAAA resolution ─────────────
-    // This ensures RESOLVES_TO relationships appear in the attack surface graph
-    // without requiring manual IP asset creation.
-    {
-      const dnsIps = allDns
-        .filter((r: { type: string; value: string }) => r.type === "A" || r.type === "AAAA")
-        .map((r: { type: string; value: string }) => r.value)
-        .filter(Boolean)
-        .slice(0, 10); // cap at 10 IPs per domain to avoid CIDR-range explosion
-      for (const ip of dnsIps) {
-        const existing = await db.select({ id: assetsTable.id })
-          .from(assetsTable)
-          .where(and(eq(assetsTable.tenantId, tenantId), eq(assetsTable.value, ip), eq(assetsTable.type, "ip")))
-          .limit(1);
-        if (existing.length === 0) {
-          await db.insert(assetsTable).values({
-            tenantId,
-            name: `IP: ${ip}`,
-            type: "ip",
-            value: ip,
-            riskLevel: "low",
-            isActive: true,
-          } as any).catch(() => {});
-        }
-      }
-    }
+
 
     const results: Array<typeof scanAssetResultsTable.$inferInsert> = [];
     // Seed with email security findings collected during Phase-1 DKIM/SPF/DMARC checks
