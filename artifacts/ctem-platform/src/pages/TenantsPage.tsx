@@ -756,53 +756,75 @@ export default function TenantsPage() {
 
                         {/* Account Managers tab */}
                         {getTab(t.id) === "managers" && (
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1 min-h-[40px]">
-                              {t.assignedManagers.length === 0 ? (
-                                <p className="text-xs text-muted-foreground italic">
-                                  No account managers assigned. Click "Assign Manager" to add one.
-                                </p>
-                              ) : (
-                                <div className="space-y-2">
-                                  {t.assignedManagers.map((m: any) => (
-                                    <div key={m.id} className="flex items-center gap-2.5 text-sm">
-                                      <div className="w-7 h-7 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center shrink-0">
-                                        <span className="text-xs font-bold text-blue-400">
-                                          {(m.name || m.email)[0].toUpperCase()}
-                                        </span>
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <span className="font-medium text-xs">{m.name}</span>
-                                        <span className="text-muted-foreground text-xs ml-2">{m.email}</span>
-                                      </div>
-                                      <button
-                                        onClick={e => { e.stopPropagation(); unassignMutation.mutate({ tenantId: t.id, amUserId: m.id }); }}
-                                        className="p-1 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400 transition-colors ml-auto"
-                                        title="Unassign"
-                                      >
-                                        <X className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex flex-col gap-1.5 shrink-0">
-                              <Button
-                                size="sm" variant="outline" className="text-xs h-8"
-                                onClick={e => { e.stopPropagation(); setAssignTarget({ tenantId: t.id, tenantName: t.name }); setSelectedAmId(""); }}
-                              >
-                                <Plus className="w-3.5 h-3.5 mr-1" /> Assign Manager
-                              </Button>
-                              {t.assignedManagers.length > 0 && (
+                          <div className="w-full space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-medium text-muted-foreground">
+                                {t.assignedManagers.length > 0
+                                  ? `${t.assignedManagers.length} manager${t.assignedManagers.length > 1 ? "s" : ""} assigned`
+                                  : "No account managers assigned"}
+                              </span>
+                              <div className="flex items-center gap-1.5">
                                 <Button
-                                  size="sm" variant="outline" className="text-xs h-8 text-amber-400 hover:text-amber-300 border-amber-500/30 hover:bg-amber-500/10"
-                                  onClick={e => { e.stopPropagation(); setReassignTarget({ tenantId: t.id, tenantName: t.name, currentManagers: t.assignedManagers }); setReassignAmId(""); }}
+                                  size="sm" variant="outline" className="text-xs h-7"
+                                  onClick={e => { e.stopPropagation(); setAssignTarget({ tenantId: t.id, tenantName: t.name }); setSelectedAmId(""); }}
                                 >
-                                  <ArrowRightLeft className="w-3.5 h-3.5 mr-1" /> Reassign
+                                  <Plus className="w-3.5 h-3.5 mr-1" /> Assign Manager
                                 </Button>
-                              )}
+                                {t.assignedManagers.length > 0 && (
+                                  <Button
+                                    size="sm" variant="outline" className="text-xs h-7 text-amber-400 hover:text-amber-300 border-amber-500/30 hover:bg-amber-500/10"
+                                    onClick={e => { e.stopPropagation(); setReassignTarget({ tenantId: t.id, tenantName: t.name, currentManagers: t.assignedManagers }); setReassignAmId(""); }}
+                                  >
+                                    <ArrowRightLeft className="w-3.5 h-3.5 mr-1" /> Reassign
+                                  </Button>
+                                )}
+                              </div>
                             </div>
+                            {t.assignedManagers.length === 0 ? (
+                              <div className="w-full py-6 border border-dashed border-border rounded-lg flex flex-col items-center justify-center gap-1.5">
+                                <UserCheck className="w-6 h-6 text-muted-foreground/30" />
+                                <p className="text-xs text-muted-foreground">No account managers assigned yet.</p>
+                                <p className="text-[10px] text-muted-foreground/60">Use "Assign Manager" to link an account manager to this tenant.</p>
+                              </div>
+                            ) : (
+                              <div className="w-full rounded-lg border border-border overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="bg-muted/30 border-b border-border">
+                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Manager</th>
+                                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Email</th>
+                                      <th className="w-8 px-3 py-2" />
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {t.assignedManagers.map((m: any) => (
+                                      <tr key={m.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
+                                        <td className="px-3 py-2">
+                                          <div className="flex items-center gap-2">
+                                            <div className="w-6 h-6 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center shrink-0">
+                                              <span className="text-[10px] font-bold text-blue-400">
+                                                {(m.name || m.email)[0].toUpperCase()}
+                                              </span>
+                                            </div>
+                                            <span className="font-medium">{m.name}</span>
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2 text-muted-foreground">{m.email}</td>
+                                        <td className="px-3 py-2">
+                                          <button
+                                            onClick={e => { e.stopPropagation(); unassignMutation.mutate({ tenantId: t.id, amUserId: m.id }); }}
+                                            className="p-1 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400 transition-colors"
+                                            title="Unassign"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
                           </div>
                         )}
 

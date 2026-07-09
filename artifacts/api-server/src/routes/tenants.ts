@@ -196,8 +196,15 @@ async function buildRichTenantList(tenantIds: number[]) {
     ? await db.select({ id: usersTable.id, email: usersTable.email, firstName: usersTable.firstName, lastName: usersTable.lastName })
         .from(usersTable).where(inArray(usersTable.id, amUserIds))
     : [];
+  // assigned_client_id stores a USER ID (not a tenant ID). Build userId → tenantId map so
+  // platform-owned assets (e.g. SA-scanned assets) are correctly attributed to their client tenant.
+  const userTenantMap = new Map(allUsers.map(u => [u.id, u.tenantId]));
   return allTenants.map(t => {
-    const tenantAssetIdSet = new Set(allAssets.filter(a => a.tenantId === t.id).map(a => a.id));
+    const tenantAssets = allAssets.filter(a =>
+      a.tenantId === t.id ||
+      (a.assignedClientId != null && userTenantMap.get(a.assignedClientId) === t.id)
+    );
+    const tenantAssetIdSet = new Set(tenantAssets.map(a => a.id));
     const tenantFindings = allFindings.filter(f => f.assetId != null && tenantAssetIdSet.has(f.assetId));
     return {
       ...toTenantResponse(t),
