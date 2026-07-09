@@ -265,6 +265,10 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       }).from(usersTable).where(inArray(usersTable.id, amUserIds))
     : [];
 
+  // assigned_client_id stores a USER ID (not a tenant ID). Build userId → tenantId
+  // map so we can correctly attribute SA-owned assets to their assigned client tenant.
+  const userTenantMap = new Map(allUsers.map(u => [u.id, u.tenantId]));
+
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   // Count AMs globally — AM users may live on the platform tenant itself
@@ -406,7 +410,10 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     // Include both the client's own assets AND platform assets assigned to this client (assignedClientId)
     // so that SA-scanned assets for a client appear in that client's metrics.
     ...allTenantsRaw.map(t => {
-      const clientAssets = allAssets.filter(a => a.tenantId === t.id || a.assignedClientId === t.id);
+      const clientAssets = allAssets.filter(a =>
+        a.tenantId === t.id ||
+        (a.assignedClientId != null && userTenantMap.get(a.assignedClientId) === t.id)
+      );
       const scores = clientAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
       const avgRisk = scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r, 0) / scores.length) : 0;
       const clientAssetIdSet = new Set(clientAssets.map(a => a.id));
@@ -454,7 +461,10 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     // Include both the client's own assets AND platform assets assigned to this client (assignedClientId)
     // so that SA-scanned assets for a client appear in that client's metrics.
     ...allTenantsRaw.map(t => {
-      const tAssets = allAssets.filter(a => a.tenantId === t.id || a.assignedClientId === t.id);
+      const tAssets = allAssets.filter(a =>
+        a.tenantId === t.id ||
+        (a.assignedClientId != null && userTenantMap.get(a.assignedClientId) === t.id)
+      );
       const tScores = tAssets.map(a => riskScoreMap.get(a.id) ?? 0).filter(s => s > 0);
       const avgRisk = tScores.length > 0 ? Math.round(tScores.reduce((a, b) => a + b, 0) / tScores.length) : 0;
       const tAssetIdSet = new Set(tAssets.map(a => a.id));

@@ -256,7 +256,7 @@ export function Sidebar() {
 
 
       {/* Navigation */}
-      <nav className={cn("flex-1 py-3 space-y-4 overflow-y-auto", collapsed ? "px-1.5" : "px-3")}>
+      <nav className={cn("flex-1 py-3 space-y-4 overflow-y-auto scrollbar-none", collapsed ? "px-1.5" : "px-3")}>
         {visibleGroups.map((group) => (
           <div key={group.title}>
             {!collapsed && (

@@ -1,5 +1,13 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+
+/* Hide scrollbar visually while keeping scroll functionality */
+.scrollbar-none {
+  scrollbar-width: none; /* Firefox */
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Edge */
+}
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
