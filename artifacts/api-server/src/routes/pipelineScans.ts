@@ -3526,6 +3526,75 @@ async function executePipeline(
       }
     }
 
+    // ── PHASE 6: Generic Custom Tool Runner ───────────────────────────────────
+    // Runs any pipeline tool that has a real runCommand but is NOT handled by
+    // the engine's built-in phases 1–5. Results are written to tool_runs for
+    // full audit visibility. Client tenants benefit automatically because the
+    // global pipeline (platform tenant) is now the single source of truth.
+    const BUILTIN_ENGINE_TOOLS = new Set([
+      // Phase 1 — Recon / OSINT (run via Node.js internals, not their runCommand)
+      "subfinder", "amass", "findomain", "dnsx", "shuffledns", "asnmap", "cdncheck",
+      "mapcidr", "tldfinder", "dnsrecon", "alterx", "gau", "waybackurls", "hakrawler",
+      "katana", "uro", "uncover", "theHarvester", "maltego", "censys", "s3scanner",
+      "cloud_enum", "cloud-enum", "firebase-recon", "GrayhatWarfare", "paramspider",
+      "linkfinder", "arjun", "secretfinder", "useragent", "aix",
+      // Phase 2 — Port Scanning (portScanner.ts handles these)
+      "naabu", "masscan", "nmap", "rustscan",
+      // Phase 3 — Web Recon (screenshotEngine / httpx / dirFuzzer)
+      "eyewitness", "gowitness", "snapback", "wappalyzer", "webcheck", "httpx",
+      "wafw00f", "whatweb", "feroxbuster", "ffuf", "gobuster",
+      // Phase 4 — Vuln & Secrets (nucleiScanner / wpScanner / secretsHunter)
+      "trufflehog", "nikto", "dalfox", "wpscan", "goleak", "vulnx", "wapiti", "nuclei",
+      // Phase 5 — SSL (sslTestScanner)
+      "sslscan", "testssl",
+      // Passive / API-backed (no local binary execution)
+      "shodan", "dnstwist", "gitdumper",
+    ]);
+
+    const customToolsToRun = toolsForAsset.filter(t =>
+      !BUILTIN_ENGINE_TOOLS.has(t.name) &&
+      t.runCommand &&
+      t.runCommand.trim() !== "" &&
+      t.installCommand !== "built-in (no install required)",
+    );
+
+    if (customToolsToRun.length > 0) {
+      logger.info({ assetId: asset.id, scanId, count: customToolsToRun.length }, "Phase 6: Running generic custom tools");
+      for (const ct of customToolsToRun) {
+        const ctStartMs = Date.now();
+        startTool(ct.name, `Running custom tool: ${ct.name} against ${domain}…`);
+        const sanitizedTgt = target.replace(/[;&|`$]/g, "").trim();
+        const sanitizedDom = sanitizedTgt.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        const cmd = (ct.runCommand || "")
+          .replace(/{target}/g, sanitizedTgt)
+          .replace(/{domain}/g, sanitizedDom)
+          .replace(/{ip}/g, sanitizedDom);
+        const startedAt = new Date();
+        let output = "";
+        try {
+          const { stdout, stderr } = await execAsync(cmd, { timeout: 60_000, maxBuffer: 5 * 1024 * 1024 });
+          output = (stdout || stderr || "(no output)").slice(0, 50_000);
+        } catch (err: any) {
+          output = `[ERROR] ${err?.message ?? String(err)}`.slice(0, 5000);
+        }
+        const failed = output.startsWith("[ERROR]");
+        await db.insert(toolRunsTable).values({
+          tenantId,
+          toolId: ct.id,
+          assetId: asset.id,
+          status: failed ? "failed" : "completed",
+          output,
+          startedAt,
+          completedAt: new Date(),
+        }).catch(err => logger.warn({ err, tool: ct.name }, "Phase 6: Failed to save tool run (non-fatal)"));
+        const detail = failed
+          ? `${ct.name} failed: ${output.slice(7, 120)}`
+          : `${ct.name} completed — ${output.slice(0, 120)}`;
+        doneTool(ct.name, 0, detail, ctStartMs);
+        logger.info({ assetId: asset.id, scanId, tool: ct.name, failed }, "Phase 6: Custom tool finished");
+      }
+    }
+
     // Deduplicate by CVE+asset, enrich with EPSS/KEV, then insert
     const uniqueFindings = new Map<string, typeof findingInserts[0]>();
     for (const f of findingInserts) {

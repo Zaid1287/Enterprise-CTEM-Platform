@@ -2,13 +2,14 @@ import { Router } from "express";
 import { eq, and, count, sql, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
-import { db, complianceFrameworksTable, complianceControlsTable } from "@workspace/db";
+import { db, complianceFrameworksTable, complianceControlsTable, tenantsTable } from "@workspace/db";
 import {
   GetComplianceControlParams, UpdateComplianceControlParams,
   UpdateComplianceControlBody, ListComplianceControlsQueryParams,
 } from "@workspace/api-zod";
-import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
+import { requireAuth, requireRole, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
+import { getPlatformTenantId } from "../lib/seedPlatform";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -117,7 +118,7 @@ router.post(
     if (req.user!.role === "client") {
       res.status(403).json({ error: "Client users cannot upload compliance evidence" }); return;
     }
-    const controlId = parseInt(req.params.controlId, 10);
+    const controlId = parseInt(req.params.controlId as string, 10);
     if (isNaN(controlId)) { res.status(400).json({ error: "Invalid controlId" }); return; }
 
     const [row] = await db.select({
@@ -160,8 +161,8 @@ router.get(
   "/compliance/controls/:controlId/evidence/:filename",
   requireAuth,
   async (req: AuthenticatedRequest, res): Promise<void> => {
-    const controlId = parseInt(req.params.controlId, 10);
-    const filename = req.params.filename;
+    const controlId = parseInt(req.params.controlId as string, 10);
+    const filename = req.params.filename as string;
     if (isNaN(controlId) || !filename || filename.includes("..") || filename.includes("/")) {
       res.status(400).json({ error: "Invalid request" });
       return;
@@ -189,8 +190,8 @@ router.delete(
     if (req.user!.role === "client") {
       res.status(403).json({ error: "Client users cannot delete compliance evidence" }); return;
     }
-    const controlId = parseInt(req.params.controlId, 10);
-    const filename = req.params.filename;
+    const controlId = parseInt(req.params.controlId as string, 10);
+    const filename = req.params.filename as string;
     if (isNaN(controlId) || !filename || filename.includes("..") || filename.includes("/")) {
       res.status(400).json({ error: "Invalid request" });
       return;
@@ -218,6 +219,113 @@ router.delete(
       .returning();
     await logAudit(req.user!, "delete_compliance_evidence", "compliance", controlId, `${filename} deleted`);
     res.json(toControlResponse(updated, row.frameworkName));
+  },
+);
+
+// ── Create a new compliance control ──────────────────────────────────────────
+// Platform SA: propagates to all client tenants automatically.
+router.post(
+  "/compliance/controls",
+  requireAuth,
+  requireRole("admin", "super_admin"),
+  async (req: AuthenticatedRequest, res): Promise<void> => {
+    const { frameworkId, controlId, title, description, status } = req.body;
+    if (!frameworkId || !controlId || !title) {
+      res.status(400).json({ error: "frameworkId, controlId, and title are required" }); return;
+    }
+    const fwId = parseInt(String(frameworkId), 10);
+    if (isNaN(fwId)) { res.status(400).json({ error: "frameworkId must be a number" }); return; }
+    const [fw] = await db.select().from(complianceFrameworksTable).where(eq(complianceFrameworksTable.id, fwId));
+    if (!fw) { res.status(400).json({ error: "Framework not found" }); return; }
+
+    const tenantId = req.user!.tenantId;
+    const platformId = await getPlatformTenantId();
+
+    const validStatuses = ["non_compliant", "in_progress", "compliant", "not_applicable"];
+    const controlStatus = (validStatuses.includes(String(status)) ? String(status) : "non_compliant") as any;
+
+    const [control] = await db.insert(complianceControlsTable).values({
+      tenantId,
+      frameworkId: fw.id,
+      controlId: String(controlId),
+      title: String(title),
+      description: description ? String(description) : null,
+      status: controlStatus,
+    }).returning();
+
+    // Platform SA: propagate to all client tenants (same controlId within same framework)
+    if (tenantId === platformId) {
+      const clientTenants = await db.select({ id: tenantsTable.id })
+        .from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+      for (const ct of clientTenants) {
+        const exists = await db.select({ id: complianceControlsTable.id })
+          .from(complianceControlsTable)
+          .where(and(
+            eq(complianceControlsTable.tenantId, ct.id),
+            eq(complianceControlsTable.frameworkId, fw.id),
+            eq(complianceControlsTable.controlId, String(controlId)),
+          )).then(r => r.length > 0);
+        if (!exists) {
+          await db.insert(complianceControlsTable).values({
+            tenantId: ct.id,
+            frameworkId: fw.id,
+            controlId: String(controlId),
+            title: String(title),
+            description: description ? String(description) : null,
+            status: "non_compliant",
+          });
+        }
+      }
+    }
+
+    await logAudit(req.user!, "create_compliance_control", "compliance", control.id,
+      `${fw.name}: ${controlId} — ${title}${tenantId === platformId ? " (propagated to clients)" : ""}`);
+    res.status(201).json(toControlResponse(control, fw.name));
+  },
+);
+
+// ── Delete a compliance control ───────────────────────────────────────────────
+// Platform SA: also removes the same control from all client tenants.
+router.delete(
+  "/compliance/controls/:controlId",
+  requireAuth,
+  requireRole("admin", "super_admin"),
+  async (req: AuthenticatedRequest, res): Promise<void> => {
+    if (req.user!.role === "client") {
+      res.status(403).json({ error: "Client users cannot delete compliance controls" }); return;
+    }
+    const controlId = parseInt(req.params.controlId as string, 10);
+    if (isNaN(controlId)) { res.status(400).json({ error: "Invalid controlId" }); return; }
+
+    const tenantId = req.user!.tenantId;
+    const platformId = await getPlatformTenantId();
+
+    const [row] = await db.select({ control: complianceControlsTable })
+      .from(complianceControlsTable)
+      .where(and(eq(complianceControlsTable.id, controlId), eq(complianceControlsTable.tenantId, tenantId)));
+    if (!row) { res.status(404).json({ error: "Control not found" }); return; }
+
+    // Platform SA: propagate deletion to all client tenants
+    if (tenantId === platformId) {
+      const { controlId: cId, frameworkId: fId } = row.control;
+      const clientTenants = await db.select({ id: tenantsTable.id })
+        .from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
+      for (const ct of clientTenants) {
+        await db.delete(complianceControlsTable)
+          .where(and(
+            eq(complianceControlsTable.tenantId, ct.id),
+            eq(complianceControlsTable.frameworkId, fId),
+            eq(complianceControlsTable.controlId, cId),
+          ));
+      }
+    }
+
+    await db.delete(complianceControlsTable)
+      .where(and(eq(complianceControlsTable.id, controlId), eq(complianceControlsTable.tenantId, tenantId)));
+
+    await logAudit(req.user!, "delete_compliance_control", "compliance", controlId,
+      tenantId === platformId ? "propagated deletion to client tenants" : undefined);
+    res.sendStatus(204);
   },
 );
 

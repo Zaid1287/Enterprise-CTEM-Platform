@@ -300,6 +300,25 @@ router.post("/tools", requireAuth, requireRole("admin", "super_admin"), async (r
     createdBy: req.user!.id,
   }).returning();
   await logAudit(req.user!, "create_tool", "security_tool", tool.id);
+
+  // Auto-add new custom tool to the platform pipeline as last step (disabled by default).
+  // SA can enable it via the Pipeline Config page — ensures the tool is immediately visible
+  // in the global pipeline that all client tenants read.
+  try {
+    const [maxRow] = await db
+      .select({ maxOrder: sql<number>`COALESCE(MAX(${toolPipelineStepsTable.stepOrder}), 0)` })
+      .from(toolPipelineStepsTable)
+      .where(eq(toolPipelineStepsTable.tenantId, platformId));
+    await db.insert(toolPipelineStepsTable).values({
+      tenantId: platformId,
+      toolId: tool.id,
+      stepOrder: (maxRow?.maxOrder ?? 0) + 1,
+      isEnabled: false,
+    });
+  } catch (err) {
+    req.log.warn({ err, toolId: tool.id }, "Failed to auto-create pipeline step for new tool (non-fatal)");
+  }
+
   res.status(201).json({
     ...tool,
     installCommand: tool.installCommand, updateCommand: tool.updateCommand, outputFormat: tool.outputFormat,

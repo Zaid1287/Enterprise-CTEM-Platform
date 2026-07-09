@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray, isNull, or } from "drizzle-orm";
 import { db, tenantsTable, usersTable, securityToolsTable, cdnWhitelistTable, toolPipelineStepsTable, complianceControlsTable, complianceFrameworksTable, alertRulesTable } from "@workspace/db";
 import { hashPassword } from "./auth";
 import { logger } from "./logger";
@@ -294,6 +294,24 @@ const DEFAULT_ALERT_RULES = [
 ] as const;
 
 export async function seedDefaultAlertRulesForTenant(tenantId: number): Promise<void> {
+  // Resolve admin email — prefer super_admin/admin, fall back to any user in the tenant
+  let [adminUser] = await db.select({ email: usersTable.email })
+    .from(usersTable)
+    .where(and(
+      eq(usersTable.tenantId, tenantId),
+      inArray(usersTable.role, ["super_admin", "admin"]),
+    ))
+    .orderBy(usersTable.id)
+    .limit(1);
+  if (!adminUser) {
+    [adminUser] = await db.select({ email: usersTable.email })
+      .from(usersTable)
+      .where(eq(usersTable.tenantId, tenantId))
+      .orderBy(usersTable.id)
+      .limit(1);
+  }
+  const adminEmail = adminUser?.email ?? null;
+
   let inserted = 0;
   for (const rule of DEFAULT_ALERT_RULES) {
     const exists = await db
@@ -313,14 +331,14 @@ export async function seedDefaultAlertRulesForTenant(tenantId: number): Promise<
         name: rule.name,
         triggerType: rule.triggerType,
         channel: rule.channel,
-        destination: null,
+        destination: rule.channel === "email" ? adminEmail : null,
         isActive: true,
       });
       inserted++;
     }
   }
   if (inserted > 0) {
-    logger.info({ tenantId, inserted }, "Default alert rules seeded for tenant");
+    logger.info({ tenantId, inserted, adminEmail }, "Default alert rules seeded for tenant");
   }
 }
 
@@ -424,6 +442,48 @@ export async function seedPlatformOnStartup(): Promise<void> {
     // Seed default alert rules for all tenants (idempotent)
     for (const { id } of allTenants) {
       await seedDefaultAlertRulesForTenant(id);
+    }
+
+    // Backfill: update existing email alert rules that have null or empty destination
+    // with the tenant's admin email so notifications actually get delivered.
+    try {
+      const nullRuleTenants = await db
+        .selectDistinct({ tenantId: alertRulesTable.tenantId })
+        .from(alertRulesTable)
+        .where(and(
+          eq(alertRulesTable.channel, "email"),
+          or(isNull(alertRulesTable.destination), eq(alertRulesTable.destination, "")),
+        ));
+      for (const { tenantId } of nullRuleTenants) {
+        // Prefer super_admin/admin; fall back to any user in the tenant
+        let [admin] = await db.select({ email: usersTable.email })
+          .from(usersTable)
+          .where(and(
+            eq(usersTable.tenantId, tenantId),
+            inArray(usersTable.role, ["super_admin", "admin"]),
+          ))
+          .orderBy(usersTable.id)
+          .limit(1);
+        if (!admin) {
+          [admin] = await db.select({ email: usersTable.email })
+            .from(usersTable)
+            .where(eq(usersTable.tenantId, tenantId))
+            .orderBy(usersTable.id)
+            .limit(1);
+        }
+        if (admin?.email) {
+          await db.update(alertRulesTable)
+            .set({ destination: admin.email })
+            .where(and(
+              eq(alertRulesTable.tenantId, tenantId),
+              eq(alertRulesTable.channel, "email"),
+              or(isNull(alertRulesTable.destination), eq(alertRulesTable.destination, "")),
+            ));
+          logger.info({ tenantId, email: admin.email }, "Backfilled null email alert rule destinations");
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "Alert rule email backfill failed (non-fatal)");
     }
   } catch (err) {
     logger.error({ err }, "Platform seed failed");
