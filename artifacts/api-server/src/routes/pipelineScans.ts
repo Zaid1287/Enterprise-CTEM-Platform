@@ -330,10 +330,13 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
       logger.info({ scanId: entry.scanId, findingsCount }, "Scan completed");
 
       // Recompute risk scores and lastScannedAt for all scanned assets (includes businessImpact)
+      // IMPORTANT: awaited — scan report must see the updated risk score, not a stale pre-scan value.
       const pipelineAssetIds = entry.configs.map(c => c.assetId);
-      finalizeScannedAssets(pipelineAssetIds).catch(err =>
-        logger.warn({ err, scanId: entry.scanId }, "finalizeScannedAssets failed"),
-      );
+      try {
+        await finalizeScannedAssets(pipelineAssetIds);
+      } catch (err) {
+        logger.warn({ err, scanId: entry.scanId }, "finalizeScannedAssets failed (non-fatal)");
+      }
 
       // ── Dispatch Slack / Discord / email notifications ────────────────────────
       setImmediate(async () => {
@@ -392,10 +395,16 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
 // ── On startup: recover any scans stuck as "running" from a previous crash ────
 // Since we use an in-process queue (no Redis), ALL in-process state is lost on
 // server restart. Any scan still "running" at this point is definitively orphaned.
-// Use a 30-second lookback to avoid a theoretical race where the new process and
-// the dying old process briefly overlap (Replit SIGKILL ensures this can't happen,
-// but the guard is cheap insurance).
+//
+// Recovery strategy:
+//   • Scans running for < REQUEUE_WINDOW_MS  → automatically re-enqueued from scratch.
+//   • Scans running for >= REQUEUE_WINDOW_MS → permanently failed (too old to safely retry).
+//
+// We use a 30-second lookback to skip scans that started in the last 30 s — those
+// are extremely unlikely to have survived a restart and avoids any race with a
+// concurrent hot-reload in development.
 const _serverBootTime = new Date();
+const REQUEUE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours — re-queue if interrupted recently
 setImmediate(async () => {
   try {
     const runningCutoff = new Date(_serverBootTime.getTime() - 30_000);
@@ -404,13 +413,46 @@ setImmediate(async () => {
         eq(scansTable.status, "running" as string),
         lt(scansTable.startedAt, runningCutoff),
       ));
-    if (stuckScans.length > 0) {
-      logger.warn({ count: stuckScans.length }, "Recovering scans stuck in running state from server restart");
-      for (const scan of stuckScans) {
-        await db.update(scansTable)
-          .set({ status: "failed", completedAt: new Date() })
-          .where(eq(scansTable.id, scan.id));
+    if (stuckScans.length === 0) return;
 
+    logger.warn({ count: stuckScans.length }, "Recovering scans stuck in running state from server restart");
+
+    // Pre-load pipeline config once — all re-queued scans share the same platform pipeline
+    const platformTenantId = await getPlatformTenantId().catch(() => null);
+    let allTools: (typeof securityToolsTable.$inferSelect)[] = [];
+    let enabledTools: (typeof securityToolsTable.$inferSelect)[] = [];
+    if (platformTenantId) {
+      allTools = await db.select().from(securityToolsTable)
+        .where(eq(securityToolsTable.tenantId, platformTenantId));
+      const pipelineSteps = await db.select({ tool: securityToolsTable })
+        .from(toolPipelineStepsTable)
+        .innerJoin(securityToolsTable, eq(securityToolsTable.id, toolPipelineStepsTable.toolId))
+        .where(and(
+          eq(toolPipelineStepsTable.tenantId, platformTenantId),
+          eq(toolPipelineStepsTable.isEnabled, true),
+        ))
+        .orderBy(toolPipelineStepsTable.stepOrder);
+      enabledTools = pipelineSteps.map(p => p.tool);
+    }
+
+    for (const scan of stuckScans) {
+      const startedAt = scan.startedAt ? new Date(scan.startedAt).getTime() : 0;
+      const ageMs = Date.now() - startedAt;
+      const canRequeue = platformTenantId && ageMs < REQUEUE_WINDOW_MS;
+      const assetIds: number[] = Array.isArray(scan.assetIds) ? (scan.assetIds as number[]) : [];
+
+      // Mark as failed first regardless — if re-queue also fails it stays in a clean terminal state
+      await db.update(scansTable)
+        .set({ status: canRequeue && assetIds.length > 0 ? "pending" : "failed", completedAt: canRequeue && assetIds.length > 0 ? null : new Date() })
+        .where(eq(scansTable.id, scan.id));
+
+      if (canRequeue && assetIds.length > 0) {
+        logger.info({ scanId: scan.id, assetCount: assetIds.length, ageMin: Math.round(ageMs / 60_000) }, "Re-queuing interrupted scan after restart");
+        const configs: AssetToolConfigItem[] = assetIds.map(assetId => ({ assetId, toolIds: [] }));
+        enqueueAndRun({ scanId: scan.id, tenantId: scan.tenantId, userId: 0, configs, allTools, enabledTools })
+          .catch(err => logger.error({ err, scanId: scan.id }, "Failed to re-enqueue interrupted scan"));
+      } else {
+        logger.warn({ scanId: scan.id, ageMin: Math.round(ageMs / 60_000) }, "Scan too old to re-queue — marked failed");
         // Dispatch a notification so the team is aware the scan did not finish
         setImmediate(async () => {
           try {
@@ -2325,7 +2367,18 @@ async function executePipeline(
           ? (async () => { secretsHunt = await runSecretsHunt(target, githubToken); })()
           : Promise.resolve(),
         isWebAsset
-          ? (async () => { dirFuzz = await runDirFuzz(target, dnsResult.subdomains.map(s => s.name)); })()
+          ? (async () => {
+              // Hard 10-minute timeout — prevents unbounded BFS crawl on large targets
+              const PHASE3_CRAWL_TIMEOUT_MS = 10 * 60 * 1000;
+              const result = await Promise.race([
+                runDirFuzz(target, dnsResult.subdomains.map(s => s.name)),
+                new Promise<null>(res => setTimeout(() => res(null), PHASE3_CRAWL_TIMEOUT_MS)),
+              ]);
+              if (!result) {
+                logger.warn({ target, scanId }, "Phase 3: dirFuzz hit 10-min hard timeout — crawl truncated, partial results may be missing");
+              }
+              dirFuzz = result as DirFuzzResult | null;
+            })()
           : Promise.resolve(),
         isWebAsset
           ? (async () => { vulnScan = await runNucleiScan(target, dnsResult.subdomains.map(s => s.name)); })()
@@ -2496,6 +2549,7 @@ async function executePipeline(
     if (needsVulns || needsSecrets) {
       const p4Start = Date.now();
       for (const t of p4) startTool(t.name, t.name === "trufflehog" ? `Scanning ${domain} for exposed credentials & secrets…` : `Running vulnerability analysis on ${domain}…`);
+      const PHASE4_MIN_EXPECTED_MS = 500; // anything faster is a sign tools fast-exited without running
 
       const shodanCveIds: string[] = portScanReport?.shodan?.vulns ?? [];
 
@@ -2643,6 +2697,17 @@ async function executePipeline(
           } catch (err) { logger.warn({ err, domain }, "Custom nuclei templates scan failed"); }
         })(),
       ].filter(Boolean));
+
+      const p4DurationMs = Date.now() - p4Start;
+      if (p4DurationMs < PHASE4_MIN_EXPECTED_MS) {
+        // Phase 4 completed suspiciously fast — most likely all tools fast-exited because
+        // isHostLive=false, needsVulns=false, or missing guard conditions. Log this so it's
+        // visible in server logs rather than silently producing 0 findings.
+        logger.warn(
+          { target, scanId, p4DurationMs, isHostLive, needsVulns, needsSecrets, p4Tools: p4.map(t => t.name) },
+          "Phase 4 completed very fast — vuln scanning likely skipped. Check isHostLive and needsVulns flags.",
+        );
+      }
 
       for (const t of p4) {
         const isSecrets = t.name === "trufflehog";
@@ -3316,7 +3381,7 @@ async function executePipeline(
       const HIGH_PATHS = new Set(["phpmyadmin","adminer","adminer.php","wp-admin","phpinfo.php","info.php","debug",".git/HEAD"]);
       const MEDIUM_PATHS = new Set(["swagger-ui","swagger","graphql","graphiql","api-docs","openapi.json","actuator","actuator/env","actuator/heapdump","server-status"]);
 
-      const dirVulns: Array<{ cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source: string }> = [];
+      const dirVulnCandidates: Array<{ cve: string; cvss: number; severity: string; title: string; cwe: string; remediation: string; source: string; isCriticalOrHigh: boolean }> = [];
       const seen = new Set<string>();
       for (const host of dirFuzz.hosts) {
         for (const ep of host.endpoints) {
@@ -3327,14 +3392,62 @@ async function executePipeline(
           seen.add(key);
 
           if (CRITICAL_PATHS.has(pathClean)) {
-            dirVulns.push({ cve: `EXPOSED-FILE-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 9.5, severity: "critical", title: `Sensitive file exposed: ${ep.url}`, cwe: "CWE-538", remediation: `Immediately remove or block public access to ${ep.path}. Add server-level deny rule (e.g. Nginx: location ~ /\\.env { deny all; }). Rotate any credentials contained in the file.`, source: ep.url });
+            dirVulnCandidates.push({ cve: `EXPOSED-FILE-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 9.5, severity: "critical", title: `Sensitive file exposed: ${ep.url}`, cwe: "CWE-538", remediation: `Immediately remove or block public access to ${ep.path}. Add server-level deny rule (e.g. Nginx: location ~ /\\.env { deny all; }). Rotate any credentials contained in the file.`, source: ep.url, isCriticalOrHigh: true });
           } else if (HIGH_PATHS.has(pathClean)) {
-            dirVulns.push({ cve: `EXPOSED-ADMIN-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 7.5, severity: "high", title: `Admin interface exposed: ${ep.url}`, cwe: "CWE-284", remediation: `Restrict access to ${ep.path} via IP allowlist or authentication gateway. Consider relocating admin interfaces off the public web root.`, source: ep.url });
+            dirVulnCandidates.push({ cve: `EXPOSED-ADMIN-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 7.5, severity: "high", title: `Admin interface exposed: ${ep.url}`, cwe: "CWE-284", remediation: `Restrict access to ${ep.path} via IP allowlist or authentication gateway. Consider relocating admin interfaces off the public web root.`, source: ep.url, isCriticalOrHigh: true });
           } else if (MEDIUM_PATHS.has(pathClean)) {
-            dirVulns.push({ cve: `EXPOSED-API-DOCS-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 5.3, severity: "medium", title: `API documentation/debug endpoint exposed: ${ep.url}`, cwe: "CWE-200", remediation: `Restrict ${ep.path} to authenticated or internal users only. Disable debug endpoints in production.`, source: ep.url });
+            dirVulnCandidates.push({ cve: `EXPOSED-API-DOCS-${pathClean.replace(/[^A-Z0-9]/gi,"-").toUpperCase()}-${ep.host.replace(/[^A-Z0-9]/gi,"-").toUpperCase().slice(0,20)}`, cvss: 5.3, severity: "medium", title: `API documentation/debug endpoint exposed: ${ep.url}`, cwe: "CWE-200", remediation: `Restrict ${ep.path} to authenticated or internal users only. Disable debug endpoints in production.`, source: ep.url, isCriticalOrHigh: false });
           }
         }
       }
+
+      // ── Double-check critical/high endpoint findings with a real HTTP verification ──
+      // The BFS crawler can misclassify "soft 404s" (pages that return HTTP 200 but
+      // display a generic "Not Found" or redirect via JavaScript) as real exposures.
+      // We verify each critical/high candidate with a fresh fetch + body content check
+      // before generating a finding. Medium paths skip verification (lower risk).
+      const SOFT_404_PATTERNS = [
+        "page not found", "404 not found", "not found", "no page found",
+        "doesn't exist", "does not exist", "error 404", "file not found",
+      ];
+      const REAL_CONTENT_INDICATORS = [
+        // Patterns that prove the file/interface actually exists
+        "password", "passwd", "secret", "api_key", "apikey", "db_password",
+        "database_url", "aws_access", "private_key", "BEGIN RSA", "BEGIN OPENSSH",
+        "[client]", "[mysqld]", "MYSQL_ROOT", "phpinfo()", "phpMyAdmin",
+        "wp-login", "adminer", "[database]", "credentials",
+      ];
+
+      const dirVulns = (await Promise.all(
+        dirVulnCandidates.map(async (v) => {
+          if (!v.isCriticalOrHigh) return v; // medium paths pass through without verification
+          try {
+            const vCtrl = new AbortController();
+            const vTimer = setTimeout(() => vCtrl.abort(), 5000);
+            const resp = await orchestratedFetch(v.source, { signal: vCtrl.signal, redirect: "follow" });
+            clearTimeout(vTimer);
+            if (resp.status !== 200) return null; // final status must be 200 after redirects
+            const body = await resp.text().catch(() => "");
+            if (body.length < 150) return null; // empty/near-empty body = not a real file
+            const lc = body.toLowerCase();
+            // Confirmed real if it contains known sensitive content patterns
+            const hasRealContent = REAL_CONTENT_INDICATORS.some(p => lc.includes(p.toLowerCase()));
+            if (hasRealContent) return v;
+            // Reject if body looks like a generic error page
+            const isSoft404 = SOFT_404_PATTERNS.some(p => lc.includes(p));
+            if (isSoft404) {
+              logger.info({ url: v.source, scanId }, "Endpoint finding discarded — soft-404 response body detected");
+              return null;
+            }
+            // No strong signal either way — accept it (conservative: keep as finding)
+            return v;
+          } catch {
+            // Fetch timed out or failed = endpoint not consistently reachable = discard
+            logger.info({ url: v.source, scanId }, "Endpoint finding discarded — verification fetch failed");
+            return null;
+          }
+        })
+      )).filter((v): v is NonNullable<typeof v> => v !== null);
 
       const interestingUrls = dirFuzz.hosts.flatMap(h => h.endpoints.filter(e => e.isInteresting || (e.source === "fuzz" && e.statusCode === 200)));
 
@@ -3684,18 +3797,31 @@ async function executePipeline(
       }
     }
 
-    // Insert genuinely new findings in batches
+    // Insert genuinely new findings in batches — count only confirmed DB inserts
+    let insertedCount = 0;
     for (let i = 0; i < toInsert.length; i += 50) {
-      await db.insert(findingsTable).values(toInsert.slice(i, i + 50));
+      try {
+        await db.insert(findingsTable).values(toInsert.slice(i, i + 50));
+        insertedCount += toInsert.slice(i, i + 50).length;
+      } catch (insertErr) {
+        logger.warn({ err: insertErr, assetId: asset.id, batch: i }, "Finding batch insert partial failure");
+      }
     }
-    findingTotals.push(updateGroupsByPrev.size > 0 ? Array.from(updateGroupsByPrev.values()).flat().length + toInsert.length : toInsert.length);
+    // findingTotals tracks CONFIRMED DB operations only:
+    //   insertedCount = rows successfully written to findings table this scan
+    //   updateGroupsByPrev.size > 0 = seen-again findings that were re-stamped
+    const seenAgainCount = updateGroupsByPrev.size > 0 ? Array.from(updateGroupsByPrev.values()).flat().length : 0;
+    findingTotals.push(seenAgainCount + insertedCount);
 
     // ── Stale finding tracking + auto-mitigation ──────────────────────────────
     // Increment consecutiveMissedScans for findings NOT seen in this scan run.
     // Auto-mitigate those that exceed the configured threshold.
     try {
       const thresholdStr = await getPlatformSetting("auto_mitigate_threshold");
-      const threshold = thresholdStr !== null ? parseInt(thresholdStr, 10) : 3;
+      // Default reduced from 3 → 2: a finding not seen in 2 consecutive scans is
+      // very likely resolved; waiting for a 3rd miss allows false positives to linger
+      // an extra full scan cycle before being cleaned up.
+      const threshold = thresholdStr !== null ? parseInt(thresholdStr, 10) : 2;
       if (!isNaN(threshold) && threshold > 0) {
         // Increment missed counter for all stale open findings on this asset
         await db.update(findingsTable)
