@@ -202,7 +202,7 @@ export function Sidebar() {
       ref={asideRef as React.RefObject<HTMLDivElement>}
       onScroll={handleScroll}
       className={cn(
-        "flex flex-col shrink-0 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 overflow-y-auto transition-all duration-200",
+        "flex flex-col shrink-0 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 overflow-hidden transition-all duration-200",
         collapsed ? "w-14" : "w-60",
       )}
     >
@@ -256,7 +256,7 @@ export function Sidebar() {
 
 
       {/* Navigation */}
-      <nav className={cn("flex-1 py-3 space-y-4", collapsed ? "px-1.5" : "px-3")}>
+      <nav className={cn("flex-1 py-3 space-y-4 overflow-y-auto", collapsed ? "px-1.5" : "px-3")}>
         {visibleGroups.map((group) => (
           <div key={group.title}>
             {!collapsed && (

@@ -692,7 +692,7 @@ function SuperAdminDashboard() {
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Assets</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Open</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Critical</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Scans</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-muted-foreground">Total Scans</th>
                 <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
               </tr>
             </thead>
@@ -723,9 +723,9 @@ function SuperAdminDashboard() {
                       ? <span className="text-red-400 font-bold">{t.criticalCount}</span>
                       : <span className="text-muted-foreground/50">0</span>}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {t.activeScans > 0
-                      ? <span className="text-blue-400">{t.activeScans}</span>
+                  <td className="px-4 py-3 text-right tabular-nums text-sm">
+                    {(t.scanCount ?? 0) > 0
+                      ? <span className="font-medium">{t.scanCount}</span>
                       : <span className="text-muted-foreground/50">0</span>}
                   </td>
                   <td className="px-4 py-3 text-center">

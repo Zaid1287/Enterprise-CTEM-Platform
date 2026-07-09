@@ -74,7 +74,10 @@ function toScanResponse(s: typeof brandThreatScansTable.$inferSelect) {
 router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;
   let btWhere;
-  if (role === "account_manager") {
+  if (role === "super_admin") {
+    // SA sees ALL brand threats across every tenant — no tenant restriction
+    btWhere = undefined;
+  } else if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
     if (ids.length === 0) { res.json([]); return; }
     btWhere = inArray(brandThreatScansTable.tenantId, ids);

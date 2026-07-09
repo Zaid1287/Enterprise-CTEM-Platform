@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, count, and, desc, sql, inArray, or, isNull, lte, gte, ne } from "drizzle-orm";
-import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable, brandThreatScansTable } from "@workspace/db";
+import { db, assetsTable, findingsTable, scansTable, alertsTable, riskScoresTable, auditLogsTable, complianceControlsTable, tenantsTable, usersTable, accountManagerClientsTable, takedownRequestsTable, brandThreatScansTable, scanAssetResultsTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { cacheGet, cacheSet, cacheDelete, ck } from "../lib/cache";
 
@@ -286,8 +286,18 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   const CLOSED_STATUSES = ["mitigated", "accepted_risk", "false_positive"];
   const newVulns7D = allFindings.filter(f => new Date(f.createdAt) >= sevenDaysAgo).length;
   const resolvedVulns7D = allFindings.filter(f => CLOSED_STATUSES.includes(f.status) && new Date(f.updatedAt) >= sevenDaysAgo).length;
-  // cve (not cveId) — that is the actual schema column name
-  const exposedPortsCount = allFindings.filter(f => f.cve?.startsWith("EXP-PORT-")).length;
+  // Count total open ports from scan_asset_results.ports JSONB (real port scan data).
+  // This is more accurate than filtering findings by EXP-PORT-* prefix, because it
+  // reflects ALL open ports discovered — not only ports in the 26-entry danger list.
+  const sarPortRows = assetIds.length > 0
+    ? await db.select({ ports: scanAssetResultsTable.ports })
+        .from(scanAssetResultsTable)
+        .where(inArray(scanAssetResultsTable.tenantId, allDataTenantIds))
+    : [];
+  const exposedPortsCount = sarPortRows.reduce((total, row) => {
+    if (Array.isArray(row.ports)) return total + row.ports.length;
+    return total;
+  }, 0);
 
   const severityBreakdown = ["critical", "high", "medium", "low", "info"].map(severity => ({
     severity,
@@ -437,6 +447,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       criticalCount: platformFindings.filter(f => f.severity === "critical").length,
       openFindingCount: platformFindings.filter(f => f.status === "open").length,
       activeScans: allScans.filter(s => s.tenantId === req.user!.tenantId && (s.status === "running" || s.status === "pending")).length,
+      scanCount: allScans.filter(s => s.tenantId === req.user!.tenantId).length,
       avgRisk: platformAvgRisk,
     }] : []),
     // Client tenant rows
@@ -453,6 +464,10 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
         (s.status === "running" || s.status === "pending") &&
         (s.tenantId === t.id || (s.assetIds ?? []).some(aid => tAssetIdSet.has(aid)))
       ).length;
+      const scanCount = allScans.filter(s =>
+        s.tenantId === t.id ||
+        ((s.assetIds ?? []) as number[]).some(aid => tAssetIdSet.has(aid))
+      ).length;
       return {
         id: t.id, name: t.name, slug: t.slug, plan: t.plan, isActive: t.isActive,
         createdAt: t.createdAt.toISOString(),
@@ -462,6 +477,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
         criticalCount: tFindings.filter(f => f.severity === "critical").length,
         openFindingCount: tFindings.filter(f => f.status === "open").length,
         activeScans,
+        scanCount,
         avgRisk,
       };
     }),
