@@ -228,53 +228,60 @@ export default function AssetGroupDetailPage() {
     );
   }
 
+  const COLOR_MAP: Record<string, string> = { slate:"#64748b",rose:"#f43f5e",orange:"#f97316",amber:"#f59e0b",lime:"#84cc16",teal:"#14b8a6",sky:"#0ea5e9",violet:"#8b5cf6" };
+  const groupColor = COLOR_MAP[g?.color ?? "slate"] ?? "#64748b";
+
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="space-y-5">
       {/* Back */}
       <Button variant="ghost" size="sm" className="gap-1.5 -ml-2 text-muted-foreground" onClick={() => navigate("/asset-groups")}>
         <ArrowLeft className="w-4 h-4" /> Asset Groups
       </Button>
 
-      {/* Header card */}
-      <div className="bg-card border border-border rounded-xl p-5">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-              <Layers className="w-4 h-4 text-primary" />
+      {/* Hero header */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        {/* Color bar accent */}
+        <div className="h-1.5 w-full" style={{ background: `linear-gradient(90deg, ${groupColor}aa, ${groupColor}22)` }} />
+        <div className="p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border" style={{ background: `${groupColor}20`, borderColor: `${groupColor}40` }}>
+                <Layers className="w-5 h-5" style={{ color: groupColor }} />
+              </div>
+              {editing ? (
+                <div className="space-y-1 flex-1 min-w-0">
+                  <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="h-8 text-sm font-medium" />
+                  <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="Description (optional)" className="h-7 text-xs" />
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] text-muted-foreground mr-1">Color:</span>
+                    {["slate","rose","orange","amber","lime","teal","sky","violet"].map(c => (
+                      <button
+                        key={c}
+                        onClick={() => setForm(p => ({ ...p, color: c }))}
+                        className={`w-4 h-4 rounded-full border-2 transition-all ${form.color === c ? "border-foreground scale-110" : "border-transparent hover:border-muted-foreground"}`}
+                        style={{ backgroundColor: COLOR_MAP[c] }}
+                        title={c}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="min-w-0">
+                  <h1 className="text-lg font-semibold truncate">{g?.name}</h1>
+                  {g?.description && <p className="text-xs text-muted-foreground mt-0.5">{g.description}</p>}
+                  {g?.createdAt && <p className="text-[10px] text-muted-foreground/60 mt-1">Created {formatDate(g.createdAt)}</p>}
+                </div>
+              )}
             </div>
             {editing ? (
-              <div className="space-y-1">
-                <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="h-8 text-sm font-medium" />
-                <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="Description (optional)" className="h-7 text-xs" />
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  <span className="text-[10px] text-muted-foreground mr-1">Color:</span>
-                  {["slate","rose","orange","amber","lime","teal","sky","violet"].map(c => (
-                    <button
-                      key={c}
-                      onClick={() => setForm(p => ({ ...p, color: c }))}
-                      className={`w-4 h-4 rounded-full border-2 transition-all ${form.color === c ? "border-foreground scale-110" : "border-transparent hover:border-muted-foreground"}`}
-                      style={{ backgroundColor: { slate:"#64748b",rose:"#f43f5e",orange:"#f97316",amber:"#f59e0b",lime:"#84cc16",teal:"#14b8a6",sky:"#0ea5e9",violet:"#8b5cf6" }[c] }}
-                      title={c}
-                    />
-                  ))}
-                </div>
+              <div className="flex gap-1.5 shrink-0">
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setEditing(false)}>Cancel</Button>
+                <Button size="sm" className="h-7 text-xs gap-1" onClick={saveEdit} disabled={saving}>
+                  <Save className="w-3 h-3" />{saving ? "Saving…" : "Save"}
+                </Button>
               </div>
             ) : (
-              <div>
-                <h1 className="text-base font-semibold">{g?.name}</h1>
-                {g?.description && <p className="text-xs text-muted-foreground">{g.description}</p>}
-              </div>
-            )}
-          </div>
-          {editing ? (
-            <div className="flex gap-1.5">
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setEditing(false)}>Cancel</Button>
-              <Button size="sm" className="h-7 text-xs gap-1" onClick={saveEdit} disabled={saving}>
-                <Save className="w-3 h-3" />{saving ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          ) : (
-            <div className="flex gap-1.5">
+              <div className="flex gap-1.5 shrink-0">
               <Button
                 variant="outline" size="sm" className="h-7 text-xs gap-1"
                 disabled={memberList.length === 0}
@@ -293,28 +300,35 @@ export default function AssetGroupDetailPage() {
                 Scan Now
               </Button>
               <Button variant="outline" size="sm" className="h-7 text-xs" onClick={startEdit}>Edit</Button>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Stats row */}
-        <div className="flex gap-5 text-xs text-muted-foreground flex-wrap">
-          <span><span className="font-semibold text-foreground">{memberList.length}</span> assets</span>
-          {!loadingFindings && (
-            <>
-              <span><span className="font-semibold text-foreground">{findingCounts.total}</span> findings</span>
-              {findingCounts.critical > 0 && (
-                <span className="text-red-400"><span className="font-semibold">{findingCounts.critical}</span> critical</span>
-              )}
-              {findingCounts.high > 0 && (
-                <span className="text-orange-400"><span className="font-semibold">{findingCounts.high}</span> high</span>
-              )}
-            </>
-          )}
-          {g?.createdAt && <span>Created {formatDate(g.createdAt)}</span>}
-          {verifiedMemberIds.length < memberList.length && memberList.length > 0 && (
-            <span className="text-amber-400">{memberList.length - verifiedMemberIds.length} unverified (excluded from scans)</span>
-          )}
+        {/* Stat cards row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-5 pb-5 -mt-1">
+          <div className="bg-background/60 border border-border rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Assets</p>
+            <p className="text-2xl font-bold tabular-nums">{memberList.length}</p>
+            {verifiedMemberIds.length < memberList.length && memberList.length > 0 && (
+              <p className="text-[10px] text-amber-400 mt-0.5">{memberList.length - verifiedMemberIds.length} unverified</p>
+            )}
+          </div>
+          <div className="bg-background/60 border border-border rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Findings</p>
+            <p className="text-2xl font-bold tabular-nums">{findingCounts.total}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{findingCounts.open} open</p>
+          </div>
+          <div className="bg-background/60 border border-red-500/20 rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Critical</p>
+            <p className={cn("text-2xl font-bold tabular-nums", findingCounts.critical > 0 ? "text-red-400" : "text-muted-foreground/40")}>{findingCounts.critical}</p>
+            <p className="text-[10px] text-orange-400 mt-0.5">{findingCounts.high} high</p>
+          </div>
+          <div className="bg-background/60 border border-border rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Verified</p>
+            <p className="text-2xl font-bold tabular-nums text-green-400">{verifiedMemberIds.length}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">of {memberList.length} assets</p>
+          </div>
         </div>
       </div>
 

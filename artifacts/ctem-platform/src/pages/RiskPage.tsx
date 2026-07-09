@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   useListRiskScores, getListRiskScoresQueryKey,
   useGetTopRiskyAssets, getGetTopRiskyAssetsQueryKey,
+  useListAssets, getListAssetsQueryKey,
 } from "@workspace/api-client-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -9,6 +10,7 @@ import {
 } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn, riskLevelBg, capitalize } from "@/lib/utils";
 import { apiFetch } from "@/lib/apiFetch";
 import { useAuth } from "@/hooks/useAuth";
@@ -23,6 +25,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 export default function RiskPage() {
   const { user } = useAuth();
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const [assetFilter, setAssetFilter] = useState<string>("all");
   const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
 
   const { data: scores, isLoading } = useListRiskScores({
@@ -44,6 +47,11 @@ export default function RiskPage() {
     },
   });
 
+  const { data: assetsRaw } = useListAssets({} as any, {
+    query: { queryKey: getListAssetsQueryKey({} as any) },
+  });
+  const assetsList = (assetsRaw as any[]) ?? [];
+
   // Issue 5: Real historical trend data from /risk/history
   const { data: historyData } = useQuery({
     queryKey: ["risk-history", tenantFilter],
@@ -52,7 +60,13 @@ export default function RiskPage() {
     refetchInterval: 60_000,
   });
 
-  const list = scores as any[] ?? [];
+  const allScores = (scores as any[]) ?? [];
+  // Apply per-asset filter
+  const list = useMemo(() => {
+    if (assetFilter === "all") return allScores;
+    const id = Number(assetFilter);
+    return allScores.filter((s: any) => s.assetId === id);
+  }, [allScores, assetFilter]);
   const history = historyData as any[] ?? [];
   const levels = ["critical", "high", "medium", "low"];
   const breakdown = levels.map(level => ({
@@ -78,8 +92,22 @@ export default function RiskPage() {
           <h1 className="text-lg font-semibold">Risk Scoring</h1>
           <p className="text-sm text-muted-foreground">Quantified risk across all assets</p>
         </div>
-        <div className="flex items-center gap-2">
-          {isPrivileged && <TenantFilter value={tenantFilter} onChange={setTenantFilter} />}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Per-asset filter */}
+          {allScores.length > 0 && (
+            <Select value={assetFilter} onValueChange={setAssetFilter}>
+              <SelectTrigger className="h-8 w-40 text-xs">
+                <SelectValue placeholder="All Assets" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Assets</SelectItem>
+                {allScores.map((s: any) => (
+                  <SelectItem key={s.assetId} value={String(s.assetId)}>{s.assetName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {isPrivileged && <TenantFilter value={tenantFilter} onChange={v => { setTenantFilter(v); setAssetFilter("all"); }} />}
         </div>
       </div>
 

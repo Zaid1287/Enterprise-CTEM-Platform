@@ -3,9 +3,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   useListScans, useCreateScan, useCancelScan,
-  useListAssets, useListScanJobs, useListAssetGroups, useGetAssetGroupMembers,
+  useListAssets, useListScanJobs, useListAssetGroups, useGetAssetGroupMembers, useCreateScanSchedule,
   getListScansQueryKey, getListAssetsQueryKey, getListScanJobsQueryKey, getListAssetGroupsQueryKey,
-  getGetAssetGroupMembersQueryKey,
+  getGetAssetGroupMembersQueryKey, getListScanSchedulesQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
@@ -13,7 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, X, RefreshCw, CheckCircle2, Loader2, AlertCircle, Clock,
   ShieldAlert, ShieldCheck, Calendar, History, Layers, Link2,
-  Brain, Sparkles, AlertTriangle,
+  Brain, Sparkles, AlertTriangle, SlidersHorizontal, ToggleLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -121,6 +121,10 @@ export default function ScansPage() {
   const [page, setPage] = useState(1);
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const [groupFilter, setGroupFilter] = useState<number | null>(null);
+  const [assetFilter, setAssetFilter] = useState<number | null>(null);
+  // Schedule mode for the Create dialog
+  const [scheduleMode, setScheduleMode] = useState(false);
+  const [schedForm, setSchedForm] = useState({ frequency: "daily", runTime: "09:00", dayOfWeek: 1, dayOfMonth: 1, timezone: "+00:00" });
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -186,6 +190,7 @@ export default function ScansPage() {
   });
   const createScan = useCreateScan();
   const cancelScan = useCancelScan();
+  const createSchedule = useCreateScanSchedule();
 
   const assetsList = (assets as any[]) ?? [];
 
@@ -205,18 +210,29 @@ export default function ScansPage() {
   });
   const groupMemberIds = useMemo(() => {
     if (!groupFilter) return null;
+    if (groupMembersRaw === undefined) return undefined; // still loading — don't filter yet
     const members = (groupMembersRaw as any[]) ?? [];
     return new Set(members.map((m: any) => m.id));
   }, [groupFilter, groupMembersRaw]);
 
   const allScans = useMemo(() => {
     const raw = (scans as any[]) ?? [];
-    if (!groupFilter || !groupMemberIds) return raw;
-    // Show scans that include at least one asset from the selected group
-    return raw.filter((scan: any) =>
-      Array.isArray(scan.assetIds) && scan.assetIds.some((id: number) => groupMemberIds.has(id))
-    );
-  }, [scans, groupFilter, groupMemberIds]);
+    let filtered = raw;
+    // Group filter — wait for members to load before filtering
+    if (groupFilter) {
+      if (groupMemberIds === undefined) return raw; // still loading, show all
+      filtered = filtered.filter((scan: any) =>
+        Array.isArray(scan.assetIds) && scan.assetIds.some((id: number) => groupMemberIds!.has(id))
+      );
+    }
+    // Per-asset filter
+    if (assetFilter) {
+      filtered = filtered.filter((scan: any) =>
+        Array.isArray(scan.assetIds) && scan.assetIds.includes(assetFilter)
+      );
+    }
+    return filtered;
+  }, [scans, groupFilter, groupMemberIds, assetFilter]);
 
   const autoName = useMemo(
     () => buildScanName(form.assetIds, assetsList),
@@ -234,6 +250,38 @@ export default function ScansPage() {
       setCreateError({ message: "Select at least one asset to scan." });
       return;
     }
+
+    if (scheduleMode) {
+      // Save as schedule — one schedule entry per asset
+      try {
+        for (const assetId of form.assetIds) {
+          const asset = assetsList.find((a: any) => a.id === assetId);
+          const assetLabel = asset?.value ?? asset?.name ?? `Asset #${assetId}`;
+          const payload: Record<string, unknown> = {
+            name: customName.trim() || `${assetLabel} — ${schedForm.frequency} scan`,
+            frequency: schedForm.frequency,
+            runTime: schedForm.runTime,
+            timezone: schedForm.timezone,
+            assetId,
+          };
+          if (schedForm.frequency === "weekly") payload.dayOfWeek = schedForm.dayOfWeek;
+          if (schedForm.frequency === "monthly") payload.dayOfMonth = schedForm.dayOfMonth;
+          await createSchedule.mutateAsync({ data: payload as any });
+        }
+        queryClient.invalidateQueries({ queryKey: getListScanSchedulesQueryKey() });
+        setShowCreate(false);
+        setForm({ type: "full", assetIds: [], intensity: "endpoint-discovery" });
+        setCustomName("");
+        setScheduleMode(false);
+        setCreateError(null);
+        setActiveTab("schedules");
+        toast({ title: "Schedule created", description: `${form.assetIds.length} asset(s) scheduled for ${schedForm.frequency} scans.` });
+      } catch {
+        setCreateError({ message: "Failed to create schedule. Please try again." });
+      }
+      return;
+    }
+
     try {
       await createScan.mutateAsync({ data: { name: effectiveName, ...form } } as any);
       queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
@@ -291,6 +339,22 @@ export default function ScansPage() {
           <p className="text-sm text-muted-foreground">{allScans.length} total scans</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
+          {/* Asset filter */}
+          {activeTab === "history" && assetsList.length > 0 && (
+            <div className="relative">
+              <select
+                value={assetFilter ?? ""}
+                onChange={e => { setAssetFilter(e.target.value ? Number(e.target.value) : null); setPage(1); }}
+                className="h-8 pl-7 pr-3 text-xs border border-border rounded-md bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors"
+              >
+                <option value="">All Assets</option>
+                {assetsList.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.value ?? a.name}</option>
+                ))}
+              </select>
+              <SlidersHorizontal className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            </div>
+          )}
           {/* Group filter */}
           {activeTab === "history" && groupList.length > 0 && (
             <div className="relative">
@@ -348,7 +412,7 @@ export default function ScansPage() {
             <ul className="space-y-1 text-xs list-disc list-inside">
               <li>Schedules run at the exact time and day you configure — not based on last scan completion.</li>
               <li>Only <span className="text-green-400 font-medium">verified</span> assets in each schedule will be scanned. Unverified assets are skipped automatically.</li>
-              <li>To create a schedule, click <strong>New Scan</strong>, select assets and choose "Save as Schedule".</li>
+              <li>To create a schedule: click <strong>New Scan</strong> → select assets → click <strong>"Save as schedule"</strong> toggle → configure frequency → click <strong>Save Schedule</strong>.</li>
               <li>The beat scheduler checks every 60 seconds for overdue schedules — maximum 60s delay from configured time.</li>
             </ul>
           </div>
@@ -506,10 +570,37 @@ export default function ScansPage() {
 
       <Dialog open={showCreate} onOpenChange={v => {
         setShowCreate(v);
-        if (!v) { setForm({ type: "full", assetIds: [], intensity: "endpoint-discovery" }); setCustomName(""); setCreateError(null); }
+        if (!v) { setForm({ type: "full", assetIds: [], intensity: "endpoint-discovery" }); setCustomName(""); setCreateError(null); setScheduleMode(false); }
       }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Create Scan</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{scheduleMode ? "Save as Schedule" : "Create Scan"}</DialogTitle>
+          </DialogHeader>
+
+          {/* Mode toggle */}
+          <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border -mb-1 mt-1">
+            <div className="flex items-center gap-2">
+              {scheduleMode ? <Calendar className="w-4 h-4 text-primary" /> : <ShieldCheck className="w-4 h-4 text-green-400" />}
+              <div>
+                <p className="text-xs font-medium">{scheduleMode ? "Schedule mode" : "Immediate scan"}</p>
+                <p className="text-[10px] text-muted-foreground">{scheduleMode ? "Creates a recurring scan schedule" : "Starts the scan right away"}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setScheduleMode(p => !p); setCreateError(null); }}
+              className={cn(
+                "flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-colors",
+                scheduleMode
+                  ? "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground hover:border-border"
+              )}
+            >
+              <ToggleLeft className="w-3.5 h-3.5" />
+              {scheduleMode ? "Switch to immediate" : "Save as schedule"}
+            </button>
+          </div>
+
           <form onSubmit={handleCreate} className="space-y-3 mt-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Scan Name</Label>
@@ -524,34 +615,84 @@ export default function ScansPage() {
               )}
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Scan Type</Label>
-              <Select value={form.type} onValueChange={v => setForm(p => ({ ...p, type: v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {SCAN_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t)} Scan</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            {!scheduleMode && (
+              <>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Scan Type</Label>
+                  <Select value={form.type} onValueChange={v => setForm(p => ({ ...p, type: v }))}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {SCAN_TYPES.map(t => <SelectItem key={t} value={t}>{capitalize(t)} Scan</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Scan Intensity</Label>
-              <Select value={form.intensity} onValueChange={v => setForm(p => ({ ...p, intensity: v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {SCAN_INTENSITIES.map(s => (
-                    <SelectItem key={s.value} value={s.value}>
-                      <div className="flex flex-col">
-                        <span>{s.label}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[10px] text-muted-foreground">
-                {SCAN_INTENSITIES.find(s => s.value === form.intensity)?.description}
-              </p>
-            </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Scan Intensity</Label>
+                  <Select value={form.intensity} onValueChange={v => setForm(p => ({ ...p, intensity: v }))}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {SCAN_INTENSITIES.map(s => (
+                        <SelectItem key={s.value} value={s.value}>
+                          <div className="flex flex-col"><span>{s.label}</span></div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground">
+                    {SCAN_INTENSITIES.find(s => s.value === form.intensity)?.description}
+                  </p>
+                </div>
+              </>
+            )}
+
+            {scheduleMode && (
+              <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Frequency</Label>
+                    <Select value={schedForm.frequency} onValueChange={v => setSchedForm(p => ({ ...p, frequency: v }))}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1"><Clock className="w-3 h-3" /> Time (UTC)</Label>
+                    <Input type="time" value={schedForm.runTime} onChange={e => setSchedForm(p => ({ ...p, runTime: e.target.value }))} className="h-9" />
+                  </div>
+                </div>
+                {schedForm.frequency === "weekly" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Day of Week</Label>
+                    <Select value={String(schedForm.dayOfWeek)} onValueChange={v => setSchedForm(p => ({ ...p, dayOfWeek: Number(v) }))}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map((d, i) => (
+                          <SelectItem key={i} value={String(i)}>{d}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {schedForm.frequency === "monthly" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Day of Month</Label>
+                    <Select value={String(schedForm.dayOfMonth)} onValueChange={v => setSchedForm(p => ({ ...p, dayOfMonth: Number(v) }))}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                          <SelectItem key={d} value={String(d)}>{d}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label className="text-xs">
@@ -620,9 +761,11 @@ export default function ScansPage() {
               <Button variant="outline" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
               <Button
                 type="submit"
-                disabled={createScan.isPending || form.assetIds.length === 0}
+                disabled={(scheduleMode ? createSchedule.isPending : createScan.isPending) || form.assetIds.length === 0}
               >
-                {createScan.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Starting…</> : "Start Scan"}
+                {scheduleMode
+                  ? (createSchedule.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Saving…</> : <><Calendar className="w-3.5 h-3.5 mr-1.5" /> Save Schedule</>)
+                  : (createScan.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Starting…</> : "Start Scan")}
               </Button>
             </DialogFooter>
           </form>
