@@ -31,7 +31,7 @@ function parseId(param: string | string[] | undefined): number {
 
 // ── Proxy CRUD ─────────────────────────────────────────────────────────────────
 
-router.get("/api/scan-proxies", requireAuth, requireAdmin, async (req, res) => {
+router.get("/scan-proxies", requireAuth, requireAdmin, async (req, res) => {
   try {
     const proxies = await db
       .select()
@@ -64,7 +64,7 @@ router.get("/api/scan-proxies", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-router.post("/api/scan-proxies", requireAuth, requireSuperAdmin, async (req, res) => {
+router.post("/scan-proxies", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const { ip, port = 8080, label, type = "http", country, asn, username, password } = req.body;
     if (!ip) { res.status(400).json({ error: "ip is required" }); return; }
@@ -91,7 +91,7 @@ router.post("/api/scan-proxies", requireAuth, requireSuperAdmin, async (req, res
   }
 });
 
-router.patch("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+router.patch("/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -138,7 +138,7 @@ router.patch("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req
   }
 });
 
-router.delete("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+router.delete("/scan-proxies/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -151,7 +151,7 @@ router.delete("/api/scan-proxies/:id", requireAuth, requireSuperAdmin, async (re
   }
 });
 
-router.get("/api/scan-proxies/:id/health", requireAuth, requireAdmin, async (req, res) => {
+router.get("/scan-proxies/:id/health", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -219,7 +219,7 @@ router.get("/api/scan-proxies/:id/health", requireAuth, requireAdmin, async (req
 // ── Issue 3: Bulk proxy import (CSV / paste) ───────────────────────────────────
 // Accepts: { proxies: "1.2.3.4:8080\n5.6.7.8:3128:user:pass" }
 // Or: { proxies: [{ ip, port, username?, password?, label?, type?, country? }] }
-router.post("/api/scan-proxies/bulk", requireAuth, requireSuperAdmin, async (req, res) => {
+router.post("/scan-proxies/bulk", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const { proxies: raw, type: defaultType = "http" } = req.body;
     if (!raw) { res.status(400).json({ error: "proxies field is required" }); return; }
@@ -305,7 +305,7 @@ router.post("/api/scan-proxies/bulk", requireAuth, requireSuperAdmin, async (req
 // Body: { oldSecret: string }
 // Response: { reencrypted: number, failed: number, failures: { id, error }[] }
 
-router.post("/api/scan-proxies/rotate-key", requireAuth, requireSuperAdmin, async (req: any, res) => {
+router.post("/scan-proxies/rotate-key", requireAuth, requireSuperAdmin, async (req: any, res) => {
   try {
     const { oldSecret } = req.body ?? {};
     if (!oldSecret || typeof oldSecret !== "string") {
@@ -361,7 +361,7 @@ router.post("/api/scan-proxies/rotate-key", requireAuth, requireSuperAdmin, asyn
 
 // ── Orchestrator Config ────────────────────────────────────────────────────────
 
-router.get("/api/orchestrator-config", requireAuth, requireAdmin, async (req: any, res) => {
+router.get("/orchestrator-config", requireAuth, requireAdmin, async (req: any, res) => {
   try {
     const tenantId = req.user!.tenantId as number;
     const rows = await db.select().from(orchestratorConfigTable)
@@ -376,7 +376,7 @@ router.get("/api/orchestrator-config", requireAuth, requireAdmin, async (req: an
   }
 });
 
-router.patch("/api/orchestrator-config", requireAuth, requireAdmin, async (req: any, res) => {
+router.patch("/orchestrator-config", requireAuth, requireAdmin, async (req: any, res) => {
   try {
     const tenantId = req.user!.tenantId as number;
     const updates: Record<string, string> = req.body;
@@ -407,7 +407,7 @@ router.patch("/api/orchestrator-config", requireAuth, requireAdmin, async (req: 
 
 // ── Fingerprint Profiles ───────────────────────────────────────────────────────
 
-router.get("/api/scan-fingerprints", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/scan-fingerprints", requireAuth, requireAdmin, async (req, res) => {
   try {
     const profiles = await db
       .select()
@@ -420,7 +420,7 @@ router.get("/api/scan-fingerprints", requireAuth, requireSuperAdmin, async (req,
   }
 });
 
-router.get("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+router.get("/scan-fingerprints/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -436,7 +436,7 @@ router.get("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (
   }
 });
 
-router.patch("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+router.patch("/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -465,7 +465,7 @@ router.patch("/api/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async
 // ── Issue 4: Real-time waterfall SSE stream ────────────────────────────────────
 // Uses query-param token (like the alerts/stream endpoint) because EventSource
 // cannot send custom Authorization headers.
-router.get("/api/scan-telemetry/stream", (req: any, res: any) => {
+router.get("/scan-telemetry/stream", (req: any, res: any) => {
   const token = req.query.token as string | undefined;
   if (!token) { res.status(401).end(); return; }
 
@@ -499,7 +499,7 @@ router.get("/api/scan-telemetry/stream", (req: any, res: any) => {
 
 // ── Telemetry ──────────────────────────────────────────────────────────────────
 
-router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) => {
+router.get("/scan-telemetry", requireAuth, requireAdmin, async (req, res) => {
   try {
     const page   = Math.max(1, parseInt(req.query.page  as string ?? "1",  10));
     const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit as string ?? "50", 10)));
@@ -555,7 +555,7 @@ router.get("/api/scan-telemetry", requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
-router.get("/api/scan-telemetry/stats", requireAuth, requireAdmin, async (req, res) => {
+router.get("/scan-telemetry/stats", requireAuth, requireAdmin, async (req, res) => {
   try {
     const now = Date.now();
     const since30m = new Date(now - 30 * 60_000);

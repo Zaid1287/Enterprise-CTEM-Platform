@@ -1857,19 +1857,19 @@ function AutoTunerTab() {
   }
 
   const actionLabel: Record<string, string> = {
-    increase_delay:  "Increased delay multiplier",
-    decrease_delay:  "Decreased delay multiplier",
-    enable_bypass:   "Enabled WAF bypass",
-    disable_bypass:  "Disabled WAF bypass",
-    no_change:       "No change",
+    increase_delay_multiplier: "Increased delay multiplier",
+    decrease_delay_multiplier: "Decreased delay multiplier",
+    enable_waf_bypass:         "Enabled WAF bypass",
+    disable_waf_bypass:        "Disabled WAF bypass",
+    no_change:                 "No change",
   };
 
   const actionColor: Record<string, string> = {
-    increase_delay: "text-amber-500",
-    decrease_delay: "text-emerald-500",
-    enable_bypass:  "text-blue-500",
-    disable_bypass: "text-muted-foreground",
-    no_change:      "text-muted-foreground",
+    increase_delay_multiplier: "text-amber-500",
+    decrease_delay_multiplier: "text-emerald-500",
+    enable_waf_bypass:         "text-blue-500",
+    disable_waf_bypass:        "text-muted-foreground",
+    no_change:                 "text-muted-foreground",
   };
 
   return (
