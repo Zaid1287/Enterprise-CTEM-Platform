@@ -965,6 +965,11 @@ function SchedulesSection() {
     dayOfMonth: 1,
   });
 
+  const { data: assetsData } = useListAssets({ query: { queryKey: ["assets", "brand-schedule-assets"], staleTime: 60_000 } });
+  const verifiedDomainAssets = (assetsData ?? []).filter(
+    (a: any) => a.verificationStatus === "verified" && (a.type === "domain" || a.type === "subdomain"),
+  );
+
   async function load() {
     setLoading(true);
     try {
@@ -1088,12 +1093,31 @@ function SchedulesSection() {
               </div>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Domain *</label>
-                <input
-                  value={form.domain}
-                  onChange={e => setForm(v => ({ ...v, domain: e.target.value }))}
-                  placeholder="e.g. acme.com"
-                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                />
+                {verifiedDomainAssets.length > 0 ? (
+                  <select
+                    value={form.domain}
+                    onChange={e => setForm(v => ({ ...v, domain: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    <option value="">Select a verified domain…</option>
+                    {verifiedDomainAssets.map((a: any) => {
+                      const domain = (a.value ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+                      return (
+                        <option key={a.id} value={domain}>
+                          {a.name} — {domain}
+                        </option>
+                      );
+                    })}
+                  </select>
+                ) : (
+                  <input
+                    value={form.domain}
+                    onChange={e => setForm(v => ({ ...v, domain: e.target.value }))}
+                    placeholder="e.g. acme.com"
+                    className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                )}
+                <p className="text-[10px] text-muted-foreground mt-1">Only verified assets are eligible for brand threat monitoring.</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Frequency</label>

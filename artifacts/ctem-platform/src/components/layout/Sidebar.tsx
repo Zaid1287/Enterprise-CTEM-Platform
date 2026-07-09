@@ -7,7 +7,7 @@ import {
   Users, Building2, ChevronRight, GitBranch, ScanSearch,
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
   ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
-  Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal, ChevronDown,
+  Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 
@@ -39,6 +39,8 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "All Tenants", href: "/tenants", icon: Building2 },
       { label: "Packages", href: "/packages", icon: Package },
+      { label: "Platform Settings", href: "/settings/platform", icon: Settings, onlyFor: ["super_admin"] },
+      { label: "CDN Whitelist", href: "/settings/cdn-whitelist", icon: Shield, onlyFor: ["super_admin"] },
     ],
   },
   {
@@ -91,19 +93,19 @@ const navGroups: NavGroup[] = [
     title: "Infrastructure",
     onlyFor: ["admin", "super_admin"],
     items: [
-      { label: "Queue Monitor", href: "/queue-monitor", icon: Activity, onlyFor: ["admin", "super_admin"] },
+      { label: "Queue Monitor",    href: "/queue-monitor",           icon: Activity,     onlyFor: ["admin", "super_admin"] },
     ],
   },
   {
     title: "Scan Orchestration",
     onlyFor: ["admin", "super_admin"],
     items: [
-      { label: "Orchestration",  href: "/settings/orchestration",       icon: SlidersHorizontal },
-      { label: "Dashboard",      href: "/scan-orchestration",           icon: Cpu },
-      { label: "Proxy Pool",     href: "/settings/scan-proxies",        icon: Radio,       onlyFor: ["super_admin"] },
-      { label: "Fingerprints",   href: "/settings/scan-fingerprints",   icon: Fingerprint, onlyFor: ["super_admin"] },
-      { label: "Config",         href: "/settings/orchestrator-config", icon: Sliders,     onlyFor: ["super_admin"] },
-      { label: "Telemetry Logs", href: "/scan-telemetry",               icon: ScrollText },
+      { label: "Orchestration",    href: "/settings/orchestration",      icon: SlidersHorizontal },
+      { label: "Dashboard",        href: "/scan-orchestration",          icon: Cpu },
+      { label: "Proxy Pool",       href: "/settings/scan-proxies",       icon: Radio,        onlyFor: ["super_admin"] },
+      { label: "Fingerprints",     href: "/settings/scan-fingerprints",  icon: Fingerprint,  onlyFor: ["super_admin"] },
+      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders,     onlyFor: ["super_admin"] },
+      { label: "Telemetry Logs",   href: "/scan-telemetry",              icon: ScrollText },
     ],
   },
   {
@@ -112,50 +114,38 @@ const navGroups: NavGroup[] = [
       { label: "AI Copilot", href: "/ai-copilot", icon: Brain },
     ],
   },
+  {
+    title: "Admin",
+    onlyFor: ["super_admin", "admin", "account_manager"],
+    items: [
+      { label: "Users", href: "/settings/users", icon: Users, onlyFor: ["super_admin", "admin"] },
+      { label: "Tenant Management", href: "/tenants", icon: Building2, onlyFor: ["super_admin", "admin"] },
+      { label: "Access Requests", href: "/access-requests", icon: UserCheck, onlyFor: ["super_admin", "admin"] },
+      { label: "Audit Logs", href: "/audit-logs", icon: ClipboardList, onlyFor: ["super_admin", "admin"] },
+    ],
+  },
+  {
+    title: "Account",
+    items: [
+      { label: "Settings", href: "/settings/account", icon: Settings },
+    ],
+  },
 ];
-
-// Settings items — shown in a dedicated collapsible section at the bottom
-const settingsItems: NavItem[] = [
-  { label: "Users",              href: "/settings/users",    icon: Users,         onlyFor: ["super_admin", "admin"] },
-  { label: "Platform Settings",  href: "/settings/platform", icon: Settings,      onlyFor: ["super_admin"] },
-  { label: "CDN Whitelist",      href: "/settings/cdn-whitelist", icon: Shield,   onlyFor: ["super_admin"] },
-  { label: "Access Requests",    href: "/access-requests",   icon: UserCheck,     onlyFor: ["super_admin", "admin"] },
-  { label: "Audit Logs",         href: "/audit-logs",        icon: ClipboardList, onlyFor: ["super_admin", "admin"] },
-  { label: "Account Settings",   href: "/settings/account",  icon: Settings },
-];
-
-const SETTINGS_HREFS = settingsItems.map(i => i.href);
 
 let _collapsed = false;
 let _scrollTop = 0;
-let _settingsOpen = true;
 
 export function Sidebar() {
   const [location] = useLocation();
   const { user, aiMapperEnabled } = useAuth();
   const role = user?.role ?? "client";
   const [collapsed, setCollapsed] = useState(_collapsed);
-  const [settingsOpen, setSettingsOpen] = useState(_settingsOpen);
   const asideRef = useRef<HTMLElement>(null);
 
   const toggle = () => {
     _collapsed = !collapsed;
     setCollapsed(!collapsed);
   };
-
-  const toggleSettings = () => {
-    _settingsOpen = !settingsOpen;
-    setSettingsOpen(!settingsOpen);
-  };
-
-  // Auto-open settings section when navigating to a settings page
-  useEffect(() => {
-    const onSettings = SETTINGS_HREFS.some(h => location === h || location.startsWith(h + "/"));
-    if (onSettings && !settingsOpen) {
-      _settingsOpen = true;
-      setSettingsOpen(true);
-    }
-  }, [location]);
 
   // Persist scroll position across re-renders caused by navigation
   const handleScroll = useCallback(() => {
@@ -170,17 +160,20 @@ export function Sidebar() {
 
   const isExternalMember = ["vendor", "employee", "third_party"].includes(role);
 
-  // External members see only "My Assets"
+  // External members (vendor/employee/third_party) see only "My Assets"
   const externalGroups: NavGroup[] = isExternalMember ? [
-    { title: "Assets", items: [{ label: "My Assets", href: "/assets", icon: Server }] },
+    {
+      title: "Assets",
+      items: [{ label: "My Assets", href: "/assets", icon: Server }],
+    },
   ] : [];
 
   const isAM = role === "account_manager";
 
   const aiMapperItems: NavItem[] = aiMapperEnabled ? [
-    { label: "Overview",   href: "/ai-mapper",            icon: Globe2 },
-    { label: "Endpoints",  href: "/ai-mapper/endpoints",  icon: Crosshair },
-    { label: "Scans",      href: "/ai-mapper/scans",      icon: Radar },
+    { label: "Overview",   href: "/ai-mapper",            icon: Globe2       },
+    { label: "Endpoints",  href: "/ai-mapper/endpoints",  icon: Crosshair    },
+    { label: "Scans",      href: "/ai-mapper/scans",      icon: Radar        },
     { label: "AI BOM",     href: "/ai-mapper/bom",        icon: ClipboardList },
     ...(isAM ? [{ label: "My Clients", href: "/ai-mapper/clients", icon: Users }] : []),
   ] : [];
@@ -204,39 +197,12 @@ export function Sidebar() {
 
   const visibleGroups = isExternalMember ? externalGroups : filteredGroups;
 
-  // Settings items filtered by role
-  const visibleSettingsItems = settingsItems.filter(
-    item => !item.onlyFor || item.onlyFor.includes(role)
-  );
-
-  const renderNavItem = (item: NavItem) => {
-    const isActive = location === item.href || location.startsWith(item.href + "/");
-    return (
-      <Link key={item.href} href={item.href}>
-        <div
-          title={collapsed ? item.label : undefined}
-          className={cn(
-            "flex items-center gap-2.5 rounded-md text-sm cursor-pointer transition-all",
-            collapsed ? "justify-center px-0 py-2.5" : "px-2.5 py-2",
-            isActive
-              ? "bg-sidebar-accent text-foreground font-medium"
-              : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-          )}
-        >
-          <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
-          {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
-          {!collapsed && isActive && <ChevronRight className="w-3 h-3 text-primary opacity-70" />}
-        </div>
-      </Link>
-    );
-  };
-
   return (
     <aside
       ref={asideRef as React.RefObject<HTMLDivElement>}
       onScroll={handleScroll}
       className={cn(
-        "flex flex-col shrink-0 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 overflow-hidden transition-all duration-200",
+        "flex flex-col shrink-0 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 overflow-y-auto transition-all duration-200",
         collapsed ? "w-14" : "w-60",
       )}
     >
@@ -288,8 +254,9 @@ export function Sidebar() {
         </button>
       )}
 
+
       {/* Navigation */}
-      <nav className={cn("flex-1 py-3 space-y-4 overflow-y-auto scrollbar-none", collapsed ? "px-1.5" : "px-3")}>
+      <nav className={cn("flex-1 py-3 space-y-4", collapsed ? "px-1.5" : "px-3")}>
         {visibleGroups.map((group) => (
           <div key={group.title}>
             {!collapsed && (
@@ -298,39 +265,30 @@ export function Sidebar() {
               </p>
             )}
             <div className="space-y-0.5">
-              {group.items.map(renderNavItem)}
+              {group.items.map((item) => {
+                const isActive = location === item.href || location.startsWith(item.href + "/");
+                return (
+                  <Link key={item.href} href={item.href}>
+                    <div
+                      title={collapsed ? item.label : undefined}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md text-sm cursor-pointer transition-all",
+                        collapsed ? "justify-center px-0 py-2.5" : "px-2.5 py-2",
+                        isActive
+                          ? "bg-sidebar-accent text-foreground font-medium"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                      )}
+                    >
+                      <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
+                      {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+                      {!collapsed && isActive && <ChevronRight className="w-3 h-3 text-primary opacity-70" />}
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           </div>
         ))}
-
-        {/* ── Settings section (collapsible) ───────────────────────────────── */}
-        {!isExternalMember && visibleSettingsItems.length > 0 && (
-          <div>
-            {!collapsed ? (
-              <button
-                onClick={toggleSettings}
-                className="w-full flex items-center justify-between px-2 mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 hover:text-muted-foreground transition-colors group"
-              >
-                <span>Settings</span>
-                <ChevronDown
-                  className={cn(
-                    "w-3 h-3 transition-transform duration-200",
-                    settingsOpen ? "rotate-0" : "-rotate-90",
-                  )}
-                />
-              </button>
-            ) : (
-              <div className="flex justify-center mb-1">
-                <Settings className="w-3 h-3 text-muted-foreground/50" />
-              </div>
-            )}
-            {(settingsOpen || collapsed) && (
-              <div className="space-y-0.5">
-                {visibleSettingsItems.map(renderNavItem)}
-              </div>
-            )}
-          </div>
-        )}
       </nav>
     </aside>
   );

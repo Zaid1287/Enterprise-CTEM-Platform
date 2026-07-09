@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, desc, inArray, isNull } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull, isNotNull } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db,
@@ -159,9 +159,21 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
   }
 
   const tenantId = scanTenantId;
-  const [existing] = await db.select({ id: brandThreatScansTable.id })
-    .from(brandThreatScansTable)
-    .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, raw)));
+  const role = user.role;
+  const isPrivileged = role === "super_admin" || role === "admin" || role === "account_manager";
+  // Privileged users: find any existing scan for this domain across all tenants (one entry per domain)
+  const existingRows = isPrivileged
+    ? await db.select({ id: brandThreatScansTable.id, tenantId: brandThreatScansTable.tenantId })
+        .from(brandThreatScansTable)
+        .where(eq(brandThreatScansTable.domain, raw))
+        .orderBy(desc(brandThreatScansTable.id))
+        .limit(1)
+    : await db.select({ id: brandThreatScansTable.id, tenantId: brandThreatScansTable.tenantId })
+        .from(brandThreatScansTable)
+        .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, raw)))
+        .orderBy(desc(brandThreatScansTable.id))
+        .limit(1);
+  const [existing] = existingRows;
 
   let scan: typeof brandThreatScansTable.$inferSelect;
 
@@ -233,7 +245,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
   if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
   const [scan] = await db.select().from(brandThreatScansTable).where(filter);
   if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
-  const [results, phishing, dataLeaks, brandAbuse, adMonitoring, metaAdsSetting] = await Promise.all([
+  const [results, phishing, dataLeaks, brandAbuse, adMonitoring, metaAdsSetting, archivedResults] = await Promise.all([
     db.select().from(brandThreatResultsTable)
       .where(and(eq(brandThreatResultsTable.scanId, id), isNull(brandThreatResultsTable.archivedAt)))
       .orderBy(desc(brandThreatResultsTable.riskScore)),
@@ -253,7 +265,34 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
       .from(platformSettingsTable)
       .where(eq(platformSettingsTable.key, "meta_ads_access_token"))
       .limit(1),
+    db.select({
+      id: brandThreatResultsTable.id,
+      permutation: brandThreatResultsTable.permutation,
+      riskScore: brandThreatResultsTable.riskScore,
+      registrationStatus: brandThreatResultsTable.registrationStatus,
+      isPhishing: brandThreatResultsTable.isPhishing,
+      fuzzer: brandThreatResultsTable.fuzzer,
+      archivedAt: brandThreatResultsTable.archivedAt,
+    }).from(brandThreatResultsTable)
+      .where(and(eq(brandThreatResultsTable.scanId, id), isNotNull(brandThreatResultsTable.archivedAt)))
+      .orderBy(desc(brandThreatResultsTable.archivedAt)),
   ]);
+
+  // Group archived results into scan rounds by archivedAt minute-level bucket
+  const scanRounds: Record<string, { archivedAt: string; total: number; registered: number; phishing: number; highRisk: number }> = {};
+  for (const r of archivedResults) {
+    if (!r.archivedAt) continue;
+    const bucket = new Date(r.archivedAt).toISOString().slice(0, 16); // minute precision
+    if (!scanRounds[bucket]) {
+      scanRounds[bucket] = { archivedAt: r.archivedAt.toISOString(), total: 0, registered: 0, phishing: 0, highRisk: 0 };
+    }
+    scanRounds[bucket]!.total++;
+    if (r.registrationStatus === "registered" || r.registrationStatus === "active") scanRounds[bucket]!.registered++;
+    if (r.isPhishing) scanRounds[bucket]!.phishing++;
+    if ((r.riskScore ?? 0) >= 60) scanRounds[bucket]!.highRisk++;
+  }
+  const scanHistory = Object.values(scanRounds).sort((a, b) => new Date(b.archivedAt).getTime() - new Date(a.archivedAt).getTime());
+
   const metaAdsChecked = !!(metaAdsSetting[0]?.value);
   res.json({
     ...toScanResponse(scan),
@@ -263,6 +302,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
     dataLeaks: dataLeaks.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     brandAbuse: brandAbuse.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     adMonitoringResults: adMonitoring.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    scanHistory,
   });
 });
 

@@ -9,7 +9,7 @@ import {
   ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
   Hash, Search, ChevronRight, Download, Fish, Database, Target,
   MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
-  TrendingUp, Megaphone,
+  TrendingUp, Megaphone, History,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -1391,6 +1391,57 @@ export default function BrandThreatDetailPage() {
         );
       })()}
 
+      {/* ── Scan History ─────────────────────────────────────────────────────── */}
+      {(() => {
+        const history: any[] = s?.scanHistory ?? [];
+        if (history.length === 0) return null;
+        return (
+          <div className="mx-6 mt-4 shrink-0">
+            <details className="group bg-muted/20 border border-border rounded-xl overflow-hidden">
+              <summary className="flex items-center gap-2 px-4 py-2.5 cursor-pointer select-none text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors list-none">
+                <History className="w-3.5 h-3.5" />
+                Previous Scan Rounds
+                <span className="ml-1 bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full text-[10px] font-bold">{history.length}</span>
+                <span className="ml-auto text-muted-foreground/50 text-[10px] group-open:hidden">▶ expand</span>
+                <span className="ml-auto text-muted-foreground/50 text-[10px] hidden group-open:inline">▼ collapse</span>
+              </summary>
+              <div className="border-t border-border">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-muted/30">
+                        <th className="text-left px-4 py-2 text-muted-foreground font-medium">Scan Date</th>
+                        <th className="text-right px-4 py-2 text-muted-foreground font-medium">Total</th>
+                        <th className="text-right px-4 py-2 text-muted-foreground font-medium">Registered</th>
+                        <th className="text-right px-4 py-2 text-muted-foreground font-medium">High Risk</th>
+                        <th className="text-right px-4 py-2 text-muted-foreground font-medium">Phishing</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((h: any, i: number) => (
+                        <tr key={i} className="border-t border-border/50 hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-2 text-foreground/80">{formatDate(h.archivedAt)}</td>
+                          <td className="px-4 py-2 text-right text-foreground/70">{h.total.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right">
+                            <span className={h.registered > 0 ? "text-orange-400 font-medium" : "text-muted-foreground"}>{h.registered}</span>
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            <span className={h.highRisk > 0 ? "text-red-400 font-medium" : "text-muted-foreground"}>{h.highRisk}</span>
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            <span className={h.phishing > 0 ? "text-red-500 font-bold" : "text-muted-foreground"}>{h.phishing}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+          </div>
+        );
+      })()}
+
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       {s.status === "done" && (
         <div className="px-6 pt-4 shrink-0">
@@ -1583,15 +1634,6 @@ export default function BrandThreatDetailPage() {
           <div className="flex h-full overflow-hidden mt-0">
             {/* Left sidebar */}
             <div className="w-64 shrink-0 border-r border-border overflow-y-auto p-4 space-y-4 bg-card/50">
-              {/* Favicon intel + Shodan matches */}
-              {(s.faviconMd5 || s.favihunterStatus === "running" || s.favihunterStatus === "pending") && (
-                <div>
-                  <FaviconIntelPanel scan={s} />
-                  {s.faviconShodanMatches?.length > 0 && (
-                    <ShodanFaviconPanel matches={s.faviconShodanMatches} />
-                  )}
-                </div>
-              )}
               {chartData.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Permutation Types</p>
@@ -2007,6 +2049,16 @@ export default function BrandThreatDetailPage() {
                   <div className="flex flex-col items-center justify-center h-32 text-center">
                     <Globe className="w-6 h-6 text-muted-foreground/20 mb-2" />
                     <p className="text-sm text-muted-foreground">No results match the current filters</p>
+                  </div>
+                )}
+
+                {/* ── Favicon Intelligence — full-width below domain permutations ── */}
+                {(s.faviconMd5 || s.favihunterStatus === "running" || s.favihunterStatus === "pending") && (
+                  <div className="px-5 py-4 border-t border-border space-y-3">
+                    <FaviconIntelPanel scan={s} />
+                    {s.faviconShodanMatches?.length > 0 && (
+                      <ShodanFaviconPanel matches={s.faviconShodanMatches} />
+                    )}
                   </div>
                 )}
               </div>
