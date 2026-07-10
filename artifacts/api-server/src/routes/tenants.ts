@@ -514,6 +514,9 @@ router.delete("/tenants/:tenantId/managers/:amUserId", requireAuth, requireRole(
 });
 
 // ── Assets for a specific tenant (cross-tenant management) ───────────────────
+// Returns ALL assets logically belonging to the tenant — either by direct tenantId ownership
+// OR by assignedClientId pointing to a user who belongs to this tenant.
+// This matches the same two-path logic used in buildRichTenantList() for counts.
 router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", "admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = Number(req.params.tenantId);
   if (isNaN(tid)) { res.status(400).json({ error: "Invalid tenantId" }); return; }
@@ -525,7 +528,18 @@ router.get("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin", 
     const clientIds = await getAmClientTenantIds(req.user!.userId);
     if (!clientIds.includes(tid)) { res.status(403).json({ error: "Forbidden" }); return; }
   }
-  const assets = await db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid));
+
+  // Gather user IDs belonging to this tenant so we can find assignedClientId-linked assets
+  const tenantUsers = await db.select({ id: usersTable.id }).from(usersTable)
+    .where(eq(usersTable.tenantId, tid));
+  const tenantUserIds = tenantUsers.map(u => u.id);
+
+  // Asset belongs to this tenant if: tenantId matches OR assignedClientId is a user in this tenant
+  const whereClause = tenantUserIds.length > 0
+    ? or(eq(assetsTable.tenantId, tid), inArray(assetsTable.assignedClientId, tenantUserIds))
+    : eq(assetsTable.tenantId, tid);
+
+  const assets = await db.select().from(assetsTable).where(whereClause);
   res.json(assets.map(a => ({
     id: a.id, name: a.name, type: a.type, value: a.value,
     verificationStatus: a.verificationStatus, isActive: a.isActive,
@@ -560,7 +574,9 @@ router.post("/tenants/:tenantId/assets", requireAuth, requireRole("super_admin",
 });
 
 // ── Remove asset from tenant (unassign only — asset is NOT deleted) ───────────
-// Moves the asset back to the caller's own tenant so it can be re-assigned later.
+// Handles two ownership paths:
+//   1. Direct: tenantId = tid → set tenantId = null
+//   2. Assigned: assignedClientId is a user in tid → clear assignedClientId
 router.post("/tenants/:tenantId/assets/:assetId/unassign", requireAuth, requireRole("super_admin", "admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = Number(req.params.tenantId);
   const aid = Number(req.params.assetId);
@@ -571,17 +587,29 @@ router.post("/tenants/:tenantId/assets/:assetId/unassign", requireAuth, requireR
     res.status(403).json({ error: "Forbidden" }); return;
   }
 
-  // Verify asset belongs to the target tenant
-  const [asset] = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
-    .from(assetsTable).where(and(eq(assetsTable.id, aid), eq(assetsTable.tenantId, tid)));
-  if (!asset) { res.status(404).json({ error: "Asset not found in this tenant" }); return; }
+  // Fetch the asset and check ownership via both paths
+  const [asset] = await db.select({
+    id: assetsTable.id, tenantId: assetsTable.tenantId, assignedClientId: assetsTable.assignedClientId,
+  }).from(assetsTable).where(eq(assetsTable.id, aid));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
-  // Set tenantId = null — asset is now free/unassigned until explicitly re-assigned
-  await db.update(assetsTable)
-    .set({ tenantId: null })
-    .where(eq(assetsTable.id, aid));
+  // Path 1: Direct ownership — tenantId matches
+  if (asset.tenantId === tid) {
+    await db.update(assetsTable).set({ tenantId: null }).where(eq(assetsTable.id, aid));
+    res.json({ id: aid, unassigned: true }); return;
+  }
 
-  res.json({ id: aid, unassigned: true });
+  // Path 2: Linked via assignedClientId — check if that user belongs to this tenant
+  if (asset.assignedClientId != null) {
+    const [assignedUser] = await db.select({ tenantId: usersTable.tenantId })
+      .from(usersTable).where(eq(usersTable.id, asset.assignedClientId));
+    if (assignedUser?.tenantId === tid) {
+      await db.update(assetsTable).set({ assignedClientId: null }).where(eq(assetsTable.id, aid));
+      res.json({ id: aid, unassigned: true }); return;
+    }
+  }
+
+  res.status(404).json({ error: "Asset not found in this tenant" });
 });
 
 // ── Delete tenant ─────────────────────────────────────────────────────────────
