@@ -10,8 +10,7 @@ import {
   CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap, Shield,
   TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
   BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link, CalendarClock,
-  RotateCw, Edit2, Check, X, LockKeyhole, Key, EyeOff, ExternalLink,
-  Twitter, Youtube, Instagram,
+  RotateCw, Edit2, Check, X, LockKeyhole,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -1030,303 +1029,6 @@ const SCHEDULE_FREQ_LABELS: Record<string, string> = {
   monthly: "Monthly",
 };
 
-const SOCIAL_KEYS: {
-  key: string;
-  label: string;
-  platform: string;
-  icon: React.ReactNode;
-  description: string;
-  placeholder: string;
-  docsUrl: string;
-}[] = [
-  {
-    key: "twitter_x_bearer_token",
-    label: "Twitter/X Bearer Token",
-    platform: "Twitter / X",
-    icon: <Twitter className="w-4 h-4" />,
-    description: "Bearer Token from Twitter Developer Portal. Used to search recent tweets and accounts for brand impersonation signals.",
-    placeholder: "AAAAAAAAAAAAAAAAAAAAAA...",
-    docsUrl: "https://developer.twitter.com/en/docs/authentication/oauth-2-0/bearer-tokens",
-  },
-  {
-    key: "youtube_api_key",
-    label: "YouTube Data API v3 Key",
-    platform: "YouTube",
-    icon: <Youtube className="w-4 h-4" />,
-    description: "API key from Google Cloud Console with YouTube Data API v3 enabled. Detects brand-impersonating channels and scam videos.",
-    placeholder: "AIzaSy...",
-    docsUrl: "https://developers.google.com/youtube/v3/getting-started",
-  },
-  {
-    key: "instagram_graph_api_token",
-    label: "Instagram Graph API Token",
-    platform: "Instagram",
-    icon: <Instagram className="w-4 h-4" />,
-    description: "Access token from Meta for Developers with instagram_basic and public_content permissions. Scans hashtags for impersonation.",
-    placeholder: "EAABsbCS4IHABOO...",
-    docsUrl: "https://developers.facebook.com/docs/instagram-basic-display-api",
-  },
-  {
-    key: "meta_ads_access_token",
-    label: "Meta Ads Access Token",
-    platform: "Meta Ads",
-    icon: <Target className="w-4 h-4 text-blue-400" />,
-    description: "Meta Marketing API access token (page or user). Searches the Ads Library for brand-impersonating paid campaigns across Facebook & Instagram.",
-    placeholder: "EAABsbCS4IHABOO...",
-    docsUrl: "https://developers.facebook.com/docs/marketing-api/reference/ads-archive/",
-  },
-  {
-    key: "tiktok_research_api_token",
-    label: "TikTok Research API Token",
-    platform: "TikTok",
-    icon: <Zap className="w-4 h-4 text-pink-400" />,
-    description: "TikTok Research API token (Research Program access required). Scans videos using brand keywords and hashtags for scam content.",
-    placeholder: "act.e3a7c5...",
-    docsUrl: "https://developers.tiktok.com/products/research-api/",
-  },
-];
-
-function SocialApiKeysSection() {
-  const { toast } = useToast();
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [status, setStatus] = useState<Record<string, boolean>>({});
-  const [saving, setSaving] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      try {
-        const [settingsRes, statusRes] = await Promise.all([
-          fetch("/api/platform-settings", { headers: { Authorization: `Bearer ${getToken()}` } }),
-          fetch("/api/platform/social-source-status", { headers: { Authorization: `Bearer ${getToken()}` } }),
-        ]);
-        if (settingsRes.ok) {
-          const settings: { key: string; value: string | null }[] = await settingsRes.json();
-          const map: Record<string, string> = {};
-          for (const s of settings) {
-            if (SOCIAL_KEYS.some(k => k.key === s.key)) {
-              map[s.key] = s.value ? "••••••••••••••••" : "";
-            }
-          }
-          setValues(map);
-        }
-        if (statusRes.ok) {
-          const st: Record<string, boolean> = await statusRes.json();
-          setStatus(st);
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-    void load();
-  }, []);
-
-  async function handleSave(key: string) {
-    const val = values[key] ?? "";
-    if (val === "••••••••••••••••" || val === "") {
-      toast({ title: "No change — enter a new token to update", variant: "destructive" });
-      return;
-    }
-    setSaving(key);
-    try {
-      const res = await fetch("/api/platform-settings", {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ key, value: val }),
-      });
-      if (!res.ok) throw new Error();
-      toast({ title: "Saved", description: `${SOCIAL_KEYS.find(k => k.key === key)?.platform} token updated.` });
-      // Update status
-      const statusRes = await fetch("/api/platform/social-source-status", { headers: { Authorization: `Bearer ${getToken()}` } });
-      if (statusRes.ok) setStatus(await statusRes.json());
-      // Mask the value again
-      setValues(v => ({ ...v, [key]: "••••••••••••••••" }));
-    } catch {
-      toast({ title: "Failed to save token", variant: "destructive" });
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function handleClear(key: string) {
-    if (!confirm(`Remove the ${SOCIAL_KEYS.find(k => k.key === key)?.platform} token? This will disable monitoring for this platform.`)) return;
-    setSaving(key);
-    try {
-      await fetch("/api/platform-settings", {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ key, value: "" }),
-      });
-      setValues(v => ({ ...v, [key]: "" }));
-      const statusRes = await fetch("/api/platform/social-source-status", { headers: { Authorization: `Bearer ${getToken()}` } });
-      if (statusRes.ok) setStatus(await statusRes.json());
-      toast({ title: "Token removed" });
-    } catch {
-      toast({ title: "Failed to remove token", variant: "destructive" });
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  const STATUS_KEY_MAP: Record<string, string> = {
-    twitter_x_bearer_token: "twitter_x",
-    youtube_api_key: "youtube",
-    instagram_graph_api_token: "instagram",
-    meta_ads_access_token: "meta_ads",
-    tiktok_research_api_token: "tiktok",
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  const configuredCount = SOCIAL_KEYS.filter(k => status[STATUS_KEY_MAP[k.key] ?? ""] === true).length;
-
-  return (
-    <div className="flex-1 overflow-y-auto px-6 py-5">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-base font-semibold">Social Media Monitoring API Keys</h2>
-          <p className="text-xs text-muted-foreground mt-1 max-w-2xl leading-relaxed">
-            Configure API tokens for each social platform to enable real-time monitoring of brand impersonation, scam accounts, fake ads, and unauthorized content.
-            Tokens are encrypted at rest and used only during brand threat scans.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={cn(
-            "inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border",
-            configuredCount === SOCIAL_KEYS.length
-              ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400"
-              : configuredCount > 0
-                ? "bg-amber-500/10 border-amber-500/25 text-amber-400"
-                : "bg-muted/40 border-border text-muted-foreground",
-          )}>
-            <Key className="w-3 h-3" />
-            {configuredCount}/{SOCIAL_KEYS.length} configured
-          </span>
-        </div>
-      </div>
-
-      {/* Info banner */}
-      <div className="mb-5 rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 flex items-start gap-3">
-        <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-        <div>
-          <p className="text-xs font-semibold text-blue-300">How social monitoring works</p>
-          <p className="text-xs text-blue-200/70 mt-0.5 leading-relaxed">
-            When a brand threat scan runs, each configured platform is queried for brand-name keywords, fake handles, scam hashtags, and impersonating ad campaigns.
-            Results appear in the <strong>Brand Abuse</strong> and <strong>Malicious Ads</strong> tabs of the scan detail page.
-            Platforms without a token are skipped and will show as unconfigured in the scan results.
-          </p>
-        </div>
-      </div>
-
-      {/* Token cards */}
-      <div className="space-y-4">
-        {SOCIAL_KEYS.map(({ key, label, platform, icon, description, placeholder, docsUrl }) => {
-          const isConfigured = status[STATUS_KEY_MAP[key] ?? ""] === true;
-          const val = values[key] ?? "";
-          const isSaving = saving === key;
-          const isRevealed = revealed[key] ?? false;
-
-          return (
-            <div
-              key={key}
-              className={cn(
-                "rounded-xl border p-5 transition-colors",
-                isConfigured
-                  ? "border-emerald-500/20 bg-emerald-500/3"
-                  : "border-border bg-background/40",
-              )}
-            >
-              <div className="flex items-start justify-between gap-4 mb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className={cn(
-                    "w-8 h-8 rounded-lg flex items-center justify-center border",
-                    isConfigured ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400" : "bg-muted/40 border-border text-muted-foreground",
-                  )}>
-                    {icon}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold">{platform}</span>
-                      {isConfigured ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                          <CheckCircle2 className="w-2.5 h-2.5" /> Active
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-muted/40 border border-border text-muted-foreground">
-                          <XCircle className="w-2.5 h-2.5" /> Not configured
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{label}</p>
-                  </div>
-                </div>
-                <a
-                  href={docsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors shrink-0"
-                >
-                  <ExternalLink className="w-3 h-3" /> Docs
-                </a>
-              </div>
-
-              <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{description}</p>
-
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <input
-                    type={isRevealed ? "text" : "password"}
-                    value={val}
-                    onChange={e => setValues(v => ({ ...v, [key]: e.target.value }))}
-                    placeholder={isConfigured ? "Enter new token to replace existing" : placeholder}
-                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40 pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setRevealed(r => ({ ...r, [key]: !r[key] }))}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => handleSave(key)}
-                  disabled={isSaving || !val || val === "••••••••••••••••"}
-                  className="h-9 shrink-0"
-                >
-                  {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
-                  Save
-                </Button>
-                {isConfigured && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleClear(key)}
-                    disabled={isSaving}
-                    className="h-9 shrink-0 text-red-400 border-red-500/30 hover:bg-red-500/10"
-                  >
-                    <X className="w-3.5 h-3.5 mr-1.5" /> Remove
-                  </Button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function SchedulesSection() {
   const { toast } = useToast();
   const [schedules, setSchedules] = useState<any[]>([]);
@@ -1652,7 +1354,7 @@ export default function BrandThreatPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"scans" | "watchlist" | "schedules" | "social">("scans");
+  const [activeTab, setActiveTab] = useState<"scans" | "watchlist" | "schedules">("scans");
 
   const { data: scans, isLoading, refetch } = useListBrandThreats({
     query: { queryKey: getListBrandThreatsQueryKey(), staleTime: 0, refetchInterval: (query: any) => {
@@ -1757,15 +1459,6 @@ export default function BrandThreatPage() {
               >
                 <CalendarClock className="w-3.5 h-3.5" /> Schedules
               </button>
-              <button
-                onClick={() => setActiveTab("social")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                  activeTab === "social" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <Key className="w-3.5 h-3.5" /> Social API Keys
-              </button>
             </div>
             <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8">
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
@@ -1826,9 +1519,6 @@ export default function BrandThreatPage() {
 
       {/* ── Schedules tab content ──────────────────────────────────────── */}
       {activeTab === "schedules" && <SchedulesSection />}
-
-      {/* ── Social API Keys tab content ─────────────────────────────────── */}
-      {activeTab === "social" && <SocialApiKeysSection />}
 
       {/* ── Scans tab content ──────────────────────────────────────────── */}
       {activeTab === "scans" && (

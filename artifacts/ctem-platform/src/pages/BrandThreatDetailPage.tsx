@@ -9,7 +9,8 @@ import {
   ShieldAlert, Eye, Activity, Zap, Fingerprint, ExternalLink,
   Hash, Search, ChevronRight, Download, Fish, Database, Target,
   MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
-  TrendingUp, Megaphone, History,
+  TrendingUp, Megaphone, History, BookmarkCheck, Clock, AtSign,
+  Tag, Smartphone, RotateCw,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -58,7 +59,7 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
 };
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns" | "favicon_clones";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns" | "favicon_clones" | "watchlist";
 
 function RiskScoreBar({ score }: { score: number }) {
   return (
@@ -1011,6 +1012,197 @@ function TakedownsTab({ scanDomain, results }: { scanId: number; scanDomain: str
   );
 }
 
+const WATCHLIST_TYPE_META: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
+  keyword:       { icon: <Tag className="w-3.5 h-3.5" />,        label: "Keyword",       color: "text-amber-400" },
+  logo_url:      { icon: <Eye className="w-3.5 h-3.5" />,        label: "Logo URL",      color: "text-purple-400" },
+  domain:        { icon: <Globe className="w-3.5 h-3.5" />,       label: "Domain",        color: "text-blue-400" },
+  ip:            { icon: <Server className="w-3.5 h-3.5" />,      label: "IP",            color: "text-cyan-400" },
+  email:         { icon: <Mail className="w-3.5 h-3.5" />,        label: "Email",         color: "text-green-400" },
+  social_handle: { icon: <AtSign className="w-3.5 h-3.5" />,      label: "Social Handle", color: "text-pink-400" },
+  mobile_app:    { icon: <Smartphone className="w-3.5 h-3.5" />,  label: "Mobile App",    color: "text-orange-400" },
+};
+
+const FREQ_LABEL: Record<string, string> = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" };
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function WatchlistDetailTab({ items, scanDomain }: { items: any[]; scanDomain: string }) {
+  const [, navigate] = useLocation();
+  const normalizedScanDomain = scanDomain?.toLowerCase().replace(/^www\./, "") ?? "";
+
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center">
+        <BookmarkCheck className="w-10 h-10 text-muted-foreground/20 mb-3" />
+        <p className="text-sm font-medium text-muted-foreground">No watchlist items</p>
+        <p className="text-xs text-muted-foreground/60 mt-1">
+          Add domains, keywords, social handles and more in the Watchlist tab on the Brand Threats page.
+        </p>
+        <button
+          onClick={() => navigate("/brand-threats")}
+          className="mt-4 inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" /> Go to Brand Threats
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h2 className="text-sm font-semibold">Watchlist Items</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            All monitored brand assets — keywords, domains, social handles and more. Items marked{" "}
+            <span className="text-blue-400 font-medium">This Scan</span> are matched to the current scan domain.
+          </p>
+        </div>
+        <span className="text-xs text-muted-foreground bg-muted/40 border border-border px-2.5 py-1 rounded-full">
+          {items.length} item{items.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* Items grid */}
+      <div className="space-y-3">
+        {items.map((item: any) => {
+          const meta = WATCHLIST_TYPE_META[item.type] ?? WATCHLIST_TYPE_META["keyword"]!;
+          const isThisScan = item.type === "domain" &&
+            item.value.toLowerCase().replace(/^www\./, "") === normalizedScanDomain;
+          const prev = item.prevScanSummary as Record<string, number> | null;
+
+          let scheduleLabel = "—";
+          if (item.frequency === "daily") {
+            scheduleLabel = item.scanTime ? `Daily at ${item.scanTime}` : "Daily";
+          } else if (item.frequency === "weekly") {
+            const dayName = item.dayOfWeek !== null && item.dayOfWeek !== undefined ? DAY_NAMES[item.dayOfWeek] ?? "" : "";
+            scheduleLabel = `Weekly${dayName ? ` · ${dayName}` : ""}${item.scanTime ? ` at ${item.scanTime}` : ""}`;
+          } else if (item.frequency === "monthly") {
+            scheduleLabel = `Monthly${item.dayOfMonth ? ` · day ${item.dayOfMonth}` : ""}${item.scanTime ? ` at ${item.scanTime}` : ""}`;
+          }
+
+          const hasPrevDelta = prev && Object.keys(prev).length > 0 && Object.values(prev).some(v => (v as number) !== 0);
+
+          return (
+            <div
+              key={item.id}
+              className={cn(
+                "rounded-xl border p-4 transition-colors",
+                isThisScan
+                  ? "border-blue-500/25 bg-blue-500/5"
+                  : "border-border bg-background/40",
+              )}
+            >
+              <div className="flex items-start gap-3">
+                {/* Type icon */}
+                <div className={cn(
+                  "w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 mt-0.5",
+                  isThisScan ? "bg-blue-500/10 border-blue-500/25" : "bg-muted/40 border-border",
+                  meta.color,
+                )}>
+                  {meta.icon}
+                </div>
+
+                {/* Main content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {meta.label}
+                    </span>
+                    {isThisScan && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                        <Shield className="w-2.5 h-2.5" /> This Scan
+                      </span>
+                    )}
+                    {item.lastScanId && (
+                      <a
+                        href={`/brand-threats/${item.lastScanId}`}
+                        className="inline-flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors"
+                      >
+                        <ExternalLink className="w-2.5 h-2.5" /> Last scan
+                      </a>
+                    )}
+                  </div>
+
+                  <p className="text-sm font-mono font-semibold mt-0.5 truncate">{item.value}</p>
+
+                  {item.notes && (
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.notes}</p>
+                  )}
+
+                  {/* Schedule + timing row */}
+                  <div className="flex items-center gap-4 mt-2 flex-wrap">
+                    {item.frequency && (
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <Clock className="w-3 h-3" />
+                        {FREQ_LABEL[item.frequency] ?? item.frequency}
+                        {scheduleLabel !== FREQ_LABEL[item.frequency] && (
+                          <span className="text-muted-foreground/60 ml-0.5">· {item.scanTime}{item.dayOfWeek !== null && item.dayOfWeek !== undefined ? ` ${DAY_NAMES[item.dayOfWeek] ?? ""}` : ""}{item.dayOfMonth ? ` day ${item.dayOfMonth}` : ""}</span>
+                        )}
+                      </span>
+                    )}
+                    {item.lastScanAt && (
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <RotateCw className="w-3 h-3" />
+                        Last: {formatDate(item.lastScanAt)}
+                      </span>
+                    )}
+                    {item.nextScanAt && (
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <Calendar className="w-3 h-3" />
+                        Next: {formatDate(item.nextScanAt)}
+                      </span>
+                    )}
+                    {!item.frequency && !item.lastScanAt && (
+                      <span className="text-[11px] text-muted-foreground/50">No schedule · manual scan only</span>
+                    )}
+                  </div>
+
+                  {/* Previous scan delta */}
+                  {hasPrevDelta && (
+                    <div className="mt-2 flex items-center gap-3 flex-wrap">
+                      <span className="text-[10px] text-muted-foreground font-medium">Changes vs. prev scan:</span>
+                      {Object.entries(prev!).map(([k, v]) => {
+                        if (v === 0) return null;
+                        const isPos = (v as number) > 0;
+                        return (
+                          <span
+                            key={k}
+                            className={cn(
+                              "inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border",
+                              isPos
+                                ? "bg-red-500/10 border-red-500/20 text-red-400"
+                                : "bg-green-500/10 border-green-500/20 text-green-400",
+                            )}
+                          >
+                            {isPos ? "+" : ""}{v as number} {k.replace(/_/g, " ")}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer note */}
+      <div className="mt-4 rounded-xl border border-border bg-muted/20 px-4 py-3 flex items-start gap-2">
+        <Info className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Watchlist items are scanned on their configured schedule. Each completed scan updates the{" "}
+          <strong>Last Scan</strong> timestamp and computes a delta against the previous scan result, shown as change badges above.
+          Manage items and schedules from the{" "}
+          <button onClick={() => navigate("/brand-threats")} className="text-primary hover:underline">Brand Threats</button>{" "}
+          Watchlist tab.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function BrandThreatDetailPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -1024,6 +1216,7 @@ export default function BrandThreatDetailPage() {
   const [downloadingCsv, setDownloadingCsv] = useState(false);
   const [activeTab, setActiveTab] = useState<TabMode>("typosquatting");
   const [watchlistItem, setWatchlistItem] = useState<any | null>(null);
+  const [allWatchlistItems, setAllWatchlistItems] = useState<any[]>([]);
   const [confirmDeleteScan, setConfirmDeleteScan] = useState(false);
   const deleteScan = useDeleteBrandThreatScan();
   const qc = useQueryClient();
@@ -1057,18 +1250,20 @@ export default function BrandThreatDetailPage() {
   }, [allScans, s?.domain]);
 
   useEffect(() => {
-    if (!s?.domain) return;
-    const domain = s.domain.toLowerCase().replace(/^www\./, "");
     void fetch("/api/brand-watchlist", {
       headers: { Authorization: `Bearer ${getToken() ?? ""}` },
     })
       .then(r => r.ok ? r.json() : [])
       .then((items: any[]) => {
-        const match = items.find((i: any) =>
-          i.type === "domain" &&
-          i.value.toLowerCase().replace(/^www\./, "") === domain,
-        );
-        setWatchlistItem(match ?? null);
+        setAllWatchlistItems(items);
+        if (s?.domain) {
+          const domain = s.domain.toLowerCase().replace(/^www\./, "");
+          const match = items.find((i: any) =>
+            i.type === "domain" &&
+            i.value.toLowerCase().replace(/^www\./, "") === domain,
+          );
+          setWatchlistItem(match ?? null);
+        }
       })
       .catch(() => {});
   }, [s?.domain]);
@@ -1133,6 +1328,7 @@ export default function BrandThreatDetailPage() {
     { id: "brand_abuse",   label: "Brand Abuse",   icon: <Target className="w-3.5 h-3.5" />,   count: brandAbuse.length, color: brandAbuse.length > 0 ? "text-yellow-400" : undefined },
     { id: "malicious_ads", label: "Malicious Ads", icon: <Megaphone className="w-3.5 h-3.5" />, count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
     ...(hasFaviconData ? [{ id: "favicon_clones" as TabMode, label: "Favicon Clones", icon: <Fingerprint className="w-3.5 h-3.5" />, count: shodanCloneCount, color: shodanCloneCount > 0 ? "text-violet-400" : undefined }] : []),
+    { id: "watchlist",     label: "Watchlist",     icon: <BookmarkCheck className="w-3.5 h-3.5" />, count: allWatchlistItems.length, color: allWatchlistItems.length > 0 ? "text-blue-400" : undefined },
     { id: "takedowns",     label: "Takedowns",     icon: <Shield className="w-3.5 h-3.5" /> },
   ];
 
@@ -1610,6 +1806,13 @@ export default function BrandThreatDetailPage() {
         {activeTab === "malicious_ads" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
             <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} />
+          </div>
+        )}
+
+        {/* ── WATCHLIST tab ── */}
+        {activeTab === "watchlist" && (
+          <div className="h-full overflow-y-auto p-6">
+            <WatchlistDetailTab items={allWatchlistItems} scanDomain={s.domain} />
           </div>
         )}
 
