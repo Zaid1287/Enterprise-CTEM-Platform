@@ -706,7 +706,7 @@ export default function ScanReportPage() {
               disabled={downloading}
               onClick={async () => {
                 setDownloading(true);
-                try { await downloadScanReportPdf(scan, assetReports); }
+                try { await downloadScanReportPdf(scan, assetReports, getToken()); }
                 catch { /* ignore */ }
                 finally { setDownloading(false); }
               }}>

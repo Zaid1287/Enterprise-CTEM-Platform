@@ -194,7 +194,7 @@ async function getLogo(): Promise<HTMLImageElement | null> {
       }
       resolve(null);
     };
-    img.src = "/sentinelware-logo-white.png";
+    img.src = "/sentinelware-logo.png";
   });
 }
 
@@ -251,91 +251,114 @@ function makeCover(o: CoverOptions): HTMLCanvasElement {
   const cv  = createScaledCanvas();
   const ctx = getScaledCtx(cv);
 
-  // ── Background ──
-  const grad = ctx.createLinearGradient(0, 0, 0, PH);
-  grad.addColorStop(0.0, "#0b1120");
-  grad.addColorStop(0.5, "#0f172a");
-  grad.addColorStop(1.0, "#111827");
-  ctx.fillStyle = grad;
+  // ── Background: rich dark gradient ──────────────────────────────────────
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, PH);
+  bgGrad.addColorStop(0.0, "#060c18");
+  bgGrad.addColorStop(0.45, "#0b1220");
+  bgGrad.addColorStop(1.0,  "#0f172a");
+  ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, PW, PH);
 
-  // ── Top accent ──
-  ctx.fillStyle = BLUE;
-  ctx.fillRect(0, 0, PW, 4);
+  // ── Subtle dot-grid texture ─────────────────────────────────────────────
+  ctx.fillStyle = "rgba(255,255,255,0.035)";
+  for (let gx = 36; gx < PW; gx += 36) {
+    for (let gy = 36; gy < PH; gy += 36) {
+      ctx.beginPath(); ctx.arc(gx, gy, 1, 0, Math.PI * 2); ctx.fill();
+    }
+  }
 
-  // ── Side accent bars ──
-  ctx.fillStyle = "rgba(59,130,246,0.14)";
-  ctx.fillRect(0, 4, 6, PH - 4);
-  ctx.fillRect(PW - 6, 4, 6, PH - 4);
+  // ── Top accent bar: amber gradient ──────────────────────────────────────
+  const topGrad = ctx.createLinearGradient(0, 0, PW, 0);
+  topGrad.addColorStop(0, "#d97706");
+  topGrad.addColorStop(0.5, "#f59e0b");
+  topGrad.addColorStop(1, "#d97706");
+  ctx.fillStyle = topGrad;
+  ctx.fillRect(0, 0, PW, 5);
 
-  // ── Header area ──
-  const hh = 76;
-  ctx.fillStyle = "rgba(255,255,255,0.04)";
-  ctx.fillRect(0, 4, PW, hh);
-  ctx.fillStyle = "rgba(59,130,246,0.15)";
-  ctx.fillRect(0, 4 + hh, PW, 1);
+  // ── Bottom confidential strip ────────────────────────────────────────────
+  ctx.fillStyle = "#160505";
+  ctx.fillRect(0, PH - 46, PW, 46);
+  ctx.fillStyle = "#7f1d1d";
+  ctx.fillRect(0, PH - 46, PW, 1.5);
+  tx(ctx, "⚠  CONFIDENTIAL — FOR AUTHORIZED PERSONNEL ONLY  ⚠", PW / 2, PH - 14, 9, "#fca5a5", "bold", "center");
 
-  // ── Logo / branding ──
+  // ── Logo zone: centered vertically at ~35% of page height ──────────────
+  const logoZoneCY = Math.round(PH * 0.28);
+  const logoW = 300;
+
   if (o.logo) {
-    drawLogo(ctx, o.logo, PW / 2, 4 + hh / 2, 180);
+    drawLogo(ctx, o.logo, PW / 2, logoZoneCY, logoW);
   } else {
-    drawShield(ctx, M + 20, 4 + hh / 2, 32, BLUE);
-    tx(ctx, "SENTINELWARE", M + 44, 4 + hh / 2 + 5, 14, WHITE, "bold");
-    const lw = mw(ctx, "SENTINELWARE", 14, "bold");
-    ctx.fillStyle = AMBER;
-    ctx.beginPath();
-    ctx.arc(M + 44 + lw + 8, 4 + hh / 2 - 4, 5, 0, Math.PI * 2);
-    ctx.fill();
+    // Fallback text logo
+    drawShield(ctx, PW / 2 - 90, logoZoneCY, 44, AMBER);
+    tx(ctx, "SENTINELWARES", PW / 2 + 20, logoZoneCY + 10, 26, WHITE, "bold", "center");
   }
 
-  // ── Report kind badge ──
+  // ── Tagline ──────────────────────────────────────────────────────────────
+  const tagY = logoZoneCY + 52;
+  tx(ctx, "CONTINUOUS THREAT EXPOSURE MANAGEMENT", PW / 2, tagY, 9.5, GR400, "bold", "center");
+
+  // ── Horizontal rule with amber accent ────────────────────────────────────
+  const divY = tagY + 26;
+  ctx.fillStyle = "rgba(245,158,11,0.25)";
+  ctx.fillRect(M + 30, divY, CW - 60, 1);
+  ctx.fillStyle = AMBER;
+  ctx.fillRect(PW / 2 - 28, divY - 1, 56, 3);
+
+  // ── Report kind badge ─────────────────────────────────────────────────────
   const bKind = o.reportKind.toUpperCase();
-  const bW    = mw(ctx, bKind, 9, "bold") + 28;
-  rr(ctx, PW / 2 - bW / 2, 120, bW, 24, 12, "rgba(59,130,246,0.2)", BLUE, 1);
-  tx(ctx, bKind, PW / 2, 136, 9, BLUE, "bold", "center");
+  const bkW   = mw(ctx, bKind, 8.5, "bold") + 30;
+  const bkY   = divY + 20;
+  rr(ctx, PW / 2 - bkW / 2, bkY, bkW, 24, 12, "rgba(59,130,246,0.15)", BLUE, 1);
+  tx(ctx, bKind, PW / 2, bkY + 16.5, 8.5, BLUE, "bold", "center");
 
-  // ── Title ──
-  const titleLines = wrapText(ctx, o.title, 22, "bold", PW - 100);
-  let titleY = 170;
-  for (const line of titleLines.slice(0, 3)) {
-    tx(ctx, line, PW / 2, titleY, 22, WHITE, "bold", "center");
-    titleY += 30;
+  // ── Report title ──────────────────────────────────────────────────────────
+  const titleY0 = bkY + 40;
+  const titleLines = wrapText(ctx, o.title, 21, "bold", PW - 100);
+  let titleY = titleY0;
+  for (const line of titleLines.slice(0, 2)) {
+    tx(ctx, line, PW / 2, titleY, 21, WHITE, "bold", "center");
+    titleY += 29;
   }
 
-  // ── Divider ──
-  ctx.fillStyle = "rgba(59,130,246,0.35)";
-  ctx.fillRect(M + 40, titleY + 10, CW - 80, 1);
+  // ── Generated date (prominent) ────────────────────────────────────────────
+  const gen = new Date().toLocaleString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+  });
+  tx(ctx, gen, PW / 2, titleY + 20, 10, GR300, "500", "center");
 
-  // ── Meta grid ──
-  const metaY   = titleY + 30;
+  // ── Meta grid ────────────────────────────────────────────────────────────
+  const metaY    = titleY + 46;
   const metaCols = 2;
-  const colW    = (CW - 20) / metaCols;
-  const rowH    = 50;
+  const colW     = (CW - 14) / metaCols;
+  const rowH     = 54;
   o.metaPairs.forEach(([k, v], i) => {
     const col = i % metaCols;
     const row = Math.floor(i / metaCols);
-    const x   = M + col * (colW + 20);
+    const x   = M + col * (colW + 14);
     const y   = metaY + row * rowH;
-    rr(ctx, x, y, colW, rowH - 6, 6, "rgba(255,255,255,0.05)", "rgba(255,255,255,0.1)", 1);
-    tx(ctx, k.toUpperCase(), x + 10, y + 16, 7.5, GR400, "bold");
-    tx(ctx, String(v || "—"), x + 10, y + 36, 10.5, WHITE, "500", "left", colW - 20);
+    rr(ctx, x, y, colW, rowH - 8, 7, "rgba(255,255,255,0.05)", "rgba(255,255,255,0.12)", 1);
+    // Left micro-accent
+    ctx.fillStyle = AMBER;
+    ctx.fillRect(x, y, 3, rowH - 8);
+    rr(ctx, x, y, 3, 6, 2, AMBER, "");
+    rr(ctx, x, y + rowH - 8 - 6, 3, 6, 2, AMBER, "");
+    tx(ctx, k.toUpperCase(), x + 12, y + 17, 7.5, GR400, "bold");
+    tx(ctx, String(v || "—"), x + 12, y + 36, 10.5, WHITE, "500", "left", colW - 22);
   });
 
-  // ── Risk badge ──
-  const badgeY = metaY + Math.ceil(o.metaPairs.length / metaCols) * rowH + 20;
-  const bLabel = o.riskLabel.toUpperCase();
-  const bBW    = mw(ctx, bLabel, 11.5, "bold") + 40;
-  rr(ctx, PW / 2 - bBW / 2, badgeY, bBW, 34, 17, o.riskColor);
-  tx(ctx, bLabel, PW / 2, badgeY + 22, 11.5, WHITE, "bold", "center");
-
-  // ── Confidential strip ──
-  ctx.fillStyle = "#450a0a";
-  ctx.fillRect(0, PH - 40, PW, 40);
-  tx(ctx, "⚠  CONFIDENTIAL — FOR AUTHORIZED PERSONNEL ONLY", PW / 2, PH - 12, 8.5, "#fca5a5", "bold", "center");
-
-  // ── Generated date ──
-  const gen = new Date().toLocaleString("en-US", { year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
-  tx(ctx, `Generated: ${gen}`, PW / 2, PH - 54, 8, GR400, "normal", "center");
+  // ── Risk level badge ──────────────────────────────────────────────────────
+  const metaRows = Math.ceil(o.metaPairs.length / metaCols);
+  const rBadgeY  = metaY + metaRows * rowH + 18;
+  const bLabel   = o.riskLabel.toUpperCase();
+  const bBW      = mw(ctx, bLabel, 11, "bold") + 48;
+  ctx.save();
+  ctx.shadowColor = o.riskColor;
+  ctx.shadowBlur  = 18;
+  rr(ctx, PW / 2 - bBW / 2, rBadgeY, bBW, 36, 18, o.riskColor);
+  ctx.shadowBlur  = 0;
+  ctx.restore();
+  tx(ctx, bLabel, PW / 2, rBadgeY + 24, 11, WHITE, "bold", "center");
 
   return cv;
 }
@@ -425,6 +448,45 @@ class PdfDoc {
     c.fillStyle = GR200;
     c.fillRect(M + 12, this.y + 25, CW - 12, 1);
     this.y += 36;
+  }
+
+  cardHeader(num: number, title: string, color = BLUE, subtitle?: string) {
+    const hgt = subtitle ? 56 : 42;
+    this.ensureSpace(hgt + 12);
+    const c = this._ctx;
+    const y0 = this.y;
+    // Card header background
+    const hgrad = c.createLinearGradient(M, y0, M, y0 + hgt);
+    hgrad.addColorStop(0, "#f8fafc");
+    hgrad.addColorStop(1, "#f1f5f9");
+    rr(c, M, y0, CW, hgt, 8, "#f8fafc", GR200, 1);
+    // Left color accent bar
+    c.fillStyle = color;
+    c.fillRect(M, y0, 5, hgt);
+    rr(c, M, y0, 5, 8, 3, color, "");
+    rr(c, M, y0 + hgt - 8, 5, 8, 3, color, "");
+    // Number badge (circle)
+    const cx = M + 26;
+    const cy = y0 + hgt / 2;
+    c.fillStyle = color;
+    c.beginPath();
+    c.arc(cx, cy, 13, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = WHITE;
+    c.font = `bold 9px ${FONT}`;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.fillText(String(num).padStart(2, "0"), cx, cy + 0.5);
+    c.textAlign = "left";
+    c.textBaseline = "alphabetic";
+    // Title & optional subtitle
+    if (subtitle) {
+      tx(c, title, M + 48, y0 + 22, 10.5, TEXT, "bold");
+      tx(c, subtitle, M + 48, y0 + 40, 8.5, TEXT2, "normal");
+    } else {
+      tx(c, title, M + 48, y0 + hgt / 2 + 5, 10.5, TEXT, "bold");
+    }
+    this.y += hgt + 10;
   }
 
   subsectionHeader(title: string, color = TEXT2) {
@@ -1358,193 +1420,674 @@ function computeAsmScore(asset: any): number {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-export async function downloadScanReportPdf(scan: any, assetReports: any[]): Promise<void> {
-  const logo = await getLogo();
+export async function downloadScanReportPdf(scan: any, assetReports: any[], token?: string | null): Promise<void> {
+  // Load logo + optionally fetch brand threat data for primary domain
+  const primaryDomain = assetReports[0]?.assetValue ?? "";
+  const [logo, brandThreatDetail] = await Promise.all([
+    getLogo(),
+    (async () => {
+      if (!primaryDomain || !token) return null;
+      try {
+        const r = await fetch(`/api/brand-threats?limit=5`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) return null;
+        const list: any[] = await r.json();
+        const match = list.find((s: any) =>
+          (s.domain ?? "").toLowerCase().includes(primaryDomain.replace(/^https?:\/\//,"").replace(/\/.*$/,"").toLowerCase().split(".").slice(-2).join("."))
+        );
+        if (!match) return null;
+        const dr = await fetch(`/api/brand-threats/${match.id}`, { headers: { Authorization: `Bearer ${token}` } });
+        return dr.ok ? dr.json() : null;
+      } catch { return null; }
+    })(),
+  ]);
 
-  const totalVulns    = assetReports.reduce((a, r) => a + (r.summary?.vulnerabilities ?? 0), 0);
-  const totalCritical = assetReports.reduce((a, r) => a + (r.summary?.criticalVulns ?? 0) + (r.vulnScan?.stats?.critical ?? 0), 0);
-  const totalHigh     = assetReports.reduce((a, r) => a + (r.summary?.highVulns ?? 0) + (r.vulnScan?.stats?.high ?? 0), 0);
-  const totalMedium   = assetReports.reduce((a, r) => a + (r.cves ?? []).filter((c: any) => c.severity === "medium").length, 0);
-  const totalSecrets  = assetReports.reduce((a, r) => a + (r.secrets ?? []).length + (r.secretsHunt?.stats?.secretsFound ?? 0), 0);
-  const avgAsm        = assetReports.length > 0
+  // ── Aggregate stats across all assets ──────────────────────────────────
+  const totalCritical  = assetReports.reduce((a, r) => a + (r.summary?.criticalVulns ?? 0) + (r.vulnScan?.stats?.critical ?? 0), 0);
+  const totalHigh      = assetReports.reduce((a, r) => a + (r.summary?.highVulns ?? 0) + (r.vulnScan?.stats?.high ?? 0), 0);
+  const totalMedium    = assetReports.reduce((a, r) => a + (r.cves ?? []).filter((c: any) => c.severity === "medium").length, 0);
+  const totalCves      = assetReports.reduce((a, r) => a + (r.cves ?? []).length, 0);
+  const totalPorts     = assetReports.reduce((a, r) => a + (r.summary?.openPorts ?? 0), 0);
+  const totalSubs      = assetReports.reduce((a, r) => a + (r.summary?.subdomains ?? 0), 0);
+  const totalDns       = assetReports.reduce((a, r) => a + (r.summary?.dnsRecords ?? 0), 0);
+  const totalEndpoints = assetReports.reduce((a, r) => a + (r.summary?.endpoints ?? 0), 0);
+  const totalSecrets   = assetReports.reduce((a, r) => a + (r.secrets ?? []).length + (r.secretsHunt?.stats?.secretsFound ?? 0), 0);
+  const avgAsm         = assetReports.length > 0
     ? Math.round(assetReports.map(computeAsmScore).reduce((a, b) => a + b, 0) / assetReports.length)
     : 100;
-  const worstSeverity = totalCritical > 0 ? "critical" : totalHigh > 0 ? "high" : "medium";
-  const rc            = sevColor(worstSeverity);
-  const ts            = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
+  const ws  = totalCritical > 0 ? "critical" : totalHigh > 0 ? "high" : "medium";
+  const rc  = sevColor(ws);
+  const ts  = scan?.completedAt ? new Date(scan.completedAt).toLocaleString() : new Date().toLocaleString();
+  const scanName        = scan?.name ?? `Scan #${scan?.id}`;
+  const primaryAssetName = assetReports[0]?.assetName ?? scanName;
+  const asmColor        = avgAsm >= 70 ? LOW : avgAsm >= 40 ? MED : CRIT;
 
+  // ── Cover page ───────────────────────────────────────────────────────────
   const cover = makeCover({
-    title:      `${scan?.name ?? `Scan #${scan?.id}`} — Full Scan Report`,
+    title:      scanName,
     reportKind: "Pipeline Vulnerability Scan Report",
     metaPairs:  [
-      ["Scan Name",       scan?.name ?? `Scan #${scan?.id}`],
+      ["Scan Name",       scanName],
       ["Completed",       ts],
       ["Assets Scanned",  String(assetReports.length)],
-      ["Total Findings",  String(totalVulns)],
+      ["Total CVEs",      String(totalCves)],
       ["Critical / High", `${totalCritical} / ${totalHigh}`],
       ["Secrets Found",   String(totalSecrets)],
     ],
-    riskLabel:  `Threat Level: ${worstSeverity.toUpperCase()}`,
+    riskLabel:  `Threat Level: ${ws.toUpperCase()}`,
     riskColor:  rc,
     logo,
   });
 
-  const doc = new PdfDoc(`${scan?.name ?? `Scan #${scan?.id}`} — Scan Report`, logo);
+  const doc = new PdfDoc(scanName, logo);
   doc.newPage();
 
-  // Executive Summary
-  doc.sectionHeader("Executive Summary");
+  // ════════════════════════════════════════════════════════════════════════
+  // CARD 01 — Total Risk Score / Asset Name / Timestamp
+  // ════════════════════════════════════════════════════════════════════════
+  doc.cardHeader(1, "Total Risk Score & Scan Overview", BLUE);
   doc.gap(6);
   doc.statCards([
-    { label: "ASM Score",      value: avgAsm,            color: avgAsm >= 70 ? LOW : avgAsm >= 40 ? MED : CRIT },
-    { label: "Assets Scanned", value: assetReports.length, color: NAVY },
-    { label: "Critical",       value: totalCritical,     color: CRIT },
-    { label: "High",           value: totalHigh,         color: HIGH },
+    { label: "ASM Risk Score",   value: `${avgAsm}/100`,          color: asmColor },
+    { label: "Assets Scanned",   value: assetReports.length,      color: NAVY     },
+    { label: "Scan Status",      value: (scan?.status ?? "DONE").toUpperCase(), color: INFO_C },
   ]);
-  doc.statCards([
-    { label: "Medium",       value: totalMedium,  color: MED   },
-    { label: "Total Vulns",  value: totalVulns,   color: INFO_C },
-    { label: "Secrets",      value: totalSecrets, color: MED   },
-    { label: "Threat Level", value: worstSeverity.toUpperCase(), color: rc },
-  ]);
-  doc.gap(12);
-
-  // Scan Details
-  doc.sectionHeader("Scan Information");
   doc.gap(6);
   doc.keyValue([
-    ["Scan Name",      scan?.name ?? `Scan #${scan?.id}`],
-    ["Scan ID",        String(scan?.id ?? "—")],
-    ["Status",         (scan?.status ?? "—").toUpperCase()],
+    ["Primary Asset",  primaryAssetName],
+    ["Scan Name",      scanName],
     ["Completed At",   ts],
-    ["Assets in Scan", String(assetReports.length)],
-    ["Scan Type",      scan?.type ?? "full"],
+    ["Scan Type",      scan?.type ?? "Full Pipeline"],
+    ["Scan ID",        String(scan?.id ?? "—")],
+    ["Report Date",    new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })],
   ], 3);
-  doc.gap(12);
-
-  // Asset Summary Table
-  if (assetReports.length > 0) {
-    doc.sectionHeader("Asset Overview");
+  if (assetReports.length > 1) {
     doc.gap(6);
+    doc.subsectionHeader("Asset List", NAVY);
+    doc.gap(3);
     doc.table(
-      ["Asset", "Target", "Open Ports", "Vulns", "Critical", "Secrets"],
-      [158, 170, 66, 60, 66, 66],
+      ["Asset Name", "Target", "ASM Score", "Open Ports", "CVEs", "Secrets"],
+      [170, 200, 76, 74, 66, 66],
       assetReports.map(r => [
         r.assetName ?? "—",
         r.assetValue ?? "—",
+        `${computeAsmScore(r)}/100`,
         String(r.summary?.openPorts ?? 0),
-        String(r.summary?.vulnerabilities ?? 0),
-        String((r.summary?.criticalVulns ?? 0) + (r.vulnScan?.stats?.critical ?? 0)),
+        String((r.cves ?? []).length),
         String((r.secrets ?? []).length + (r.secretsHunt?.stats?.secretsFound ?? 0)),
       ]),
     );
-    doc.gap(12);
   }
+  doc.gap(16);
 
-  // Per-Asset Sections
+  // ════════════════════════════════════════════════════════════════════════
+  // CARD 02 — Critical / High Findings / Risk Level / Assets Scanned
+  // ════════════════════════════════════════════════════════════════════════
+  doc.cardHeader(2, "Findings Summary", CRIT,
+    `${totalCritical} Critical · ${totalHigh} High · ${totalMedium} Medium · ${totalCves} Total CVEs`);
+  doc.gap(6);
+  doc.statCards([
+    { label: "Critical Findings", value: totalCritical,           color: CRIT   },
+    { label: "High Findings",     value: totalHigh,               color: HIGH   },
+    { label: "Threat Level",      value: ws.toUpperCase(),        color: rc     },
+    { label: "Assets Scanned",    value: assetReports.length,     color: NAVY   },
+  ]);
+  doc.gap(6);
+  doc.statCards([
+    { label: "Medium Findings",   value: totalMedium,             color: MED    },
+    { label: "Total CVEs",        value: totalCves,               color: HIGH   },
+    { label: "Secrets Found",     value: totalSecrets,            color: MED    },
+    { label: "Scan Duration",     value: scan?.startedAt && scan?.completedAt
+        ? formatScanDuration(scan.startedAt, scan.completedAt) : "—",           color: INFO_C },
+  ]);
+  doc.gap(16);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CARD 03 — Attack Surface Summary Stats
+  // ════════════════════════════════════════════════════════════════════════
+  doc.cardHeader(3, "Attack Surface Summary", PURPLE,
+    "Aggregated statistics across all scanned assets");
+  doc.gap(6);
+  doc.statCards([
+    { label: "Open Ports",   value: totalPorts,     color: INFO_C },
+    { label: "CVEs Found",   value: totalCves,      color: CRIT   },
+    { label: "Subdomains",   value: totalSubs,      color: BLUE   },
+  ]);
+  doc.gap(6);
+  doc.statCards([
+    { label: "DNS Records",  value: totalDns,       color: MED    },
+    { label: "Endpoints",    value: totalEndpoints, color: INFO_C },
+    { label: "Secrets",      value: totalSecrets,   color: HIGH   },
+  ]);
+  doc.gap(16);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CARDS 04-15: Per-asset detail sections
+  // ════════════════════════════════════════════════════════════════════════
   for (const asset of assetReports) {
-    const cves: any[]    = asset.cves ?? [];
-    const secrets: any[] = asset.secrets ?? [];
-    const ports: any[]   = asset.ports ?? [];
-    const asmScore       = computeAsmScore(asset);
+    const assetSuffix = assetReports.length > 1 ? ` — ${asset.assetName ?? "Unknown"}` : "";
+    const ports: any[]      = (asset.ports ?? []).filter((p: any) => p.state === "open" || !p.state);
+    const cves: any[]       = asset.cves ?? [];
+    const secrets: any[]    = asset.secrets ?? [];
+    const techList: any[]   = asset.technologies ?? [];
+    const dnsRecords: any[] = asset.dnsRecords ?? [];
+    const subdomains: any[] = asset.subdomains ?? [];
+    const endpoints: any[]  = asset.endpoints ?? [];
+    const intelItems: any[] = asset.intelligence ?? [];
+    const httpInfo: any     = asset.httpInfo ?? {};
+    const httpHeaders: any  = asset.httpHeaders ?? {};
+    const cloudRecon: any   = asset.cloudRecon ?? null;
+    const secretsHunt: any  = asset.secretsHunt ?? null;
+    const dirFuzz: any      = asset.dirFuzz ?? null;
 
-    doc.sectionHeader(`Asset: ${asset.assetName ?? "Unknown"}`, BLUE);
-    doc.gap(6);
-
-    doc.keyValue([
-      ["Target",       asset.assetValue ?? "—"],
-      ["ASM Score",    `${asmScore} / 100`],
-      ["Open Ports",   String(asset.summary?.openPorts ?? 0)],
-      ["Subdomains",   String(asset.summary?.subdomains ?? 0)],
-      ["Endpoints",    String(asset.summary?.endpoints ?? 0)],
-      ["DNS Records",  String(asset.summary?.dnsRecords ?? 0)],
-    ], 3);
-    doc.gap(8);
-
-    if (asset.httpInfo?.waf && asset.httpInfo.waf !== "none") {
-      doc.text(`WAF / CDN Detected: ${asset.httpInfo.waf}`, { size: 9, color: LOW, weight: "bold" });
-      doc.gap(6);
-    }
-
-    // CVEs / Vulnerabilities
-    if (cves.length > 0) {
-      doc.subsectionHeader(`Vulnerability Findings (${cves.length} total)`, TEXT);
+    // ── CARD 04: Open Ports ─────────────────────────────────────────────
+    if (ports.length > 0) {
+      doc.cardHeader(4, `Open Ports${assetSuffix}`, INFO_C,
+        `${ports.length} open port${ports.length !== 1 ? "s" : ""} detected`);
       doc.gap(4);
       doc.table(
-        ["CVE / ID", "Title", "Severity", "CVSS"],
-        [136, 276, 82, 62],
-        cves.slice(0, 25).map(c => [
+        ["Port", "Protocol", "Service", "Version / Banner", "State"],
+        [52, 60, 100, 390, 56],
+        ports.slice(0, 35).map((p: any) => [
+          String(p.port ?? "—"), p.protocol ?? "tcp",
+          p.service ?? "unknown", p.version ?? p.banner ?? "—",
+          p.state ?? "open",
+        ]),
+        { monoCol: [0, 1, 4] },
+      );
+      if (ports.length > 35) {
+        doc.gap(3); doc.text(`…and ${ports.length - 35} more ports not shown`, { size: 8.5, color: TEXT2 });
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 05: CVEs ──────────────────────────────────────────────────
+    if (cves.length > 0) {
+      const crit5 = cves.filter((c: any) => c.severity === "critical").length;
+      const high5 = cves.filter((c: any) => c.severity === "high").length;
+      const med5  = cves.filter((c: any) => c.severity === "medium").length;
+      doc.cardHeader(5, `CVEs & Vulnerabilities${assetSuffix}`, CRIT,
+        `${crit5} Critical · ${high5} High · ${med5} Medium · ${cves.length} Total`);
+      doc.gap(4);
+      doc.table(
+        ["CVE / ID", "Title", "Severity", "CVSS", "CWE"],
+        [116, 298, 76, 54, 56],
+        cves.slice(0, 35).map((c: any) => [
           c.cve ?? c.cveId ?? c.id ?? "—",
           c.title ?? c.description ?? "—",
           c.severity ?? "—",
-          c.cvss != null ? String(c.cvss) : "—",
+          c.cvss != null ? Number(c.cvss).toFixed(1) : "—",
+          c.cwe ?? "—",
         ]),
-        { severityCol: 2, monoCol: [0] },
+        { severityCol: 2, monoCol: [0, 4] },
       );
-      if (cves.length > 25) {
-        doc.gap(3);
-        doc.text(`…and ${cves.length - 25} more findings not shown`, { size: 8.5, color: TEXT2 });
+      if (cves.length > 35) {
+        doc.gap(3); doc.text(`…and ${cves.length - 35} more CVEs not shown`, { size: 8.5, color: TEXT2 });
       }
-      doc.gap(8);
+      doc.gap(16);
     }
 
-    // Nuclei / VulnScan stats
-    const vs = asset.vulnScan?.stats;
-    if (vs && (vs.critical + vs.high + vs.medium + vs.low > 0)) {
-      doc.subsectionHeader("Template Scan Results", TEXT);
-      doc.gap(4);
-      doc.statCards([
-        { label: "Critical", value: vs.critical ?? 0, color: CRIT },
-        { label: "High",     value: vs.high ?? 0,     color: HIGH },
-        { label: "Medium",   value: vs.medium ?? 0,   color: MED  },
-        { label: "Low",      value: vs.low ?? 0,      color: LOW  },
-      ]);
-      doc.gap(8);
-    }
-
-    // Secrets
+    // ── CARD 06: Secrets & Credentials ─────────────────────────────────
     if (secrets.length > 0) {
-      doc.subsectionHeader(`Exposed Secrets (${secrets.length})`, MED);
+      doc.cardHeader(6, `Secrets & Credentials${assetSuffix}`, MED,
+        `${secrets.length} exposed secret${secrets.length !== 1 ? "s" : ""} detected`);
       doc.gap(4);
       doc.table(
         ["Type", "File / Location", "Value (truncated)"],
-        [134, 222, 200],
-        secrets.slice(0, 15).map((s: any) => [
+        [130, 228, 316],
+        secrets.slice(0, 25).map((s: any) => [
           s.type ?? "Secret",
           s.file ?? "—",
-          s.value ? String(s.value).slice(0, 48) : "—",
+          s.value ? String(s.value).slice(0, 55) : "—",
         ]),
         { monoCol: [2] },
       );
-      doc.gap(8);
+      if (secrets.length > 25) {
+        doc.gap(3); doc.text(`…and ${secrets.length - 25} more secrets not shown`, { size: 8.5, color: TEXT2 });
+      }
+      doc.gap(16);
     }
 
-    // Open Ports
-    if (ports.length > 0) {
-      const openPorts = ports.filter((p: any) => p.state === "open" || !p.state).slice(0, 20);
-      if (openPorts.length > 0) {
-        doc.subsectionHeader(`Open Ports (${openPorts.length} shown)`, TEXT);
-        doc.gap(4);
+    // ── CARD 07: Technologies ─────────────────────────────────────────
+    const vs = asset.vulnScan;
+    const hasTech = techList.length > 0;
+    const hasVulnStats = vs?.stats && (vs.stats.critical + vs.stats.high + vs.stats.medium + vs.stats.low) > 0;
+    if (hasTech || hasVulnStats) {
+      doc.cardHeader(7, `Technologies${assetSuffix}`, BLUE,
+        hasTech ? `${techList.length} technologies detected` : "Vulnerability template scan results");
+      doc.gap(4);
+      if (hasTech) {
         doc.table(
-          ["Port", "Protocol", "Service", "Version / Banner"],
-          [56, 64, 96, 340],
-          openPorts.map((p: any) => [
-            String(p.port ?? "—"),
-            p.protocol ?? "tcp",
-            p.service ?? "unknown",
-            p.version ?? p.banner ?? "—",
+          ["Technology", "Category", "Version", "Confidence"],
+          [220, 204, 130, 92],
+          techList.slice(0, 30).map((t: any) => [
+            t.name ?? t.technology ?? "—",
+            t.category ?? "—",
+            t.version ?? "—",
+            t.confidence != null ? `${t.confidence}%` : "—",
+          ]),
+        );
+        if (techList.length > 30) {
+          doc.gap(3); doc.text(`…and ${techList.length - 30} more technologies`, { size: 8.5, color: TEXT2 });
+        }
+        doc.gap(6);
+      }
+      if (hasVulnStats) {
+        doc.subsectionHeader("Vulnerability Template Scan (Nuclei)", TEXT);
+        doc.gap(4);
+        doc.statCards([
+          { label: "Critical", value: vs.stats.critical ?? 0, color: CRIT },
+          { label: "High",     value: vs.stats.high     ?? 0, color: HIGH },
+          { label: "Medium",   value: vs.stats.medium   ?? 0, color: MED  },
+          { label: "Low",      value: vs.stats.low      ?? 0, color: LOW  },
+        ]);
+        if ((vs.findings ?? []).length > 0) {
+          doc.gap(4);
+          doc.table(
+            ["Template", "Severity", "Host / URL"],
+            [220, 76, 358],
+            (vs.findings as any[]).slice(0, 20).map((f: any) => [
+              f.templateId ?? f.name ?? "—",
+              f.severity ?? "—",
+              f.host ?? f.url ?? "—",
+            ]),
+            { severityCol: 1 },
+          );
+        }
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 08: DNS Records ────────────────────────────────────────────
+    if (dnsRecords.length > 0) {
+      doc.cardHeader(8, `DNS Records${assetSuffix}`, BLUE,
+        `${dnsRecords.length} DNS record${dnsRecords.length !== 1 ? "s" : ""} discovered`);
+      doc.gap(4);
+      doc.table(
+        ["Type", "Name", "Value", "TTL"],
+        [60, 180, 336, 66],
+        dnsRecords.slice(0, 35).map((d: any) => [
+          d.type ?? "—",
+          d.name ?? "—",
+          d.value ?? d.data ?? "—",
+          d.ttl != null ? String(d.ttl) : "—",
+        ]),
+        { monoCol: [0, 2] },
+      );
+      if (dnsRecords.length > 35) {
+        doc.gap(3); doc.text(`…and ${dnsRecords.length - 35} more records`, { size: 8.5, color: TEXT2 });
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 09: Subdomains ──────────────────────────────────────────────
+    if (subdomains.length > 0) {
+      const live9 = subdomains.filter((s: any) => s.isLive).length;
+      doc.cardHeader(9, `Subdomains${assetSuffix}`, BLUE,
+        `${subdomains.length} discovered · ${live9} live`);
+      doc.gap(4);
+      doc.table(
+        ["Subdomain", "IP Address", "Live", "Status", "Title"],
+        [222, 116, 44, 60, 168],
+        subdomains.slice(0, 35).map((s: any) => [
+          s.name ?? s.subdomain ?? "—",
+          s.ip ?? s.ipAddress ?? "—",
+          s.isLive ? "YES" : "NO",
+          s.statusCode != null ? String(s.statusCode) : "—",
+          s.title ?? "—",
+        ]),
+        { monoCol: [1, 2] },
+      );
+      if (subdomains.length > 35) {
+        doc.gap(3); doc.text(`…and ${subdomains.length - 35} more subdomains`, { size: 8.5, color: TEXT2 });
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 10: HTTP Info ────────────────────────────────────────────────
+    const httpPairs: [string, string][] = [];
+    if (httpInfo.statusCode)                        httpPairs.push(["Status Code",    String(httpInfo.statusCode)]);
+    if (httpInfo.title)                             httpPairs.push(["Page Title",     httpInfo.title]);
+    if (httpInfo.server)                            httpPairs.push(["Server",         httpInfo.server]);
+    if (httpInfo.contentType)                       httpPairs.push(["Content-Type",   httpInfo.contentType]);
+    if (httpInfo.waf && httpInfo.waf !== "none")    httpPairs.push(["WAF / Firewall", httpInfo.waf]);
+    if (httpInfo.cdn)                               httpPairs.push(["CDN",            httpInfo.cdn]);
+    if (httpInfo.ip)                                httpPairs.push(["Resolved IP",    httpInfo.ip]);
+    if (httpInfo.tlsVersion)                        httpPairs.push(["TLS Version",    httpInfo.tlsVersion]);
+    if (httpInfo.redirectUrl)                       httpPairs.push(["Redirect URL",   httpInfo.redirectUrl]);
+    Object.entries(httpHeaders).slice(0, 10).forEach(([k, v]) => httpPairs.push([k, String(v)]));
+    if (httpPairs.length > 0) {
+      doc.cardHeader(10, `HTTP Info${assetSuffix}`, INFO_C,
+        `${httpPairs.length} properties collected`);
+      doc.gap(4);
+      doc.keyValue(httpPairs, 3);
+      doc.gap(16);
+    }
+
+    // ── CARD 11: Endpoints ────────────────────────────────────────────────
+    if (endpoints.length > 0) {
+      const interesting = endpoints.filter((e: any) => e.isInteresting || e.statusCode === 200 || e.statusCode === 403);
+      const toShow = endpoints.slice(0, 35);
+      doc.cardHeader(11, `Endpoints${assetSuffix}`, INFO_C,
+        `${endpoints.length} endpoints · ${interesting.length} interesting`);
+      doc.gap(4);
+      doc.table(
+        ["URL", "Method", "Status", "Content-Type", "Source"],
+        [302, 52, 54, 168, 58],
+        toShow.map((e: any) => [
+          e.url ?? e.path ?? "—",
+          e.method ?? "GET",
+          e.statusCode != null ? String(e.statusCode) : "—",
+          e.contentType ?? "—",
+          e.source ?? "—",
+        ]),
+        { monoCol: [0, 1, 2] },
+      );
+      if (endpoints.length > 35) {
+        doc.gap(3); doc.text(`…and ${endpoints.length - 35} more endpoints`, { size: 8.5, color: TEXT2 });
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 12: Intelligence ─────────────────────────────────────────────
+    if (intelItems.length > 0) {
+      doc.cardHeader(12, `Intelligence${assetSuffix}`, PURPLE,
+        `${intelItems.length} intelligence item${intelItems.length !== 1 ? "s" : ""}`);
+      doc.gap(4);
+      doc.table(
+        ["Type", "Source", "Data"],
+        [120, 120, 434],
+        intelItems.slice(0, 30).map((item: any) => [
+          item.type ?? "—",
+          item.source ?? "—",
+          (typeof item.data === "object"
+            ? JSON.stringify(item.data)
+            : String(item.data ?? "—")
+          ).slice(0, 90),
+        ]),
+      );
+      if (intelItems.length > 30) {
+        doc.gap(3); doc.text(`…and ${intelItems.length - 30} more items`, { size: 8.5, color: TEXT2 });
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 13: Cloud Assets ─────────────────────────────────────────────
+    if (cloudRecon) {
+      const buckets: any[]  = cloudRecon.buckets ?? [];
+      const firebase: any[] = cloudRecon.firebase ?? [];
+      const ssrf: any[]     = cloudRecon.ssrfEndpoints ?? [];
+      const cStats: any     = cloudRecon.stats ?? {};
+      const totalCloud      = buckets.length + firebase.length + ssrf.length;
+      doc.cardHeader(13, `Cloud Assets${assetSuffix}`, BLUE,
+        `${cStats.existingBuckets ?? buckets.length} buckets · ${firebase.length} Firebase · ${ssrf.length} SSRF endpoints`);
+      doc.gap(4);
+      if (totalCloud === 0) {
+        doc.text("No cloud assets (S3 / GCS / Azure / Firebase) detected.", { size: 9.5, color: TEXT2 });
+      } else {
+        if (buckets.length > 0) {
+          doc.subsectionHeader(`Storage Buckets (${buckets.length})`);
+          doc.gap(3);
+          doc.table(
+            ["Provider", "Bucket Name", "Status", "URL"],
+            [80, 196, 76, 306],
+            buckets.slice(0, 20).map((b: any) => [
+              b.provider ?? "—", b.name ?? b.bucket ?? "—",
+              b.status ?? (b.accessible ? "ACCESSIBLE" : "exists"),
+              b.url ?? "—",
+            ]),
+            { monoCol: [2] },
+          );
+          doc.gap(6);
+        }
+        if (firebase.length > 0) {
+          doc.subsectionHeader(`Firebase Endpoints (${firebase.length})`);
+          doc.gap(3);
+          doc.table(
+            ["Endpoint", "Status", "Data Exposed"],
+            [438, 80, 156],
+            firebase.slice(0, 10).map((f: any) => [
+              f.url ?? f.endpoint ?? "—", f.status ?? "—", f.dataExposed ? "YES" : "NO",
+            ]),
+          );
+          doc.gap(6);
+        }
+        if (ssrf.length > 0) {
+          doc.subsectionHeader(`SSRF / Internal Endpoints (${ssrf.length})`);
+          doc.gap(3);
+          doc.table(
+            ["URL", "Source"],
+            [560, 114],
+            ssrf.slice(0, 10).map((e: any) => [e.url ?? String(e), e.source ?? "—"]),
+          );
+        }
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 14: Secrets Hunt ─────────────────────────────────────────────
+    if (secretsHunt) {
+      const shStats: any  = secretsHunt.stats ?? {};
+      const ghSecrets: any[] = secretsHunt.githubSecrets ?? [];
+      const gitDirs: any[]   = secretsHunt.gitDirectories ?? [];
+      doc.cardHeader(14, `Secrets Hunt${assetSuffix}`, MED,
+        `${shStats.secretsFound ?? 0} secrets · ${shStats.gitDirsExposed ?? 0} .git dirs exposed`);
+      doc.gap(4);
+      doc.keyValue([
+        ["Secrets Found",    String(shStats.secretsFound    ?? 0)],
+        [".git Dirs Exposed", String(shStats.gitDirsExposed  ?? 0)],
+        ["Verified Secrets",  String(shStats.verifiedSecrets ?? 0)],
+        ["GitHub Org",        secretsHunt.githubOrg?.login   ?? "—"],
+      ], 4);
+      if (ghSecrets.length > 0) {
+        doc.gap(5);
+        doc.subsectionHeader(`GitHub Leaked Secrets (${ghSecrets.length})`);
+        doc.gap(3);
+        doc.table(
+          ["Secret Type", "File / Path", "Snippet"],
+          [136, 220, 318],
+          ghSecrets.slice(0, 20).map((s: any) => [
+            s.type ?? s.secretType ?? "—",
+            s.file ?? s.path ?? "—",
+            String(s.snippet ?? s.value ?? "—").slice(0, 60),
+          ]),
+          { monoCol: [2] },
+        );
+      }
+      if (gitDirs.length > 0) {
+        doc.gap(5);
+        doc.subsectionHeader(`Exposed .git Directories (${gitDirs.length})`);
+        doc.gap(3);
+        doc.table(
+          ["URL", "Status"],
+          [572, 92],
+          gitDirs.slice(0, 15).map((d: any) => [d.url ?? String(d), "EXPOSED"]),
+          { monoCol: [1] },
+        );
+      }
+      doc.gap(16);
+    }
+
+    // ── CARD 15: Directory Fuzzing ────────────────────────────────────────
+    if (dirFuzz) {
+      const dfStats: any = dirFuzz.stats ?? {};
+      const dfHosts: any[] = dirFuzz.hosts ?? [];
+      const allFuzz: any[] = [];
+      dfHosts.forEach((h: any) => {
+        (h.endpoints ?? []).forEach((e: any) => {
+          allFuzz.push({
+            url:    e.url ?? `${h.host ?? ""}${e.path ?? ""}`,
+            status: e.statusCode,
+            size:   e.contentLength,
+            source: e.source ?? "fuzz",
+            host:   h.host,
+          });
+        });
+      });
+      doc.cardHeader(15, `Directory Fuzzing${assetSuffix}`, INFO_C,
+        `${dfStats.totalUnique ?? allFuzz.length} unique paths · ${dfHosts.length} host${dfHosts.length !== 1 ? "s" : ""} fuzzed`);
+      doc.gap(4);
+      doc.keyValue([
+        ["Hosts Fuzzed",  String(dfHosts.length)],
+        ["Unique Paths",  String(dfStats.totalUnique ?? allFuzz.length)],
+        ["Max Depth",     String(dfStats.maxDepth ?? 3)],
+        ["Wordlist Size", String((dirFuzz.masterList ?? []).length)],
+      ], 4);
+      if (allFuzz.length > 0) {
+        doc.gap(5);
+        doc.table(
+          ["URL", "Status", "Size (bytes)", "Source"],
+          [400, 58, 90, 106],
+          allFuzz.slice(0, 35).map((r: any) => [
+            r.url ?? "—",
+            r.status != null ? String(r.status) : "—",
+            r.size   != null ? String(r.size)   : "—",
+            r.source ?? "—",
           ]),
           { monoCol: [0, 1] },
         );
-        doc.gap(8);
+        if (allFuzz.length > 35) {
+          doc.gap(3); doc.text(`…and ${allFuzz.length - 35} more paths`, { size: 8.5, color: TEXT2 });
+        }
+      }
+      doc.gap(16);
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CARD 16 — Brand Threat Intelligence
+  // ════════════════════════════════════════════════════════════════════════
+  const btd = brandThreatDetail;
+  {
+    const typosquatResults: any[] = btd?.results ?? [];
+    const phishDetections: any[]  = btd?.phishingDetections ?? [];
+    const dataLeaks: any[]        = btd?.dataLeaks ?? [];
+    const brandAbuse: any[]       = btd?.brandAbuse ?? [];
+    const btScan: any             = btd?.scan ?? null;
+    const hasBrandData            = typosquatResults.length > 0 || phishDetections.length > 0
+                                    || dataLeaks.length > 0 || brandAbuse.length > 0;
+
+    const subtitle16 = hasBrandData
+      ? `${typosquatResults.length} domains · ${phishDetections.length} phishing · ${dataLeaks.length} leaks · ${brandAbuse.length} abuse`
+      : "No brand threat data linked to this scan";
+
+    doc.cardHeader(16, "Brand Threat Intelligence", CRIT, subtitle16);
+    doc.gap(4);
+
+    if (!hasBrandData) {
+      doc.text(
+        "No brand threat scan results are associated with this asset. Run a brand threat scan from the Brand Monitoring module to populate this section.",
+        { size: 9.5, color: TEXT2 },
+      );
+    } else {
+      // Brand overview stats
+      doc.statCards([
+        { label: "Typosquat Domains",  value: typosquatResults.length,                                   color: HIGH   },
+        { label: "Phishing Detected",  value: phishDetections.length,                                    color: CRIT   },
+        { label: "Data Leaks",         value: dataLeaks.length,                                          color: MED    },
+        { label: "Brand Abuse Cases",  value: brandAbuse.length,                                         color: HIGH   },
+      ]);
+      doc.gap(6);
+
+      // Favicon clone info
+      if (btScan?.faviconMd5) {
+        doc.keyValue([
+          ["Brand Domain",  btScan.domain ?? "—"],
+          ["Favicon MD5",   btScan.faviconMd5],
+          ["Phishing Risk", (btScan.phishingRisk ?? "—").toUpperCase()],
+          ["Scan Status",   (btScan.status ?? "—").toUpperCase()],
+        ], 4);
+        doc.gap(6);
+      }
+
+      // Typosquatting / domain permutations
+      if (typosquatResults.length > 0) {
+        doc.subsectionHeader(`Typosquatting Domains (${typosquatResults.length})`);
+        doc.gap(3);
+        const dangerousDomains = typosquatResults.filter((r: any) =>
+          r.isLive || r.isPhishing || r.phishingRisk === "high" || r.phishingRisk === "critical"
+        );
+        const toShowDomains = dangerousDomains.length > 0 ? dangerousDomains : typosquatResults;
+        doc.table(
+          ["Domain", "Risk Level", "Registrar", "Live", "Type"],
+          [238, 70, 184, 52, 80],
+          toShowDomains.slice(0, 30).map((r: any) => [
+            r.domain ?? r.permutation ?? "—",
+            (r.phishingRisk ?? r.risk ?? "low").toUpperCase(),
+            r.registrar ?? "—",
+            r.isLive ? "YES" : "NO",
+            r.type ?? r.fuzzer ?? "—",
+          ]),
+          { monoCol: [3] },
+        );
+        if (toShowDomains.length > 30) {
+          doc.gap(3); doc.text(`…and ${toShowDomains.length - 30} more domains`, { size: 8.5, color: TEXT2 });
+        }
+        doc.gap(6);
+      }
+
+      // Phishing detections
+      if (phishDetections.length > 0) {
+        doc.subsectionHeader(`Phishing Detections (${phishDetections.length})`);
+        doc.gap(3);
+        doc.table(
+          ["URL / Domain", "Source", "Threat Type"],
+          [350, 150, 164],
+          phishDetections.slice(0, 15).map((p: any) => [
+            p.url ?? p.domain ?? "—",
+            p.source ?? "—",
+            p.threatType ?? "phishing",
+          ]),
+        );
+        doc.gap(6);
+      }
+
+      // Data leaks
+      if (dataLeaks.length > 0) {
+        doc.subsectionHeader(`Data Leaks (${dataLeaks.length})`);
+        doc.gap(3);
+        doc.table(
+          ["Source", "Type", "Description", "Date"],
+          [150, 110, 300, 104],
+          dataLeaks.slice(0, 15).map((l: any) => [
+            l.source ?? l.breachSource ?? "—",
+            l.type ?? "—",
+            (l.description ?? l.title ?? "—").slice(0, 60),
+            l.date ?? l.breachDate ?? "—",
+          ]),
+        );
+        doc.gap(6);
+      }
+
+      // Brand abuse (malicious ads, social impersonation, etc.)
+      if (brandAbuse.length > 0) {
+        doc.subsectionHeader(`Brand Abuse — Malicious Ads / Social / Favicon Clones (${brandAbuse.length})`);
+        doc.gap(3);
+        doc.table(
+          ["Type", "Platform", "Risk", "Title / Description"],
+          [130, 110, 60, 364],
+          brandAbuse.slice(0, 15).map((a: any) => [
+            a.type ?? "—",
+            a.platform ?? "—",
+            (a.risk ?? "—").toUpperCase(),
+            (a.title ?? a.description ?? "—").slice(0, 70),
+          ]),
+        );
       }
     }
-
-    doc.gap(6);
   }
 
   const safeName = (scan?.name ?? `scan-${scan?.id}`).replace(/[^a-z0-9_\-. ]/gi, "_").replace(/\s+/g, "_");
   triggerDownload(buildPdf([cover, ...doc.finalize()]), `${safeName}_report.pdf`);
+}
+
+function formatScanDuration(startedAt: string, completedAt: string): string {
+  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (ms < 0) return "—";
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
 // ── Full Reports Page PDF ────────────────────────────────────────────────
