@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, and, count, sql, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
-import { db, complianceFrameworksTable, complianceControlsTable, tenantsTable, assetGroupsTable } from "@workspace/db";
+import { db, complianceFrameworksTable, complianceControlsTable, tenantsTable, assetGroupsTable, assetsTable } from "@workspace/db";
 import {
   GetComplianceControlParams, UpdateComplianceControlParams,
   UpdateComplianceControlBody, ListComplianceControlsQueryParams,
@@ -33,13 +33,15 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-function toControlResponse(control: typeof complianceControlsTable.$inferSelect, frameworkName: string | null, groupName?: string | null) {
+function toControlResponse(control: typeof complianceControlsTable.$inferSelect, frameworkName: string | null, groupName?: string | null, assetName?: string | null) {
   return {
     id: control.id, frameworkId: control.frameworkId, frameworkName: frameworkName ?? "",
     controlId: control.controlId, title: control.title, description: control.description,
     status: control.status, evidence: control.evidence, assignedTo: control.assignedTo,
     targetGroupId: (control as any).targetGroupId ?? null,
     targetGroupName: groupName ?? null,
+    targetAssetId: (control as any).targetAssetId ?? null,
+    targetAssetName: assetName ?? null,
     dueDate: control.dueDate, createdAt: control.createdAt.toISOString(),
   };
 }
@@ -77,11 +79,13 @@ router.get("/compliance/controls", requireAuth, async (req: AuthenticatedRequest
     control: complianceControlsTable,
     frameworkName: complianceFrameworksTable.name,
     groupName: assetGroupsTable.name,
+    assetName: assetsTable.name,
   }).from(complianceControlsTable)
     .leftJoin(complianceFrameworksTable, eq(complianceControlsTable.frameworkId, complianceFrameworksTable.id))
     .leftJoin(assetGroupsTable, eq((complianceControlsTable as any).targetGroupId, assetGroupsTable.id))
+    .leftJoin(assetsTable, eq((complianceControlsTable as any).targetAssetId, assetsTable.id))
     .where(and(...filters));
-  res.json(controls.map(({ control, frameworkName, groupName }) => toControlResponse(control, frameworkName, groupName)));
+  res.json(controls.map(({ control, frameworkName, groupName, assetName }) => toControlResponse(control, frameworkName, groupName, assetName)));
 });
 
 router.get("/compliance/controls/:controlId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -105,11 +109,14 @@ router.patch("/compliance/controls/:controlId", requireAuth, async (req: Authent
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const parsed = UpdateComplianceControlBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  // Accept targetGroupId alongside the standard Zod-validated fields
+  // Accept targetGroupId / targetAssetId alongside the standard Zod-validated fields
   const rawBody = req.body as any;
   const updatePayload: any = { ...parsed.data };
   if ("targetGroupId" in rawBody) {
     updatePayload.targetGroupId = rawBody.targetGroupId === null ? null : parseInt(rawBody.targetGroupId, 10) || null;
+  }
+  if ("targetAssetId" in rawBody) {
+    updatePayload.targetAssetId = rawBody.targetAssetId === null ? null : parseInt(rawBody.targetAssetId, 10) || null;
   }
   const [control] = await db.update(complianceControlsTable).set(updatePayload)
     .where(and(eq(complianceControlsTable.id, params.data.controlId), eq(complianceControlsTable.tenantId, req.user!.tenantId)))
@@ -122,7 +129,12 @@ router.patch("/compliance/controls/:controlId", requireAuth, async (req: Authent
     const [grp] = await db.select({ name: assetGroupsTable.name }).from(assetGroupsTable).where(eq(assetGroupsTable.id, (control as any).targetGroupId));
     groupName = grp?.name ?? null;
   }
-  res.json(toControlResponse(control, fw?.name ?? null, groupName));
+  let assetName: string | null = null;
+  if ((control as any).targetAssetId) {
+    const [ast] = await db.select({ name: assetsTable.name }).from(assetsTable).where(eq(assetsTable.id, (control as any).targetAssetId));
+    assetName = ast?.name ?? null;
+  }
+  res.json(toControlResponse(control, fw?.name ?? null, groupName, assetName));
 });
 
 router.post(

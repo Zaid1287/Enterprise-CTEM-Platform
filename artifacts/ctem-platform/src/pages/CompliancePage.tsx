@@ -1,12 +1,12 @@
 import { useState, useRef } from "react";
 import {
-  useListComplianceControls, useUpdateComplianceControl, useListAssetGroups,
-  getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey, getListAssetGroupsQueryKey,
+  useListComplianceControls, useUpdateComplianceControl,
+  getGetComplianceSummaryQueryKey, getListComplianceControlsQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { Paperclip, Upload, FileText, X, Trash2, Bot, Loader2, Layers, Link2 } from "lucide-react";
+import { Paperclip, Upload, FileText, X, Trash2, Bot, Loader2, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -102,7 +102,6 @@ export default function CompliancePage() {
   const [selectedFramework, setSelectedFramework] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
-  const [groupFilter, setGroupFilter] = useState<number | null>(null);
   const { user } = useAuth();
   const [uploadingId, setUploadingId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,9 +147,13 @@ export default function CompliancePage() {
   });
   const updateControl = useUpdateComplianceControl();
 
-  const { data: groups } = useListAssetGroups({ query: { queryKey: getListAssetGroupsQueryKey() } });
-  const groupList = (groups as any[]) ?? [];
-  const selectedGroupObj = groupFilter ? groupList.find((g: any) => g.id === groupFilter) : null;
+  const { data: verifiedAssetsData } = useQuery({
+    queryKey: ["compliance-verified-assets"],
+    queryFn: () => apiFetch<{ id: number; name: string; domain: string | null; type: string }[]>(
+      `${BASE}/api/assets?verificationStatus=verified`
+    ),
+  });
+  const verifiedAssets = (verifiedAssetsData as any[]) ?? [];
 
   const handleStatusChange = async (controlId: number, status: string) => {
     await updateControl.mutateAsync({ controlId, data: { status } });
@@ -158,10 +161,10 @@ export default function CompliancePage() {
     queryClient.invalidateQueries({ queryKey: getGetComplianceSummaryQueryKey() });
   };
 
-  const handleGroupAssign = async (controlId: number, groupId: number | null) => {
+  const handleAssetAssign = async (controlId: number, assetId: number | null) => {
     await apiFetch(`${BASE}/api/compliance/controls/${controlId}`, {
       method: "PATCH",
-      body: JSON.stringify({ targetGroupId: groupId }),
+      body: JSON.stringify({ targetAssetId: assetId }),
     });
     queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() });
   };
@@ -189,11 +192,8 @@ export default function CompliancePage() {
 
   const frameworks = summary as any[] ?? [];
 
-  // Client-side: if group filter is active, show controls assigned to that group first
   const allControls = (controls as any[] ?? []);
-  const displayControls = groupFilter
-    ? [...allControls.filter((c: any) => c.targetGroupId === groupFilter), ...allControls.filter((c: any) => c.targetGroupId !== groupFilter)]
-    : allControls;
+  const displayControls = allControls;
 
   return (
     <div className="space-y-5">
@@ -203,33 +203,9 @@ export default function CompliancePage() {
           <p className="text-sm text-muted-foreground">Track compliance across security frameworks</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Group scope filter */}
-          {groupList.length > 0 && (
-            <div className="relative">
-              <select
-                value={groupFilter ?? ""}
-                onChange={e => setGroupFilter(e.target.value ? Number(e.target.value) : null)}
-                className="h-8 pl-7 pr-3 text-xs border border-border rounded-md bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors"
-              >
-                <option value="">All Assets</option>
-                {groupList.map((g: any) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-              <Layers className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-            </div>
-          )}
           {isPrivileged && <TenantFilter value={tenantFilter} onChange={setTenantFilter} />}
         </div>
       </div>
-      {/* Group context banner */}
-      {selectedGroupObj && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-xs text-primary">
-          <Layers className="w-3.5 h-3.5 shrink-0" />
-          <span>Filtering controls scoped to asset group <span className="font-semibold">{selectedGroupObj.name}</span> — controls assigned to this group are shown first</span>
-          <button className="ml-auto text-muted-foreground hover:text-foreground" onClick={() => setGroupFilter(null)}>✕</button>
-        </div>
-      )}
 
       {/* Hidden file input */}
       <input
@@ -326,7 +302,7 @@ export default function CompliancePage() {
                 </tr>
               ))}
               {!loadingControls && displayControls.map((c: any) => (
-                <tr key={c.id} className={cn("border-b border-border/50 hover:bg-accent/30 transition-colors", groupFilter && c.targetGroupId === groupFilter && "bg-primary/5")}>
+                <tr key={c.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
                   <td className="px-4 py-2.5 text-xs font-mono font-medium text-primary">{c.controlId}</td>
                   <td className="px-4 py-2.5 text-xs max-w-xs">
                     <p className="font-medium">{c.title}</p>
@@ -337,22 +313,22 @@ export default function CompliancePage() {
                     />
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.frameworkName}</td>
-                  {/* Asset Scope — assign control to an asset group */}
+                  {/* Asset Scope — assign control to a verified asset */}
                   <td className="px-4 py-2.5 text-xs">
                     <select
-                      value={c.targetGroupId ?? ""}
-                      onChange={e => handleGroupAssign(c.id, e.target.value ? Number(e.target.value) : null)}
-                      className="h-6 px-2 text-xs border border-border rounded bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors max-w-[130px]"
-                      title="Assign to asset group"
+                      value={c.targetAssetId ?? ""}
+                      onChange={e => handleAssetAssign(c.id, e.target.value ? Number(e.target.value) : null)}
+                      className="h-6 px-2 text-xs border border-border rounded bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors max-w-[150px]"
+                      title="Assign to verified asset"
                     >
                       <option value="">— unscoped —</option>
-                      {groupList.map((g: any) => (
-                        <option key={g.id} value={g.id}>{g.name}</option>
+                      {verifiedAssets.map((a: any) => (
+                        <option key={a.id} value={a.id}>{a.name || a.domain || `Asset #${a.id}`}</option>
                       ))}
                     </select>
-                    {c.targetGroupName && (
+                    {c.targetAssetName && (
                       <p className="text-[10px] text-primary/70 mt-0.5 flex items-center gap-1">
-                        <Link2 className="w-2.5 h-2.5" />{c.targetGroupName}
+                        <Link2 className="w-2.5 h-2.5" />{c.targetAssetName}
                       </p>
                     )}
                   </td>

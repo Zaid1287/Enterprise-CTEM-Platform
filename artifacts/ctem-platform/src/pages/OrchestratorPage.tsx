@@ -730,21 +730,28 @@ function ProxiesTab() {
 
   return (
     <div className="space-y-5">
-      {/* Header row */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex gap-3 flex-wrap">
-          <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/25 gap-1.5 px-3 py-1">
-            <Wifi className="w-3.5 h-3.5" />{activeCount} Healthy
-          </Badge>
-          <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/25 gap-1.5 px-3 py-1">
-            <Clock className="w-3.5 h-3.5" />{cooldownCount} Cooling
-          </Badge>
-          <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/25 gap-1.5 px-3 py-1">
-            <WifiOff className="w-3.5 h-3.5" />{inactiveCount} Inactive
-          </Badge>
+      {/* Stat tiles + actions */}
+      <div className="flex items-start gap-4 flex-wrap justify-between">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1 min-w-0">
+          {[
+            { label: "Total Proxies",  value: proxies.length,  icon: Wifi,    color: "text-primary",    bg: "bg-primary/10" },
+            { label: "Healthy",        value: activeCount,     icon: Wifi,    color: "text-green-500",  bg: "bg-green-500/10" },
+            { label: "Cooling Down",   value: cooldownCount,   icon: Clock,   color: "text-amber-500",  bg: "bg-amber-500/10" },
+            { label: "Inactive",       value: inactiveCount,   icon: WifiOff, color: "text-red-500",    bg: "bg-red-500/10" },
+          ].map(s => (
+            <div key={s.label} className="rounded-xl border bg-card p-4 flex items-center gap-3">
+              <div className={cn("p-2 rounded-lg shrink-0", s.bg)}>
+                <s.icon className={cn("w-4 h-4", s.color)} />
+              </div>
+              <div>
+                <p className={cn("text-2xl font-bold tabular-nums leading-none", s.color)}>{s.value}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
+              </div>
+            </div>
+          ))}
         </div>
         {isSuperAdmin && (
-          <div className="flex gap-2">
+          <div className="flex gap-2 shrink-0 pt-0.5">
             <Button variant="outline" onClick={() => setShowBulk(true)} className="gap-1.5" size="sm">
               <Upload className="w-4 h-4" />Bulk Import
             </Button>
@@ -1116,72 +1123,82 @@ function ConfigTab() {
   const otherKnobs = KNOBS.filter(k => k.type !== "boolean");
 
   return (
-    <div className="space-y-5 max-w-3xl">
-      <div className="flex items-center gap-2 justify-end">
-        <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: ["orch-config"] })} className="gap-1.5">
-          <RefreshCw className="w-3.5 h-3.5" />Reload
-        </Button>
-        <Button size="sm" onClick={() => saveMut.mutate(values)} disabled={!dirty || saveMut.isPending} className="gap-1.5">
-          {saveMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-          Save Changes
-        </Button>
-      </div>
-
-      {dirty && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-          You have unsaved changes. Click "Save Changes" to apply.
+    <div className="space-y-5">
+      {/* Save bar */}
+      <div className="flex items-center gap-3 justify-between">
+        <div>
+          {dirty ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-700 dark:text-amber-400">
+              <Info className="w-3.5 h-3.5 shrink-0" /> Unsaved changes — click Save to apply.
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Changes are applied within 60 seconds of saving.</p>
+          )}
         </div>
-      )}
-
-      <div className="rounded-xl border bg-card p-5 space-y-4">
-        <h2 className="text-sm font-semibold">Feature Toggles</h2>
-        {isLoading ? Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="flex items-center justify-between">
-            <Skeleton className="h-4 w-48" /><Skeleton className="h-6 w-10 rounded-full" />
-          </div>
-        )) : boolKnobs.map(k => (
-          <div key={k.key} className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <Label className="text-sm font-medium">{k.label}</Label>
-                <UITooltip>
-                  <TooltipTrigger asChild><Info className="w-3.5 h-3.5 text-muted-foreground cursor-help shrink-0" /></TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-xs">{k.description}</TooltipContent>
-                </UITooltip>
-              </div>
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">{k.key}</p>
-            </div>
-            {renderKnob(k)}
-          </div>
-        ))}
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: ["orch-config"] })} className="gap-1.5">
+            <RefreshCw className="w-3.5 h-3.5" />Reload
+          </Button>
+          <Button size="sm" onClick={() => saveMut.mutate(values)} disabled={!dirty || saveMut.isPending} className="gap-1.5">
+            {saveMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save Changes
+          </Button>
+        </div>
       </div>
 
-      <div className="rounded-xl border bg-card p-5 space-y-4">
-        <h2 className="text-sm font-semibold">Parameters &amp; Strategies</h2>
-        {isLoading ? Array.from({ length: 11 }).map((_, i) => (
-          <div key={i} className="flex items-center justify-between">
-            <Skeleton className="h-4 w-52" /><Skeleton className="h-8 w-36 rounded" />
-          </div>
-        )) : otherKnobs.map(k => (
-          <div key={k.key} className="flex items-center justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <Label className="text-sm font-medium">{k.label}</Label>
-                <UITooltip>
-                  <TooltipTrigger asChild><Info className="w-3.5 h-3.5 text-muted-foreground cursor-help shrink-0" /></TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-xs">{k.description}</TooltipContent>
-                </UITooltip>
-              </div>
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">{k.key}{k.min != null ? ` (${k.min}–${k.max})` : ""}</p>
+      {/* Two-column layout */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        {/* Left: Feature Toggles */}
+        <div className="rounded-xl border bg-card p-5 space-y-1">
+          <h2 className="text-sm font-semibold mb-4">Feature Toggles</h2>
+          {isLoading ? Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between py-2.5">
+              <Skeleton className="h-4 w-48" /><Skeleton className="h-6 w-10 rounded-full" />
             </div>
-            {renderKnob(k)}
-          </div>
-        ))}
-      </div>
+          )) : boolKnobs.map((k, idx) => (
+            <div key={k.key} className={cn("flex items-center justify-between gap-4 py-2.5", idx < boolKnobs.length - 1 && "border-b border-border/50")}>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <Label className="text-sm font-medium">{k.label}</Label>
+                  <UITooltip>
+                    <TooltipTrigger asChild><Info className="w-3.5 h-3.5 text-muted-foreground cursor-help shrink-0" /></TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-xs">{k.description}</TooltipContent>
+                  </UITooltip>
+                </div>
+                <p className="text-xs text-muted-foreground font-mono mt-0.5">{k.key}</p>
+              </div>
+              {renderKnob(k)}
+            </div>
+          ))}
+        </div>
 
-      <div className="rounded-lg border bg-blue-500/5 border-blue-500/20 px-4 py-3 text-xs text-muted-foreground">
-        <strong className="text-foreground">Note:</strong> Changes are written immediately to the database.
-        The orchestrator reloads its config cache every 60 seconds, so new settings take effect within one minute.
+        {/* Right: Parameters & Strategies */}
+        <div className="rounded-xl border bg-card p-5 space-y-1">
+          <h2 className="text-sm font-semibold mb-4">Parameters &amp; Strategies</h2>
+          {isLoading ? Array.from({ length: 11 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between py-2.5">
+              <Skeleton className="h-4 w-52" /><Skeleton className="h-8 w-36 rounded" />
+            </div>
+          )) : otherKnobs.map((k, idx) => (
+            <div key={k.key} className={cn("flex items-center justify-between gap-4 py-2.5", idx < otherKnobs.length - 1 && "border-b border-border/50")}>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <Label className="text-sm font-medium">{k.label}</Label>
+                  <UITooltip>
+                    <TooltipTrigger asChild><Info className="w-3.5 h-3.5 text-muted-foreground cursor-help shrink-0" /></TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-xs">{k.description}</TooltipContent>
+                  </UITooltip>
+                </div>
+                <p className="text-xs text-muted-foreground font-mono mt-0.5">{k.key}{k.min != null ? ` (${k.min}–${k.max})` : ""}</p>
+              </div>
+              {renderKnob(k)}
+            </div>
+          ))}
+
+          <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 px-3 py-2.5 text-xs text-muted-foreground mt-4">
+            <strong className="text-foreground">Note:</strong> Config reloads every 60 seconds — changes take effect within one minute.
+          </div>
+        </div>
       </div>
     </div>
   );
