@@ -491,7 +491,7 @@ function scheduleLabel(item: any): string {
 }
 
 function WatchlistItem({
-  item, onDelete, onScheduleChange, deleting, latestScan, onViewScan, onRunScan, runningScan,
+  item, onDelete, onScheduleChange, deleting, latestScan, onViewScan, onRunScan, onView, runningScan,
 }: {
   item: any;
   onDelete: (id: number) => void;
@@ -500,6 +500,7 @@ function WatchlistItem({
   latestScan?: any;
   onViewScan?: (id: number) => void;
   onRunScan?: (item: any) => void;
+  onView?: (item: any) => void;
   runningScan?: boolean;
 }) {
   const [editingFreq, setEditingFreq] = useState(false);
@@ -553,26 +554,47 @@ function WatchlistItem({
           )}
         </div>
         <span className="text-[10px] text-muted-foreground/50 shrink-0 hidden sm:block">{formatDate(item.createdAt)}</span>
-        {latestScan && onViewScan && (
+        {/* Scan status badge — shown when a scan exists */}
+        {latestScan && (
+          <span className={cn(
+            "text-[10px] px-2 py-0.5 rounded-full border flex items-center gap-1 shrink-0",
+            latestScan.status === "done"    ? "bg-green-500/10 border-green-500/20 text-green-400" :
+            latestScan.status === "running" ? "bg-blue-500/10 border-blue-500/20 text-blue-400" :
+            latestScan.status === "failed"  ? "bg-red-500/10 border-red-500/20 text-red-400" :
+                                              "bg-muted border-border text-muted-foreground"
+          )}>
+            {latestScan.status === "running" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+            {latestScan.status === "done" && <CheckCircle2 className="w-2.5 h-2.5" />}
+            {latestScan.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
+            {latestScan.status === "done" ? "Scanned" : latestScan.status === "running" ? "Scanning…" : latestScan.status === "failed" ? "Failed" : latestScan.status}
+          </span>
+        )}
+        {/* View Intel — always visible; routes to scan detail or triggers new scan */}
+        {onView && (
           <Button
             variant="ghost" size="sm"
-            onClick={() => onViewScan(latestScan.id)}
-            className="h-7 text-[11px] px-2 text-blue-400 hover:text-blue-300 shrink-0 gap-1"
-            title={`View intel from ${latestScan.status === 'done' ? 'last scan' : latestScan.status + ' scan'}`}
+            onClick={() => onView(item)}
+            disabled={runningScan}
+            className="h-7 text-[11px] px-2.5 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 shrink-0 gap-1 font-medium"
+            title={latestScan ? "View brand threat intelligence for this item" : "Start a scan to view intelligence"}
           >
-            Intel <ChevronRight className="w-3 h-3" />
+            {runningScan
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : latestScan ? <Eye className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+            {runningScan ? "Starting…" : latestScan ? "View Intel" : "Scan Now"}
           </Button>
         )}
-        {SCANNABLE_TYPES.includes(item.type) && onRunScan && (
+        {/* Re-scan button — only for scannable types that already have a scan */}
+        {latestScan && SCANNABLE_TYPES.includes(item.type) && onRunScan && (
           <Button
             variant="ghost" size="sm"
             onClick={() => onRunScan(item)}
             disabled={runningScan}
             className="h-7 text-[11px] px-2 text-emerald-400 hover:text-emerald-300 shrink-0 gap-1"
-            title="Start a brand threat scan for this item"
+            title="Run a fresh brand threat scan"
           >
-            {runningScan ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-            {latestScan ? "Re-scan" : "Scan"}
+            <RefreshCw className="w-3 h-3" />
+            Re-scan
           </Button>
         )}
         {isSchedulable && (
@@ -805,6 +827,19 @@ function WatchlistSection() {
     }
   }
 
+  async function handleViewItem(item: any) {
+    const latest = latestScanForItem(item);
+    if (latest) {
+      navigate(`/brand-threats/${latest.id}`);
+      return;
+    }
+    if (SCANNABLE_TYPES.includes(item.type as any)) {
+      await handleRunScan(item);
+      return;
+    }
+    navigate("/brand-threats");
+  }
+
   async function handleScheduleChange(id: number, schedule: WatchlistSchedule) {
     try {
       const res = await fetch(`/api/brand-watchlist/${id}`, {
@@ -977,6 +1012,7 @@ function WatchlistSection() {
                 latestScan={latestScanForItem(item)}
                 onViewScan={id => navigate(`/brand-threats/${id}`)}
                 onRunScan={handleRunScan}
+                onView={handleViewItem}
                 runningScan={runningScanItemId === item.id}
               />
             ))}

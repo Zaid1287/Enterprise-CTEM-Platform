@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, Server, AlertTriangle, Zap, Clock, RefreshCw,
@@ -668,11 +668,15 @@ function ProxiesTab() {
   const isSuperAdmin = user?.role === "super_admin";
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [showAdd, setShowAdd]   = useState(false);
-  const [showBulk, setShowBulk] = useState(false);
-  const [editProxy, setEditProxy] = useState<Proxy | null>(null);
-  const [testingId, setTestingId] = useState<number | null>(null);
-  const [deleteId, setDeleteId]   = useState<number | null>(null);
+  const [showAdd, setShowAdd]         = useState(false);
+  const [showBulk, setShowBulk]       = useState(false);
+  const [editProxy, setEditProxy]     = useState<Proxy | null>(null);
+  const [testingId, setTestingId]     = useState<number | null>(null);
+  const [deleteId, setDeleteId]       = useState<number | null>(null);
+  const [selectedProxy, setSelectedProxy] = useState<number | null>(null);
+  const [filterSearch, setFilterSearch]   = useState("");
+  const [filterStatus, setFilterStatus]   = useState("all");
+  const [filterType, setFilterType]       = useState("all");
 
   const { data: proxies = [], isLoading } = useQuery<Proxy[]>({
     queryKey: ["orch-proxies"],
@@ -689,35 +693,18 @@ function ProxiesTab() {
   const testProxy = async (proxy: Proxy) => {
     setTestingId(proxy.id);
     try {
-      // Always do the auth-aware test so we can surface credential failures.
-      // The test URL only needs to be reachable by the proxy — we use the
-      // CONNECT tunnel response code (or SOCKS handshake) to check auth, so
-      // the target itself doesn't need to respond.
       const url = `/api/scan-proxies/${proxy.id}/health?testUrl=${encodeURIComponent("http://example.com")}`;
       const result = await api<{
         reachable: boolean; authOk?: boolean; httpStatus?: number; latencyMs?: number; error?: string;
       }>(url);
       qc.invalidateQueries({ queryKey: ["orch-proxies"] });
-
       if (!result.reachable) {
-        toast({
-          title: "Proxy unreachable",
-          description: result.error ?? "TCP connection failed.",
-          variant: "destructive",
-        });
+        toast({ title: "Proxy unreachable", description: result.error ?? "TCP connection failed.", variant: "destructive" });
       } else if (proxy.hasAuth && result.authOk === false) {
-        toast({
-          title: "Auth Failed",
-          description: result.error ?? `Proxy rejected credentials (HTTP ${result.httpStatus ?? "?"})`,
-          variant: "destructive",
-        });
+        toast({ title: "Auth Failed", description: result.error ?? `Proxy rejected credentials (HTTP ${result.httpStatus ?? "?"})`, variant: "destructive" });
       } else if (proxy.hasAuth && result.authOk) {
-        toast({
-          title: "Auth OK",
-          description: `Credentials accepted — latency ${result.latencyMs ?? "?"}ms`,
-        });
+        toast({ title: "Auth OK", description: `Credentials accepted — latency ${result.latencyMs ?? "?"}ms` });
       } else {
-        // No credentials — just a connectivity check
         toast({ title: "Proxy reachable", description: `Latency: ${result.latencyMs ?? "?"}ms` });
       }
     } catch { toast({ title: "Health check failed", variant: "destructive" }); }
@@ -727,59 +714,130 @@ function ProxiesTab() {
   const activeCount   = proxies.filter(p => p.status === "active").length;
   const cooldownCount = proxies.filter(p => p.status === "cooldown").length;
   const inactiveCount = proxies.filter(p => p.status === "inactive").length;
+  const totalToday    = proxies.reduce((a, p) => a + (p.requestsToday ?? 0), 0);
+  const avgHealth     = proxies.length > 0
+    ? Math.round(proxies.reduce((a, p) => a + (p.healthScore ?? 0), 0) / proxies.length) : 0;
+
+  const uniqueTypes = [...new Set(proxies.map(p => p.type))];
+
+  const filteredProxies = proxies.filter(p => {
+    if (filterStatus !== "all" && p.status !== filterStatus) return false;
+    if (filterType   !== "all" && p.type   !== filterType)   return false;
+    if (filterSearch) {
+      const q = filterSearch.toLowerCase();
+      return p.ip.includes(q) || (p.label ?? "").toLowerCase().includes(q) || (p.country ?? "").toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const hasFilters = filterSearch !== "" || filterStatus !== "all" || filterType !== "all";
+  const clearFilters = () => { setFilterSearch(""); setFilterStatus("all"); setFilterType("all"); };
+
+  const statTiles = [
+    { label: "Total Proxies",  value: proxies.length,  icon: Wifi,     color: "text-primary",   bg: "bg-primary/10" },
+    { label: "Healthy",        value: activeCount,     icon: Wifi,     color: "text-green-500", bg: "bg-green-500/10" },
+    { label: "Cooling Down",   value: cooldownCount,   icon: Clock,    color: "text-amber-500", bg: "bg-amber-500/10" },
+    { label: "Inactive",       value: inactiveCount,   icon: WifiOff,  color: "text-red-500",   bg: "bg-red-500/10" },
+    {
+      label: "Avg Health", icon: Shield,
+      value: proxies.length > 0 ? `${avgHealth}%` : "—",
+      color: avgHealth >= 70 ? "text-green-500" : avgHealth >= 40 ? "text-amber-500" : "text-red-500",
+      bg: "bg-muted",
+    },
+    { label: "Requests Today", value: totalToday,      icon: Activity, color: "text-blue-500",  bg: "bg-blue-500/10" },
+  ];
 
   return (
     <div className="space-y-5">
-      {/* Stat tiles + actions */}
-      <div className="flex items-start gap-4 flex-wrap justify-between">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1 min-w-0">
-          {[
-            { label: "Total Proxies",  value: proxies.length,  icon: Wifi,    color: "text-primary",    bg: "bg-primary/10" },
-            { label: "Healthy",        value: activeCount,     icon: Wifi,    color: "text-green-500",  bg: "bg-green-500/10" },
-            { label: "Cooling Down",   value: cooldownCount,   icon: Clock,   color: "text-amber-500",  bg: "bg-amber-500/10" },
-            { label: "Inactive",       value: inactiveCount,   icon: WifiOff, color: "text-red-500",    bg: "bg-red-500/10" },
-          ].map(s => (
-            <div key={s.label} className="rounded-xl border bg-card p-4 flex items-center gap-3">
-              <div className={cn("p-2 rounded-lg shrink-0", s.bg)}>
-                <s.icon className={cn("w-4 h-4", s.color)} />
-              </div>
-              <div>
-                <p className={cn("text-2xl font-bold tabular-nums leading-none", s.color)}>{s.value}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-              </div>
+      {/* 6-tile stat bar — full width */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+        {statTiles.map(s => (
+          <div key={s.label} className="rounded-xl border bg-card p-4 flex items-center gap-3">
+            <div className={cn("p-2.5 rounded-lg shrink-0", s.bg)}>
+              <s.icon className={cn("w-4 h-4", s.color)} />
             </div>
-          ))}
-        </div>
-        {isSuperAdmin && (
-          <div className="flex gap-2 shrink-0 pt-0.5">
-            <Button variant="outline" onClick={() => setShowBulk(true)} className="gap-1.5" size="sm">
-              <Upload className="w-4 h-4" />Bulk Import
-            </Button>
-            <Button onClick={() => setShowAdd(true)} className="gap-1.5" size="sm">
-              <Plus className="w-4 h-4" />Add Proxy
-            </Button>
+            <div>
+              <p className={cn("text-2xl font-bold tabular-nums leading-none", s.color)}>{s.value}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
+            </div>
           </div>
+        ))}
+      </div>
+
+      {/* Filter + action bar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            className="pl-8 h-9 text-sm"
+            placeholder="Search by IP, label, or country…"
+            value={filterSearch}
+            onChange={e => setFilterSearch(e.target.value)}
+          />
+        </div>
+        <Select value={filterStatus} onValueChange={setFilterStatus}>
+          <SelectTrigger className="h-9 w-[150px]"><SelectValue placeholder="All Statuses" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="active">Healthy</SelectItem>
+            <SelectItem value="cooldown">Cooling Down</SelectItem>
+            <SelectItem value="inactive">Inactive</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={filterType} onValueChange={setFilterType}>
+          <SelectTrigger className="h-9 w-[130px]"><SelectValue placeholder="All Types" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            {(uniqueTypes.length > 0 ? uniqueTypes : ["http", "https", "socks4", "socks5"]).map(t => (
+              <SelectItem key={t} value={t}>{t.toUpperCase()}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {hasFilters && (
+          <Button variant="ghost" size="sm" className="h-9 text-muted-foreground gap-1" onClick={clearFilters}>
+            <X className="w-3.5 h-3.5" /> Clear
+          </Button>
+        )}
+        <div className="flex-1" />
+        {isSuperAdmin && (
+          <>
+            <Button variant="outline" onClick={() => setShowBulk(true)} className="gap-1.5 h-9" size="sm">
+              <Upload className="w-4 h-4" /> Bulk Import
+            </Button>
+            <Button onClick={() => setShowAdd(true)} className="gap-1.5 h-9" size="sm">
+              <Plus className="w-4 h-4" /> Add Proxy
+            </Button>
+          </>
         )}
       </div>
+
+      {/* Count line */}
+      {!isLoading && proxies.length > 0 && (
+        <p className="text-xs text-muted-foreground -mt-1">
+          Showing <span className="font-medium text-foreground">{filteredProxies.length}</span> of {proxies.length} proxies
+          {hasFilters && " (filtered)"}
+          {selectedProxy != null && " — click the highlighted row again to collapse details"}
+        </p>
+      )}
 
       {/* Proxy table */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
-                <th className="px-4 py-3 text-left font-medium">IP : Port</th>
-                <th className="px-4 py-3 text-left font-medium">Label</th>
-                <th className="px-4 py-3 text-left font-medium">Class</th>
-                <th className="px-4 py-3 text-left font-medium">Country</th>
-                <th className="px-4 py-3 text-right font-medium">Health</th>
-                <th className="px-4 py-3 text-right font-medium">Success %</th>
-                <th className="px-4 py-3 text-right font-medium">429s</th>
-                <th className="px-4 py-3 text-right font-medium">403s</th>
-                <th className="px-4 py-3 text-right font-medium">Avg Latency</th>
-                <th className="px-4 py-3 text-left font-medium">Status</th>
-                <th className="px-4 py-3 text-right font-medium">Today</th>
-                <th className="px-4 py-3 text-right font-medium">Actions</th>
+              <tr className="border-b bg-muted/40 text-[11px] text-muted-foreground uppercase tracking-wide">
+                <th className="px-4 py-3 text-left font-semibold">IP : Port</th>
+                <th className="px-4 py-3 text-left font-semibold">Label</th>
+                <th className="px-4 py-3 text-left font-semibold">Type</th>
+                <th className="px-4 py-3 text-left font-semibold">Country</th>
+                <th className="px-5 py-3 text-center font-semibold w-36">Health Score</th>
+                <th className="px-4 py-3 text-right font-semibold">Success %</th>
+                <th className="px-4 py-3 text-right font-semibold">429s</th>
+                <th className="px-4 py-3 text-right font-semibold">403s</th>
+                <th className="px-4 py-3 text-right font-semibold">Avg Latency</th>
+                <th className="px-4 py-3 text-left font-semibold">Status</th>
+                <th className="px-4 py-3 text-right font-semibold">Today</th>
+                <th className="px-4 py-3 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -789,58 +847,129 @@ function ProxiesTab() {
                     <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>
                   ))}
                 </tr>
-              )) : proxies.length === 0 ? (
+              )) : filteredProxies.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-12 text-center text-muted-foreground text-sm">
-                    No proxies configured.{isSuperAdmin && " Click \"Add Proxy\" to add one."}
+                  <td colSpan={12} className="px-4 py-16 text-center">
+                    <div className="flex flex-col items-center gap-3 text-muted-foreground">
+                      <WifiOff className="w-10 h-10 opacity-20" />
+                      <p className="text-sm font-medium">
+                        {proxies.length === 0
+                          ? (isSuperAdmin ? "No proxies configured — click \"Add Proxy\" to get started" : "No proxies configured.")
+                          : "No proxies match the current filters."}
+                      </p>
+                      {proxies.length > 0 && (
+                        <Button variant="outline" size="sm" onClick={clearFilters}>Clear filters</Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
-              ) : proxies.map(proxy => {
-                const total = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
+              ) : filteredProxies.map(proxy => {
+                const total      = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
                 const successPct = total > 0 ? Math.round((proxy.successCount / total) * 100) : null;
-                const hColor = proxy.healthScore >= 70 ? "text-green-600" : proxy.healthScore >= 30 ? "text-amber-500" : "text-red-500";
+                const hColor     = proxy.healthScore >= 70 ? "text-green-600" : proxy.healthScore >= 30 ? "text-amber-500" : "text-red-500";
+                const hBarColor  = proxy.healthScore >= 70 ? "#16a34a" : proxy.healthScore >= 30 ? "#f59e0b" : "#ef4444";
+                const isSelected = selectedProxy === proxy.id;
                 return (
-                  <tr key={proxy.id} className="border-b last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3 font-mono text-xs">{proxy.ip}:{proxy.port}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{proxy.label ?? "—"}</td>
-                    <td className="px-4 py-3 text-xs capitalize">{proxy.type}</td>
-                    <td className="px-4 py-3 text-xs">{proxy.country ?? "—"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-                          <div className="h-full rounded-full" style={{ width: `${proxy.healthScore}%`, background: proxy.healthScore >= 70 ? "#16a34a" : proxy.healthScore >= 30 ? "#f59e0b" : "#ef4444" }} />
+                  <Fragment key={proxy.id}>
+                    <tr
+                      className={cn(
+                        "border-b transition-colors cursor-pointer select-none",
+                        isSelected ? "bg-primary/5 border-primary/20" : "hover:bg-muted/30 last:border-0"
+                      )}
+                      onClick={() => setSelectedProxy(isSelected ? null : proxy.id)}
+                    >
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-xs font-semibold">{proxy.ip}</span>
+                        <span className="font-mono text-xs text-muted-foreground">:{proxy.port}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground max-w-[110px] truncate" title={proxy.label ?? undefined}>{proxy.label ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className="text-[10px] font-mono uppercase tracking-wider bg-muted px-1.5 py-0.5 rounded border border-border/50">{proxy.type}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{proxy.country ?? "—"}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <div className="w-20 h-2 rounded-full bg-muted overflow-hidden flex-shrink-0">
+                            <div className="h-full rounded-full" style={{ width: `${proxy.healthScore}%`, background: hBarColor }} />
+                          </div>
+                          <span className={cn("text-xs font-bold tabular-nums w-6 text-right", hColor)}>{proxy.healthScore}</span>
                         </div>
-                        <span className={cn("text-xs font-bold tabular-nums w-6", hColor)}>{proxy.healthScore}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right text-xs">{successPct != null ? `${successPct}%` : "—"}</td>
-                    <td className={cn("px-4 py-3 text-right text-xs", proxy.count429 > 0 ? "text-amber-500 font-semibold" : "")}>{proxy.count429}</td>
-                    <td className={cn("px-4 py-3 text-right text-xs", proxy.count403 > 0 ? "text-red-500 font-semibold" : "")}>{proxy.count403}</td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground">{proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}</td>
-                    <td className="px-4 py-3"><ProxyStatusBadge status={proxy.status} /></td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground">{proxy.requestsToday ?? 0}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="w-7 h-7"
-                          title={proxy.hasAuth ? "Test connectivity & verify credentials" : "Test connectivity"}
-                          onClick={() => testProxy(proxy)} disabled={testingId === proxy.id}>
-                          {testingId === proxy.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube2 className="w-3.5 h-3.5" />}
-                        </Button>
-                        {isSuperAdmin && (
-                          <>
-                            <Button variant="ghost" size="icon" className="w-7 h-7" title="Edit"
-                              onClick={() => setEditProxy(proxy)}>
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive" title="Delete"
-                              onClick={() => setDeleteId(proxy.id)} disabled={deleteMut.isPending && deleteId === proxy.id}>
-                              {deleteMut.isPending && deleteId === proxy.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {successPct != null
+                          ? <span className={cn("text-xs font-semibold", successPct >= 80 ? "text-green-600" : successPct >= 50 ? "text-amber-500" : "text-red-500")}>{successPct}%</span>
+                          : <span className="text-xs text-muted-foreground">—</span>}
+                      </td>
+                      <td className={cn("px-4 py-3 text-right text-xs font-mono", proxy.count429 > 0 ? "text-amber-500 font-bold" : "text-muted-foreground")}>{proxy.count429}</td>
+                      <td className={cn("px-4 py-3 text-right text-xs font-mono", proxy.count403 > 0 ? "text-red-500 font-bold" : "text-muted-foreground")}>{proxy.count403}</td>
+                      <td className="px-4 py-3 text-right text-xs font-mono text-muted-foreground">{proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}</td>
+                      <td className="px-4 py-3"><ProxyStatusBadge status={proxy.status} /></td>
+                      <td className="px-4 py-3 text-right text-xs font-mono text-muted-foreground">{proxy.requestsToday ?? 0}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                          <Button variant="ghost" size="icon" className="w-7 h-7"
+                            title={proxy.hasAuth ? "Test connectivity & verify credentials" : "Test connectivity"}
+                            onClick={() => testProxy(proxy)} disabled={testingId === proxy.id}>
+                            {testingId === proxy.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube2 className="w-3.5 h-3.5" />}
+                          </Button>
+                          {isSuperAdmin && (
+                            <>
+                              <Button variant="ghost" size="icon" className="w-7 h-7" title="Edit" onClick={() => setEditProxy(proxy)}>
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive" title="Delete"
+                                onClick={() => setDeleteId(proxy.id)} disabled={deleteMut.isPending && deleteId === proxy.id}>
+                                {deleteMut.isPending && deleteId === proxy.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {isSelected && (
+                      <tr className="border-b bg-muted/20">
+                        <td colSpan={12} className="px-6 py-5">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Proxy Detail — {proxy.ip}:{proxy.port}</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-x-6 gap-y-4">
+                            {[
+                              { label: "Total Requests", value: total,                    color: "" },
+                              { label: "Successes",      value: proxy.successCount ?? 0,  color: "text-green-500" },
+                              { label: "Failures",       value: proxy.failCount ?? 0,     color: "text-red-500" },
+                              { label: "Rate Limits (429)", value: proxy.count429,        color: proxy.count429 > 0 ? "text-amber-500" : "" },
+                              { label: "Blocked (403)",  value: proxy.count403,           color: proxy.count403 > 0 ? "text-red-500" : "" },
+                              { label: "Avg Latency",    value: proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—", color: "" },
+                              { label: "Requests Today", value: proxy.requestsToday ?? 0, color: "text-blue-500" },
+                            ].map(stat => (
+                              <div key={stat.label}>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">{stat.label}</p>
+                                <p className={cn("text-lg font-bold tabular-nums", stat.color || "text-foreground")}>{stat.value}</p>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-6 mt-4 pt-3 border-t border-border/40 flex-wrap">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Auth:</span>
+                              {proxy.hasAuth
+                                ? <span className="text-xs text-green-500 flex items-center gap-1"><KeyRound className="w-3 h-3" /> Authenticated</span>
+                                : <span className="text-xs text-muted-foreground">None</span>}
+                            </div>
+                            {proxy.asn && (
+                              <div><span className="text-[10px] text-muted-foreground uppercase tracking-wide">ASN: </span>
+                              <span className="text-xs font-medium">{proxy.asn}</span></div>
+                            )}
+                            {proxy.lastTestedAt && (
+                              <div><span className="text-[10px] text-muted-foreground uppercase tracking-wide">Last Tested: </span>
+                              <span className="text-xs font-medium">{new Date(proxy.lastTestedAt).toLocaleString()}</span></div>
+                            )}
+                            {proxy.username && (
+                              <div><span className="text-[10px] text-muted-foreground uppercase tracking-wide">Username: </span>
+                              <span className="text-xs font-mono">{proxy.username}</span></div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
