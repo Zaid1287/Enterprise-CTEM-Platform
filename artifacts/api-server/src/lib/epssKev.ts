@@ -214,6 +214,18 @@ export async function fetchKevSet(): Promise<Set<string>> {
   }
 }
 
+// ── Scan-start cache warm-up (Cat 6 fix) ─────────────────────────────────────
+/**
+ * Force-refresh the KEV catalog from CISA right now, bypassing the TTL.
+ * Call this at the start of each scan so all findings enriched during that scan
+ * use the same KEV snapshot locked to scan-start time, not the previous cache epoch.
+ */
+export async function forceRefreshKevCache(): Promise<Set<string>> {
+  // Invalidate the in-memory cache timestamp so fetchKevSet() goes to CISA
+  kevCacheTs = 0;
+  return fetchKevSet();
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 type FindingLike = {

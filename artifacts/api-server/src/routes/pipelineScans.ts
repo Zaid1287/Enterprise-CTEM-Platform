@@ -39,7 +39,7 @@ import { BUILTIN_TOOL_DEFS, getPlatformTenantId } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
 import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
 import { finalizeScannedAssets } from "../lib/scanScheduler";
-import { enrichFindingsWithEpssKev } from "../lib/epssKev";
+import { enrichFindingsWithEpssKev, forceRefreshKevCache } from "../lib/epssKev";
 import { getPlatformSetting } from "./platformSettings";
 import { setNvdApiKey } from "../lib/nvdLookup";
 import { getVirusTotalDomain } from "../lib/virusTotal";
@@ -1012,10 +1012,13 @@ function parseNmapNormal(output: string): PortFinding[] {
 async function runNmapScan(target: string, scanId: number): Promise<{ ports: PortFinding[]; raw: string }> {
   const scanTarget = extractDomain(target) || target;
   try {
-    const cmd = `nmap -sT --open --top-ports 1000 -T4 -sV --version-intensity 3 --max-rtt-timeout 2s --host-timeout 50s ${scanTarget}`;
+    // No --host-timeout, --max-rtt-timeout, or exec timeout — nmap runs until it finishes.
+    // These flags caused nmap to exit early on slow targets: scan 1 (fast day) would find
+    // 12 ports, scan 2 (slow day) would time out and find 3 — purely based on RTT variance.
+    const cmd = `nmap -sT --open --top-ports 1000 -T4 -sV --version-intensity 3 ${scanTarget}`;
     let child: ReturnType<typeof exec> | null = null;
     const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      child = exec(cmd, { timeout: 60000 }, (err, stdout, stderr) => {
+      child = exec(cmd, (err, stdout, stderr) => {
         if (err && !stdout) reject(err);
         else resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
       });
@@ -1752,6 +1755,13 @@ async function executePipeline(
   let totalFindings = 0;
   scanProgressMap.set(scanId, []);
 
+  // Cat 6: Force-refresh KEV catalog once at scan start so every asset processed in this
+  // scan uses the same KEV snapshot locked to this moment — not whatever was last cached.
+  // This ensures consistent isKev values across all findings discovered in this scan run.
+  await forceRefreshKevCache().catch(err =>
+    logger.warn({ err, scanId }, "KEV cache warm-up failed — enrichment will use last cached set (non-fatal)")
+  );
+
   // ── Parallel asset processing with concurrency cap ────────────────────────
   // Assets within a scan run MAX_PARALLEL_ASSETS at a time instead of sequentially.
   // Each asset still runs its own phases sequentially internally.
@@ -1861,13 +1871,24 @@ async function executePipeline(
         tenantId, scanId, assetId: asset.id, toolName: "mobile_app_scanner",
         toolCategory: "mobile", rawOutput: JSON.stringify(mobileIntel), intelligence: mobileIntel as any,
       } as any);
-      await db.insert(findingsTable).values({
+      // Cat 12: Push into emailSecurityFindings so it flows through the main dedup pipeline
+      // and the DB unique constraint prevents duplicate rows on re-scans.
+      emailSecurityFindings.push({
         tenantId, assetId: asset.id, scanId,
         title: "Mobile App: Network Scanning Not Applicable",
-        severity: "low", status: "open", cveId: "INFO-MOBILE-SCAN", cvss: 0,
+        cve: "INFO-MOBILE-SCAN",
+        severity: "low", status: "open", cvss: 0,
         description: `Mobile application asset (${asset.value}) was identified. Network-layer scanning (port scan, HTTP probe, SSL analysis) does not apply to mobile apps. App store metadata was ${appFound ? "retrieved successfully" : "not found — ensure the value is a valid bundle ID (com.example.app) or App/Play Store URL"}.`,
         remediation: `Add the backend API hostname (e.g. api.${extractRootDomain(domain || bundleId)}) as a separate Domain or URL asset for full vulnerability scanning. Use Brand Threat monitoring to detect mobile app impersonation.`,
       } as any);
+      // Flush emailSecurityFindings before early return — mobile assets skip the main pipeline
+      for (const ef of emailSecurityFindings) {
+        await db.insert(findingsTable).values(ef)
+          .onConflictDoUpdate({
+            target: [findingsTable.assetId, findingsTable.cve],
+            set: { lastSeenAt: new Date(), scanId },
+          }).catch(() => {});
+      }
       logger.info({ assetId: asset.id, bundleId, appFound }, "Mobile app scan complete (app store metadata mode)");
       return;
     }
@@ -1877,10 +1898,12 @@ async function executePipeline(
       const prefix = parseCidrPrefix(target);
       if (prefix !== null && prefix < 24) {
         const ipCount = Math.round(Math.pow(2, 32 - prefix));
-        await db.insert(findingsTable).values({
+        // Cat 12: Push into emailSecurityFindings so it flows through the main dedup pipeline
+        emailSecurityFindings.push({
           tenantId, assetId: asset.id, scanId,
           title: `Large CIDR Range — Scan May Take Hours (/${prefix}, ~${ipCount.toLocaleString()} IPs)`,
-          severity: "medium", status: "open", cveId: "INFO-CIDR-BUDGET", cvss: 0,
+          cve: "INFO-CIDR-BUDGET",
+          severity: "medium", status: "open", cvss: 0,
           description: `The CIDR range ${target} covers approximately ${ipCount.toLocaleString()} IP addresses (/${prefix}). Scanning this entire range can take hours, consume significant server resources, and may trigger rate-limiting or blocking on the target network.`,
           remediation: `Set this asset's Scan Frequency to "manual" and schedule scans during maintenance windows. Break large CIDR ranges into individual /24 subnets (256 IPs each) or individual IP assets for regular automated scanning.`,
         } as any);
@@ -1894,10 +1917,12 @@ async function executePipeline(
         /^([0-9a-f]{2}:){15,}[0-9a-f]{2}$/i.test(target.trim()) ||
         /^[0-9a-f]{40,}$/i.test(target.trim());
       if (looksLikeFingerprint) {
-        await db.insert(findingsTable).values({
+        // Cat 12: Push into emailSecurityFindings so it flows through the main dedup pipeline
+        emailSecurityFindings.push({
           tenantId, assetId: asset.id, scanId,
           title: "SSL Certificate Asset: Value Should Be Hostname, Not Fingerprint",
-          severity: "low", status: "open", cveId: "CONF-SSL-VALUE", cvss: 0,
+          cve: "CONF-SSL-VALUE",
+          severity: "low", status: "open", cvss: 0,
           description: `The asset value "${target.slice(0, 60)}${target.length > 60 ? "…" : ""}" appears to be a certificate fingerprint or serial number rather than a hostname. The scanner uses the value as a network target — a fingerprint cannot be probed.`,
           remediation: `Update the asset value to the hostname the certificate protects (e.g. "api.example.com"). Store the fingerprint in the asset Description or Tags field instead.`,
         } as any);
@@ -1927,15 +1952,13 @@ async function executePipeline(
     }
 
     // ── Start subdomain scan early (runs in parallel with all phases) ────────
-    // Hard 3-minute outer timeout — binary downloads + passive queries must finish
-    // within this window or the scan proceeds without subdomain enrichment.
-    const SUBDOMAIN_TIMEOUT_MS = 3 * 60 * 1000;
+    // No hard timeout — scanSubdomains runs until it naturally completes.
+    // The 3-minute limit was causing nuclei to scan only the primary host when
+    // subdomain discovery was slow, producing a completely different finding set
+    // than runs where all subdomains were discovered and included in the nuclei scope.
     const subdomainScanPromise: Promise<SubdomainScanReport | null> =
       domain && !isIp(domain)
-        ? Promise.race([
-            scanSubdomains(domain).catch(() => null),
-            new Promise<null>(resolve => setTimeout(() => resolve(null), SUBDOMAIN_TIMEOUT_MS)),
-          ])
+        ? scanSubdomains(domain).catch(() => null)
         : Promise.resolve(null);
 
     // ── Init progress for this asset ────────────────────────────────────────
@@ -2866,6 +2889,19 @@ async function executePipeline(
             remediation: `Review the full VirusTotal report for ${domain} and monitor for further malicious activity.`,
           });
         }
+        // Cat 9: Store raw VT response in scan_asset_results so historical scan reports
+        // have an immutable snapshot of what VirusTotal reported at scan time.
+        if (vtResult) {
+          await db.insert(scanAssetResultsTable).values({
+            tenantId, scanId, assetId: asset.id,
+            toolName: "virustotal", toolCategory: "threat_intel",
+            rawOutput: JSON.stringify({ ...vtResult, fetchedAt: new Date().toISOString(), domain }),
+            intelligence: { virustotal: vtResult, fetchedAt: new Date().toISOString(), domain } as any,
+            ports: null as any, subdomains: null as any, endpoints: null as any,
+            httpInfo: null as any, dnsRecords: null as any, jsAnalysis: null as any,
+            vulnerabilities: null as any,
+          }).catch(() => {}); // non-fatal
+        }
       } catch { /* non-fatal — VT findings are bonus data */ }
     }
 
@@ -3741,20 +3777,26 @@ async function executePipeline(
     const terminalStatuses = ["mitigated", "accepted_risk", "false_positive", "auto_mitigated"];
 
     // Fetch all current findings for this asset so we can diff against them
+    // Cat 11: also select assetId so the dedup key can include it, preventing
+    // cross-asset CVE matches when the same CVE ID appears on multiple assets.
     const existingFindings = await db.select({
       id: findingsTable.id,
       cve: findingsTable.cve,
       title: findingsTable.title,
       scanId: findingsTable.scanId,
+      assetId: findingsTable.assetId,
     }).from(findingsTable).where(and(
       eq(findingsTable.assetId, asset.id),
       eq(findingsTable.tenantId, tenantId),
     ));
 
     // Build fingerprint → existing finding map
+    // Key format: "cve:{cveId}:{assetId}" or "title:{title}:{assetId}"
+    // Including assetId prevents a CVE on asset A from matching a finding for asset B
+    // when two assets are processed in the same scan batch.
     const existingMap = new Map<string, typeof existingFindings[0]>();
     for (const ef of existingFindings) {
-      const k = ef.cve ? `cve:${ef.cve}` : `title:${ef.title}`;
+      const k = ef.cve ? `cve:${ef.cve}:${ef.assetId}` : `title:${ef.title}:${ef.assetId}`;
       if (!existingMap.has(k)) existingMap.set(k, ef);
     }
 
@@ -3763,7 +3805,8 @@ async function executePipeline(
     // Group "seen again" findings by their previous scanId so we can batch-update
     const updateGroupsByPrev = new Map<number | null, number[]>();
     for (const f of filteredFindings) {
-      const k = f.cve ? `cve:${f.cve}` : `title:${f.title}`;
+      // Cat 11: Key must include asset.id to match the existingMap key format above.
+      const k = f.cve ? `cve:${f.cve}:${asset.id}` : `title:${f.title}:${asset.id}`;
       const existing = existingMap.get(k);
       if (existing) {
         const prev = existing.scanId ?? null;
@@ -3786,14 +3829,38 @@ async function executePipeline(
       }
     }
 
-    // Insert genuinely new findings in batches — count only confirmed DB inserts
+    // Insert genuinely new findings with upsert semantics (Cat 10).
+    // Split by cve presence to target the correct unique partial index:
+    //   • WITH cve  → unique on (asset_id, cve) WHERE cve IS NOT NULL
+    //   • WITHOUT cve → unique on (asset_id, title) WHERE cve IS NULL
+    // onConflictDoUpdate acts as a safety net for parallel scan workers racing to
+    // insert the same finding; the primary dedup (existingMap above) already
+    // prevents re-inserting findings the current worker already knows about.
     let insertedCount = 0;
-    for (let i = 0; i < toInsert.length; i += 50) {
+    const toInsertWithCve = toInsert.filter(f => !!f.cve);
+    const toInsertWithoutCve = toInsert.filter(f => !f.cve);
+
+    for (let i = 0; i < toInsertWithCve.length; i += 50) {
       try {
-        await db.insert(findingsTable).values(toInsert.slice(i, i + 50));
-        insertedCount += toInsert.slice(i, i + 50).length;
+        const batch = toInsertWithCve.slice(i, i + 50);
+        await db.insert(findingsTable).values(batch)
+          .onConflictDoUpdate({
+            target: [findingsTable.assetId, findingsTable.cve],
+            set: { lastSeenAt: scanSeenAt, consecutiveMissedScans: 0, scanId },
+          });
+        insertedCount += batch.length;
       } catch (insertErr) {
-        logger.warn({ err: insertErr, assetId: asset.id, batch: i }, "Finding batch insert partial failure");
+        logger.warn({ err: insertErr, assetId: asset.id, batch: i }, "Finding batch insert (cve-keyed) partial failure");
+      }
+    }
+    for (let i = 0; i < toInsertWithoutCve.length; i += 50) {
+      try {
+        const batch = toInsertWithoutCve.slice(i, i + 50);
+        await db.insert(findingsTable).values(batch)
+          .onConflictDoNothing(); // title-based unique index; update handled by updateGroupsByPrev above
+        insertedCount += batch.length;
+      } catch (insertErr) {
+        logger.warn({ err: insertErr, assetId: asset.id, batch: i }, "Finding batch insert (title-keyed) partial failure");
       }
     }
     // findingTotals tracks CONFIRMED DB operations only:
@@ -3802,39 +3869,18 @@ async function executePipeline(
     const seenAgainCount = updateGroupsByPrev.size > 0 ? Array.from(updateGroupsByPrev.values()).flat().length : 0;
     findingTotals.push(seenAgainCount + insertedCount);
 
-    // ── Stale finding tracking + auto-mitigation ──────────────────────────────
-    // Increment consecutiveMissedScans for findings NOT seen in this scan run.
-    // Auto-mitigate those that exceed the configured threshold.
-    try {
-      const thresholdStr = await getPlatformSetting("auto_mitigate_threshold");
-      // Default reduced from 3 → 2: a finding not seen in 2 consecutive scans is
-      // very likely resolved; waiting for a 3rd miss allows false positives to linger
-      // an extra full scan cycle before being cleaned up.
-      const threshold = thresholdStr !== null ? parseInt(thresholdStr, 10) : 2;
-      if (!isNaN(threshold) && threshold > 0) {
-        // Increment missed counter for all stale open findings on this asset
-        await db.update(findingsTable)
-          .set({ consecutiveMissedScans: sql`consecutive_missed_scans + 1` })
-          .where(and(
-            eq(findingsTable.assetId, asset.id),
-            eq(findingsTable.tenantId, tenantId),
-            or(isNull(findingsTable.lastSeenAt), lt(findingsTable.lastSeenAt, scanSeenAt)),
-            not(inArray(findingsTable.status, terminalStatuses)),
-          ));
-        // Auto-mitigate findings that have exceeded the threshold
-        await db.update(findingsTable)
-          .set({ status: "auto_mitigated" })
-          .where(and(
-            eq(findingsTable.assetId, asset.id),
-            eq(findingsTable.tenantId, tenantId),
-            gte(findingsTable.consecutiveMissedScans, threshold),
-            eq(findingsTable.status, "open"),
-          ));
-        logger.info({ assetId: asset.id, threshold }, "Stale finding check complete");
-      }
-    } catch (err) {
-      logger.warn({ err, assetId: asset.id }, "Stale finding auto-mitigate failed (non-fatal)");
-    }
+    // ── Auto-mitigation DISABLED (Cat 1) ─────────────────────────────────────
+    // Auto-mitigation was permanently disabled because it was the primary cause of
+    // scan inconsistency: a tool failure (timeout, rate-limit, network blip) on any
+    // one scan would increment consecutiveMissedScans, and after just 2 misses the
+    // finding was permanently deleted. On the next successful scan it re-appeared as
+    // "new", making every report look completely different from the previous one.
+    //
+    // Findings are now permanent until a human explicitly resolves them
+    // (status: mitigated / false_positive / accepted_risk). The consecutiveMissedScans
+    // counter is still incremented by the batch-update above (updateGroupsByPrev)
+    // and reset to 0 when a finding is seen again, so operators can still query
+    // "how many scans has this finding been absent from?" without any auto-deletion.
 
     // ── Persist scan progress to DB so a server restart doesn't lose state ──────
     try {

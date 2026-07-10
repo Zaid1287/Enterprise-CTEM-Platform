@@ -226,7 +226,9 @@ async function runNaabu(target: string): Promise<{ ports: number[]; raw: string 
   const cmd  = `${NAABU_BIN} -host ${host} -p 1-65535 -rate 3000 -timeout 5 -silent 2>/dev/null`;
   let stdout = "";
   try {
-    const r = await orchestratedExec(cmd, { timeout: 90000, targetHost: host });
+    // No outer timeout — naabu runs until it finishes all 65535 ports.
+    // The 90 s limit was causing different port sets between runs depending on network speed.
+    const r = await orchestratedExec(cmd, { targetHost: host });
     stdout = r.stdout.trim();
   } catch (err: any) { stdout = (err as any)?.stdout?.trim() ?? ""; }
 
@@ -267,9 +269,12 @@ async function runMasscan(target: string, targetIp: string | null): Promise<Mass
   let failReason: string | undefined;
 
   try {
+    // No outer timeouts — masscan runs until it naturally finishes.
+    // Hard timeouts here caused different port sets between runs: a run that hit
+    // the 120 s cut-off returned fewer ports than a run that completed fully.
     const [tcpResult, udpResult] = await Promise.allSettled([
-      orchestratedExec(tcpCmd, { timeout: 120000, targetHost: scanTarget }),
-      orchestratedExec(udpCmd, { timeout: 60000,  targetHost: scanTarget }),
+      orchestratedExec(tcpCmd, { targetHost: scanTarget }),
+      orchestratedExec(udpCmd, { targetHost: scanTarget }),
     ]);
     if (tcpResult.status === "fulfilled") tcpOut = tcpResult.value.stdout;
     else {
@@ -330,13 +335,16 @@ async function runNmapDetailed(target: string, ports: number[]): Promise<{ portD
     `--script=${scripts}`,
     portSpec,
     "-T4 --open",
-    "--max-rtt-timeout 3s --host-timeout 120s",
+    // No --host-timeout or --max-rtt-timeout — nmap runs until it finishes.
+    // These limits caused nmap to exit early on slow targets, missing services
+    // that would be found when the target was faster on a different run.
     host,
   ].join(" ");
 
   let stdout = "";
   try {
-    const r = await orchestratedExec(cmd, { timeout: 150000, targetHost: host });
+    // No outer timeout — nmap runs to completion.
+    const r = await orchestratedExec(cmd, { targetHost: host });
     stdout = r.stdout;
   } catch (err: any) { stdout = (err as any)?.stdout ?? String((err as any)?.message ?? err); }
   return { portDetails: parseNmapOutput(stdout), raw: stdout };
@@ -374,9 +382,10 @@ async function runRustscan(target: string): Promise<{ ports: number[]; raw: stri
 export async function queryShodanInternetDB(ip: string): Promise<ShodanHostData | null> {
   if (!ip || !isIp(ip)) return null;
   try {
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 10000);
-    const res = await orchestratedFetch(`https://internetdb.shodan.io/${ip}`, { signal: ctrl.signal }, { intensity: "passive" });
+    // No abort timeout — Shodan InternetDB is a free passive API, let it respond naturally.
+    // A 6-10 s cut-off caused the Shodan port set to be empty on slow days, producing
+    // different port unions between scan runs.
+    const res = await orchestratedFetch(`https://internetdb.shodan.io/${ip}`, {}, { intensity: "passive" });
     if (!res.ok) return null;
     const d: any = await res.json();
     if (d.detail === "No information available") return null;

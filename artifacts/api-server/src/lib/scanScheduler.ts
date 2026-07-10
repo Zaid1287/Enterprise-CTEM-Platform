@@ -46,9 +46,11 @@ function computeRiskComponents(
   const maxEpss = openFindings.reduce((m, f) => Math.max(m, f.epss ?? 0), 0);
   const epssComponent = Math.round(maxEpss * 15 * 10) / 10;
 
-  // Factor 4: KEV bonus — 8 pts per confirmed exploited finding
+  // Factor 4: KEV bonus — 8 pts per confirmed exploited finding, capped at 30
+  // Cap prevents a single KEV API response from dominating the score and causing
+  // large swings when KEV enrichment partially fails between scans.
   const kevCount = openFindings.filter(f => f.isKev).length;
-  const kevBonus = kevCount * 8;
+  const kevBonus = Math.min(kevCount * 8, 30);
 
   // Factor 5: Business impact (0–20 pts based on 1–10 field)
   const clampedImpact = Math.max(1, Math.min(10, businessImpact));

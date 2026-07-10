@@ -413,9 +413,12 @@ async function runFfuf(baseUrl: string, host: string): Promise<FuzzedEndpoint[]>
       "-o", outFile,
       "-s",   // silent — no progress output
     ].join(" ");
+    // No outer timeout — ffuf runs until its own internal request rate limit completes.
+    // A 90 s wall-clock cut-off caused different endpoint sets between runs depending
+    // on target response speed.
     await orchestratedExec(
       (proxyUrl) => proxyUrl ? `${cmd} -replay-proxy "${proxyUrl}"` : cmd,
-      { timeout: 90000, targetHost: host },
+      { targetHost: host },
     ).catch(() => null);
     if (!fs.existsSync(outFile)) return [];
     const raw = fs.readFileSync(outFile, "utf8");
@@ -449,9 +452,12 @@ async function runGobuster(baseUrl: string, host: string): Promise<FuzzedEndpoin
   const outFile = path.join(os.tmpdir(), `gobuster-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
   try {
     fs.writeFileSync(wlFile, [...WORDLIST, ...WORDLIST_MINI].filter((v, i, a) => a.indexOf(v) === i).join("\n"));
+    // No outer timeout — gobuster runs until it finishes its wordlist.
+    // A 90 s cut-off meant a slow-responding server produced a different endpoint
+    // set than a fast-responding one on the exact same target.
     await orchestratedExec(
       (proxyUrl) => `gobuster dir -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" -q -t 25 --timeout 10s --no-error${proxyUrl ? ` --proxy "${proxyUrl}"` : ""} 2>/dev/null`,
-      { timeout: 90_000, targetHost: host },
+      { targetHost: host },
     ).catch(() => null);
     if (!fs.existsSync(outFile)) return [];
     return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {
@@ -477,9 +483,10 @@ async function runFeroxbuster(baseUrl: string, host: string): Promise<FuzzedEndp
   const outFile = path.join(os.tmpdir(), `ferox-${host.replace(/\W/g, "_")}-${Date.now()}.txt`);
   try {
     fs.writeFileSync(wlFile, WORDLIST.join("\n"));
+    // No outer timeout — feroxbuster runs until it finishes its wordlist.
     await orchestratedExec(
       (proxyUrl) => `feroxbuster -u "${baseUrl}" -w "${wlFile}" -o "${outFile}" --no-state --silent -t 25 --timeout 10 -k${proxyUrl ? ` --proxy "${proxyUrl}"` : ""} 2>/dev/null`,
-      { timeout: 90_000, targetHost: host },
+      { targetHost: host },
     ).catch(() => null);
     if (!fs.existsSync(outFile)) return [];
     return fs.readFileSync(outFile, "utf8").trim().split("\n").filter(Boolean).flatMap(line => {

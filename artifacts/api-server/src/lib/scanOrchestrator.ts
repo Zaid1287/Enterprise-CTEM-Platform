@@ -168,7 +168,7 @@ async function loadProfiles(): Promise<Array<{ id: number; headers: Record<strin
 
 // Key format: "{tenantId}:{hostname}" — WAF detections are per-tenant
 const wafHostCache = new Map<string, number>();
-const WAF_HOST_TTL_MS      = 24 * 60 * 60_000; // 24 h
+const WAF_HOST_TTL_MS      = 12 * 60 * 60_000; // 12 h — reduced from 24h to reduce behavioural drift between runs
 const WAF_CACHE_REFRESH_MS =  5 * 60_000;       // re-read DB every 5 min
 // Per-tenant refresh timestamps
 const _wafCacheLoadedAt = new Map<number, number>();

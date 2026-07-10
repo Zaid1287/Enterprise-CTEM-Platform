@@ -442,9 +442,12 @@ function mapNucleiTag(tags: string[]): VulnCategory {
 async function runNucleiBinary(target: string): Promise<NucleiVuln[]> {
   try {
     const safeTarget = target.replace(/"/g, "").replace(/`/g, "").slice(0, 500);
+    // No outer process timeout — nuclei binary runs until it naturally completes.
+    // The 120 s limit was killing the binary mid-output on large targets, causing
+    // partial JSON output that gets silently dropped.
     const { stdout } = await execAsync(
       `nuclei -u "${safeTarget}" -severity critical,high,medium -json -timeout 15 -rate-limit 100 -no-interactsh -silent 2>/dev/null`,
-      { timeout: 120000, env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
+      { env: { ...process.env, HOME: process.env.HOME ?? "/home/runner" } }
     );
     return stdout.trim().split("\n")
       .filter(Boolean)
@@ -502,20 +505,19 @@ export async function runNucleiScan(target: string, subdomainNames: string[] = [
   logger.info({ target, hosts: allBases.length }, "Nuclei scan starting");
 
   const sem = new Semaphore(20); // max 20 concurrent requests across all hosts
-  const TIMEOUT = 5 * 60 * 1000;
-
-  const [findings, headers, cors] = await Promise.race([
-    Promise.all([
-      // Template scans across all hosts
-      Promise.allSettled(allBases.map(b => runTemplates(b, new URL(b).hostname, sem)))
-        .then(r => r.flatMap(x => x.status === "fulfilled" ? x.value : [])),
-      // Header analysis (primary host + up to 5 subdomains)
-      Promise.allSettled(allBases.slice(0, 6).map(b => analyzeHeaders(b, new URL(b).hostname)))
-        .then(r => r.filter(x => x.status === "fulfilled").map(x => (x as PromiseFulfilledResult<HeaderAnalysis>).value)),
-      // CORS testing (primary host only — most impactful)
-      testCors(primaryBase, domain),
-    ]),
-    new Promise<[NucleiVuln[], HeaderAnalysis[], CorsResult[]]>(r => setTimeout(() => r([[], [], []]), TIMEOUT)),
+  // No hard timeout — let all templates run to completion regardless of how long it takes.
+  // A timeout here was the primary cause of zero-finding scans: if the wall-clock fired
+  // first, ALL nuclei findings were silently discarded, making every timed-out scan
+  // look identical to a scan that found nothing.
+  const [findings, headers, cors] = await Promise.all([
+    // Template scans across all hosts
+    Promise.allSettled(allBases.map(b => runTemplates(b, new URL(b).hostname, sem)))
+      .then(r => r.flatMap(x => x.status === "fulfilled" ? x.value : [])),
+    // Header analysis (primary host + up to 5 subdomains)
+    Promise.allSettled(allBases.slice(0, 6).map(b => analyzeHeaders(b, new URL(b).hostname)))
+      .then(r => r.filter(x => x.status === "fulfilled").map(x => (x as PromiseFulfilledResult<HeaderAnalysis>).value)),
+    // CORS testing (primary host only — most impactful)
+    testCors(primaryBase, domain),
   ]);
 
   // ── Merge binary findings (deduplicate by templateId+host) ───────────────
