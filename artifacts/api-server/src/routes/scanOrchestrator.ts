@@ -438,6 +438,48 @@ router.get("/scan-fingerprints/:id", requireAuth, requireAdmin, async (req, res)
   }
 });
 
+// ── POST /scan-fingerprints — create a new custom profile ─────────────────────
+router.post("/scan-fingerprints", requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { name, headers, isActive = true } = req.body;
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      res.status(400).json({ error: "name is required" }); return;
+    }
+    if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+      res.status(400).json({ error: "headers must be a non-null object" }); return;
+    }
+    // Require at least a User-Agent header so the profile is meaningful
+    const hasUserAgent = Object.keys(headers).some(k => k.toLowerCase() === "user-agent");
+    if (!hasUserAgent) {
+      res.status(400).json({ error: "Profile must include a User-Agent header" }); return;
+    }
+
+    const [profile] = await db
+      .insert(scanFingerprintProfilesTable)
+      .values({
+        name:      name.trim(),
+        headers,
+        isActive:  !!isActive,
+        isBuiltIn: false,   // user-created profiles are never built-in
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any)
+      .returning();
+
+    invalidateConfigCache();
+    logger.info({ id: profile.id, name: profile.name }, "Fingerprint profile created");
+    res.status(201).json(profile);
+  } catch (err: any) {
+    // Drizzle wraps PG errors — code lives on err.cause
+    const pgCode = err?.code ?? err?.cause?.code;
+    if (pgCode === "23505") {
+      res.status(409).json({ error: "A profile with that name already exists" }); return;
+    }
+    logger.error({ err }, "POST /api/scan-fingerprints error");
+    res.status(500).json({ error: "Failed to create fingerprint profile" });
+  }
+});
+
 router.patch("/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseId(req.params.id);
@@ -458,9 +500,39 @@ router.patch("/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (re
     if (!updated) { res.status(404).json({ error: "Profile not found" }); return; }
     invalidateConfigCache();
     res.json(updated);
-  } catch (err) {
+  } catch (err: any) {
+    const pgCode = err?.code ?? err?.cause?.code;
+    if (pgCode === "23505") {
+      res.status(409).json({ error: "A profile with that name already exists" }); return;
+    }
     logger.error({ err }, "PATCH /api/scan-fingerprints/:id error");
     res.status(500).json({ error: "Failed to update fingerprint profile" });
+  }
+});
+
+// ── DELETE /scan-fingerprints/:id — remove a custom profile ───────────────────
+router.delete("/scan-fingerprints/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+    const [existing] = await db
+      .select({ id: scanFingerprintProfilesTable.id, isBuiltIn: scanFingerprintProfilesTable.isBuiltIn })
+      .from(scanFingerprintProfilesTable)
+      .where(eq(scanFingerprintProfilesTable.id, id));
+
+    if (!existing) { res.status(404).json({ error: "Profile not found" }); return; }
+    if (existing.isBuiltIn) {
+      res.status(403).json({ error: "Built-in profiles cannot be deleted — disable them instead" }); return;
+    }
+
+    await db.delete(scanFingerprintProfilesTable).where(eq(scanFingerprintProfilesTable.id, id));
+    invalidateConfigCache();
+    logger.info({ id }, "Fingerprint profile deleted");
+    res.json({ success: true });
+  } catch (err) {
+    logger.error({ err }, "DELETE /api/scan-fingerprints/:id error");
+    res.status(500).json({ error: "Failed to delete fingerprint profile" });
   }
 });
 

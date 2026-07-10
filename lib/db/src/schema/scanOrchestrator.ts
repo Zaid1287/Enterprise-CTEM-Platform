@@ -34,11 +34,14 @@ export const orchestratorConfigTable = pgTable("orchestrator_config", {
 }, (t) => [unique("orchestrator_config_tenant_key_unique").on(t.tenantId, t.key)]);
 
 export const scanFingerprintProfilesTable = pgTable("scan_fingerprint_profiles", {
-  id:        serial("id").primaryKey(),
-  name:      text("name").notNull().unique(),
-  headers:   jsonb("headers").$type<Record<string, string>>().notNull(),
-  isActive:  boolean("is_active").notNull().default(true),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  id:          serial("id").primaryKey(),
+  name:        text("name").notNull().unique(),
+  headers:     jsonb("headers").$type<Record<string, string>>().notNull(),
+  isActive:    boolean("is_active").notNull().default(true),
+  /** True for the 6 factory profiles seeded at first boot. Cannot be deleted via API. */
+  isBuiltIn:   boolean("is_built_in").notNull().default(false),
+  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:   timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const scanRequestTelemetryTable = pgTable("scan_request_telemetry", {
