@@ -7,6 +7,7 @@ import { getAllCircuits } from "../lib/circuitBreaker.js";
 import { getAllRateLimiterStats } from "../lib/adaptiveRateLimiter.js";
 import { getDnsResolverStats } from "../lib/dnsResolverPool.js";
 import { invalidateConfigCache, getWafProtectedHosts, orchestratedFetch } from "../lib/scanOrchestrator.js";
+import { invalidateExecConfigCache } from "../lib/orchestratedExec.js";
 import { addWaterfallSseClient, removeWaterfallSseClient } from "../lib/sseManager.js";
 import { logger } from "../lib/logger.js";
 import { encryptCredential, decryptCredential, decryptCredentialWithSecret } from "../lib/proxyCredentialEncryption.js";
@@ -398,6 +399,7 @@ router.patch("/orchestrator-config", requireAuth, requireAdmin, async (req: any,
     }
 
     invalidateConfigCache(tenantId);
+    invalidateExecConfigCache(tenantId);
     res.json({ updated: results });
   } catch (err) {
     logger.error({ err }, "PATCH /api/orchestrator-config error");

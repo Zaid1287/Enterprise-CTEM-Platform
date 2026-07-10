@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
-import { useGetBrandThreatScan, getGetBrandThreatScanQueryKey, useDeleteBrandThreatScan, getListBrandThreatsQueryKey } from "@workspace/api-client-react";
+import { useGetBrandThreatScan, getGetBrandThreatScanQueryKey, useDeleteBrandThreatScan, getListBrandThreatsQueryKey, useListBrandThreats } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
@@ -405,6 +405,7 @@ interface SocialSourceStatus {
   instagram: boolean;
   tiktok: boolean;
   youtube: boolean;
+  meta_ads: boolean;
 }
 
 const SOCIAL_SOURCES: { key: keyof SocialSourceStatus; label: string; settingsPath: string }[] = [
@@ -412,6 +413,7 @@ const SOCIAL_SOURCES: { key: keyof SocialSourceStatus; label: string; settingsPa
   { key: "instagram", label: "Instagram",  settingsPath: "/settings/platform" },
   { key: "tiktok",   label: "TikTok",     settingsPath: "/settings/platform" },
   { key: "youtube",  label: "YouTube",    settingsPath: "/settings/platform" },
+  { key: "meta_ads", label: "Meta Ads",   settingsPath: "/settings/platform" },
 ];
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1044,6 +1046,16 @@ export default function BrandThreatDetailPage() {
 
   const s = scan as any;
 
+  const { data: allScans = [] } = useListBrandThreats({});
+
+  const domainScans = useMemo(() => {
+    if (!s?.domain) return [];
+    const domain = s.domain.toLowerCase().replace(/^www\./, "");
+    return ((allScans as any[]) ?? [])
+      .filter((sc: any) => (sc.domain ?? "").toLowerCase().replace(/^www\./, "") === domain)
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [allScans, s?.domain]);
+
   useEffect(() => {
     if (!s?.domain) return;
     const domain = s.domain.toLowerCase().replace(/^www\./, "");
@@ -1257,6 +1269,28 @@ export default function BrandThreatDetailPage() {
             </span>
           )}
         </p>
+
+        {/* ── Scan History Picker ──────────────────────────────────────────────── */}
+        {domainScans.length > 1 && (
+          <div className="flex items-center gap-2 mt-2 ml-[72px] flex-wrap">
+            <History className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+            <span className="text-xs text-muted-foreground shrink-0">Scan history:</span>
+            <select
+              value={id}
+              onChange={e => navigate(`/brand-threats/${e.target.value}`)}
+              className="text-xs bg-card border border-border rounded px-2 py-0.5 text-foreground cursor-pointer max-w-[280px]"
+            >
+              {domainScans.map((sc: any, i: number) => (
+                <option key={sc.id} value={sc.id}>
+                  {i === 0 ? "Latest — " : ""}{formatDate(sc.createdAt)} · {sc.status === "done" ? `${sc.totalPermutations ?? 0} permutations` : sc.status}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-muted-foreground/50 shrink-0">
+              {domainScans.length - 1} older scan{domainScans.length > 2 ? "s" : ""}
+            </span>
+          </div>
+        )}
 
         {s.status === "done" && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5">

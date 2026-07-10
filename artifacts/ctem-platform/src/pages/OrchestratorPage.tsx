@@ -2049,7 +2049,7 @@ export default function OrchestratorPage() {
   const visibleTabs = TABS.filter(t => !t.superAdminOnly || isSuperAdmin);
 
   return (
-    <div className="p-6 space-y-6 max-w-screen-2xl mx-auto">
+    <div className="p-6 space-y-6 w-full">
       {/* Page header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Scan Orchestration</h1>

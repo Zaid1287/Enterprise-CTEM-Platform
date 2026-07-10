@@ -43,6 +43,19 @@ async function getExecConfig(tenantId: number): Promise<ExecOrchConfig> {
   }
 }
 
+/**
+ * Invalidate the exec config cache for a tenant (or all tenants).
+ * Must be called whenever the orchestrator config is updated so that
+ * CLI tools (nmap, nuclei, etc.) immediately pick up the new settings.
+ */
+export function invalidateExecConfigCache(tenantId?: number): void {
+  if (tenantId !== undefined) {
+    _execConfigCache.delete(tenantId);
+  } else {
+    _execConfigCache.clear();
+  }
+}
+
 export interface OrchestratedExecOptions extends ExecOptions {
   timeout?: number;
   targetHost?: string;

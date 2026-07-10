@@ -135,7 +135,7 @@ router.put("/platform/settings", requireAuth, async (req: AuthenticatedRequest, 
 });
 
 router.get("/platform/social-source-status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const SOCIAL_KEYS = ["twitter_x_bearer_token", "instagram_graph_api_token", "tiktok_research_api_token", "youtube_api_key"] as const;
+  const SOCIAL_KEYS = ["twitter_x_bearer_token", "instagram_graph_api_token", "tiktok_research_api_token", "youtube_api_key", "meta_ads_access_token"] as const;
   const rows = await db.select().from(platformSettingsTable).where(
     inArray(platformSettingsTable.key, [...SOCIAL_KEYS])
   );
@@ -145,6 +145,7 @@ router.get("/platform/social-source-status", requireAuth, async (req: Authentica
     instagram:  map.get("instagram_graph_api_token") ?? false,
     tiktok:     map.get("tiktok_research_api_token") ?? false,
     youtube:    map.get("youtube_api_key")            ?? false,
+    meta_ads:   map.get("meta_ads_access_token")     ?? false,
   });
 });
 

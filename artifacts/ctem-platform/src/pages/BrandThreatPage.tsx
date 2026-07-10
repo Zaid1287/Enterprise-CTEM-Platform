@@ -491,7 +491,7 @@ function scheduleLabel(item: any): string {
 }
 
 function WatchlistItem({
-  item, onDelete, onScheduleChange, deleting, latestScan, onViewScan,
+  item, onDelete, onScheduleChange, deleting, latestScan, onViewScan, onRunScan, runningScan,
 }: {
   item: any;
   onDelete: (id: number) => void;
@@ -499,6 +499,8 @@ function WatchlistItem({
   deleting: boolean;
   latestScan?: any;
   onViewScan?: (id: number) => void;
+  onRunScan?: (item: any) => void;
+  runningScan?: boolean;
 }) {
   const [editingFreq, setEditingFreq] = useState(false);
   const [pendingFreq, setPendingFreq] = useState<string>(item.frequency ?? "none");
@@ -559,6 +561,18 @@ function WatchlistItem({
             title={`View intel from ${latestScan.status === 'done' ? 'last scan' : latestScan.status + ' scan'}`}
           >
             Intel <ChevronRight className="w-3 h-3" />
+          </Button>
+        )}
+        {SCANNABLE_TYPES.includes(item.type) && onRunScan && (
+          <Button
+            variant="ghost" size="sm"
+            onClick={() => onRunScan(item)}
+            disabled={runningScan}
+            className="h-7 text-[11px] px-2 text-emerald-400 hover:text-emerald-300 shrink-0 gap-1"
+            title="Start a brand threat scan for this item"
+          >
+            {runningScan ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+            {latestScan ? "Re-scan" : "Scan"}
           </Button>
         )}
         {isSchedulable && (
@@ -681,20 +695,26 @@ function WatchlistItem({
   );
 }
 
+function normalizeDomain(v: string): string {
+  return (v ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!.trim();
+}
+
 function WatchlistSection() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { data: allScans } = useListBrandThreats({});
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [runningScanItemId, setRunningScanItemId] = useState<number | null>(null);
 
   function latestScanForItem(item: any) {
     const scans = (allScans as any[]) ?? [];
-    const val = (item.value ?? "").toLowerCase().trim();
-    const matches = scans.filter((s: any) =>
-      (s.domain ?? "").toLowerCase() === val ||
-      (s.brandName ?? "").toLowerCase() === val
-    );
+    const normalizedVal = normalizeDomain(item.value ?? "");
+    const matches = scans.filter((s: any) => {
+      const d = normalizeDomain(s.domain ?? "");
+      const b = normalizeDomain(s.brandName ?? "");
+      return d === normalizedVal || b === normalizedVal;
+    });
     return matches[0] ?? null;
   }
   const [showForm, setShowForm] = useState(false);
@@ -759,6 +779,29 @@ function WatchlistSection() {
       toast({ title: "Failed to remove item", variant: "destructive" });
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleRunScan(item: any) {
+    const domain = normalizeDomain(item.value ?? "");
+    if (!domain) return;
+    setRunningScanItemId(item.id);
+    try {
+      const res = await fetch("/api/brand-threats", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ domain }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any)?.error ?? "Failed to start scan");
+      }
+      const scan = await res.json();
+      navigate(`/brand-threats/${scan.id}`);
+    } catch (err: any) {
+      toast({ title: err?.message ?? "Failed to start brand threat scan", variant: "destructive" });
+    } finally {
+      setRunningScanItemId(null);
     }
   }
 
@@ -933,6 +976,8 @@ function WatchlistSection() {
                 deleting={deletingId === item.id}
                 latestScan={latestScanForItem(item)}
                 onViewScan={id => navigate(`/brand-threats/${id}`)}
+                onRunScan={handleRunScan}
+                runningScan={runningScanItemId === item.id}
               />
             ))}
           </div>
