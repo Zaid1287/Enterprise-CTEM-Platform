@@ -134,12 +134,12 @@ async function seedOrchestratorDefaults(): Promise<void> {
     const platTenantId = platTenant?.id ?? 1;
 
     for (const row of DEFAULT_CONFIG) {
+      // onConflictDoNothing: only seed the default when no row exists yet.
+      // If the operator has already saved a custom value, preserve it — never
+      // overwrite user settings with factory defaults on restart.
       await db.insert(orchestratorConfigTable)
         .values({ ...row, tenantId: platTenantId })
-        .onConflictDoUpdate({
-          target: [orchestratorConfigTable.tenantId, orchestratorConfigTable.key],
-          set:    { value: row.value },
-        });
+        .onConflictDoNothing();
     }
 
     const existing = await db.select({ id: scanFingerprintProfilesTable.id }).from(scanFingerprintProfilesTable).limit(1);
