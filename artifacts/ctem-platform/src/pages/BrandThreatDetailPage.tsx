@@ -1278,19 +1278,91 @@ export default function BrandThreatDetailPage() {
             <select
               value={id}
               onChange={e => navigate(`/brand-threats/${e.target.value}`)}
-              className="text-xs bg-card border border-border rounded px-2 py-0.5 text-foreground cursor-pointer max-w-[280px]"
+              className="text-xs bg-card border border-border rounded px-2 py-0.5 text-foreground cursor-pointer max-w-[300px]"
             >
               {domainScans.map((sc: any, i: number) => (
                 <option key={sc.id} value={sc.id}>
-                  {i === 0 ? "Latest — " : ""}{formatDate(sc.createdAt)} · {sc.status === "done" ? `${sc.totalPermutations ?? 0} permutations` : sc.status}
+                  {i === 0 ? "▲ Latest — " : `#${domainScans.length - i} — `}{formatDate(sc.createdAt)} · {sc.status === "done" ? `${sc.totalPermutations ?? 0} permutations` : sc.status}
                 </option>
               ))}
             </select>
             <span className="text-xs text-muted-foreground/50 shrink-0">
-              {domainScans.length - 1} older scan{domainScans.length > 2 ? "s" : ""}
+              {domainScans.length} total scan{domainScans.length !== 1 ? "s" : ""}
             </span>
+            {/* Jump to latest button when viewing an older scan */}
+            {domainScans.length > 0 && String(domainScans[0].id) !== String(id) && (
+              <button
+                onClick={() => navigate(`/brand-threats/${domainScans[0].id}`)}
+                className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary/10 border border-primary/25 text-primary hover:bg-primary/20 transition-colors"
+              >
+                Jump to latest ↑
+              </button>
+            )}
           </div>
         )}
+
+        {/* ── "Viewing older scan" comparison banner ───────────────────────────── */}
+        {domainScans.length > 1 && String(domainScans[0]?.id) !== String(id) && s.status === "done" && (() => {
+          const latest = domainScans[0] as any;
+          if (!latest || latest.status !== "done") return null;
+          const deltaPerms  = (latest.totalPermutations ?? 0) - (s.totalPermutations ?? 0);
+          const deltaLive   = (latest.liveCount ?? 0)         - (s.liveCount ?? 0);
+          const deltaPhish  = (latest.phishingCount ?? 0)     - (s.phishingCount ?? 0);
+          const deltaLeaks  = (latest.dataLeakCount ?? 0)     - (s.dataLeakCount ?? 0);
+          const deltaAbuse  = (latest.brandAbuseCount ?? 0)   - (s.brandAbuseCount ?? 0);
+          const hasChanges  = deltaPerms !== 0 || deltaLive !== 0 || deltaPhish !== 0 || deltaLeaks !== 0 || deltaAbuse !== 0;
+          const totalNew    = Math.max(0, deltaLive) + Math.max(0, deltaPhish) + Math.max(0, deltaLeaks) + Math.max(0, deltaAbuse);
+          return (
+            <div className={cn(
+              "mx-6 mt-3 border rounded-xl p-3.5 shrink-0",
+              totalNew > 0
+                ? "bg-orange-500/5 border-orange-500/20"
+                : "bg-blue-500/5 border-blue-500/20",
+            )}>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className={cn("w-3.5 h-3.5 shrink-0", totalNew > 0 ? "text-orange-400" : "text-blue-400")} />
+                  <p className={cn("text-xs font-semibold", totalNew > 0 ? "text-orange-300" : "text-blue-300")}>
+                    Viewing scan from {formatDate(s.createdAt)} — comparing with latest scan ({formatDate(latest.createdAt)})
+                  </p>
+                </div>
+                <button
+                  onClick={() => navigate(`/brand-threats/${latest.id}`)}
+                  className="text-[10px] font-medium text-primary hover:text-primary/80 underline shrink-0"
+                >
+                  View latest →
+                </button>
+              </div>
+              {hasChanges && (
+                <div className="flex flex-wrap gap-3 mt-2 ml-5.5">
+                  {[
+                    { label: "Permutations", delta: deltaPerms, warn: false },
+                    { label: "Live Domains",  delta: deltaLive,  warn: true },
+                    { label: "Phishing",      delta: deltaPhish, warn: true },
+                    { label: "Data Leaks",    delta: deltaLeaks, warn: true },
+                    { label: "Brand Abuse",   delta: deltaAbuse, warn: true },
+                  ].filter(m => m.delta !== 0).map(m => (
+                    <div key={m.label} className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground">{m.label}:</span>
+                      <span className={cn(
+                        "text-[10px] font-bold",
+                        m.delta > 0 && m.warn ? "text-orange-400" : m.delta > 0 ? "text-blue-400" : "text-green-400",
+                      )}>
+                        {m.delta > 0 ? "+" : ""}{m.delta} in latest
+                      </span>
+                    </div>
+                  ))}
+                  {!hasChanges && (
+                    <span className="text-[10px] text-muted-foreground">No changes between scans</span>
+                  )}
+                </div>
+              )}
+              {!hasChanges && (
+                <p className="text-[11px] text-muted-foreground mt-1 ml-5.5">No changes detected between this scan and the latest.</p>
+              )}
+            </div>
+          );
+        })()}
 
         {s.status === "done" && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5">

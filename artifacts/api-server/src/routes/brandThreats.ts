@@ -161,55 +161,32 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
   const tenantId = scanTenantId;
   const role = user.role;
   const isPrivileged = role === "super_admin" || role === "admin" || role === "account_manager";
-  // Privileged users: find any existing scan for this domain across all tenants (one entry per domain)
-  const existingRows = isPrivileged
-    ? await db.select({ id: brandThreatScansTable.id, tenantId: brandThreatScansTable.tenantId })
+
+  // Block duplicate concurrent scans — if a scan for this domain is already pending/running, return it
+  const inProgressRows = isPrivileged
+    ? await db.select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status })
         .from(brandThreatScansTable)
-        .where(eq(brandThreatScansTable.domain, raw))
+        .where(and(eq(brandThreatScansTable.domain, raw), inArray(brandThreatScansTable.status, ["pending", "running"])))
         .orderBy(desc(brandThreatScansTable.id))
         .limit(1)
-    : await db.select({ id: brandThreatScansTable.id, tenantId: brandThreatScansTable.tenantId })
+    : await db.select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status })
         .from(brandThreatScansTable)
-        .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, raw)))
+        .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, raw), inArray(brandThreatScansTable.status, ["pending", "running"])))
         .orderBy(desc(brandThreatScansTable.id))
         .limit(1);
-  const [existing] = existingRows;
-
-  let scan: typeof brandThreatScansTable.$inferSelect;
-
-  if (existing) {
-    await db.update(brandThreatResultsTable).set({ archivedAt: new Date() }).where(eq(brandThreatResultsTable.scanId, existing.id));
-    await db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, existing.id));
-    await db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, existing.id));
-    await db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, existing.id));
-    await db.delete(adMonitoringResultsTable).where(eq(adMonitoringResultsTable.scanId, existing.id));
-    const [updated] = await db.update(brandThreatScansTable)
-      .set({
-        status: "pending",
-        totalPermutations: 0,
-        liveCount: 0,
-        registeredCount: 0,
-        phishingRisk: "low",
-        fuzzerBreakdown: null,
-        error: null,
-        completedAt: null,
-        dataLeakCount: 0,
-        phishingCount: 0,
-        brandAbuseCount: 0,
-        darkWebCount: 0,
-        scanWarnings: null,
-      })
-      .where(eq(brandThreatScansTable.id, existing.id))
-      .returning();
-    scan = updated!;
-  } else {
-    const [created] = await db.insert(brandThreatScansTable).values({
-      tenantId,
-      domain: raw,
-      status: "pending",
-    }).returning();
-    scan = created!;
+  if (inProgressRows.length > 0) {
+    // Return the in-progress scan instead of starting a duplicate
+    const [existing] = await db.select().from(brandThreatScansTable).where(eq(brandThreatScansTable.id, inProgressRows[0]!.id));
+    res.status(202).json({ ...toScanResponse(existing!), _alreadyRunning: true });
+    return;
   }
+
+  // Always create a NEW scan record — previous scan records are preserved for history comparison
+  const [scan] = await db.insert(brandThreatScansTable).values({
+    tenantId,
+    domain: raw,
+    status: "pending",
+  }).returning();
 
   const scanId = scan.id;
   setImmediate(async () => {
