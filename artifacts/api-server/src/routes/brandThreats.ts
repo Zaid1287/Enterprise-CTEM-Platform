@@ -62,6 +62,21 @@ async function btScanAccessFilter(
   return and(byId, eq(brandThreatScansTable.tenantId, user.tenantId));
 }
 
+/**
+ * Extract root/apex domain from any hostname.
+ * docs.example.com → example.com
+ * example.co.uk    → example.co.uk  (two-part TLD)
+ * example.com      → example.com
+ */
+function extractRootDomain(hostname: string): string {
+  const parts = hostname.split(".");
+  if (parts.length <= 2) return hostname;
+  const twoPartTlds = ["co.uk","co.in","co.jp","co.nz","co.za","com.au","com.br","com.cn","com.mx","org.uk","net.uk","me.uk","ac.uk","gov.uk"];
+  const lastTwo = parts.slice(-2).join(".");
+  if (twoPartTlds.includes(lastTwo)) return parts.slice(-3).join(".");
+  return parts.slice(-2).join(".");
+}
+
 function toScanResponse(s: typeof brandThreatScansTable.$inferSelect) {
   return {
     ...s,
@@ -152,11 +167,16 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
     domainSource = String(req.body?.domain ?? "").trim();
   }
 
-  const raw = (domainSource ?? "").toLowerCase()
+  const hostname = (domainSource ?? "").toLowerCase()
     .replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!;
-  if (!raw || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(raw)) {
+  if (!hostname || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(hostname)) {
     res.status(400).json({ error: "Invalid domain. Expected format: example.com" }); return;
   }
+  // Always normalize to root domain — brand threat scanning is a brand-level concern.
+  // Scanning docs.example.com or status.example.com should use example.com so all
+  // subdomain assets contribute to the same brand threat entry rather than creating
+  // hundreds of per-subdomain scan records.
+  const raw = extractRootDomain(hostname);
 
   const tenantId = scanTenantId;
   const role = user.role;

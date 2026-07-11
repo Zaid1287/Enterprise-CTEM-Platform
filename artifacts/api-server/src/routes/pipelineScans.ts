@@ -286,8 +286,9 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
               .map(a => {
                 const hostname = extractDomain(a.value);
                 if (!hostname || isIp(hostname)) return "";
-                // For domain/subdomain use the full hostname; for url/api/cloud extract root domain
-                if (a.type === "domain" || a.type === "subdomain") return hostname;
+                // Always use the root domain for brand threat scans — subdomains share the parent
+                // brand and should not generate separate scan entries (e.g. docs.example.com →
+                // brand scan runs against example.com, not docs.example.com).
                 return extractRootDomain(hostname);
               })
               .filter(d => d.length > 0 && isValidHostname(d)),
@@ -1931,12 +1932,12 @@ async function executePipeline(
     }
 
     // ── Auto-trigger brand threat scan for domain-type assets immediately ─────
-    // Extended to URL / API / cloud_asset by extracting root domain.
+    // Always scoped to the ROOT domain so that scanning docs.example.com,
+    // status.example.com, etc. all contribute to the same brand threat entry
+    // for example.com rather than creating per-subdomain scan clutter.
     {
       const btHostname = extractDomain(asset.value);
-      const btDomain = (asset.type === "domain" || asset.type === "subdomain")
-        ? btHostname
-        : extractRootDomain(btHostname);
+      const btDomain = extractRootDomain(btHostname); // always root domain
       if (
         ["domain", "subdomain", "url", "api", "cloud_asset"].includes(asset.type ?? "") &&
         btDomain && !isIp(btDomain) && isValidHostname(btDomain)
@@ -2817,25 +2818,13 @@ async function executePipeline(
         }
       }
 
-      // ── Auto-trigger brand threat scans for discovered subdomains ─────────
-      // Fan-out brand monitoring to each unique subdomain found via enumeration
-      // (full subdomain name, not just apex) so brand intelligence covers the
-      // complete discovered attack surface.
-      setImmediate(async () => {
-        try {
-          const triggeredDomains = new Set<string>();
-          if (domain) triggeredDomains.add(domain); // already triggered for parent asset
-          for (const s of subdomainScanReport.all) {
-            const sub = s.name?.toLowerCase().trim();
-            if (!sub || isIp(sub) || !isValidHostname(sub)) continue;
-            if (triggeredDomains.has(sub)) continue;
-            triggeredDomains.add(sub);
-            await triggerBrandThreatScan(tenantId, sub, scanId);
-          }
-        } catch (err) {
-          logger.warn({ err, assetId: asset.id }, "Subdomain brand threat fan-out failed (non-fatal)");
-        }
-      });
+      // NOTE: Per-subdomain brand threat fan-out intentionally removed.
+      // Brand threat scanning protects against typosquatting/phishing of a brand,
+      // which is a root-domain concern (windsurf.com). Running a separate brand
+      // threat scan for every discovered subdomain (docs.windsurf.com,
+      // status.windsurf.com, etc.) creates hundreds of redundant scan entries
+      // without adding any protection value — the root domain scan already covers
+      // all variants. The per-asset trigger above (extractRootDomain) is sufficient.
     }
 
     // ── Compile all data and store per-tool results ────────────────────────────
