@@ -65,6 +65,17 @@ const OrchestratorConfigPage = lazy(() => import("@/pages/OrchestratorConfigPage
 const ScanTelemetryPage      = lazy(() => import("@/pages/ScanTelemetryPage"));
 const OrchestratorPage       = lazy(() => import("@/pages/OrchestratorPage"));
 
+// TPRM pages
+const TprmDashboardPage                = lazy(() => import("@/pages/TprmDashboardPage"));
+const TprmVendorsPage                  = lazy(() => import("@/pages/TprmVendorsPage"));
+const TprmVendorDetailPage             = lazy(() => import("@/pages/TprmVendorDetailPage"));
+const TprmSupplyChainPage              = lazy(() => import("@/pages/TprmSupplyChainPage"));
+const TprmAdminPage                    = lazy(() => import("@/pages/TprmAdminPage"));
+const TprmCompliancePage               = lazy(() => import("@/pages/TprmCompliancePage"));
+const TprmQuestionnaireTemplatesPage   = lazy(() => import("@/pages/TprmQuestionnaireTemplatesPage"));
+const TprmVendorRespondPage            = lazy(() => import("@/pages/TprmVendorRespondPage"));
+const TprmUpgradePage                  = lazy(() => import("@/pages/TprmUpgradePage"));
+
 async function handle401(error: unknown) {
   if ((error as any)?.status === 401) {
     if (!useAuth.getState().isAuthenticated) return;
@@ -205,6 +216,39 @@ function AiMapperRoute({ component: Component }: { component: React.ComponentTyp
   );
 }
 
+function TprmBootstrap() {
+  const { isAuthenticated, setTprmEnabled } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    apiFetch<{ isEnabled: boolean }>("/api/tprm/module")
+      .then(d => setTprmEnabled(d.isEnabled ?? false))
+      .catch(() => setTprmEnabled(false));
+  }, [isAuthenticated]);
+  return null;
+}
+
+function TprmRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated, tprmEnabled, tprmLoaded, user } = useAuth();
+  if (!isAuthenticated) return <Redirect to="/login" />;
+  if (!tprmLoaded) return <AppLayout><PageLoader /></AppLayout>;
+  if (!tprmEnabled && user?.role !== "admin" && user?.role !== "super_admin") {
+    return (
+      <AppLayout>
+        <Suspense fallback={<PageLoader />}>
+          <TprmUpgradePage />
+        </Suspense>
+      </AppLayout>
+    );
+  }
+  return (
+    <AppLayout>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </AppLayout>
+  );
+}
+
 const EXTERNAL_ROLES = ["vendor", "employee", "third_party"];
 
 /** Routes external members (vendor / employee / third_party) are allowed to visit. */
@@ -295,6 +339,24 @@ function Router() {
       <Route path="/scan-telemetry" component={() => <AdminRoute component={ScanTelemetryPage} />} />
       <Route path="/settings/orchestration" component={() => <AdminRoute component={OrchestratorPage} />} />
 
+      {/* TPRM — public respond route (no auth) */}
+      <Route path="/tprm/respond/:token" component={() => (
+        <Suspense fallback={<PageLoader />}>
+          <TprmVendorRespondPage />
+        </Suspense>
+      )} />
+
+      {/* TPRM — protected routes */}
+      <Route path="/tprm" component={() => <TprmRoute component={TprmDashboardPage} />} />
+      <Route path="/tprm/vendors/new" component={() => <TprmRoute component={TprmVendorsPage} />} />
+      <Route path="/tprm/vendors/:id" component={() => <TprmRoute component={TprmVendorDetailPage} />} />
+      <Route path="/tprm/vendors" component={() => <TprmRoute component={TprmVendorsPage} />} />
+      <Route path="/tprm/supply-chain" component={() => <TprmRoute component={TprmSupplyChainPage} />} />
+      <Route path="/tprm/compliance" component={() => <TprmRoute component={TprmCompliancePage} />} />
+      <Route path="/tprm/questionnaire-templates" component={() => <TprmRoute component={TprmQuestionnaireTemplatesPage} />} />
+      <Route path="/tprm/admin" component={() => <AdminRoute component={TprmAdminPage} />} />
+      <Route path="/tprm/upgrade" component={() => <ProtectedRoute component={TprmUpgradePage} />} />
+
       {/* Fallback */}
       <Route component={() => <Redirect to={defaultPath} />} />
     </Switch>
@@ -307,6 +369,7 @@ function App() {
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <AiMapperBootstrap />
+          <TprmBootstrap />
           <Router />
         </WouterRouter>
         <Toaster />

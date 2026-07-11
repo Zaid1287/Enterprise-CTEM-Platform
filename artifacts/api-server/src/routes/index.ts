@@ -35,6 +35,7 @@ import aiMapperRouter from "./aiMapper";
 import customToolsRouter from "./customTools";
 import suppressionsRouter from "./suppressions";
 import scanOrchestratorRouter from "./scanOrchestrator";
+import tprmRouter from "./tprm";
 
 const router: IRouter = Router();
 
@@ -76,6 +77,7 @@ router.use(discoveryRouter);
 router.use(graphRouter);
 router.use(cdnWhitelistRouter);
 router.use(aiMapperRouter);
+router.use(tprmRouter);
 router.use(customToolsRouter);
 router.use(suppressionsRouter);
 router.use(scanOrchestratorRouter);

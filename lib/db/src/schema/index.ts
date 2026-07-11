@@ -31,3 +31,4 @@ export * from "./customNucleiTemplates";
 export * from "./accessRequests";
 export * from "./scanSuppressions";
 export * from "./scanOrchestrator";
+export * from "./tprm";

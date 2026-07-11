@@ -898,6 +898,7 @@ async function dispatchDueScans(): Promise<void> {
       dispatchDueWatchlistNonDomainItems(),
       dispatchToolUpdateCheck(),
       checkQueueDepth(),
+      dispatchTprmVendorRescans(),
     ]);
   } catch (err) {
     logger.error({ err }, "Beat scheduler error");
@@ -1209,6 +1210,62 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     runAutoTuner().catch(() => {});
     setInterval(runAutoTuner, 10 * 60_000);
   }, 3 * 60_000);
+}
+
+// ── TPRM vendor rescan ────────────────────────────────────────────────────────
+async function dispatchTprmVendorRescans(): Promise<void> {
+  try {
+    const { tprmModuleAssignmentsTable, tprmVendorsTable } = await import("@workspace/db");
+    const { runFullVendorScan } = await import("../lib/tprmEnrichment.js");
+
+    // Get all tenants with TPRM enabled
+    const enabledTenants = await db
+      .select({ tenantId: tprmModuleAssignmentsTable.tenantId })
+      .from(tprmModuleAssignmentsTable)
+      .where(eq(tprmModuleAssignmentsTable.isEnabled, true));
+
+    if (enabledTenants.length === 0) return;
+
+    const tenantIds = enabledTenants.map(t => t.tenantId);
+    const now = new Date();
+
+    // Find vendors that are due for a rescan based on their scanFrequency
+    const vendors = await db
+      .select({ id: tprmVendorsTable.id, tenantId: tprmVendorsTable.tenantId, scanFrequency: tprmVendorsTable.scanFrequency, lastScannedAt: tprmVendorsTable.lastScannedAt, status: tprmVendorsTable.status })
+      .from(tprmVendorsTable)
+      .where(and(
+        inArray(tprmVendorsTable.tenantId, tenantIds),
+        ne(tprmVendorsTable.scanFrequency, "manual"),
+        ne(tprmVendorsTable.status, "scanning"),
+      ));
+
+    const intervals: Record<string, number> = {
+      daily:   86_400_000,
+      weekly:  604_800_000,
+      monthly: 2_592_000_000,
+    };
+
+    let queued = 0;
+    for (const vendor of vendors) {
+      const interval = intervals[vendor.scanFrequency ?? "weekly"];
+      if (!interval) continue;
+      const lastScan = vendor.lastScannedAt?.getTime() ?? 0;
+      if (now.getTime() - lastScan >= interval) {
+        setImmediate(() => {
+          runFullVendorScan(vendor.id, vendor.tenantId).catch(err =>
+            logger.warn({ err, vendorId: vendor.id }, "Beat: TPRM vendor rescan failed")
+          );
+        });
+        queued++;
+      }
+    }
+
+    if (queued > 0) {
+      logger.info({ queued }, "Beat: queued TPRM vendor rescans");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Beat: TPRM vendor rescan dispatch failed (non-fatal)");
+  }
 }
 
 export async function stopBeatScheduler(): Promise<void> {

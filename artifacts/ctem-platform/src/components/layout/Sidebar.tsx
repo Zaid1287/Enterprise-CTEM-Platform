@@ -137,7 +137,7 @@ let _scrollTop = 0;
 
 export function Sidebar() {
   const [location] = useLocation();
-  const { user, aiMapperEnabled } = useAuth();
+  const { user, aiMapperEnabled, tprmEnabled } = useAuth();
   const role = user?.role ?? "client";
   const [collapsed, setCollapsed] = useState(_collapsed);
   const asideRef = useRef<HTMLElement>(null);
@@ -182,6 +182,20 @@ export function Sidebar() {
     ? { title: "AI Mapper", items: aiMapperItems }
     : null;
 
+  const tprmVisible = tprmEnabled || role === "admin" || role === "super_admin";
+  const tprmItems: NavItem[] = tprmVisible ? [
+    { label: "Dashboard",           href: "/tprm",                          icon: Shield },
+    { label: "Vendors",             href: "/tprm/vendors",                  icon: Building2 },
+    { label: "Supply Chain",        href: "/tprm/supply-chain",             icon: Package },
+    { label: "Compliance Docs",     href: "/tprm/compliance",               icon: FileBarChart2 },
+    { label: "Questionnaires",      href: "/tprm/questionnaire-templates",  icon: ClipboardList },
+    ...(role === "admin" || role === "super_admin" ? [{ label: "TPRM Admin", href: "/tprm/admin", icon: ShieldAlert }] : []),
+  ] : [];
+
+  const tprmGroup: NavGroup | null = tprmItems.length > 0
+    ? { title: "Third Party Risk", items: tprmItems }
+    : null;
+
   const filteredGroups = navGroups
     .filter(g => !g.onlyFor || g.onlyFor.includes(role))
     .map(g => ({
@@ -193,6 +207,12 @@ export function Sidebar() {
   if (aiMapperGroup) {
     const brandIdx = filteredGroups.findIndex(g => g.title === "Brand Monitoring");
     filteredGroups.splice(brandIdx >= 0 ? brandIdx + 1 : filteredGroups.length, 0, aiMapperGroup);
+  }
+
+  if (tprmGroup) {
+    const aiMapperIdx = filteredGroups.findIndex(g => g.title === "AI Mapper");
+    const insertAfter = aiMapperIdx >= 0 ? aiMapperIdx : filteredGroups.findIndex(g => g.title === "Brand Monitoring");
+    filteredGroups.splice(insertAfter >= 0 ? insertAfter + 1 : filteredGroups.length, 0, tprmGroup);
   }
 
   const visibleGroups = isExternalMember ? externalGroups : filteredGroups;
