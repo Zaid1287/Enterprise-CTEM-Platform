@@ -133,9 +133,10 @@ export default function TprmVendorsPage() {
             <SelectItem value="service_provider">Service Provider</SelectItem>
             <SelectItem value="software_vendor">Software Vendor</SelectItem>
             <SelectItem value="cloud_provider">Cloud Provider</SelectItem>
-            <SelectItem value="prospecting">Prospecting</SelectItem>
-            <SelectItem value="subsidiary">Subsidiary</SelectItem>
             <SelectItem value="partner">Partner</SelectItem>
+            <SelectItem value="subsidiary">Subsidiary</SelectItem>
+            <SelectItem value="sister_concern">Sister Concern</SelectItem>
+            <SelectItem value="prospecting">Prospecting</SelectItem>
           </SelectContent>
         </Select>
         <Select value={riskGrade} onValueChange={v => { setRiskGrade(v); setPage(1); }}>
@@ -272,8 +273,9 @@ export default function TprmVendorsPage() {
                     <SelectItem value="software_vendor">Software Vendor</SelectItem>
                     <SelectItem value="cloud_provider">Cloud Provider</SelectItem>
                     <SelectItem value="partner">Partner</SelectItem>
-                    <SelectItem value="prospecting">Prospecting</SelectItem>
                     <SelectItem value="subsidiary">Subsidiary</SelectItem>
+                    <SelectItem value="sister_concern">Sister Concern</SelectItem>
+                    <SelectItem value="prospecting">Prospecting</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -357,8 +357,10 @@ router.post("/tprm/vendors/:id/scan", requireAuth, requireTprm, async (req: Auth
 router.get("/tprm/vendors/:id/fourth-party", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
-  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, tenantId))).orderBy(desc(tprmFourthPartyVendorsTable.discoveredAt));
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
+  const rows = await db.select().from(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, ownerTenantId))).orderBy(desc(tprmFourthPartyVendorsTable.discoveredAt));
   res.json(rows);
 });
 
@@ -377,18 +379,22 @@ router.post("/tprm/vendors/:id/fourth-party", requireAuth, requireTprm, async (r
 router.get("/tprm/vendors/:id/risk-history", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
-  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, tenantId))).orderBy(asc(tprmVendorRiskScoresTable.calculatedAt)).limit(90);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
+  const rows = await db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, ownerTenantId))).orderBy(asc(tprmVendorRiskScoresTable.calculatedAt)).limit(90);
   res.json(rows);
 });
 
 router.get("/tprm/vendors/:id/findings", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
-  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
   const { severity, status, page = "1", limit = "50" } = req.query as Record<string, string>;
   const offset = (parseInt(page) - 1) * parseInt(limit);
-  const conds: any[] = [eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, tenantId)];
+  const conds: any[] = [eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, ownerTenantId)];
   if (severity) conds.push(eq(tprmVendorFindingsTable.severity, severity));
   if (status)   conds.push(eq(tprmVendorFindingsTable.status, status));
   const [rows, [countRow]] = await Promise.all([
@@ -410,8 +416,10 @@ router.patch("/tprm/vendors/:id/findings/:fid", requireAuth, requireTprm, async 
 router.get("/tprm/vendors/:id/assets", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
-  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, tenantId))).orderBy(asc(tprmVendorAssetsTable.assetType)).limit(500);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
+  const rows = await db.select().from(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, ownerTenantId))).orderBy(asc(tprmVendorAssetsTable.assetType)).limit(500);
   res.json(rows);
 });
 
@@ -464,8 +472,10 @@ router.get("/tprm/supply-chain/stats", requireAuth, requireTprm, async (req: Aut
 router.get("/tprm/vendors/:id/supply-chain", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
-  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, tenantId))).limit(500);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
+  const rows = await db.select().from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, ownerTenantId))).limit(500);
   res.json(rows);
 });
 
@@ -516,8 +526,10 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
       infraCoverage.sslIssues = findings.filter(f => f.category === "tls").length;
       infraCoverage.misconfiguredDns = findings.filter(f => f.category === "email" || f.category === "dns").length;
       infraCoverage.exposedServices = findings.filter(f => f.category === "network").length;
-      infraCoverage.secretsInApps = findings.filter(f => f.category === "sensitive-file").length;
+      infraCoverage.secretsInApps = findings.filter(f => f.category === "info_leak" || f.category === "sensitive-file").length;
       infraCoverage.misconfiguredCloud = findings.filter(f => f.category === "cloud").length;
+      digitalExposure.credentialLeaks = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".env") || f.title?.includes("credential") || f.title?.includes("secret"))).length;
+      digitalExposure.docsExposed = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".git") || f.title?.includes("config"))).length;
     }
 
     const recentScans = allVendors.filter(v => v.lastScannedAt).sort((a, b) => (b.lastScannedAt?.getTime() ?? 0) - (a.lastScannedAt?.getTime() ?? 0)).slice(0, 10);
@@ -655,13 +667,15 @@ router.get("/tprm/respond/:token", async (req, res) => {
     if (q.status === "expired") { res.status(410).json({ error: "This questionnaire link has expired" }); return; }
     const [template] = q.templateId ? await db.select().from(tprmQuestionnaireTemplatesTable).where(eq(tprmQuestionnaireTemplatesTable.id, q.templateId)) : [null];
     const [vendor] = await db.select({ id: tprmVendorsTable.id, companyName: tprmVendorsTable.companyName }).from(tprmVendorsTable).where(eq(tprmVendorsTable.id, q.vendorId));
+    const rawQuestions: any[] = (template?.questions as any[]) ?? [];
+    const publicQuestions = rawQuestions.map(({ weight: _w, ...q }) => q);
     res.json({
       id:          q.id,
       status:      q.status,
       dueDate:     q.dueDate,
       vendorName:  vendor?.companyName ?? "Unknown",
       templateName: template?.name ?? "Security Questionnaire",
-      questions:   (template?.questions as any[]) ?? [],
+      questions:   publicQuestions,
       alreadyCompleted: q.status === "completed",
     });
   } catch (err) {
