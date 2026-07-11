@@ -289,6 +289,7 @@ export default function TprmDashboardPage() {
                     <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5 sticky left-0 bg-card z-10">Vendor Name</th>
                     <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5">Rating</th>
                     <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5">Assessment</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Incidents</th>
                     <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Ext. Assets</th>
                     <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Brand Threat</th>
                     <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Data Breach</th>
@@ -299,6 +300,7 @@ export default function TprmDashboardPage() {
                     <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">New Issues</th>
                     <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Issues Solved</th>
                     <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Total Issues</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Total Assets</th>
                     <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5">Status Break-up</th>
                     <th className="px-3 py-2.5" />
                   </tr>
@@ -316,6 +318,7 @@ export default function TprmDashboardPage() {
                         </td>
                         <td className="px-3 py-2">{gradeBadgeSm(v.riskGrade)} <span className="text-[10px] text-muted-foreground ml-1">{v.riskScore}</span></td>
                         <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{v.assessmentType === "continuous" ? "Continuous" : "One-Time"}</Badge></td>
+                        <td className="px-3 py-2 text-xs text-right">{(v.incidents ?? 0) > 0 ? <span className="text-red-400 font-semibold">{v.incidents}</span> : <span className="text-muted-foreground">0</span>}</td>
                         <td className="px-3 py-2 text-xs text-right text-muted-foreground">{v.externalAssets}</td>
                         <td className="px-3 py-2 text-xs text-right">{v.brandThreat > 0 ? <span className="text-orange-400 font-medium">{v.brandThreat}</span> : <span className="text-muted-foreground">0</span>}</td>
                         <td className="px-3 py-2 text-xs text-right">{v.dataBreach > 0 ? <span className="text-red-400 font-medium">{v.dataBreach}</span> : <span className="text-muted-foreground">0</span>}</td>
@@ -330,6 +333,7 @@ export default function TprmDashboardPage() {
                         <td className="px-3 py-2 text-xs text-right">{v.newIssues > 0 ? <span className="text-orange-400">{v.newIssues}</span> : <span className="text-muted-foreground">0</span>}</td>
                         <td className="px-3 py-2 text-xs text-right">{v.issuesSolved > 0 ? <span className="text-green-400">{v.issuesSolved}</span> : <span className="text-muted-foreground">0</span>}</td>
                         <td className="px-3 py-2 text-xs text-right text-muted-foreground">{v.totalIssues}</td>
+                        <td className="px-3 py-2 text-xs text-right text-blue-400 font-medium">{v.totalAssets ?? 0}</td>
                         <td className="px-3 py-2">
                           <div className="flex gap-1 text-[10px] flex-wrap">
                             {v.statusBreakup?.open > 0 && <span className="bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded">{v.statusBreakup.open} open</span>}
