@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft, RefreshCw, Globe, Shield, Bug, Package, FileText, AlertTriangle,
   CheckCircle2, Loader2, Upload, Plus, Mail, Phone, User,
-  Building2, Clock, Download, Trash2, Send, ChevronRight,
+  Building2, Clock, Download, Trash2, Send, ChevronRight, Eye, Zap, Lock, Database, Search,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
@@ -54,6 +54,10 @@ export default function TprmVendorDetailPage() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [tab, setTab] = useState("overview");
+  const [secAnalysis, setSecAnalysis] = useState<any>(null);
+  const [breachIntel, setBreachIntel] = useState<any>(null);
+  const [loadingIntel, setLoadingIntel] = useState(false);
+  const [rescanning4p, setRescanning4p] = useState(false);
 
   // Contacts state
   const [showAddContact, setShowAddContact] = useState(false);
@@ -90,6 +94,27 @@ export default function TprmVendorDetailPage() {
   useEffect(() => {
     apiFetch<any[]>("/api/tprm/questionnaire-templates").then(setTemplates).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (tab !== "intelligence" || !id) return;
+    setLoadingIntel(true);
+    Promise.allSettled([
+      apiFetch<any>(`/api/tprm/vendors/${id}/security-analysis`),
+      apiFetch<any>(`/api/tprm/vendors/${id}/breach-intel`),
+    ]).then(([secRes, breachRes]) => {
+      if (secRes.status === "fulfilled") setSecAnalysis(secRes.value);
+      if (breachRes.status === "fulfilled") setBreachIntel(breachRes.value);
+    }).finally(() => setLoadingIntel(false));
+  }, [tab, id]);
+
+  const rescanFourthParties = async () => {
+    setRescanning4p(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/rescan-fourth-parties`, { method: "POST" });
+      setTimeout(loadVendor, 5000);
+    } catch { /* ignore */ }
+    setRescanning4p(false);
+  };
 
   const triggerScan = async () => {
     setScanning(true);
@@ -284,6 +309,7 @@ export default function TprmVendorDetailPage() {
           <TabsTrigger value="remediation" className="text-xs">Remediation & Tasks</TabsTrigger>
           <TabsTrigger value="assets" className="text-xs">Assets ({vendor.assets?.length ?? 0})</TabsTrigger>
           <TabsTrigger value="fourth-party" className="text-xs">4th Party ({vendor.fourthParties?.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="intelligence" className="text-xs">Intelligence</TabsTrigger>
           <TabsTrigger value="compliance" className="text-xs">Compliance ({vendor.complianceDocs?.length ?? 0})</TabsTrigger>
           <TabsTrigger value="questionnaires" className="text-xs">Questionnaires ({vendor.questionnaires?.length ?? 0})</TabsTrigger>
           <TabsTrigger value="sbom" className="text-xs">SBOM</TabsTrigger>
@@ -541,31 +567,236 @@ export default function TprmVendorDetailPage() {
         </TabsContent>
 
         {/* 4th Party */}
-        <TabsContent value="fourth-party" className="mt-4">
-          <Card>
-            <CardHeader className="pb-2 flex flex-row items-center justify-between">
-              <CardTitle className="text-sm">Fourth-Party Dependencies</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {(vendor.fourthParties ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">No 4th parties discovered. Run a scan to detect CDNs, analytics providers, and third-party dependencies.</p>
-              ) : (
-                <div className="space-y-2">
-                  {(vendor.fourthParties ?? []).map((fp: any) => (
-                    <div key={fp.id} className="flex items-center gap-3 p-2.5 rounded bg-muted/30">
-                      <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">{fp.name}</p>
-                        {fp.domain && <p className="text-xs text-muted-foreground">{fp.domain}</p>}
-                      </div>
-                      <Badge variant="outline" className="text-[10px]">{fp.discoveryMethod.replace(/_/g, " ")}</Badge>
-                      <span className="text-xs text-muted-foreground">+{fp.riskContribution} pts</span>
+        <TabsContent value="fourth-party" className="mt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">{(vendor.fourthParties ?? []).length} dependencies discovered across {new Set((vendor.fourthParties ?? []).map((f: any) => f.category)).size} categories</p>
+            <Button size="sm" variant="outline" onClick={rescanFourthParties} disabled={rescanning4p}>
+              {rescanning4p ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Search className="w-3.5 h-3.5 mr-1.5" />}
+              Deep Rescan
+            </Button>
+          </div>
+          {(() => {
+            const fps: any[] = vendor.fourthParties ?? [];
+            const byCategory = fps.reduce((acc: Record<string, any[]>, fp: any) => {
+              const cat = fp.category ?? "infrastructure";
+              if (!acc[cat]) acc[cat] = [];
+              acc[cat].push(fp);
+              return acc;
+            }, {});
+            const catColors: Record<string, string> = {
+              payments: "text-red-400 bg-red-500/10",
+              auth: "text-orange-400 bg-orange-500/10",
+              cdn: "text-blue-400 bg-blue-500/10",
+              waf: "text-purple-400 bg-purple-500/10",
+              analytics: "text-green-400 bg-green-500/10",
+              advertising: "text-yellow-400 bg-yellow-500/10",
+              monitoring: "text-cyan-400 bg-cyan-500/10",
+              communication: "text-indigo-400 bg-indigo-500/10",
+              marketing: "text-pink-400 bg-pink-500/10",
+              infrastructure: "text-slate-400 bg-slate-500/10",
+              security: "text-emerald-400 bg-emerald-500/10",
+              media: "text-violet-400 bg-violet-500/10",
+              devtools: "text-amber-400 bg-amber-500/10",
+              cms: "text-teal-400 bg-teal-500/10",
+              ca: "text-gray-400 bg-gray-500/10",
+            };
+            const riskColors: Record<string, string> = { critical: "text-red-400", high: "text-orange-400", medium: "text-yellow-400", low: "text-green-400" };
+            if (fps.length === 0) return (
+              <Card className="border-dashed"><CardContent className="py-10 text-center text-sm text-muted-foreground">No 4th parties discovered. Run a scan to detect CDNs, analytics providers, and third-party dependencies.</CardContent></Card>
+            );
+            return (
+              <div className="space-y-4">
+                {(Object.entries(byCategory) as [string, any[]][]).sort((a, b) => b[1].length - a[1].length).map(([cat, items]) => (
+                  <Card key={cat} className="bg-card/60">
+                    <CardHeader className="pb-2 pt-3 px-4">
+                      <CardTitle className="text-xs font-semibold uppercase tracking-wide flex items-center gap-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${catColors[cat] ?? catColors.infrastructure}`}>{cat}</span>
+                        <span className="text-muted-foreground font-normal normal-case tracking-normal">{items.length} {items.length === 1 ? "provider" : "providers"}</span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-4 pb-3 space-y-1.5">
+                      {items.map((fp: any) => (
+                        <div key={fp.id} className="flex items-center gap-2 py-1.5 border-b border-border/30 last:border-0">
+                          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium">{fp.name}</span>
+                            {fp.domain && <span className="text-xs text-muted-foreground ml-2">{fp.domain}</span>}
+                          </div>
+                          {fp.confidence && <span className="text-[10px] text-muted-foreground">{fp.confidence}% conf.</span>}
+                          <span className={`text-[10px] font-semibold ${riskColors[fp.riskLevel] ?? riskColors.low}`}>{fp.riskLevel}</span>
+                          <Badge variant="outline" className="text-[10px]">{(fp.discoveryMethod ?? "").replace(/_/g, " ")}</Badge>
+                          <span className="text-xs text-muted-foreground shrink-0">+{fp.riskContribution}</span>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            );
+          })()}
+        </TabsContent>
+
+        {/* Intelligence — Security Analysis + Breach Intel */}
+        <TabsContent value="intelligence" className="mt-4 space-y-4">
+          {loadingIntel ? (
+            <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <>
+              {/* Security Analysis Scorecard */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2"><Shield className="w-4 h-4" />Security Posture Analysis</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {!secAnalysis ? (
+                    <div className="text-center py-6 text-sm text-muted-foreground">
+                      <p>No security analysis available. Run a vendor scan to generate a full security scorecard.</p>
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-4">
+                        <div className="flex flex-col items-center justify-center w-16 h-16 rounded-full border-2 border-current text-2xl font-bold"
+                          style={{ color: secAnalysis.overallGrade?.startsWith("A") ? "#22c55e" : secAnalysis.overallGrade?.startsWith("B") ? "#3b82f6" : secAnalysis.overallGrade?.startsWith("C") ? "#eab308" : "#ef4444" }}>
+                          {secAnalysis.overallGrade ?? "?"}
+                        </div>
+                        <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-3">
+                          {[
+                            { label: "Security Headers", score: secAnalysis.securityHeadersScore, icon: <Lock className="w-3 h-3" /> },
+                            { label: "DNS Health",       score: secAnalysis.dnsHealthScore,       icon: <Globe className="w-3 h-3" /> },
+                            { label: "TLS/SSL",          score: secAnalysis.sslScore,             icon: <Shield className="w-3 h-3" /> },
+                            { label: "Cookies",          score: secAnalysis.cookieScore,          icon: <Database className="w-3 h-3" /> },
+                          ].map(c => (
+                            <div key={c.label} className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">{c.icon}{c.label}</div>
+                              <div className="flex items-center gap-2">
+                                <Progress value={c.score} className="h-1.5 flex-1" />
+                                <span className="text-xs font-bold w-7 text-right">{c.score}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* HTTP Header Details */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2 border-t border-border/30">
+                        {[
+                          { label: "HSTS",                val: secAnalysis.hsts },
+                          { label: "CSP",                 val: secAnalysis.csp },
+                          { label: "X-Frame-Options",     val: !!secAnalysis.xFrameOptions },
+                          { label: "X-Content-Type",      val: secAnalysis.xContentType },
+                          { label: "Referrer-Policy",     val: !!secAnalysis.referrerPolicy },
+                          { label: "Permissions-Policy",  val: secAnalysis.permissionsPolicy },
+                          { label: "COEP",                val: secAnalysis.coep },
+                          { label: "COOP",                val: secAnalysis.coop },
+                        ].map(h => (
+                          <div key={h.label} className="flex items-center gap-1.5 text-xs">
+                            {h.val ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" /> : <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />}
+                            <span className={h.val ? "text-foreground" : "text-muted-foreground"}>{h.label}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* DNS Details */}
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 pt-2 border-t border-border/30">
+                        <div className="flex items-center gap-1.5 text-xs">
+                          {secAnalysis.spfRecord ? <CheckCircle2 className="w-3 h-3 text-green-400" /> : <AlertTriangle className="w-3 h-3 text-red-400" />}
+                          <span>SPF {secAnalysis.spfPolicy ? <span className="text-muted-foreground">({secAnalysis.spfPolicy})</span> : null}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          {secAnalysis.dmarcRecord ? <CheckCircle2 className="w-3 h-3 text-green-400" /> : <AlertTriangle className="w-3 h-3 text-red-400" />}
+                          <span>DMARC {secAnalysis.dmarcDisposition ? <span className="text-muted-foreground">({secAnalysis.dmarcDisposition})</span> : null}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          {(secAnalysis.dkimSelectors as any[])?.length > 0 ? <CheckCircle2 className="w-3 h-3 text-green-400" /> : <AlertTriangle className="w-3 h-3 text-red-400" />}
+                          <span>DKIM ({(secAnalysis.dkimSelectors as any[])?.length ?? 0} selectors)</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          {(secAnalysis.caaRecords as any[])?.length > 0 ? <CheckCircle2 className="w-3 h-3 text-green-400" /> : <AlertTriangle className="w-3 h-3 text-yellow-400" />}
+                          <span>CAA Records ({(secAnalysis.caaRecords as any[])?.length ?? 0})</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          {secAnalysis.sslGrade ? <CheckCircle2 className="w-3 h-3 text-green-400" /> : <AlertTriangle className="w-3 h-3 text-red-400" />}
+                          <span>SSL Grade: {secAnalysis.sslGrade ?? "Unknown"} {secAnalysis.sslExpiryDays != null ? <span className="text-muted-foreground">({secAnalysis.sslExpiryDays}d)</span> : null}</span>
+                        </div>
+                      </div>
+
+                      {secAnalysis.totalCookies > 0 && (
+                        <div className="flex gap-4 pt-2 border-t border-border/30 text-xs">
+                          <span className="text-muted-foreground">Cookies: {secAnalysis.totalCookies} total</span>
+                          <span className={secAnalysis.cookiesSecure === secAnalysis.totalCookies ? "text-green-400" : "text-yellow-400"}>{secAnalysis.cookiesSecure} Secure</span>
+                          <span className={secAnalysis.cookiesHttponly === secAnalysis.totalCookies ? "text-green-400" : "text-yellow-400"}>{secAnalysis.cookiesHttponly} HttpOnly</span>
+                          <span className={secAnalysis.cookiesSamesite > 0 ? "text-green-400" : "text-red-400"}>{secAnalysis.cookiesSamesite} SameSite</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Breach Intelligence */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2"><Zap className="w-4 h-4" />Breach Intelligence</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {!breachIntel ? (
+                    <p className="text-center py-4 text-sm text-muted-foreground">No breach data available.</p>
+                  ) : (
+                    <>
+                      {(breachIntel.breachEvents ?? []).length === 0 ? (
+                        <div className="flex items-center gap-2 text-green-400 py-2">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span className="text-sm">No known data breaches found for {breachIntel.domain}</span>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {(breachIntel.breachEvents as any[]).map((b: any) => (
+                            <div key={b.id} className="p-3 rounded border border-red-500/20 bg-red-500/5 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                                <span className="text-sm font-medium">{b.breachName}</span>
+                                {b.breachDate && <span className="text-xs text-muted-foreground">{b.breachDate}</span>}
+                                {b.isSensitive && <Badge variant="destructive" className="text-[10px] py-0">Sensitive</Badge>}
+                                {b.isVerified && <Badge variant="outline" className="text-[10px] py-0 text-green-400 border-green-500/30">Verified</Badge>}
+                              </div>
+                              {b.pwnCount > 0 && (
+                                <p className="text-xs text-muted-foreground">{b.pwnCount.toLocaleString()} accounts compromised</p>
+                              )}
+                              {(b.dataClasses as string[])?.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {(b.dataClasses as string[]).slice(0, 8).map((dc: string) => (
+                                    <span key={dc} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{dc}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Lookalike Domains */}
+                      {(breachIntel.lookalikes ?? []).length > 0 && (
+                        <div className="space-y-2 pt-2 border-t border-border/30">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5"><Eye className="w-3 h-3" />Lookalike / Typosquatting Domains ({(breachIntel.lookalikes as any[]).length})</p>
+                          <div className="space-y-1.5">
+                            {(breachIntel.lookalikes as any[]).map((l: any, i: number) => (
+                              <div key={i} className="flex items-center gap-2 p-2 rounded bg-orange-500/10 border border-orange-500/20">
+                                <AlertTriangle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                                <span className="text-sm font-mono">{l.domain}</span>
+                                <span className="text-[10px] text-muted-foreground ml-auto">{l.technique}</span>
+                                {l.registered && <Badge variant="destructive" className="text-[10px] py-0">Registered</Badge>}
+                                {l.httpLive && <Badge className="text-[10px] py-0 bg-orange-500/20 text-orange-300 border-orange-500/30">HTTP Live</Badge>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
         </TabsContent>
 
         {/* Compliance */}

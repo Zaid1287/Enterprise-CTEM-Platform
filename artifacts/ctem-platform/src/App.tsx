@@ -69,6 +69,7 @@ const OrchestratorPage       = lazy(() => import("@/pages/OrchestratorPage"));
 const TprmDashboardPage                = lazy(() => import("@/pages/TprmDashboardPage"));
 const TprmVendorsPage                  = lazy(() => import("@/pages/TprmVendorsPage"));
 const TprmVendorDetailPage             = lazy(() => import("@/pages/TprmVendorDetailPage"));
+const TprmFourthPartyPage              = lazy(() => import("@/pages/TprmFourthPartyPage"));
 const TprmSupplyChainPage              = lazy(() => import("@/pages/TprmSupplyChainPage"));
 const TprmAdminPage                    = lazy(() => import("@/pages/TprmAdminPage"));
 const TprmCompliancePage               = lazy(() => import("@/pages/TprmCompliancePage"));
@@ -351,6 +352,7 @@ function Router() {
       <Route path="/tprm/vendors/new" component={() => <TprmRoute component={TprmVendorsPage} />} />
       <Route path="/tprm/vendors/:id" component={() => <TprmRoute component={TprmVendorDetailPage} />} />
       <Route path="/tprm/vendors" component={() => <TprmRoute component={TprmVendorsPage} />} />
+      <Route path="/tprm/fourth-parties" component={() => <TprmRoute component={TprmFourthPartyPage} />} />
       <Route path="/tprm/supply-chain" component={() => <TprmRoute component={TprmSupplyChainPage} />} />
       <Route path="/tprm/compliance" component={() => <TprmRoute component={TprmCompliancePage} />} />
       <Route path="/tprm/questionnaire-templates" component={() => <TprmRoute component={TprmQuestionnaireTemplatesPage} />} />

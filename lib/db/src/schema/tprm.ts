@@ -93,15 +93,76 @@ export const tprmVendorFindingsTable = pgTable("tprm_vendor_findings", {
 });
 
 export const tprmFourthPartyVendorsTable = pgTable("tprm_fourth_party_vendors", {
-  id:              serial("id").primaryKey(),
-  parentVendorId:  integer("parent_vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
-  tenantId:        integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
-  name:            text("name").notNull(),
-  domain:          text("domain"),
-  discoveryMethod: text("discovery_method").notNull().default("http_header"),
+  id:               serial("id").primaryKey(),
+  parentVendorId:   integer("parent_vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
+  tenantId:         integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  name:             text("name").notNull(),
+  domain:           text("domain"),
+  category:         text("category").notNull().default("infrastructure"),
+  riskLevel:        text("risk_level").notNull().default("medium"),
+  confidence:       integer("confidence").notNull().default(50),
+  isActive:         boolean("is_active").notNull().default(true),
+  discoveryMethod:  text("discovery_method").notNull().default("http_header"),
   riskContribution: integer("risk_contribution").notNull().default(0),
-  details:         jsonb("details"),
-  discoveredAt:    timestamp("discovered_at", { withTimezone: true }).notNull().defaultNow(),
+  details:          jsonb("details"),
+  discoveredAt:     timestamp("discovered_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const tprmVendorSecurityAnalysisTable = pgTable("tprm_vendor_security_analysis", {
+  id:                   serial("id").primaryKey(),
+  vendorId:             integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
+  tenantId:             integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  securityHeadersScore: integer("security_headers_score").notNull().default(0),
+  dnsHealthScore:       integer("dns_health_score").notNull().default(0),
+  sslScore:             integer("ssl_score").notNull().default(0),
+  cookieScore:          integer("cookie_score").notNull().default(0),
+  overallGrade:         text("overall_grade").notNull().default("F"),
+  hsts:                 boolean("hsts").notNull().default(false),
+  hstsMaxAge:           integer("hsts_max_age"),
+  csp:                  boolean("csp").notNull().default(false),
+  cspUnsafeInline:      boolean("csp_unsafe_inline").notNull().default(false),
+  xFrameOptions:        text("x_frame_options"),
+  xContentType:         boolean("x_content_type").notNull().default(false),
+  referrerPolicy:       text("referrer_policy"),
+  permissionsPolicy:    boolean("permissions_policy").notNull().default(false),
+  coep:                 boolean("coep").notNull().default(false),
+  coop:                 boolean("coop").notNull().default(false),
+  spfRecord:            text("spf_record"),
+  spfPolicy:            text("spf_policy"),
+  dmarcRecord:          text("dmarc_record"),
+  dmarcDisposition:     text("dmarc_disposition"),
+  dkimSelectors:        jsonb("dkim_selectors").notNull().default([]),
+  caaRecords:           jsonb("caa_records").notNull().default([]),
+  dnssec:               boolean("dnssec").notNull().default(false),
+  sslProtocol:          text("ssl_protocol"),
+  sslGrade:             text("ssl_grade"),
+  sslExpiryDays:        integer("ssl_expiry_days"),
+  certSanCount:         integer("cert_san_count"),
+  openPorts:            jsonb("open_ports").notNull().default([]),
+  cookiesSecure:        integer("cookies_secure").notNull().default(0),
+  cookiesHttponly:      integer("cookies_httponly").notNull().default(0),
+  cookiesSamesite:      integer("cookies_samesite").notNull().default(0),
+  totalCookies:         integer("total_cookies").notNull().default(0),
+  rawHeaders:           jsonb("raw_headers"),
+  scannedAt:            timestamp("scanned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const tprmVendorBreachEventsTable = pgTable("tprm_vendor_breach_events", {
+  id:           serial("id").primaryKey(),
+  vendorId:     integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
+  tenantId:     integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  breachName:   text("breach_name").notNull(),
+  breachDate:   text("breach_date"),
+  pwnCount:     integer("pwn_count").notNull().default(0),
+  dataClasses:  jsonb("data_classes").notNull().default([]),
+  description:  text("description"),
+  isVerified:   boolean("is_verified").notNull().default(true),
+  isSensitive:  boolean("is_sensitive").notNull().default(false),
+  isFabricated: boolean("is_fabricated").notNull().default(false),
+  logoPath:     text("logo_path"),
+  source:       text("source").notNull().default("hibp"),
+  rawData:      jsonb("raw_data"),
+  discoveredAt: timestamp("discovered_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const tprmSupplyChainNodesTable = pgTable("tprm_supply_chain_nodes", {
@@ -218,6 +279,8 @@ export type TprmVendorRiskScore          = typeof tprmVendorRiskScoresTable.$inf
 export type TprmVendorAsset              = typeof tprmVendorAssetsTable.$inferSelect;
 export type TprmVendorFinding            = typeof tprmVendorFindingsTable.$inferSelect;
 export type TprmFourthPartyVendor        = typeof tprmFourthPartyVendorsTable.$inferSelect;
+export type TprmVendorSecurityAnalysis   = typeof tprmVendorSecurityAnalysisTable.$inferSelect;
+export type TprmVendorBreachEvent        = typeof tprmVendorBreachEventsTable.$inferSelect;
 export type TprmSupplyChainNode          = typeof tprmSupplyChainNodesTable.$inferSelect;
 export type TprmVendorContact            = typeof tprmVendorContactsTable.$inferSelect;
 export type TprmQuestionnaireTemplate    = typeof tprmQuestionnaireTemplatesTable.$inferSelect;

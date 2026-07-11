@@ -16,7 +16,7 @@ import dns from "node:dns/promises";
 import tls from "node:tls";
 import { logger } from "./logger";
 import { orchestratedFetch } from "./scanOrchestrator";
-import { db, platformSettingsTable, tprmVendorFindingsTable, tprmVendorAssetsTable, tprmVendorRiskScoresTable, tprmFourthPartyVendorsTable, tprmVendorsTable, tprmSupplyChainNodesTable, alertsTable } from "@workspace/db";
+import { db, platformSettingsTable, tprmVendorFindingsTable, tprmVendorAssetsTable, tprmVendorRiskScoresTable, tprmFourthPartyVendorsTable, tprmVendorsTable, tprmSupplyChainNodesTable, alertsTable, tprmVendorSecurityAnalysisTable, tprmVendorBreachEventsTable } from "@workspace/db";
 import { eq, and, desc, isNull } from "drizzle-orm";
 
 const UA = "Sentinelware-TPRM/1.0";
@@ -106,7 +106,7 @@ export async function enrichCompanyByDomain(inputDomain: string): Promise<Compan
     const query = domain.split(".")[0];
     const res = await safeFetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(query)}`);
     if (res?.ok) {
-      const suggestions: any[] = await res.json().catch(() => []);
+      const suggestions = (await res.json().catch(() => [])) as any[];
       const match = suggestions.find(s => s.domain === domain) ?? suggestions[0];
       if (match) {
         base.companyName = match.name ?? base.companyName;
@@ -211,6 +211,9 @@ export interface VendorProbeResult {
 export interface FourthPartySignal {
   name:            string;
   domain:          string;
+  category:        string;
+  riskLevel:       "low" | "medium" | "high" | "critical";
+  confidence:      number;
   discoveryMethod: string;
   details:         Record<string, unknown>;
 }
@@ -278,8 +281,8 @@ async function probeTls(domain: string): Promise<TlsProbeResult | null> {
 
         resolve({
           grade, validFrom, validTo, daysUntilExp, expired, selfSigned,
-          issuer:   cert.issuer?.O ?? cert.issuer?.CN ?? null,
-          subject:  cert.subject?.CN ?? null,
+          issuer:   (cert.issuer?.O ?? cert.issuer?.CN ?? null) as string | null,
+          subject:  (cert.subject?.CN ?? null) as string | null,
           san:      san.slice(0, 30),
           protocol: protocol ?? null,
           cipher:   cipher?.name ?? null,
@@ -461,7 +464,7 @@ async function getSubdomains(domain: string): Promise<string[]> {
   try {
     const res = await safeFetch(`https://crt.sh/?q=%.${domain}&output=json`);
     if (!res?.ok) return [];
-    const data: any[] = await res.json().catch(() => []);
+    const data = (await res.json().catch(() => [])) as any[];
     const seen = new Set<string>();
     for (const row of data) {
       const names = (row.name_value ?? "").split("\n").map((n: string) => n.trim().toLowerCase());
@@ -476,83 +479,326 @@ async function getSubdomains(domain: string): Promise<string[]> {
 }
 
 // ── 4th-party discovery ───────────────────────────────────────────────────────
+// 200+ signatures across 14 categories with risk levels
 
-const CDN_WAF_HEADERS: Array<{ header: string; value: string; name: string; domain: string }> = [
-  { header: "server",             value: "cloudflare",  name: "Cloudflare",  domain: "cloudflare.com" },
-  { header: "x-served-by",       value: "fastly",      name: "Fastly CDN",  domain: "fastly.com" },
-  { header: "x-cache",           value: "cloudfront",  name: "AWS CloudFront", domain: "aws.amazon.com" },
-  { header: "x-akamai",          value: "",            name: "Akamai",      domain: "akamai.com" },
-  { header: "x-sucuri",          value: "",            name: "Sucuri WAF",  domain: "sucuri.net" },
-  { header: "server",            value: "akamaighost", name: "Akamai",      domain: "akamai.com" },
-  { header: "x-cache-hits",      value: "varnish",     name: "Varnish Cache", domain: "varnish-cache.org" },
+type FpCategory = "cdn" | "waf" | "analytics" | "advertising" | "payments" | "auth" | "monitoring" | "communication" | "marketing" | "infrastructure" | "security" | "media" | "maps" | "devtools" | "cms" | "ca";
+type FpRisk = "low" | "medium" | "high" | "critical";
+
+interface FpSig { header?: string; value?: string; name: string; domain: string; category: FpCategory; risk: FpRisk; }
+interface JsSig { pattern: string; name: string; domain: string; category: FpCategory; risk: FpRisk; }
+interface CnameSig { pattern: string; name: string; domain: string; category: FpCategory; risk: FpRisk; }
+interface CertSig { pattern: string; name: string; domain: string; category: FpCategory; risk: FpRisk; }
+
+const CDN_WAF_HEADERS: FpSig[] = [
+  // CDN — header-based
+  { header: "server",              value: "cloudflare",     name: "Cloudflare CDN",     domain: "cloudflare.com",    category: "cdn",  risk: "medium" },
+  { header: "cf-ray",              value: "",               name: "Cloudflare",          domain: "cloudflare.com",    category: "cdn",  risk: "medium" },
+  { header: "x-served-by",        value: "fastly",         name: "Fastly CDN",          domain: "fastly.com",        category: "cdn",  risk: "medium" },
+  { header: "x-fastly-request-id",value: "",               name: "Fastly CDN",          domain: "fastly.com",        category: "cdn",  risk: "medium" },
+  { header: "x-cache",            value: "cloudfront",     name: "AWS CloudFront",      domain: "aws.amazon.com",    category: "cdn",  risk: "medium" },
+  { header: "x-amz-cf-id",        value: "",               name: "AWS CloudFront",      domain: "aws.amazon.com",    category: "cdn",  risk: "medium" },
+  { header: "server",             value: "akamaighost",    name: "Akamai CDN",          domain: "akamai.com",        category: "cdn",  risk: "medium" },
+  { header: "x-akamai-transformed",value: "",              name: "Akamai CDN",          domain: "akamai.com",        category: "cdn",  risk: "medium" },
+  { header: "x-cdn",              value: "imperva",        name: "Imperva CDN",         domain: "imperva.com",       category: "cdn",  risk: "medium" },
+  { header: "server",             value: "bunnycdn",       name: "Bunny CDN",           domain: "bunny.net",         category: "cdn",  risk: "low"    },
+  { header: "x-cache",            value: "keycdn",         name: "KeyCDN",              domain: "keycdn.com",        category: "cdn",  risk: "low"    },
+  { header: "server",             value: "varnish",        name: "Varnish Cache",       domain: "varnish-cache.org", category: "cdn",  risk: "low"    },
+  { header: "x-cache-hits",       value: "varnish",        name: "Varnish Cache",       domain: "varnish-cache.org", category: "cdn",  risk: "low"    },
+  { header: "x-azure-ref",        value: "",               name: "Azure Front Door",    domain: "azure.com",         category: "cdn",  risk: "medium" },
+  { header: "x-goog-request-params",value: "",             name: "Google Cloud CDN",    domain: "cloud.google.com",  category: "cdn",  risk: "medium" },
+  { header: "x-vercel-id",        value: "",               name: "Vercel Edge",         domain: "vercel.com",        category: "cdn",  risk: "low"    },
+  { header: "x-powered-by",       value: "next.js",        name: "Next.js / Vercel",    domain: "vercel.com",        category: "cdn",  risk: "low"    },
+  { header: "x-netlify",          value: "",               name: "Netlify CDN",         domain: "netlify.com",       category: "cdn",  risk: "low"    },
+  { header: "server",             value: "nginx",          name: "NGINX",               domain: "nginx.com",         category: "infrastructure", risk: "low" },
+  { header: "server",             value: "apache",         name: "Apache HTTP",         domain: "apache.org",        category: "infrastructure", risk: "low" },
+  // WAF — header-based
+  { header: "x-sucuri-id",        value: "",               name: "Sucuri WAF",          domain: "sucuri.net",        category: "waf",  risk: "medium" },
+  { header: "x-sucuri-cache",     value: "",               name: "Sucuri WAF",          domain: "sucuri.net",        category: "waf",  risk: "medium" },
+  { header: "x-protected-by",     value: "sqreen",         name: "Sqreen WAF",          domain: "sqreen.io",         category: "waf",  risk: "medium" },
+  { header: "x-fw-server",        value: "",               name: "Firewall Cloud",      domain: "firewall-cloud.com",category: "waf",  risk: "medium" },
+  { header: "x-iinfo",            value: "",               name: "Incapsula WAF",       domain: "imperva.com",       category: "waf",  risk: "medium" },
+  { header: "x-datadome",         value: "",               name: "DataDome Bot Protection", domain: "datadome.co",   category: "security", risk: "medium" },
+  { header: "x-perimeterx",       value: "",               name: "PerimeterX",          domain: "perimeterx.com",    category: "security", risk: "medium" },
 ];
 
-const JS_THIRD_PARTIES: Array<{ pattern: string; name: string; domain: string }> = [
-  { pattern: "google-analytics.com",  name: "Google Analytics",  domain: "google.com" },
-  { pattern: "googletagmanager.com",  name: "Google Tag Manager", domain: "google.com" },
-  { pattern: "segment.io",            name: "Segment",           domain: "segment.com" },
-  { pattern: "intercom.io",           name: "Intercom",          domain: "intercom.com" },
-  { pattern: "hotjar.com",            name: "Hotjar",            domain: "hotjar.com" },
-  { pattern: "stripe.com/v3",         name: "Stripe Payments",   domain: "stripe.com" },
-  { pattern: "js.sentry-cdn.com",     name: "Sentry",            domain: "sentry.io" },
-  { pattern: "cdn.amplitude.com",     name: "Amplitude",         domain: "amplitude.com" },
-  { pattern: "cdn.mxpnl.com",         name: "Mixpanel",          domain: "mixpanel.com" },
-  { pattern: "connect.facebook.net",  name: "Facebook Pixel",    domain: "facebook.com" },
-  { pattern: "platform.twitter.com",  name: "Twitter Widget",    domain: "twitter.com" },
-  { pattern: "widget.zendesk.com",    name: "Zendesk",           domain: "zendesk.com" },
-  { pattern: "assets.hubspot.com",    name: "HubSpot",           domain: "hubspot.com" },
+const JS_THIRD_PARTIES: JsSig[] = [
+  // Analytics
+  { pattern: "google-analytics.com",    name: "Google Analytics",      domain: "google.com",        category: "analytics",     risk: "low"      },
+  { pattern: "googletagmanager.com",    name: "Google Tag Manager",    domain: "google.com",        category: "analytics",     risk: "low"      },
+  { pattern: "analytics.google.com",    name: "Google Analytics 4",    domain: "google.com",        category: "analytics",     risk: "low"      },
+  { pattern: "cdn.segment.com",         name: "Segment",               domain: "segment.com",       category: "analytics",     risk: "low"      },
+  { pattern: "segment.io",              name: "Segment",               domain: "segment.com",       category: "analytics",     risk: "low"      },
+  { pattern: "cdn.amplitude.com",       name: "Amplitude",             domain: "amplitude.com",     category: "analytics",     risk: "low"      },
+  { pattern: "cdn.mxpnl.com",           name: "Mixpanel",              domain: "mixpanel.com",      category: "analytics",     risk: "low"      },
+  { pattern: "api.mixpanel.com",        name: "Mixpanel",              domain: "mixpanel.com",      category: "analytics",     risk: "low"      },
+  { pattern: "static.hotjar.com",       name: "Hotjar",                domain: "hotjar.com",        category: "analytics",     risk: "low"      },
+  { pattern: "hotjar.com",              name: "Hotjar",                domain: "hotjar.com",        category: "analytics",     risk: "low"      },
+  { pattern: "heap.io",                 name: "Heap Analytics",        domain: "heap.io",           category: "analytics",     risk: "low"      },
+  { pattern: "fullstory.com",           name: "FullStory",             domain: "fullstory.com",     category: "analytics",     risk: "medium"   },
+  { pattern: "logrocket.io",            name: "LogRocket",             domain: "logrocket.com",     category: "analytics",     risk: "medium"   },
+  { pattern: "pendo.io",                name: "Pendo",                 domain: "pendo.io",          category: "analytics",     risk: "low"      },
+  { pattern: "mouseflow.com",           name: "Mouseflow",             domain: "mouseflow.com",     category: "analytics",     risk: "low"      },
+  { pattern: "crazyegg.com",            name: "Crazy Egg",             domain: "crazyegg.com",      category: "analytics",     risk: "low"      },
+  { pattern: "stats.wp.com",            name: "Jetpack Stats",         domain: "automattic.com",    category: "analytics",     risk: "low"      },
+  { pattern: "cdn.contentsquare.net",   name: "Contentsquare",         domain: "contentsquare.com", category: "analytics",     risk: "medium"   },
+  { pattern: "browser.sentry-cdn.com",  name: "Sentry",                domain: "sentry.io",         category: "monitoring",    risk: "medium"   },
+  { pattern: "js.sentry-cdn.com",       name: "Sentry",                domain: "sentry.io",         category: "monitoring",    risk: "medium"   },
+  { pattern: "bugsnag.com",             name: "Bugsnag",               domain: "bugsnag.com",       category: "monitoring",    risk: "medium"   },
+  { pattern: "rollbar.com",             name: "Rollbar",               domain: "rollbar.com",       category: "monitoring",    risk: "medium"   },
+  { pattern: "datadoghq.com",           name: "Datadog APM",           domain: "datadoghq.com",     category: "monitoring",    risk: "medium"   },
+  { pattern: "newrelic.com",            name: "New Relic Browser",     domain: "newrelic.com",      category: "monitoring",    risk: "medium"   },
+  { pattern: "dynatrace.com",           name: "Dynatrace RUM",         domain: "dynatrace.com",     category: "monitoring",    risk: "medium"   },
+  { pattern: "elastic.co",             name: "Elastic APM",           domain: "elastic.co",        category: "monitoring",    risk: "medium"   },
+  // Advertising
+  { pattern: "connect.facebook.net",    name: "Facebook Pixel",        domain: "facebook.com",      category: "advertising",   risk: "medium"   },
+  { pattern: "googleadservices.com",    name: "Google Ads",            domain: "google.com",        category: "advertising",   risk: "low"      },
+  { pattern: "doubleclick.net",         name: "Google DoubleClick",    domain: "google.com",        category: "advertising",   risk: "medium"   },
+  { pattern: "platform.linkedin.com",   name: "LinkedIn Insight Tag",  domain: "linkedin.com",      category: "advertising",   risk: "medium"   },
+  { pattern: "static.ads-twitter.com",  name: "Twitter Ads",           domain: "twitter.com",       category: "advertising",   risk: "medium"   },
+  { pattern: "tiktok.com/i18n",         name: "TikTok Pixel",          domain: "tiktok.com",        category: "advertising",   risk: "medium"   },
+  { pattern: "pinimg.com",              name: "Pinterest Tag",         domain: "pinterest.com",     category: "advertising",   risk: "medium"   },
+  { pattern: "criteo.com",              name: "Criteo",                domain: "criteo.com",        category: "advertising",   risk: "medium"   },
+  { pattern: "scorecardresearch.com",   name: "comScore",              domain: "comscore.com",      category: "advertising",   risk: "low"      },
+  // Payments (HIGH risk — PCI DSS scope)
+  { pattern: "stripe.com/v3",           name: "Stripe Payments",       domain: "stripe.com",        category: "payments",      risk: "high"     },
+  { pattern: "js.stripe.com",           name: "Stripe.js",             domain: "stripe.com",        category: "payments",      risk: "high"     },
+  { pattern: "braintree-api.com",       name: "Braintree",             domain: "braintree.com",     category: "payments",      risk: "high"     },
+  { pattern: "paypalobjects.com",       name: "PayPal",                domain: "paypal.com",        category: "payments",      risk: "high"     },
+  { pattern: "adyen.com",               name: "Adyen",                 domain: "adyen.com",         category: "payments",      risk: "high"     },
+  { pattern: "checkout.com",            name: "Checkout.com",          domain: "checkout.com",      category: "payments",      risk: "high"     },
+  { pattern: "squareup.com",            name: "Square Payments",       domain: "squareup.com",      category: "payments",      risk: "high"     },
+  { pattern: "klarna.com",              name: "Klarna",                domain: "klarna.com",        category: "payments",      risk: "high"     },
+  { pattern: "affirm.com",              name: "Affirm",                domain: "affirm.com",        category: "payments",      risk: "high"     },
+  { pattern: "afterpay.com",            name: "Afterpay",              domain: "afterpay.com",      category: "payments",      risk: "high"     },
+  { pattern: "razorpay.com",            name: "Razorpay",              domain: "razorpay.com",      category: "payments",      risk: "high"     },
+  // Auth/Identity (HIGH risk — authentication attack surface)
+  { pattern: "auth0.com",               name: "Auth0",                 domain: "auth0.com",         category: "auth",          risk: "high"     },
+  { pattern: "cdn.auth0.com",           name: "Auth0",                 domain: "auth0.com",         category: "auth",          risk: "high"     },
+  { pattern: "okta.com",                name: "Okta",                  domain: "okta.com",          category: "auth",          risk: "high"     },
+  { pattern: "oktacdn.com",             name: "Okta",                  domain: "okta.com",          category: "auth",          risk: "high"     },
+  { pattern: "login.microsoftonline.com", name: "Microsoft Entra ID",  domain: "microsoft.com",     category: "auth",          risk: "high"     },
+  { pattern: "accounts.google.com",     name: "Google Sign-In",        domain: "google.com",        category: "auth",          risk: "medium"   },
+  { pattern: "appleid.apple.com",       name: "Sign in with Apple",    domain: "apple.com",         category: "auth",          risk: "medium"   },
+  { pattern: "onelogin.com",            name: "OneLogin",              domain: "onelogin.com",      category: "auth",          risk: "high"     },
+  { pattern: "pingidentity.com",        name: "Ping Identity",         domain: "pingidentity.com",  category: "auth",          risk: "high"     },
+  { pattern: "duo.com",                 name: "Duo Security",          domain: "duo.com",           category: "auth",          risk: "medium"   },
+  { pattern: "cognito-identity.amazonaws.com", name: "AWS Cognito",   domain: "aws.amazon.com",    category: "auth",          risk: "high"     },
+  // Communication / Support
+  { pattern: "intercom.io",             name: "Intercom",              domain: "intercom.com",      category: "communication", risk: "medium"   },
+  { pattern: "widget.intercom.io",      name: "Intercom Widget",       domain: "intercom.com",      category: "communication", risk: "medium"   },
+  { pattern: "widget.zendesk.com",      name: "Zendesk",               domain: "zendesk.com",       category: "communication", risk: "medium"   },
+  { pattern: "static.zdassets.com",     name: "Zendesk Assets",        domain: "zendesk.com",       category: "communication", risk: "medium"   },
+  { pattern: "drift.com",               name: "Drift Chat",            domain: "drift.com",         category: "communication", risk: "medium"   },
+  { pattern: "freshchat.com",           name: "Freshchat",             domain: "freshworks.com",    category: "communication", risk: "medium"   },
+  { pattern: "freshdesk.com",           name: "Freshdesk",             domain: "freshworks.com",    category: "communication", risk: "medium"   },
+  { pattern: "tawk.to",                 name: "Tawk.to Live Chat",     domain: "tawk.to",           category: "communication", risk: "medium"   },
+  { pattern: "crisp.chat",              name: "Crisp Chat",            domain: "crisp.chat",        category: "communication", risk: "medium"   },
+  { pattern: "olark.com",               name: "Olark Live Chat",       domain: "olark.com",         category: "communication", risk: "medium"   },
+  { pattern: "livechatinc.com",         name: "LiveChat",              domain: "livechat.com",      category: "communication", risk: "medium"   },
+  { pattern: "sendbird.com",            name: "Sendbird",              domain: "sendbird.com",      category: "communication", risk: "medium"   },
+  { pattern: "twilio.com",              name: "Twilio",                domain: "twilio.com",        category: "communication", risk: "medium"   },
+  // Marketing / CRM
+  { pattern: "assets.hubspot.com",      name: "HubSpot",               domain: "hubspot.com",       category: "marketing",     risk: "medium"   },
+  { pattern: "js.hsforms.com",          name: "HubSpot Forms",         domain: "hubspot.com",       category: "marketing",     risk: "medium"   },
+  { pattern: "munchkin.marketo.net",    name: "Marketo",               domain: "marketo.com",       category: "marketing",     risk: "medium"   },
+  { pattern: "pardot.com",              name: "Salesforce Pardot",     domain: "salesforce.com",    category: "marketing",     risk: "medium"   },
+  { pattern: "salesforceliveagent.com", name: "Salesforce Live Agent", domain: "salesforce.com",    category: "marketing",     risk: "medium"   },
+  { pattern: "chimpstatic.com",         name: "Mailchimp",             domain: "mailchimp.com",     category: "marketing",     risk: "medium"   },
+  { pattern: "klaviyo.com",             name: "Klaviyo",               domain: "klaviyo.com",       category: "marketing",     risk: "medium"   },
+  { pattern: "sendgrid.net",            name: "SendGrid",              domain: "sendgrid.com",      category: "marketing",     risk: "medium"   },
+  { pattern: "activecampaign.com",      name: "ActiveCampaign",        domain: "activecampaign.com",category: "marketing",     risk: "medium"   },
+  { pattern: "platform.twitter.com",    name: "Twitter Widget",        domain: "twitter.com",       category: "marketing",     risk: "low"      },
+  // Security / Bot Protection
+  { pattern: "google.com/recaptcha",    name: "Google reCAPTCHA",      domain: "google.com",        category: "security",      risk: "low"      },
+  { pattern: "hcaptcha.com",            name: "hCaptcha",              domain: "hcaptcha.com",      category: "security",      risk: "low"      },
+  { pattern: "arkoselabs.com",          name: "Arkose Labs",           domain: "arkoselabs.com",    category: "security",      risk: "medium"   },
+  { pattern: "px-cdn.net",              name: "PerimeterX",            domain: "perimeterx.com",    category: "security",      risk: "medium"   },
+  { pattern: "datadome.co",             name: "DataDome",              domain: "datadome.co",       category: "security",      risk: "medium"   },
+  { pattern: "cloudflare.com/challenge",name: "Cloudflare Bot Mgmt",   domain: "cloudflare.com",    category: "security",      risk: "low"      },
+  // Infrastructure / Cloud Storage
+  { pattern: "s3.amazonaws.com",        name: "AWS S3",                domain: "aws.amazon.com",    category: "infrastructure",risk: "medium"   },
+  { pattern: "amazonaws.com",           name: "Amazon Web Services",   domain: "aws.amazon.com",    category: "infrastructure",risk: "medium"   },
+  { pattern: "storage.googleapis.com",  name: "Google Cloud Storage",  domain: "cloud.google.com",  category: "infrastructure",risk: "medium"   },
+  { pattern: "cloudinary.com",          name: "Cloudinary",            domain: "cloudinary.com",    category: "infrastructure",risk: "low"      },
+  { pattern: "imgix.net",               name: "Imgix",                 domain: "imgix.com",         category: "infrastructure",risk: "low"      },
+  { pattern: "cdn.jsdelivr.net",        name: "jsDelivr CDN",          domain: "jsdelivr.com",      category: "cdn",           risk: "medium"   },
+  { pattern: "cdnjs.cloudflare.com",    name: "Cloudflare CDNJS",      domain: "cloudflare.com",    category: "cdn",           risk: "medium"   },
+  { pattern: "unpkg.com",               name: "unpkg CDN",             domain: "unpkg.com",         category: "cdn",           risk: "medium"   },
+  // Media / Video
+  { pattern: "youtube.com/embed",       name: "YouTube",               domain: "youtube.com",       category: "media",         risk: "low"      },
+  { pattern: "vimeo.com",               name: "Vimeo",                 domain: "vimeo.com",         category: "media",         risk: "low"      },
+  { pattern: "fast.wistia.net",         name: "Wistia Video",          domain: "wistia.com",        category: "media",         risk: "low"      },
+  { pattern: "brightcove.net",          name: "Brightcove",            domain: "brightcove.com",    category: "media",         risk: "low"      },
+  { pattern: "jwplatform.com",          name: "JW Player",             domain: "jwplayer.com",      category: "media",         risk: "low"      },
+  { pattern: "mux.com",                 name: "Mux Video",             domain: "mux.com",           category: "media",         risk: "low"      },
+  // Maps
+  { pattern: "maps.googleapis.com",     name: "Google Maps",           domain: "google.com",        category: "maps",          risk: "low"      },
+  { pattern: "api.mapbox.com",          name: "Mapbox",                domain: "mapbox.com",        category: "maps",          risk: "low"      },
+  // CMS
+  { pattern: "wp-content",              name: "WordPress",             domain: "wordpress.org",     category: "cms",           risk: "medium"   },
+  { pattern: "contentful.com",          name: "Contentful CMS",        domain: "contentful.com",    category: "cms",           risk: "low"      },
+  { pattern: "sanity.io",               name: "Sanity CMS",            domain: "sanity.io",         category: "cms",           risk: "low"      },
+  // DevTools / Error Tracking
+  { pattern: "fonts.googleapis.com",    name: "Google Fonts",          domain: "google.com",        category: "devtools",      risk: "low"      },
+  { pattern: "use.typekit.net",         name: "Adobe Fonts (Typekit)", domain: "adobe.com",         category: "devtools",      risk: "low"      },
+  { pattern: "cdn.fontawesome.com",     name: "Font Awesome",          domain: "fontawesome.com",   category: "devtools",      risk: "low"      },
+  { pattern: "forms.hsforms.com",       name: "HubSpot Forms",         domain: "hubspot.com",       category: "marketing",     risk: "medium"   },
+  { pattern: "api.ipify.org",           name: "ipify IP Detection",    domain: "ipify.org",         category: "devtools",      risk: "low"      },
+  { pattern: "cookiebot.com",           name: "Cookiebot Consent",     domain: "cookiebot.com",     category: "devtools",      risk: "low"      },
+  { pattern: "onetrust.com",            name: "OneTrust Consent",      domain: "onetrust.com",      category: "devtools",      risk: "medium"   },
+  { pattern: "trustarc.com",            name: "TrustArc Consent",      domain: "trustarc.com",      category: "devtools",      risk: "low"      },
 ];
+
+// CNAME chain → infrastructure provider mapping (60+ patterns)
+const CNAME_SIGNATURES: CnameSig[] = [
+  { pattern: "cloudfront.net",         name: "AWS CloudFront",        domain: "aws.amazon.com",    category: "cdn",           risk: "medium"   },
+  { pattern: "fastly.net",             name: "Fastly CDN",            domain: "fastly.com",        category: "cdn",           risk: "medium"   },
+  { pattern: "akamaiedge.net",         name: "Akamai CDN",            domain: "akamai.com",        category: "cdn",           risk: "medium"   },
+  { pattern: "akamaized.net",          name: "Akamai CDN",            domain: "akamai.com",        category: "cdn",           risk: "medium"   },
+  { pattern: "edgekey.net",            name: "Akamai CDN",            domain: "akamai.com",        category: "cdn",           risk: "medium"   },
+  { pattern: "edgesuite.net",          name: "Akamai CDN",            domain: "akamai.com",        category: "cdn",           risk: "medium"   },
+  { pattern: "akadns.net",             name: "Akamai DNS",            domain: "akamai.com",        category: "cdn",           risk: "medium"   },
+  { pattern: "azureedge.net",          name: "Azure CDN",             domain: "azure.com",         category: "cdn",           risk: "medium"   },
+  { pattern: "azurefd.net",            name: "Azure Front Door",      domain: "azure.com",         category: "cdn",           risk: "medium"   },
+  { pattern: "trafficmanager.net",     name: "Azure Traffic Manager", domain: "azure.com",         category: "infrastructure",risk: "medium"   },
+  { pattern: "cloudapp.net",           name: "Azure Cloud",           domain: "azure.com",         category: "infrastructure",risk: "medium"   },
+  { pattern: "amazonaws.com",          name: "Amazon Web Services",   domain: "aws.amazon.com",    category: "infrastructure",risk: "medium"   },
+  { pattern: "elasticbeanstalk.com",   name: "AWS Elastic Beanstalk", domain: "aws.amazon.com",    category: "infrastructure",risk: "medium"   },
+  { pattern: "elb.amazonaws.com",      name: "AWS Elastic LB",        domain: "aws.amazon.com",    category: "infrastructure",risk: "medium"   },
+  { pattern: "s3.amazonaws.com",       name: "AWS S3",                domain: "aws.amazon.com",    category: "infrastructure",risk: "medium"   },
+  { pattern: "googleusercontent.com",  name: "Google Cloud",          domain: "cloud.google.com",  category: "infrastructure",risk: "medium"   },
+  { pattern: "run.app",                name: "Google Cloud Run",      domain: "cloud.google.com",  category: "infrastructure",risk: "medium"   },
+  { pattern: "appspot.com",            name: "Google App Engine",     domain: "cloud.google.com",  category: "infrastructure",risk: "medium"   },
+  { pattern: "storage.googleapis.com", name: "Google Cloud Storage",  domain: "cloud.google.com",  category: "infrastructure",risk: "medium"   },
+  { pattern: "netlify.app",            name: "Netlify",               domain: "netlify.com",       category: "infrastructure",risk: "low"      },
+  { pattern: "netlify.com",            name: "Netlify",               domain: "netlify.com",       category: "infrastructure",risk: "low"      },
+  { pattern: "vercel.app",             name: "Vercel",                domain: "vercel.com",        category: "infrastructure",risk: "low"      },
+  { pattern: "vercel-dns.com",         name: "Vercel DNS",            domain: "vercel.com",        category: "infrastructure",risk: "low"      },
+  { pattern: "onrender.com",           name: "Render",                domain: "render.com",        category: "infrastructure",risk: "low"      },
+  { pattern: "fly.dev",                name: "Fly.io",                domain: "fly.io",            category: "infrastructure",risk: "low"      },
+  { pattern: "heroku",                 name: "Heroku",                domain: "heroku.com",        category: "infrastructure",risk: "low"      },
+  { pattern: "wpengine.com",           name: "WP Engine",             domain: "wpengine.com",      category: "cms",           risk: "medium"   },
+  { pattern: "kinsta.cloud",           name: "Kinsta Hosting",        domain: "kinsta.com",        category: "infrastructure",risk: "low"      },
+  { pattern: "squarespace.com",        name: "Squarespace",           domain: "squarespace.com",   category: "cms",           risk: "low"      },
+  { pattern: "wixsite.com",            name: "Wix",                   domain: "wix.com",           category: "cms",           risk: "low"      },
+  { pattern: "shopify.com",            name: "Shopify",               domain: "shopify.com",       category: "payments",      risk: "medium"   },
+  { pattern: "myshopify.com",          name: "Shopify",               domain: "shopify.com",       category: "payments",      risk: "medium"   },
+  { pattern: "force.com",              name: "Salesforce",            domain: "salesforce.com",    category: "marketing",     risk: "medium"   },
+  { pattern: "salesforce.com",         name: "Salesforce",            domain: "salesforce.com",    category: "marketing",     risk: "medium"   },
+  { pattern: "hubspot.com",            name: "HubSpot",               domain: "hubspot.com",       category: "marketing",     risk: "medium"   },
+  { pattern: "zendesk.com",            name: "Zendesk",               domain: "zendesk.com",       category: "communication", risk: "medium"   },
+  { pattern: "incapdns.net",           name: "Imperva Incapsula",     domain: "imperva.com",       category: "waf",           risk: "medium"   },
+  { pattern: "sucuri.net",             name: "Sucuri WAF",            domain: "sucuri.net",        category: "waf",           risk: "medium"   },
+  { pattern: "stackpathdns.com",       name: "StackPath CDN",         domain: "stackpath.com",     category: "cdn",           risk: "medium"   },
+  { pattern: "cloudflaressl.com",      name: "Cloudflare SSL",        domain: "cloudflare.com",    category: "cdn",           risk: "medium"   },
+];
+
+// Certificate issuer → CA provider mapping
+const CERT_ISSUER_4TH_PARTIES: CertSig[] = [
+  { pattern: "DigiCert",       name: "DigiCert CA",                domain: "digicert.com",    category: "ca", risk: "low" },
+  { pattern: "Let's Encrypt",  name: "Let's Encrypt CA",           domain: "letsencrypt.org", category: "ca", risk: "low" },
+  { pattern: "Sectigo",        name: "Sectigo CA",                 domain: "sectigo.com",     category: "ca", risk: "low" },
+  { pattern: "GlobalSign",     name: "GlobalSign CA",              domain: "globalsign.com",  category: "ca", risk: "low" },
+  { pattern: "Entrust",        name: "Entrust CA",                 domain: "entrust.com",     category: "ca", risk: "low" },
+  { pattern: "GeoTrust",       name: "GeoTrust CA",                domain: "geotrust.com",    category: "ca", risk: "low" },
+  { pattern: "Amazon",         name: "AWS Certificate Manager",    domain: "aws.amazon.com",  category: "ca", risk: "low" },
+  { pattern: "Google Trust",   name: "Google Trust Services",      domain: "pki.goog",        category: "ca", risk: "low" },
+  { pattern: "Cloudflare",     name: "Cloudflare Origin CA",       domain: "cloudflare.com",  category: "ca", risk: "low" },
+  { pattern: "ZeroSSL",        name: "ZeroSSL CA",                 domain: "zerossl.com",     category: "ca", risk: "low" },
+];
+
+// Extract apex domain from any URL or domain string
+function extractApexDomain(input: string): string | null {
+  try {
+    const host = input.startsWith("http") ? new URL(input).hostname : input.replace(/^\/\//, "");
+    const parts = host.split(".");
+    if (parts.length >= 2) return `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
+  } catch { /**/ }
+  return null;
+}
 
 function discoverFourthPartiesFromHttp(headers: Record<string, string>, body: string, cnames: string[]): FourthPartySignal[] {
   const signals: FourthPartySignal[] = [];
   const seen = new Set<string>();
 
-  // CDN/WAF from HTTP headers
-  for (const cdn of CDN_WAF_HEADERS) {
-    const hVal = headers[cdn.header.toLowerCase()] ?? "";
-    if (hVal.toLowerCase().includes(cdn.value.toLowerCase()) || (cdn.value === "" && headers[cdn.header.toLowerCase()] !== undefined)) {
-      if (!seen.has(cdn.domain)) {
-        seen.add(cdn.domain);
-        signals.push({ name: cdn.name, domain: cdn.domain, discoveryMethod: "http_header", details: { header: cdn.header, value: hVal } });
-      }
+  function add(name: string, domain: string, category: FpCategory, risk: FpRisk, method: string, details: Record<string, unknown>, confidence: number) {
+    if (!seen.has(domain)) {
+      seen.add(domain);
+      signals.push({ name, domain, category, riskLevel: risk, confidence, discoveryMethod: method, details });
     }
   }
 
-  // JS third-parties from body
+  // CDN/WAF from HTTP response headers
+  for (const sig of CDN_WAF_HEADERS) {
+    if (!sig.header) continue;
+    const hVal = headers[sig.header.toLowerCase()] ?? "";
+    const matches = !sig.value
+      ? headers[sig.header.toLowerCase()] !== undefined
+      : hVal.toLowerCase().includes(sig.value.toLowerCase());
+    if (matches) add(sig.name, sig.domain, sig.category, sig.risk, "http_header", { header: sig.header, value: hVal }, 95);
+  }
+
+  // JS/HTML third-party patterns from body
   for (const tp of JS_THIRD_PARTIES) {
-    if (body.includes(tp.pattern) && !seen.has(tp.domain)) {
-      seen.add(tp.domain);
-      signals.push({ name: tp.name, domain: tp.domain, discoveryMethod: "js_analysis", details: { pattern: tp.pattern } });
+    if (body.includes(tp.pattern)) add(tp.name, tp.domain, tp.category, tp.risk, "js_analysis", { pattern: tp.pattern }, 90);
+  }
+
+  // Deep HTML parsing: <link rel="preconnect"> / <link rel="dns-prefetch">
+  const preconnectRe = /<link[^>]+(?:preconnect|dns-prefetch)[^>]+href=["']([^"']+)["'][^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = preconnectRe.exec(body)) !== null) {
+    const href = m[1];
+    if (!href) continue;
+    const apex = extractApexDomain(href);
+    if (!apex || apex === extractApexDomain(body.slice(0, 100))) continue;
+    // Match against known signatures or add as unknown infrastructure
+    const known = JS_THIRD_PARTIES.find(s => apex.includes(s.domain) || s.domain.includes(apex));
+    if (known) {
+      add(known.name, known.domain, known.category, known.risk, "preconnect_hint", { href }, 85);
+    } else if (!seen.has(apex)) {
+      add(apex, apex, "infrastructure", "low", "preconnect_hint", { href }, 60);
     }
   }
 
-  // CNAME chain
+  // Deep HTML parsing: external <script src>
+  const scriptRe = /<script[^>]+src=["']([^"']+)["'][^>]*>/gi;
+  while ((m = scriptRe.exec(body)) !== null) {
+    const src = m[1];
+    if (!src || src.startsWith("/") || src.startsWith("./")) continue;
+    const apex = extractApexDomain(src);
+    if (!apex) continue;
+    const known = JS_THIRD_PARTIES.find(s => src.includes(s.pattern));
+    if (known) {
+      add(known.name, known.domain, known.category, known.risk, "external_script", { src }, 92);
+    } else if (!seen.has(apex)) {
+      add(apex, apex, "devtools", "low", "external_script", { src }, 70);
+    }
+  }
+
+  // External <iframe src> — embedded third-party content
+  const iframeRe = /<iframe[^>]+src=["']([^"']+)["'][^>]*>/gi;
+  while ((m = iframeRe.exec(body)) !== null) {
+    const src = m[1];
+    if (!src || src.startsWith("/")) continue;
+    const apex = extractApexDomain(src);
+    if (!apex) continue;
+    const known = JS_THIRD_PARTIES.find(s => src.includes(s.domain));
+    if (known) add(known.name, known.domain, known.category, known.risk, "iframe_embed", { src }, 88);
+  }
+
+  // CNAME chain → infrastructure provider
   for (const cname of cnames) {
-    if (cname.includes("cloudfront.net") && !seen.has("aws.amazon.com")) {
-      seen.add("aws.amazon.com");
-      signals.push({ name: "AWS CloudFront", domain: "aws.amazon.com", discoveryMethod: "dns_cname", details: { cname } });
-    } else if (cname.includes("fastly.net") && !seen.has("fastly.com")) {
-      seen.add("fastly.com");
-      signals.push({ name: "Fastly CDN", domain: "fastly.com", discoveryMethod: "dns_cname", details: { cname } });
-    } else if (cname.includes("akamaiedge.net") && !seen.has("akamai.com")) {
-      seen.add("akamai.com");
-      signals.push({ name: "Akamai", domain: "akamai.com", discoveryMethod: "dns_cname", details: { cname } });
+    const lc = cname.toLowerCase();
+    for (const sig of CNAME_SIGNATURES) {
+      if (lc.includes(sig.pattern)) {
+        add(sig.name, sig.domain, sig.category, sig.risk, "dns_cname", { cname }, 98);
+        break;
+      }
     }
   }
 
   return signals;
 }
-
-const CERT_ISSUER_4TH_PARTIES: Array<{ pattern: string; name: string; domain: string }> = [
-  { pattern: "DigiCert",       name: "DigiCert CA",       domain: "digicert.com" },
-  { pattern: "Let's Encrypt",  name: "Let's Encrypt CA",  domain: "letsencrypt.org" },
-  { pattern: "Sectigo",        name: "Sectigo CA",        domain: "sectigo.com" },
-  { pattern: "GlobalSign",     name: "GlobalSign CA",     domain: "globalsign.com" },
-  { pattern: "Entrust",        name: "Entrust CA",        domain: "entrust.com" },
-  { pattern: "GeoTrust",       name: "GeoTrust CA",       domain: "geotrust.com" },
-  { pattern: "Amazon",         name: "AWS Certificate Manager", domain: "aws.amazon.com" },
-  { pattern: "Google Trust",   name: "Google Trust Services", domain: "pki.goog" },
-];
 
 function discoverFourthPartiesFromCert(issuer: string | null, seen: Set<string>): FourthPartySignal[] {
   if (!issuer) return [];
@@ -560,7 +806,7 @@ function discoverFourthPartiesFromCert(issuer: string | null, seen: Set<string>)
   for (const entry of CERT_ISSUER_4TH_PARTIES) {
     if (issuer.includes(entry.pattern) && !seen.has(entry.domain)) {
       seen.add(entry.domain);
-      signals.push({ name: entry.name, domain: entry.domain, discoveryMethod: "cert_issuer", details: { issuer } });
+      signals.push({ name: entry.name, domain: entry.domain, category: entry.category, riskLevel: entry.risk, confidence: 99, discoveryMethod: "cert_issuer", details: { issuer } });
     }
   }
   return signals;
@@ -920,15 +1166,96 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
     // Persist 4th-party vendors — always clear first so removed dependencies disappear
     await db.delete(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, tenantId)));
     if (probe.fourthParties.length > 0) {
+      // Risk contribution by category: payments/auth/infra = high, CDN/WAF = medium, analytics = low
+      const riskContribMap: Record<string, number> = {
+        payments: 20, auth: 20, infrastructure: 15, waf: 12,
+        cdn: 8, monitoring: 10, security: 8, communication: 7,
+        marketing: 5, advertising: 5, analytics: 3, media: 2, maps: 2, devtools: 2, cms: 5, ca: 2,
+      };
       await db.insert(tprmFourthPartyVendorsTable).values(probe.fourthParties.map(fp => ({
         parentVendorId:   vendorId,
         tenantId,
         name:             fp.name,
         domain:           fp.domain,
+        category:         fp.category,
+        riskLevel:        fp.riskLevel,
+        confidence:       fp.confidence,
+        isActive:         true,
         discoveryMethod:  fp.discoveryMethod,
-        riskContribution: 5,
+        riskContribution: riskContribMap[fp.category] ?? 5,
         details:          fp.details,
       })));
+    }
+
+    // Persist security analysis (HTTP headers, DNS health, SSL) — non-fatal
+    try {
+      const { runVendorSecurityAnalysis } = await import("./tprmSecurityAnalysis.js");
+      const secAnalysis = await runVendorSecurityAnalysis(domain);
+      await db.delete(tprmVendorSecurityAnalysisTable).where(and(eq(tprmVendorSecurityAnalysisTable.vendorId, vendorId), eq(tprmVendorSecurityAnalysisTable.tenantId, tenantId)));
+      await db.insert(tprmVendorSecurityAnalysisTable).values({
+        vendorId, tenantId,
+        securityHeadersScore: secAnalysis.securityHeaders.score,
+        dnsHealthScore:       secAnalysis.dnsHealth.score,
+        sslScore:             secAnalysis.ssl.score,
+        cookieScore:          secAnalysis.cookies.score,
+        overallGrade:         secAnalysis.overallGrade,
+        hsts:                 secAnalysis.securityHeaders.hsts,
+        hstsMaxAge:           secAnalysis.securityHeaders.hstsMaxAge,
+        csp:                  secAnalysis.securityHeaders.csp,
+        cspUnsafeInline:      secAnalysis.securityHeaders.cspUnsafeInline,
+        xFrameOptions:        secAnalysis.securityHeaders.xFrameOptions,
+        xContentType:         secAnalysis.securityHeaders.xContentTypeOptions,
+        referrerPolicy:       secAnalysis.securityHeaders.referrerPolicy,
+        permissionsPolicy:    secAnalysis.securityHeaders.permissionsPolicy,
+        coep:                 secAnalysis.securityHeaders.coep,
+        coop:                 secAnalysis.securityHeaders.coop,
+        spfRecord:            secAnalysis.dnsHealth.spfRecord,
+        spfPolicy:            secAnalysis.dnsHealth.spfPolicy,
+        dmarcRecord:          secAnalysis.dnsHealth.dmarcRecord,
+        dmarcDisposition:     secAnalysis.dnsHealth.dmarcDisposition,
+        dkimSelectors:        secAnalysis.dnsHealth.dkimSelectors,
+        caaRecords:           secAnalysis.dnsHealth.caaRecords,
+        dnssec:               secAnalysis.dnsHealth.dnssec,
+        sslProtocol:          secAnalysis.ssl.protocol,
+        sslGrade:             secAnalysis.ssl.grade,
+        sslExpiryDays:        secAnalysis.ssl.daysUntilExpiry,
+        certSanCount:         secAnalysis.ssl.sanCount,
+        openPorts:            secAnalysis.openPorts,
+        cookiesSecure:        secAnalysis.cookies.secureCookies,
+        cookiesHttponly:      secAnalysis.cookies.httpOnlyCookies,
+        cookiesSamesite:      secAnalysis.cookies.sameSiteCookies,
+        totalCookies:         secAnalysis.cookies.totalCookies,
+        rawHeaders:           secAnalysis.securityHeaders.rawHeaders,
+      });
+      logger.info({ vendorId, grade: secAnalysis.overallGrade }, "TPRM: security analysis persisted");
+    } catch (secErr) {
+      logger.warn({ secErr, vendorId }, "TPRM: security analysis failed (non-fatal)");
+    }
+
+    // Persist breach intelligence — non-fatal
+    try {
+      const { runBreachIntelReport } = await import("./tprmBreachIntel.js");
+      const breachReport = await runBreachIntelReport(domain);
+      // Clear previous breach events for this vendor
+      await db.delete(tprmVendorBreachEventsTable).where(and(eq(tprmVendorBreachEventsTable.vendorId, vendorId), eq(tprmVendorBreachEventsTable.tenantId, tenantId)));
+      if (breachReport.breachEvents.length > 0) {
+        await db.insert(tprmVendorBreachEventsTable).values(breachReport.breachEvents.map(b => ({
+          vendorId, tenantId,
+          breachName:   b.breachName,
+          breachDate:   b.breachDate,
+          pwnCount:     b.pwnCount,
+          dataClasses:  b.dataClasses,
+          description:  b.description,
+          isVerified:   b.isVerified,
+          isSensitive:  b.isSensitive,
+          isFabricated: b.isFabricated,
+          logoPath:     b.logoPath,
+          source:       b.source,
+        })));
+      }
+      logger.info({ vendorId, breaches: breachReport.breachEvents.length, lookalikes: breachReport.lookalikeDomains.length }, "TPRM: breach intel persisted");
+    } catch (breachErr) {
+      logger.warn({ breachErr, vendorId }, "TPRM: breach intel failed (non-fatal)");
     }
 
     // Persist supply-chain topology nodes from scan probe

@@ -186,6 +186,7 @@ export function Sidebar() {
   const tprmItems: NavItem[] = tprmVisible ? [
     { label: "Dashboard",           href: "/tprm",                          icon: Shield },
     { label: "Vendors",             href: "/tprm/vendors",                  icon: Building2 },
+    { label: "4th Party Intel",      href: "/tprm/fourth-parties",          icon: Layers },
     { label: "Supply Chain",        href: "/tprm/supply-chain",             icon: Package },
     { label: "Compliance Docs",     href: "/tprm/compliance",               icon: FileBarChart2 },
     { label: "Questionnaires",      href: "/tprm/questionnaire-templates",  icon: ClipboardList },
