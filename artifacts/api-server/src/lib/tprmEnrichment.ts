@@ -174,6 +174,7 @@ export interface HttpProbeResult {
   poweredBy:      string | null;
   responseTimeMs: number | null;
   headers:        Record<string, string>;
+  body:           string;
   securityHeaders: {
     hsts:             boolean;
     csp:              boolean;
@@ -323,6 +324,7 @@ async function probeHttp(domain: string): Promise<HttpProbeResult | null> {
         poweredBy:      headers["x-powered-by"] ?? null,
         responseTimeMs,
         headers,
+        body,
         securityHeaders: sh,
       };
     } catch { continue; }
@@ -450,10 +452,9 @@ export async function probeVendorDomain(inputDomain: string): Promise<VendorProb
   const allIps = dnsResult.a.slice(0, 5);
   const shodanResults = await probeShodan(allIps);
 
-  const body = httpResult ? "" : "";
   const fourthParties = discoverFourthPartiesFromHttp(
     httpResult?.headers ?? {},
-    body,
+    httpResult?.body ?? "",
     dnsResult.cname,
   );
 
