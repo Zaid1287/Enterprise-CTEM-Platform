@@ -35,13 +35,14 @@ function severityBadge(s: string) {
 
 const SCORE_CATEGORIES = [
   { key: "networkScore",    label: "Network" },
-  { key: "tlsScore",        label: "TLS/SSL" },
-  { key: "dnsScore",        label: "DNS & Email" },
+  { key: "dnsScore",        label: "DNS" },
   { key: "webAppScore",     label: "Web App" },
-  { key: "emailScore",      label: "Email Sec" },
-  { key: "appSecScore",     label: "App Sec" },
-  { key: "reputationScore", label: "Reputation" },
+  { key: "emailScore",      label: "Email" },
   { key: "cloudScore",      label: "Cloud" },
+  { key: "endpointScore",   label: "Endpoint" },
+  { key: "tlsScore",        label: "TLS/SSL" },
+  { key: "infoLeakScore",   label: "Info Leak" },
+  { key: "reputationScore", label: "Reputation" },
 ];
 
 const DOC_TYPES = ["SOC2 Type I", "SOC2 Type II", "ISO 27001", "ISO 27017", "ISO 27701", "PCI DSS", "HIPAA BAA", "GDPR DPA", "CSA STAR", "NIST CSF", "Other"];

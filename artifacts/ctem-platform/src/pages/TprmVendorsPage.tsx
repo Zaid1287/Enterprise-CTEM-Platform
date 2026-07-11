@@ -37,6 +37,9 @@ interface Vendor {
   logoUrl: string | null;
   lastScannedAt: string | null;
   assetCount: number;
+  inherentRisk: string | null;
+  scanFrequency: string | null;
+  assessmentType: string | null;
 }
 
 function gradeBadge(grade: string) {
@@ -183,6 +186,8 @@ export default function TprmVendorsPage() {
                   <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Domain</th>
                   <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Type</th>
                   <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Industry</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Inherent Risk</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Scan Freq</th>
                   <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Grade</th>
                   <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Risk Score</th>
                   <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Assets</th>
@@ -208,6 +213,12 @@ export default function TprmVendorsPage() {
                     </td>
                     <td className="px-4 py-2.5"><Badge variant="outline" className="text-[10px]">{typeLabel(v.type)}</Badge></td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{v.industry ?? "—"}</td>
+                    <td className="px-4 py-2.5">
+                      {v.inherentRisk ? (
+                        <Badge variant="outline" className={`text-[10px] ${v.inherentRisk === "critical" ? "border-red-500/40 text-red-400" : v.inherentRisk === "high" ? "border-orange-500/40 text-orange-400" : v.inherentRisk === "medium" ? "border-yellow-500/40 text-yellow-400" : "border-green-500/40 text-green-400"}`}>{v.inherentRisk}</Badge>
+                      ) : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground capitalize">{v.scanFrequency ?? "—"}</td>
                     <td className="px-4 py-2.5">{gradeBadge(v.riskGrade)}</td>
                     <td className="px-4 py-2.5">{riskBar(v.riskScore)}</td>
                     <td className="px-4 py-2.5 text-xs text-center">{v.assetCount}</td>

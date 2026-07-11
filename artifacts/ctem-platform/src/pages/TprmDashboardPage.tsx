@@ -32,6 +32,15 @@ interface DashboardData {
 const GRADE_COLORS: Record<string, string> = { "A+": "#22c55e", "A": "#4ade80", "B": "#86efac", "C": "#fbbf24", "D": "#f97316", "F": "#ef4444" };
 const RISK_COLORS = ["#22c55e", "#fbbf24", "#ef4444"];
 
+function scoreToGrade(score: number): string {
+  if (score >= 90) return "A+";
+  if (score >= 80) return "A";
+  if (score >= 70) return "B";
+  if (score >= 60) return "C";
+  if (score >= 50) return "D";
+  return "F";
+}
+
 function gradeColor(grade: string) {
   return GRADE_COLORS[grade] ?? "#6b7280";
 }
@@ -79,13 +88,28 @@ export default function TprmDashboardPage() {
         </div>
       </div>
 
-      {/* KPI row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* KPI row — Overall Security Rating + sub-metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {/* Overall Security Rating */}
+        <Card className="bg-card/80 col-span-2 md:col-span-1">
+          <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center gap-0.5 h-full">
+            <span className="text-xs text-muted-foreground uppercase tracking-wider">Security Rating</span>
+            {loading ? <Skeleton className="h-12 w-12 mt-2" /> : (
+              <>
+                <p className={`text-5xl font-black mt-1 ${GRADE_COLORS[data ? scoreToGrade(data.avgRiskScore) : "F"] ? "" : ""}`}
+                   style={{ color: GRADE_COLORS[data ? scoreToGrade(data.avgRiskScore) : "F"] }}>
+                  {data ? scoreToGrade(data.avgRiskScore) : "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">{data?.avgRiskScore ?? 0}/100</p>
+              </>
+            )}
+          </CardContent>
+        </Card>
         {[
-          { label: "Total Vendors", value: data?.totalVendors, icon: Building2, color: "text-blue-400" },
-          { label: "Avg Risk Score", value: data ? `${data.avgRiskScore}/100` : null, icon: Shield, color: data?.avgRiskScore && data.avgRiskScore >= 70 ? "text-green-400" : data?.avgRiskScore && data.avgRiskScore >= 50 ? "text-yellow-400" : "text-red-400" },
-          { label: "High/Critical Risk", value: data?.poor, icon: AlertTriangle, color: "text-red-400" },
-          { label: "Good Standing", value: data?.good, icon: CheckCircle2, color: "text-green-400" },
+          { label: "Total Vendors",    value: data?.totalVendors,       icon: Building2,    color: "text-blue-400" },
+          { label: "High/Critical Risk", value: data?.poor,             icon: AlertTriangle, color: "text-red-400" },
+          { label: "Good Standing",    value: data?.good,               icon: CheckCircle2, color: "text-green-400" },
+          { label: "Service Providers", value: data?.serviceProviders,  icon: Globe,        color: "text-purple-400" },
         ].map(k => (
           <Card key={k.label} className="bg-card/60">
             <CardContent className="pt-4 pb-3">
@@ -101,21 +125,45 @@ export default function TprmDashboardPage() {
         ))}
       </div>
 
-      {/* Asset exposure + infra issues */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Domains", value: data?.assetCounts.domains },
-          { label: "Subdomains", value: data?.assetCounts.subdomains },
-          { label: "IP Addresses", value: data?.assetCounts.ipAddresses },
-          { label: "SSL Issues", value: data?.infraCoverage.sslIssues },
-        ].map(k => (
-          <Card key={k.label} className="bg-card/50 border-dashed">
-            <CardContent className="pt-3 pb-3">
-              <span className="text-xs text-muted-foreground">{k.label}</span>
-              {loading ? <Skeleton className="h-6 w-12 mt-1" /> : <p className="text-lg font-semibold mt-0.5">{k.value ?? 0}</p>}
-            </CardContent>
-          </Card>
-        ))}
+      {/* Digital Exposure Coverage */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Digital Exposure Coverage</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: "Domains",      value: data?.assetCounts.domains },
+            { label: "Subdomains",   value: data?.assetCounts.subdomains },
+            { label: "IP Addresses", value: data?.assetCounts.ipAddresses },
+            { label: "Web Apps",     value: data?.assetCounts.webApps },
+          ].map(k => (
+            <Card key={k.label} className="bg-card/50 border-dashed">
+              <CardContent className="pt-3 pb-3">
+                <span className="text-xs text-muted-foreground">{k.label}</span>
+                {loading ? <Skeleton className="h-6 w-12 mt-1" /> : <p className="text-lg font-semibold mt-0.5">{k.value ?? 0}</p>}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* Infrastructure Attack Vector Coverage */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Infrastructure Attack Vector Coverage</p>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {[
+            { label: "SSL/TLS Issues",       value: data?.infraCoverage.sslIssues,           color: "text-red-400" },
+            { label: "Exposed Services",     value: data?.infraCoverage.exposedServices,      color: "text-orange-400" },
+            { label: "DNS Misconfigs",        value: data?.infraCoverage.misconfiguredDns,    color: "text-yellow-400" },
+            { label: "Secrets in Apps",      value: data?.infraCoverage.secretsInApps,        color: "text-purple-400" },
+            { label: "Cloud Misconfigs",     value: data?.infraCoverage.misconfiguredCloud,   color: "text-blue-400" },
+          ].map(k => (
+            <Card key={k.label} className="bg-card/50 border-dashed">
+              <CardContent className="pt-3 pb-3">
+                <span className="text-xs text-muted-foreground">{k.label}</span>
+                {loading ? <Skeleton className="h-6 w-12 mt-1" /> : <p className={`text-lg font-semibold mt-0.5 ${k.color}`}>{k.value ?? 0}</p>}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">

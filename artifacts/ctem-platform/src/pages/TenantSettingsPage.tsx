@@ -135,6 +135,60 @@ function AiMapperModuleCard({ tenantId, userRole }: { tenantId: number; userRole
   );
 }
 
+function TprmModuleCard({ tenantId, userRole }: { tenantId: number; userRole: string }) {
+  const { toast } = useToast();
+  const { tprmEnabled, setTprmEnabled } = useAuth();
+  const qc = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ isEnabled: boolean }>({
+    queryKey: ["tprm-module", tenantId],
+    queryFn: () => apiFetch(`${BASE}/api/tprm/module`),
+    enabled: !!tenantId,
+  });
+
+  const toggle = useMutation({
+    mutationFn: (enable: boolean) =>
+      apiFetch(`${BASE}/api/tprm/module`, {
+        method: "PATCH",
+        body: JSON.stringify({ isEnabled: enable }),
+      }),
+    onSuccess: (_data, enable) => {
+      setTprmEnabled(enable);
+      qc.invalidateQueries({ queryKey: ["tprm-module", tenantId] });
+      toast({ title: enable ? "TPRM module enabled" : "TPRM module disabled" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const canToggle = userRole === "super_admin" || userRole === "admin";
+  const enabled = data?.isEnabled ?? tprmEnabled;
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold">Third Party Risk Management</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Continuous vendor monitoring, supply chain risk, compliance tracking, and security questionnaires.
+          </p>
+          {enabled && (
+            <Badge className="mt-2 text-xs bg-green-500/20 text-green-400 border-green-500/30">Active</Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {toggle.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+          <Switch
+            checked={enabled}
+            onCheckedChange={(val) => canToggle && toggle.mutate(val)}
+            disabled={!canToggle || toggle.isPending || isLoading}
+            aria-label={enabled ? "Disable TPRM module" : "Enable TPRM module"}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TenantSettingsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -275,6 +329,11 @@ export default function TenantSettingsPage() {
           {/* AI Mapper Module — admins only */}
           {(user?.role === "admin" || user?.role === "super_admin") && (
             <AiMapperModuleCard tenantId={tenantId} userRole={user?.role ?? ""} />
+          )}
+
+          {/* TPRM Module — admins only */}
+          {(user?.role === "admin" || user?.role === "super_admin") && (
+            <TprmModuleCard tenantId={tenantId} userRole={user?.role ?? ""} />
           )}
 
           {/* Notification Channels — all roles */}
