@@ -158,9 +158,13 @@ router.post("/tprm/enrich", requireAuth, requireTprm, async (req: AuthenticatedR
   try {
     const enrichment = await enrichCompanyByDomain(domain);
     const cleanDomain = domain.replace(/^www\./, "").split("/")[0].toLowerCase();
+    const { tenantId } = req.user!;
     const [existing] = await db.select({ id: tprmVendorsTable.id, companyName: tprmVendorsTable.companyName })
       .from(tprmVendorsTable)
-      .where(and(eq(tprmVendorsTable.domain, cleanDomain), eq(tprmVendorsTable.isGlobal, true)));
+      .where(and(
+        eq(tprmVendorsTable.domain, cleanDomain),
+        or(eq(tprmVendorsTable.isGlobal, true), eq(tprmVendorsTable.tenantId, tenantId)),
+      ));
     res.json({ ...enrichment, existingVendor: existing ?? null });
   } catch (err) {
     logger.error({ err }, "TPRM enrich error");
@@ -354,7 +358,7 @@ router.get("/tprm/vendors/:id/fourth-party", requireAuth, requireTprm, async (re
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
   if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmFourthPartyVendorsTable).where(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId)).orderBy(desc(tprmFourthPartyVendorsTable.discoveredAt));
+  const rows = await db.select().from(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, tenantId))).orderBy(desc(tprmFourthPartyVendorsTable.discoveredAt));
   res.json(rows);
 });
 
@@ -374,7 +378,7 @@ router.get("/tprm/vendors/:id/risk-history", requireAuth, requireTprm, async (re
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
   if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmVendorRiskScoresTable).where(eq(tprmVendorRiskScoresTable.vendorId, vendorId)).orderBy(asc(tprmVendorRiskScoresTable.calculatedAt)).limit(90);
+  const rows = await db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, tenantId))).orderBy(asc(tprmVendorRiskScoresTable.calculatedAt)).limit(90);
   res.json(rows);
 });
 
@@ -407,7 +411,7 @@ router.get("/tprm/vendors/:id/assets", requireAuth, requireTprm, async (req: Aut
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
   if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmVendorAssetsTable).where(eq(tprmVendorAssetsTable.vendorId, vendorId)).orderBy(asc(tprmVendorAssetsTable.assetType)).limit(500);
+  const rows = await db.select().from(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, tenantId))).orderBy(asc(tprmVendorAssetsTable.assetType)).limit(500);
   res.json(rows);
 });
 
@@ -461,7 +465,7 @@ router.get("/tprm/vendors/:id/supply-chain", requireAuth, requireTprm, async (re
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
   if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const rows = await db.select().from(tprmSupplyChainNodesTable).where(eq(tprmSupplyChainNodesTable.vendorId, vendorId)).limit(500);
+  const rows = await db.select().from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, tenantId))).limit(500);
   res.json(rows);
 });
 

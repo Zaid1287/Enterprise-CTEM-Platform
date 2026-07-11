@@ -196,13 +196,16 @@ export interface ShodanInternetDbResult {
 }
 
 export interface VendorProbeResult {
-  domain:      string;
-  dns:         DnsProbeResult;
-  tls:         TlsProbeResult | null;
-  http:        HttpProbeResult | null;
-  shodan:      ShodanInternetDbResult[];
-  subdomains:  string[];
+  domain:        string;
+  dns:           DnsProbeResult;
+  tls:           TlsProbeResult | null;
+  http:          HttpProbeResult | null;
+  shodan:        ShodanInternetDbResult[];
+  subdomains:    string[];
   fourthParties: FourthPartySignal[];
+  whois:         WhoisResult;
+  exposure:      ExposureCheckResult;
+  virusTotal:    VirusTotalDomainResult | null;
 }
 
 export interface FourthPartySignal {
@@ -332,6 +335,107 @@ async function probeHttp(domain: string): Promise<HttpProbeResult | null> {
   return null;
 }
 
+// ── WHOIS / RDAP ─────────────────────────────────────────────────────────────
+
+interface WhoisResult {
+  registrar:    string | null;
+  createdDate:  string | null;
+  expiryDate:   string | null;
+  updatedDate:  string | null;
+  nameservers:  string[];
+  status:       string[];
+}
+
+async function probeWhois(domain: string): Promise<WhoisResult> {
+  const empty: WhoisResult = { registrar: null, createdDate: null, expiryDate: null, updatedDate: null, nameservers: [], status: [] };
+  try {
+    const tld   = domain.split(".").slice(-2).join(".");
+    const rdap  = await safeFetch(`https://rdap.org/domain/${tld}`, { headers: { Accept: "application/rdap+json" } });
+    if (!rdap?.ok) return empty;
+    const data: any = await rdap.json().catch(() => null);
+    if (!data) return empty;
+    const ns: string[] = (data.nameservers ?? []).map((n: any) => (n.ldhName ?? n.name ?? "").toLowerCase()).filter(Boolean);
+    const status: string[] = (data.status ?? []);
+    let registrar: string | null = null;
+    let created: string | null = null;
+    let expiry:  string | null = null;
+    let updated: string | null = null;
+    for (const entity of (data.entities ?? [])) {
+      const roles: string[] = entity.roles ?? [];
+      if (roles.includes("registrar")) registrar = entity.vcardArray?.[1]?.find((e: any) => e[0] === "fn")?.[3] ?? null;
+    }
+    for (const ev of (data.events ?? [])) {
+      if (ev.eventAction === "registration") created = ev.eventDate ?? null;
+      if (ev.eventAction === "expiration")   expiry  = ev.eventDate ?? null;
+      if (ev.eventAction === "last changed") updated = ev.eventDate ?? null;
+    }
+    return { registrar, createdDate: created, expiryDate: expiry, updatedDate: updated, nameservers: ns.slice(0, 6), status: status.slice(0, 6) };
+  } catch { return empty; }
+}
+
+// ── Sensitive Path Exposure Checks ───────────────────────────────────────────
+
+interface ExposureCheckResult {
+  envExposed:    boolean;
+  gitExposed:    boolean;
+  exposedPaths:  string[];
+}
+
+async function checkSensitiveExposure(domain: string): Promise<ExposureCheckResult> {
+  const paths = [
+    { path: `/.env`,              key: "envExposed" },
+    { path: `/.git/config`,       key: "gitExposed" },
+  ];
+  const result: ExposureCheckResult = { envExposed: false, gitExposed: false, exposedPaths: [] };
+  await Promise.allSettled(paths.map(async ({ path, key }) => {
+    try {
+      const res = await safeFetch(`https://${domain}${path}`);
+      if (!res) return;
+      const body = await res.text().catch(() => "");
+      // .env: contains typical env var patterns; .git/config: starts with [core]
+      const isExposed = path.includes(".env")
+        ? (res.status === 200 && /[A-Z_]+=.{3}/.test(body.slice(0, 500)))
+        : (res.status === 200 && body.includes("[core]"));
+      if (isExposed) {
+        (result as any)[key] = true;
+        result.exposedPaths.push(path);
+      }
+    } catch { /* ignore */ }
+  }));
+  return result;
+}
+
+// ── VirusTotal domain reputation ──────────────────────────────────────────────
+
+interface VirusTotalDomainResult {
+  malicious:   number;
+  suspicious:  number;
+  harmless:    number;
+  undetected:  number;
+  reputation:  number;
+  categories:  string[];
+}
+
+async function probeVirusTotal(domain: string, apiKey: string): Promise<VirusTotalDomainResult | null> {
+  try {
+    const res = await safeFetch(`https://www.virustotal.com/api/v3/domains/${encodeURIComponent(domain)}`, {
+      headers: { "x-apikey": apiKey },
+    });
+    if (!res?.ok) return null;
+    const data: any = await res.json().catch(() => null);
+    if (!data?.data?.attributes) return null;
+    const stats = data.data.attributes.last_analysis_stats ?? {};
+    return {
+      malicious:  stats.malicious  ?? 0,
+      suspicious: stats.suspicious ?? 0,
+      harmless:   stats.harmless   ?? 0,
+      undetected: stats.undetected ?? 0,
+      reputation: data.data.attributes.reputation ?? 0,
+      categories: Object.values(data.data.attributes.categories ?? {}) as string[],
+    };
+  } catch { return null; }
+}
+
 async function probeShodan(ips: string[]): Promise<ShodanInternetDbResult[]> {
   const results: ShodanInternetDbResult[] = [];
   await Promise.allSettled(ips.slice(0, 5).map(async ip => {
@@ -439,26 +543,58 @@ function discoverFourthPartiesFromHttp(headers: Record<string, string>, body: st
   return signals;
 }
 
-export async function probeVendorDomain(inputDomain: string): Promise<VendorProbeResult> {
+const CERT_ISSUER_4TH_PARTIES: Array<{ pattern: string; name: string; domain: string }> = [
+  { pattern: "DigiCert",       name: "DigiCert CA",       domain: "digicert.com" },
+  { pattern: "Let's Encrypt",  name: "Let's Encrypt CA",  domain: "letsencrypt.org" },
+  { pattern: "Sectigo",        name: "Sectigo CA",        domain: "sectigo.com" },
+  { pattern: "GlobalSign",     name: "GlobalSign CA",     domain: "globalsign.com" },
+  { pattern: "Entrust",        name: "Entrust CA",        domain: "entrust.com" },
+  { pattern: "GeoTrust",       name: "GeoTrust CA",       domain: "geotrust.com" },
+  { pattern: "Amazon",         name: "AWS Certificate Manager", domain: "aws.amazon.com" },
+  { pattern: "Google Trust",   name: "Google Trust Services", domain: "pki.goog" },
+];
+
+function discoverFourthPartiesFromCert(issuer: string | null, seen: Set<string>): FourthPartySignal[] {
+  if (!issuer) return [];
+  const signals: FourthPartySignal[] = [];
+  for (const entry of CERT_ISSUER_4TH_PARTIES) {
+    if (issuer.includes(entry.pattern) && !seen.has(entry.domain)) {
+      seen.add(entry.domain);
+      signals.push({ name: entry.name, domain: entry.domain, discoveryMethod: "cert_issuer", details: { issuer } });
+    }
+  }
+  return signals;
+}
+
+export async function probeVendorDomain(inputDomain: string, opts: { vtApiKey?: string | null } = {}): Promise<VendorProbeResult> {
   const domain = extractDomain(inputDomain);
 
-  const [dnsResult, tlsResult, httpResult, subdomains] = await Promise.all([
+  const [dnsResult, tlsResult, httpResult, subdomains, whoisResult, exposureResult] = await Promise.all([
     probeDns(domain),
     probeTls(domain),
     probeHttp(domain),
     getSubdomains(domain),
+    probeWhois(domain),
+    checkSensitiveExposure(domain),
   ]);
 
   const allIps = dnsResult.a.slice(0, 5);
-  const shodanResults = await probeShodan(allIps);
+  const [shodanResults, vtResult] = await Promise.all([
+    probeShodan(allIps),
+    opts.vtApiKey ? probeVirusTotal(domain, opts.vtApiKey) : Promise.resolve(null),
+  ]);
 
-  const fourthParties = discoverFourthPartiesFromHttp(
-    httpResult?.headers ?? {},
-    httpResult?.body ?? "",
-    dnsResult.cname,
-  );
+  const seen = new Set<string>();
+  const fp1 = discoverFourthPartiesFromHttp(httpResult?.headers ?? {}, httpResult?.body ?? "", dnsResult.cname);
+  for (const fp of fp1) seen.add(fp.domain);
+  const fp2 = discoverFourthPartiesFromCert(tlsResult?.issuer ?? null, seen);
+  const fourthParties = [...fp1, ...fp2];
 
-  return { domain, dns: dnsResult, tls: tlsResult, http: httpResult, shodan: shodanResults, subdomains, fourthParties };
+  return {
+    domain, dns: dnsResult, tls: tlsResult, http: httpResult,
+    shodan: shodanResults, subdomains, fourthParties,
+    whois: whoisResult, exposure: exposureResult, virusTotal: vtResult,
+  };
 }
 
 // ── Risk Score Calculation ────────────────────────────────────────────────────
@@ -542,6 +678,17 @@ export function calculateVendorRiskScore(probe: VendorProbeResult, questionnaire
   // Cloud / CDN
   const hasCloudProvider = probe.fourthParties.some(fp => ["aws.amazon.com", "fastly.com", "cloudflare.com"].includes(fp.domain));
   if (hasCloudProvider) cloudScore = Math.max(cloudScore, 80); // cloud provider = slight positive signal
+
+  // Info leak — exposed sensitive files
+  if (probe.exposure.envExposed)  infoLeakScore -= 60;
+  if (probe.exposure.gitExposed)  infoLeakScore -= 50;
+
+  // Reputation — VirusTotal
+  if (probe.virusTotal) {
+    if (probe.virusTotal.malicious  >= 5) reputationScore -= 60;
+    else if (probe.virusTotal.malicious  >= 1) reputationScore -= 30;
+    if (probe.virusTotal.suspicious >= 3) reputationScore -= 15;
+  }
 
   // Clamp all to 0-100
   const clamp = (v: number) => Math.max(0, Math.min(100, v));
@@ -632,6 +779,24 @@ function buildFindingsFromProbe(probe: VendorProbeResult): Array<{
     if (!sh.xFrameOptions) findings.push({ title: "Missing X-Frame-Options Header", severity: "low", category: "web_app", description: "X-Frame-Options is not set, allowing potential clickjacking.", remediation: "Add: X-Frame-Options: DENY" });
   }
 
+  // Sensitive path exposure
+  if (probe.exposure.envExposed) {
+    findings.push({ title: "Exposed .env File", severity: "critical", category: "info_leak", description: "The /.env file is publicly accessible and may contain API keys, database credentials, or other secrets.", remediation: "Immediately block access to /.env via web server config (e.g., Nginx: location ~ /\\.env { deny all; }). Rotate all exposed credentials.", cvss: 9.8 });
+  }
+  if (probe.exposure.gitExposed) {
+    findings.push({ title: "Exposed .git Directory", severity: "critical", category: "info_leak", description: "The /.git/config file is publicly accessible, allowing full source code reconstruction and secret extraction.", remediation: "Block /.git access at the web server level. Audit commit history for leaked credentials.", cvss: 9.1 });
+  }
+
+  // VirusTotal reputation
+  if (probe.virusTotal) {
+    const vt = probe.virusTotal;
+    if (vt.malicious > 0) {
+      findings.push({ title: `VirusTotal: Domain Flagged as Malicious (${vt.malicious} engines)`, severity: vt.malicious >= 5 ? "critical" : "high", category: "reputation", description: `${vt.malicious} VirusTotal engine(s) flagged this domain as malicious. Suspicious: ${vt.suspicious}.`, remediation: "Investigate the domain's recent activity, check for compromise, and review VirusTotal reports at virustotal.com." });
+    } else if (vt.suspicious > 0) {
+      findings.push({ title: `VirusTotal: Domain Marked Suspicious (${vt.suspicious} engines)`, severity: "medium", category: "reputation", description: `${vt.suspicious} VirusTotal engine(s) flagged this domain as suspicious.`, remediation: "Monitor the domain and review VirusTotal reports for further context." });
+    }
+  }
+
   // Shodan exposed ports
   const dangerous = [
     { port: 3306, name: "MySQL", severity: "critical", cvss: 9.8 },
@@ -667,7 +832,8 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
     const domain = vendor.domain;
     logger.info({ vendorId, domain }, "TPRM: starting full vendor scan");
 
-    const probe = await probeVendorDomain(domain);
+    const vtApiKey = await getPlatformSetting("virustotal_api_key");
+    const probe = await probeVendorDomain(domain, { vtApiKey });
 
     // Get compliance penalty
     let compliancePenalty = 0;

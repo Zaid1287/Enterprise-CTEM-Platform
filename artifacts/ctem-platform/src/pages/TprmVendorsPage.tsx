@@ -47,6 +47,7 @@ interface EnrichPreview {
   location: string | null;
   companyType: string | null;
   source: string;
+  existingVendor?: { id: number; companyName: string } | null;
 }
 
 export default function TprmVendorsPage() {
@@ -225,15 +226,36 @@ export default function TprmVendorsPage() {
             </div>
 
             {preview && (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 border">
-                {preview.logoUrl && <img src={preview.logoUrl} alt="" className="w-10 h-10 rounded object-contain bg-white/10 p-0.5" />}
-                <div>
-                  <p className="text-sm font-semibold">{preview.companyName}</p>
-                  {preview.industry && <p className="text-xs text-muted-foreground">{preview.industry}</p>}
-                  {preview.location && <p className="text-xs text-muted-foreground">{preview.location}</p>}
-                  <Badge variant="outline" className="text-[10px] mt-0.5">via {preview.source}</Badge>
+              <>
+                {preview.existingVendor && (
+                  <div className="flex items-start gap-2 p-3 rounded-lg border border-yellow-500/40 bg-yellow-500/10 text-sm">
+                    <span className="text-yellow-400 font-bold shrink-0">⚠</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-yellow-300">Domain already tracked</p>
+                      <p className="text-xs text-yellow-400/80 mt-0.5">
+                        This domain is already associated with <span className="font-semibold">{preview.existingVendor.companyName}</span>.
+                      </p>
+                      <div className="flex gap-2 mt-2">
+                        <Button size="sm" variant="outline" className="h-6 text-xs border-yellow-500/40 text-yellow-300 hover:bg-yellow-500/20" onClick={() => { setShowAdd(false); navigate(`/tprm/vendors/${preview.existingVendor!.id}`); }}>
+                          Go to existing vendor
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-6 text-xs text-muted-foreground" onClick={() => { /* allow continuing anyway */ }}>
+                          Add separately
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 border">
+                  {preview.logoUrl && <img src={preview.logoUrl} alt="" className="w-10 h-10 rounded object-contain bg-white/10 p-0.5" />}
+                  <div>
+                    <p className="text-sm font-semibold">{preview.companyName}</p>
+                    {preview.industry && <p className="text-xs text-muted-foreground">{preview.industry}</p>}
+                    {preview.location && <p className="text-xs text-muted-foreground">{preview.location}</p>}
+                    <Badge variant="outline" className="text-[10px] mt-0.5">via {preview.source}</Badge>
+                  </div>
                 </div>
-              </div>
+              </>
             )}
 
             <div className="grid grid-cols-2 gap-3">
