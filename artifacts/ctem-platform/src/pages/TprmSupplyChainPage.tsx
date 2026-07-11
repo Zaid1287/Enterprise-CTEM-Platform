@@ -79,9 +79,10 @@ export default function TprmSupplyChainPage() {
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
             <SelectItem value="software">Software</SelectItem>
-            <SelectItem value="library">Library</SelectItem>
-            <SelectItem value="service">Service</SelectItem>
-            <SelectItem value="hardware">Hardware</SelectItem>
+            <SelectItem value="saas">SaaS</SelectItem>
+            <SelectItem value="api">API</SelectItem>
+            <SelectItem value="cdn">CDN</SelectItem>
+            <SelectItem value="infra">Infrastructure</SelectItem>
           </SelectContent>
         </Select>
         <Select value={riskLevel} onValueChange={v => { setRiskLevel(v); setPage(1); }}>
