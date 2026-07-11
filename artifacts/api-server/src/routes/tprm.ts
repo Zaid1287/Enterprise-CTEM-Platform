@@ -620,35 +620,76 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
     const average = allVendors.filter(v => v.riskScore >= 50 && v.riskScore < 70).length;
     const good    = allVendors.filter(v => v.riskScore >= 70).length;
 
+    // Assessment type breakdown
+    const contVendors = allVendors.filter(v => v.assessmentType === "continuous");
+    const oneTimeVendors = allVendors.filter(v => v.assessmentType === "one_time" || !v.assessmentType);
+    const continuousBreakdown = { poor: contVendors.filter(v => v.riskScore < 50).length, average: contVendors.filter(v => v.riskScore >= 50 && v.riskScore < 70).length, good: contVendors.filter(v => v.riskScore >= 70).length };
+    const oneTimeBreakdown    = { poor: oneTimeVendors.filter(v => v.riskScore < 50).length, average: oneTimeVendors.filter(v => v.riskScore >= 50 && v.riskScore < 70).length, good: oneTimeVendors.filter(v => v.riskScore >= 70).length };
+
     const topCritical = allVendors.filter(v => v.riskGrade === "D" || v.riskGrade === "F").sort((a, b) => a.riskScore - b.riskScore).slice(0, 5);
 
     const vendorIds = allVendors.map(v => v.id);
-    let digitalExposure = { credentialLeaks: 0, docsExposed: 0, darkWebMentions: 0 };
+    let digitalExposure = { credentialLeaks: 0, docsExposed: 0, darkWebMentions: 0, brandMentions: 0, employeeDataExposed: 0, credentialOnForum: 0 };
     let infraCoverage = { misconfiguredCloud: 0, secretsInApps: 0, misconfiguredDns: 0, sslIssues: 0, exposedServices: 0 };
-    let assetCounts = { domains: 0, subdomains: 0, ipAddresses: 0, webApps: 0 };
+    let assetCounts = { domains: 0, subdomains: 0, ipAddresses: 0, webApps: 0, mobileApps: 0 };
+    let activeDataLeaks = 0;
+    let activeSecurityRisks = 0;
+    const vendorSummaryData: any[] = [];
 
     if (vendorIds.length > 0) {
-      const [assets, findings] = await Promise.all([
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+      const [assets, findings, recentFindings, assetTypeCounts] = await Promise.all([
         db.select({ assetType: tprmVendorAssetsTable.assetType, count: sql<number>`count(*)::int` })
           .from(tprmVendorAssetsTable).where(inArray(tprmVendorAssetsTable.vendorId, vendorIds)).groupBy(tprmVendorAssetsTable.assetType),
         db.select().from(tprmVendorFindingsTable).where(and(inArray(tprmVendorFindingsTable.vendorId, vendorIds), eq(tprmVendorFindingsTable.status, "open"))),
+        db.select().from(tprmVendorFindingsTable).where(and(inArray(tprmVendorFindingsTable.vendorId, vendorIds), sql`${tprmVendorFindingsTable.createdAt} >= ${sevenDaysAgo}`)),
+        db.select({ vendorId: tprmVendorAssetsTable.vendorId, count: sql<number>`count(*)::int` })
+          .from(tprmVendorAssetsTable).where(inArray(tprmVendorAssetsTable.vendorId, vendorIds)).groupBy(tprmVendorAssetsTable.vendorId),
       ]);
 
       for (const a of assets) {
-        if (a.assetType === "subdomain") assetCounts.subdomains += a.count;
-        else if (a.assetType === "ip") assetCounts.ipAddresses += a.count;
-        else if (a.assetType === "domain") assetCounts.domains += a.count;
-        else if (a.assetType === "web_app") assetCounts.webApps += a.count;
+        if (a.assetType === "subdomain")   assetCounts.subdomains  += a.count;
+        else if (a.assetType === "ip")     assetCounts.ipAddresses += a.count;
+        else if (a.assetType === "domain") assetCounts.domains     += a.count;
+        else if (a.assetType === "web_app")assetCounts.webApps     += a.count;
+        else if (a.assetType === "mobile_app") assetCounts.mobileApps += a.count;
       }
-      assetCounts.domains = totalVendors;
+      if (assetCounts.domains === 0) assetCounts.domains = totalVendors;
 
-      infraCoverage.sslIssues = findings.filter(f => f.category === "tls").length;
-      infraCoverage.misconfiguredDns = findings.filter(f => f.category === "email" || f.category === "dns").length;
-      infraCoverage.exposedServices = findings.filter(f => f.category === "network").length;
-      infraCoverage.secretsInApps = findings.filter(f => f.category === "info_leak" || f.category === "sensitive-file").length;
+      infraCoverage.sslIssues          = findings.filter(f => f.category === "tls").length;
+      infraCoverage.misconfiguredDns   = findings.filter(f => f.category === "email" || f.category === "dns").length;
+      infraCoverage.exposedServices    = findings.filter(f => f.category === "network").length;
+      infraCoverage.secretsInApps      = findings.filter(f => f.category === "info_leak" || f.category === "sensitive-file").length;
       infraCoverage.misconfiguredCloud = findings.filter(f => f.category === "cloud").length;
-      digitalExposure.credentialLeaks = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".env") || f.title?.includes("credential") || f.title?.includes("secret"))).length;
-      digitalExposure.docsExposed = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".git") || f.title?.includes("config"))).length;
+
+      digitalExposure.credentialLeaks    = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".env") || f.title?.includes("credential") || f.title?.includes("secret"))).length;
+      digitalExposure.docsExposed        = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".git") || f.title?.includes("config"))).length;
+      digitalExposure.brandMentions      = findings.filter(f => f.category === "brand_threat" || f.title?.toLowerCase().includes("brand")).length;
+      digitalExposure.employeeDataExposed= findings.filter(f => f.title?.toLowerCase().includes("employee") || f.title?.toLowerCase().includes("personnel") || f.title?.toLowerCase().includes("pii")).length;
+      digitalExposure.credentialOnForum  = findings.filter(f => f.title?.toLowerCase().includes("leak") || f.title?.toLowerCase().includes("forum") || f.title?.toLowerCase().includes("dark web")).length;
+
+      activeDataLeaks    = recentFindings.filter(f => f.severity === "critical" || f.severity === "high").length;
+      activeSecurityRisks= findings.length;
+
+      // Per-vendor summary with incident/status counts
+      const assetCountMap = Object.fromEntries(assetTypeCounts.map(a => [a.vendorId, a.count]));
+      for (const v of allVendors) {
+        const vFindings = findings.filter(f => f.vendorId === v.id);
+        const vNewFindings = recentFindings.filter(f => f.vendorId === v.id);
+        const statusBreakup = {
+          open: vFindings.filter(f => f.status === "open").length,
+          mitigated: vFindings.filter(f => f.status === "mitigated").length,
+        };
+        vendorSummaryData.push({
+          id: v.id, companyName: v.companyName, riskGrade: v.riskGrade, riskScore: v.riskScore,
+          assessmentType: v.assessmentType, status: v.status, domain: v.domain, logoUrl: v.logoUrl,
+          incidents: vFindings.filter(f => f.severity === "critical" || f.severity === "high").length,
+          newIssues: vNewFindings.length,
+          totalIssues: vFindings.length,
+          totalAssets: assetCountMap[v.id] ?? 0,
+          statusBreakup,
+        });
+      }
     }
 
     const recentScans = allVendors.filter(v => v.lastScannedAt).sort((a, b) => (b.lastScannedAt?.getTime() ?? 0) - (a.lastScannedAt?.getTime() ?? 0)).slice(0, 10);
@@ -656,9 +697,12 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
     res.json({
       totalVendors, serviceProviders, prospecting, subsidiaries,
       avgRiskScore, gradeMap, poor, average, good,
+      continuousBreakdown, oneTimeBreakdown,
       topCritical,
-      digitalExposure, infraCoverage, assetCounts, recentScans,
-      vendorSummary: allVendors.map(v => ({ id: v.id, companyName: v.companyName, riskGrade: v.riskGrade, riskScore: v.riskScore, assessmentType: v.assessmentType, status: v.status, domain: v.domain, logoUrl: v.logoUrl })),
+      digitalExposure, infraCoverage, assetCounts,
+      activeDataLeaks, activeSecurityRisks,
+      recentScans,
+      vendorSummary: vendorSummaryData,
     });
   } catch (err) {
     logger.error({ err }, "TPRM dashboard error");

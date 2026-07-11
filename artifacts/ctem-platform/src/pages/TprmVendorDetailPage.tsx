@@ -17,7 +17,7 @@ import {
   CheckCircle2, Loader2, Upload, Plus, Mail, Phone, User,
   Building2, Clock, Download, Trash2, Send, ChevronRight,
 } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 function gradeBadge(grade: string) {
   const c = grade === "A+" || grade === "A" ? "bg-green-500/20 text-green-400 border-green-500/30"
@@ -217,10 +217,62 @@ export default function TprmVendorDetailPage() {
         </Card>
       </div>
 
+      {/* Score delta stats + Insights from last scan */}
+      {(() => {
+        const curr = vendor.riskScores?.[0];
+        const prev = vendor.riskScores?.[1];
+        const delta = curr && prev ? curr.overallScore - prev.overallScore : null;
+        const openFindings   = (vendor.findings ?? []).filter((f: any) => f.status === "open");
+        const mitigated      = (vendor.findings ?? []).filter((f: any) => f.status === "mitigated");
+        const criticalCount  = openFindings.filter((f: any) => f.severity === "critical").length;
+        return (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {[
+                {
+                  label: "Score Change",
+                  value: delta !== null ? (delta >= 0 ? `+${delta}` : `${delta}`) : "—",
+                  sub: delta !== null ? (delta > 0 ? "Increased" : delta < 0 ? "Improved" : "No change") : "Need 2+ scans",
+                  color: delta !== null ? (delta > 0 ? "text-red-400" : delta < 0 ? "text-green-400" : "text-muted-foreground") : "text-muted-foreground",
+                  icon: delta !== null && delta > 0 ? "↑" : delta !== null && delta < 0 ? "↓" : "—",
+                },
+                { label: "Open Issues",   value: openFindings.length,  sub: "Active findings",         color: openFindings.length > 0 ? "text-red-400" : "text-green-400",    icon: "!" },
+                { label: "Issues Solved", value: mitigated.length,     sub: "Mitigated",               color: mitigated.length > 0 ? "text-green-400" : "text-muted-foreground", icon: "✓" },
+                { label: "Total Issues",  value: (vendor.findings ?? []).length, sub: "All findings",  color: "text-foreground",     icon: "#" },
+                { label: "Total Assets",  value: (vendor.assets ?? []).length,   sub: "Discovered",   color: "text-blue-400",       icon: "◈" },
+              ].map(s => (
+                <Card key={s.label} className="bg-card/50">
+                  <CardContent className="pt-3 pb-3">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{s.label}</p>
+                    <p className={`text-2xl font-bold mt-0.5 ${s.color}`}>{s.value}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            {/* Insights from last scan */}
+            {criticalCount > 0 && (
+              <Card className="border-orange-500/30 bg-orange-500/5">
+                <CardContent className="py-3">
+                  <p className="text-xs font-semibold text-orange-300 mb-1.5">Insights from last scan</p>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {criticalCount > 0 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">{criticalCount} critical finding{criticalCount > 1 ? "s" : ""} require immediate attention</span>}
+                    {openFindings.filter((f: any) => f.severity === "high").length > 0 && <span className="bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded">{openFindings.filter((f: any) => f.severity === "high").length} high severity issues open</span>}
+                    {delta !== null && delta > 5 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">Risk score increased by {delta} points since last scan</span>}
+                    {delta !== null && delta < -5 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">Risk score improved by {Math.abs(delta)} points</span>}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        );
+      })()}
+
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-8 text-xs">
+        <TabsList className="h-8 text-xs flex-wrap gap-0.5">
           <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
           <TabsTrigger value="findings" className="text-xs">Findings ({vendor.findings?.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="remediation" className="text-xs">Remediation & Tasks</TabsTrigger>
           <TabsTrigger value="assets" className="text-xs">Assets ({vendor.assets?.length ?? 0})</TabsTrigger>
           <TabsTrigger value="fourth-party" className="text-xs">4th Party ({vendor.fourthParties?.length ?? 0})</TabsTrigger>
           <TabsTrigger value="compliance" className="text-xs">Compliance ({vendor.complianceDocs?.length ?? 0})</TabsTrigger>
@@ -336,25 +388,147 @@ export default function TprmVendorDetailPage() {
           </Card>
         </TabsContent>
 
-        {/* Assets */}
-        <TabsContent value="assets" className="mt-4">
-          <Card>
-            <CardContent className="pt-4">
-              {(vendor.assets ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground py-6 text-center">No assets discovered yet</p>
-              ) : (
-                <div className="divide-y divide-border/50">
-                  {(vendor.assets ?? []).map((a: any) => (
-                    <div key={a.id} className="flex items-center gap-3 py-2">
-                      <Badge variant="outline" className="text-[10px] shrink-0">{a.assetType}</Badge>
-                      <span className="text-sm font-mono flex-1 truncate">{a.value}</span>
-                      <Badge variant="outline" className="text-[10px]">{a.riskLevel}</Badge>
+        {/* Remediation & Tasks */}
+        <TabsContent value="remediation" className="mt-4 space-y-3">
+          {(() => {
+            const remFindings = (vendor.findings ?? []).filter((f: any) => f.remediation || f.severity === "critical" || f.severity === "high");
+            const byPriority = {
+              critical: remFindings.filter((f: any) => f.severity === "critical"),
+              high: remFindings.filter((f: any) => f.severity === "high"),
+              medium: remFindings.filter((f: any) => f.severity === "medium"),
+              low: remFindings.filter((f: any) => f.severity === "low" || f.severity === "info"),
+            };
+            return (
+              <>
+                {remFindings.length === 0 ? (
+                  <Card className="border-dashed">
+                    <CardContent className="py-12 text-center">
+                      <CheckCircle2 className="w-8 h-8 text-green-400 mx-auto mb-2" />
+                      <p className="text-sm font-medium text-green-400">No remediation tasks</p>
+                      <p className="text-xs text-muted-foreground mt-1">All findings are mitigated or none detected yet</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {[
+                        { label: "Critical", count: byPriority.critical.length, color: "text-red-400",    bg: "bg-red-500/10" },
+                        { label: "High",     count: byPriority.high.length,     color: "text-orange-400", bg: "bg-orange-500/10" },
+                        { label: "Medium",   count: byPriority.medium.length,   color: "text-yellow-400", bg: "bg-yellow-500/10" },
+                        { label: "Low/Info", count: byPriority.low.length,      color: "text-blue-400",   bg: "bg-blue-500/10" },
+                      ].map(p => (
+                        <Card key={p.label} className={`${p.bg} border-transparent`}>
+                          <CardContent className="py-3 text-center">
+                            <p className={`text-2xl font-bold ${p.color}`}>{p.count}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{p.label}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                    <div className="space-y-2">
+                      {remFindings.map((f: any, idx: number) => (
+                        <Card key={f.id} className="bg-card/60">
+                          <CardContent className="py-3">
+                            <div className="flex items-start gap-3">
+                              <div className="shrink-0 mt-0.5">{severityBadge(f.severity)}</div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-sm font-medium">{f.title}</p>
+                                  <Badge variant="outline" className="text-[10px] shrink-0">{f.status?.replace(/_/g, " ")}</Badge>
+                                </div>
+                                {f.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{f.description}</p>}
+                                {f.remediation && (
+                                  <div className="mt-2 p-2 rounded bg-blue-500/10 border border-blue-500/20">
+                                    <p className="text-[10px] text-blue-400 font-semibold uppercase tracking-wider mb-0.5">Remediation Task</p>
+                                    <p className="text-xs text-blue-300">{f.remediation}</p>
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
+                                  {f.cvss && <span>CVSS {f.cvss.toFixed(1)}</span>}
+                                  {f.cve && <span className="text-orange-400">{f.cve}</span>}
+                                  {f.category && <span className="capitalize">{f.category.replace(/_/g, " ")}</span>}
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </TabsContent>
+
+        {/* Assets */}
+        <TabsContent value="assets" className="mt-4 space-y-4">
+          {(() => {
+            const assets = vendor.assets ?? [];
+            const typeCounts: Record<string, number> = {};
+            for (const a of assets) typeCounts[a.assetType] = (typeCounts[a.assetType] ?? 0) + 1;
+            const typeChartData = Object.entries(typeCounts).map(([type, count]) => ({ type: type.replace(/_/g, " "), count })).sort((a, b) => b.count - a.count);
+            const ipAssets = assets.filter((a: any) => a.assetType === "ip");
+            return (
+              <>
+                {/* IPs Distribution */}
+                {typeChartData.length > 0 && (
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <Card>
+                      <CardHeader className="pb-2"><CardTitle className="text-sm">IPs Distribution by Asset Type</CardTitle></CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={160}>
+                          <BarChart data={typeChartData} barSize={28} layout="vertical">
+                            <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
+                            <YAxis type="category" dataKey="type" tick={{ fontSize: 10 }} width={80} />
+                            <Tooltip cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+                            <Bar dataKey="count" name="Assets" fill="#3b82f6" radius={[0, 3, 3, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-2"><CardTitle className="text-sm">Geolocation</CardTitle></CardHeader>
+                      <CardContent>
+                        {ipAssets.length === 0 ? (
+                          <p className="text-xs text-muted-foreground py-4 text-center">No IP assets to geolocate</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-muted-foreground mb-2">{ipAssets.length} IP address{ipAssets.length > 1 ? "es" : ""} discovered</p>
+                            {ipAssets.slice(0, 8).map((a: any) => (
+                              <div key={a.id} className="flex items-center gap-2 text-xs">
+                                <Badge variant="outline" className="text-[10px]">IP</Badge>
+                                <span className="font-mono flex-1 truncate">{a.value}</span>
+                                {a.riskLevel && <Badge variant="outline" className="text-[10px]">{a.riskLevel}</Badge>}
+                              </div>
+                            ))}
+                            {ipAssets.length > 8 && <p className="text-[10px] text-muted-foreground text-center">+{ipAssets.length - 8} more IPs</p>}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+                <Card>
+                  <CardContent className="pt-4">
+                    {assets.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-6 text-center">No assets discovered yet</p>
+                    ) : (
+                      <div className="divide-y divide-border/50">
+                        {assets.map((a: any) => (
+                          <div key={a.id} className="flex items-center gap-3 py-2">
+                            <Badge variant="outline" className="text-[10px] shrink-0">{a.assetType}</Badge>
+                            <span className="text-sm font-mono flex-1 truncate">{a.value}</span>
+                            <Badge variant="outline" className="text-[10px]">{a.riskLevel}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
         </TabsContent>
 
         {/* 4th Party */}

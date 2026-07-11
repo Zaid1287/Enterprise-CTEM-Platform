@@ -127,14 +127,36 @@ export default function TprmVendorsPage() {
   const typeLabel = (t: string) => VENDOR_TYPES.find(v => v.value === t)?.label ?? t.replace(/_/g, " ");
   const fmtDate   = (d: string | null) => d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
 
+  // Count by type for the header KPIs
+  const serviceProvidersCount = vendors.filter(v => v.type === "service_provider").length;
+  const prospectingCount      = vendors.filter(v => v.type === "prospecting").length;
+  const subsidiaryCount       = vendors.filter(v => v.type === "subsidiary").length;
+
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">Vendor Inventory</h1>
+          <h1 className="text-xl font-bold">3rd Party Companies</h1>
           <p className="text-muted-foreground text-sm">{total} vendor{total !== 1 ? "s" : ""} tracked</p>
         </div>
-        <Button size="sm" onClick={() => setShowAdd(true)}><Plus className="w-4 h-4 mr-1.5" />Add Vendor</Button>
+        <Button size="sm" onClick={() => setShowAdd(true)}><Plus className="w-4 h-4 mr-1.5" />Add Organization</Button>
+      </div>
+
+      {/* Header KPI cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: "Total 3rd Party Companies", value: total,               color: "text-blue-400" },
+          { label: "Total Service Providers",   value: serviceProvidersCount, color: "text-purple-400" },
+          { label: "Total Prospecting",         value: prospectingCount,    color: "text-cyan-400" },
+          { label: "Total Subsidiaries",        value: subsidiaryCount,     color: "text-indigo-400" },
+        ].map(k => (
+          <Card key={k.label} className="bg-card/60">
+            <CardContent className="pt-3 pb-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{k.label}</p>
+              {loading ? <Skeleton className="h-7 w-12 mt-1" /> : <p className={`text-2xl font-bold mt-0.5 ${k.color}`}>{k.value}</p>}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Filters */}
