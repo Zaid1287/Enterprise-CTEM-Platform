@@ -497,15 +497,25 @@ const SOCIAL_PLATFORM_LINKS: { name: string; searchUrl: (brand: string) => strin
   },
 ];
 
-function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains: string[]; pipelineScanId: number; scanDomain: string }) {
+type PipelineSubdomain = { name: string; ip?: string; cname?: string; status?: string; sources?: string[] };
+
+function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains: PipelineSubdomain[]; pipelineScanId: number; scanDomain: string }) {
   const [search, setSearch] = useState("");
-  const filtered = search.trim()
-    ? subdomains.filter(s => s.includes(search.trim().toLowerCase()))
-    : subdomains;
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+
+  const filtered = subdomains.filter(s => {
+    const q = search.trim().toLowerCase();
+    if (q && !s.name.includes(q) && !(s.ip ?? "").includes(q) && !(s.cname ?? "").includes(q)) return false;
+    if (statusFilter === "active" && s.status !== "active") return false;
+    if (statusFilter === "inactive" && s.status === "active") return false;
+    return true;
+  });
+
+  const activeCount = subdomains.filter(s => s.status === "active").length;
 
   return (
     <div className="p-6 space-y-5">
-      {/* Header card */}
+      {/* Header */}
       <div className="flex items-start gap-4 p-5 bg-blue-500/5 border border-blue-500/20 rounded-xl">
         <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
           <Server className="w-5 h-5 text-blue-400" />
@@ -518,94 +528,128 @@ function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains:
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            {subdomains.length} subdomain{subdomains.length !== 1 ? "s" : ""} enumerated for <span className="font-mono text-foreground">{scanDomain}</span> during the linked asset scan.
-            Review for shadow IT, forgotten services, exposed dev environments, or subdomain takeover candidates.
+            {subdomains.length} subdomain{subdomains.length !== 1 ? "s" : ""} enumerated for{" "}
+            <span className="font-mono text-foreground">{scanDomain}</span> — {activeCount} active (DNS resolves).
+            Review for shadow IT, forgotten services, and subdomain takeover candidates.
           </p>
         </div>
-        <div className="text-right shrink-0">
-          <p className="text-2xl font-bold text-blue-400">{subdomains.length}</p>
-          <p className="text-[10px] text-muted-foreground">subdomains</p>
+        <div className="flex gap-4 shrink-0">
+          <div className="text-center">
+            <p className="text-2xl font-bold text-blue-400">{subdomains.length}</p>
+            <p className="text-[10px] text-muted-foreground">total</p>
+          </div>
+          <div className="text-center">
+            <p className="text-2xl font-bold text-green-400">{activeCount}</p>
+            <p className="text-[10px] text-muted-foreground">active</p>
+          </div>
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Filter subdomains…"
-          className="w-full pl-8 pr-3 py-2 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/40"
-        />
-        {search && (
-          <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-            ✕
-          </button>
-        )}
+      {/* Search + filters */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter by subdomain, IP, or CNAME…"
+            className="w-full pl-8 pr-3 py-2 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/40"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs">✕</button>
+          )}
+        </div>
+        <div className="flex gap-1 bg-muted/30 rounded-xl p-1">
+          {(["all", "active", "inactive"] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setStatusFilter(f)}
+              className={cn(
+                "px-3 py-1 rounded-lg text-xs font-medium transition-all capitalize",
+                statusFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Results count */}
-      {search && (
+      {(search || statusFilter !== "all") && (
         <p className="text-xs text-muted-foreground">
-          Showing {filtered.length} of {subdomains.length} subdomains matching <span className="font-mono text-foreground">"{search}"</span>
+          Showing {filtered.length} of {subdomains.length} subdomains
+          {search && <> matching <span className="font-mono text-foreground">"{search}"</span></>}
+          {statusFilter !== "all" && <> · status: <span className="text-foreground">{statusFilter}</span></>}
         </p>
       )}
 
-      {/* Subdomain grid */}
+      {/* Results table */}
       {filtered.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          {filtered.map(sub => {
-            const isApex = sub === scanDomain || sub === `www.${scanDomain}`;
-            const label = sub.replace(`.${scanDomain}`, "");
-            return (
-              <div
-                key={sub}
-                className={cn(
-                  "flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border text-sm transition-all group",
-                  isApex
-                    ? "bg-blue-500/10 border-blue-500/25"
-                    : "bg-background border-border hover:border-blue-500/30 hover:bg-blue-500/5",
-                )}
-              >
-                <Globe className={cn("w-3.5 h-3.5 shrink-0", isApex ? "text-blue-400" : "text-muted-foreground group-hover:text-blue-400")} />
-                <div className="flex-1 min-w-0">
-                  <span className="font-mono text-xs truncate block">{sub}</span>
-                  {!isApex && label !== sub && (
-                    <span className="text-[10px] text-muted-foreground">.{scanDomain}</span>
-                  )}
-                </div>
-                <a
-                  href={`https://${sub}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                  title={`Open https://${sub}`}
-                >
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-            );
-          })}
+        <div className="border border-border rounded-xl overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border bg-muted/30">
+                <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">Subdomain</th>
+                <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">IP Address</th>
+                <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">CNAME</th>
+                <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">Status</th>
+                <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">Sources</th>
+                <th className="px-2 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {filtered.map(sub => (
+                <tr key={sub.name} className="hover:bg-muted/20 transition-colors group">
+                  <td className="px-4 py-2.5">
+                    <span className="font-mono text-foreground">{sub.name}</span>
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-muted-foreground">{sub.ip ?? "—"}</td>
+                  <td className="px-4 py-2.5 font-mono text-muted-foreground max-w-[180px] truncate" title={sub.cname}>{sub.cname ?? "—"}</td>
+                  <td className="px-4 py-2.5">
+                    {sub.status === "active"
+                      ? <span className="inline-flex items-center gap-1 text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full font-medium">● active</span>
+                      : sub.status
+                        ? <span className="inline-flex items-center gap-1 text-muted-foreground bg-muted/30 border border-border px-2 py-0.5 rounded-full">{sub.status}</span>
+                        : <span className="text-muted-foreground/50">—</span>
+                    }
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex flex-wrap gap-1">
+                      {sub.sources?.map(src => (
+                        <span key={src} className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{src}</span>
+                      )) ?? <span className="text-muted-foreground/50">—</span>}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2.5">
+                    <a href={`https://${sub.name}`} target="_blank" rel="noopener noreferrer"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                      title={`Visit https://${sub.name}`}>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
           <Server className="w-10 h-10 text-muted-foreground/20" />
-          <p className="text-sm text-muted-foreground">No subdomains match <span className="font-mono">"{search}"</span></p>
-          <button onClick={() => setSearch("")} className="text-xs text-primary hover:underline">Clear filter</button>
+          <p className="text-sm text-muted-foreground">No subdomains match the current filter</p>
+          <button onClick={() => { setSearch(""); setStatusFilter("all"); }} className="text-xs text-primary hover:underline">Clear filters</button>
         </div>
       )}
 
-      {/* Risk advisory */}
+      {/* Takeover advisory */}
       <div className="border border-amber-500/20 bg-amber-500/5 rounded-xl p-4 space-y-1.5">
         <div className="flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
           <p className="text-xs font-semibold text-amber-300">Subdomain Takeover Advisory</p>
         </div>
-        <p className="text-xs text-muted-foreground ml-5.5">
-          Subdomains pointing to decommissioned services (dangling DNS) may be vulnerable to takeover.
-          Cross-reference with your asset inventory and verify each subdomain has an active, controlled backend.
-          Run a dedicated scan on any subdomain that appears in your asset list but is not actively monitored.
+        <p className="text-xs text-muted-foreground">
+          Subdomains with CNAME records pointing to decommissioned services are vulnerable to takeover.
+          Cross-reference against your asset inventory — any subdomain without an active controlled backend should be investigated.
         </p>
       </div>
     </div>
@@ -1520,7 +1564,9 @@ export default function BrandThreatDetailPage() {
   const faviconPivotCount = s?.faviconSearchUrls ? Object.keys(s.faviconSearchUrls as object).filter(k => k !== "_error").length : 0;
   const hasFaviconData = !!(s?.faviconMd5 || s?.favihunterStatus === "done");
 
-  const pipelineSubdomains: string[] = Array.isArray(s?.pipelineSubdomains) ? (s.pipelineSubdomains as string[]) : [];
+  const pipelineSubdomains: PipelineSubdomain[] = Array.isArray(s?.pipelineSubdomains)
+    ? (s.pipelineSubdomains as PipelineSubdomain[])
+    : [];
 
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
     { id: "typosquatting", label: "Typosquatting", icon: <Globe className="w-3.5 h-3.5" />, count: results.length },

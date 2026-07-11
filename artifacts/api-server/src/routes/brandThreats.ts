@@ -292,20 +292,37 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
   const scanHistory = Object.values(scanRounds).sort((a, b) => new Date(b.archivedAt).getTime() - new Date(a.archivedAt).getTime());
 
   // Fetch discovered subdomains from the linked pipeline scan (if any)
-  let pipelineSubdomains: string[] = [];
+  // scan_asset_results.subdomains is a jsonb array of objects: { name, ip, cname, status, sources, ... }
+  // or legacy plain strings — handle both.
+  let pipelineSubdomains: Array<{ name: string; ip?: string; cname?: string; status?: string; sources?: string[] }> = [];
   if (scan.pipelineScanId) {
     const sarRows = await db.select({ subdomains: scanAssetResultsTable.subdomains })
       .from(scanAssetResultsTable)
       .where(eq(scanAssetResultsTable.scanId, scan.pipelineScanId));
-    const allSubs = new Set<string>();
+    const seen = new Set<string>();
     for (const row of sarRows) {
-      if (Array.isArray(row.subdomains)) {
-        for (const sub of row.subdomains as unknown[]) {
-          if (typeof sub === "string" && sub.trim()) allSubs.add(sub.toLowerCase().trim());
+      if (!Array.isArray(row.subdomains)) continue;
+      for (const sub of row.subdomains as unknown[]) {
+        if (typeof sub === "string" && sub.trim()) {
+          const name = sub.toLowerCase().trim();
+          if (!seen.has(name)) { seen.add(name); pipelineSubdomains.push({ name }); }
+        } else if (typeof sub === "object" && sub !== null) {
+          const s = sub as Record<string, unknown>;
+          if (typeof s.name !== "string" || !s.name.trim()) continue;
+          const name = s.name.toLowerCase().trim();
+          if (seen.has(name)) continue;
+          seen.add(name);
+          pipelineSubdomains.push({
+            name,
+            ip:      typeof s.ip === "string" ? s.ip : undefined,
+            cname:   typeof s.cname === "string" ? s.cname : undefined,
+            status:  typeof s.status === "string" ? s.status : undefined,
+            sources: Array.isArray(s.sources) ? (s.sources as string[]).filter(x => typeof x === "string") : undefined,
+          });
         }
       }
     }
-    pipelineSubdomains = Array.from(allSubs).sort();
+    pipelineSubdomains.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   const metaAdsChecked = !!(metaAdsSetting[0]?.value);
