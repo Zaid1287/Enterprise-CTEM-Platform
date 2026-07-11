@@ -861,7 +861,23 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
       }
     } catch { /* non-fatal */ }
 
-    const breakdown = calculateVendorRiskScore(probe, null, compliancePenalty);
+    // Look up latest completed questionnaire score for this vendor
+    let latestQuestionnaireScore: number | null = null;
+    try {
+      const { tprmVendorQuestionnairesTable: questTable } = await import("@workspace/db");
+      const [latestQ] = await db
+        .select({ score: questTable.score })
+        .from(questTable)
+        .where(and(
+          eq(questTable.vendorId, vendorId),
+          eq(questTable.status, "completed" as any),
+        ))
+        .orderBy(desc(questTable.completedAt))
+        .limit(1);
+      if (latestQ?.score != null) latestQuestionnaireScore = latestQ.score;
+    } catch { /* non-fatal — proceed without questionnaire score */ }
+
+    const breakdown = calculateVendorRiskScore(probe, latestQuestionnaireScore, compliancePenalty);
 
     // Persist findings — enrich CVE findings with EPSS/KEV first
     const rawFindings = buildFindingsFromProbe(probe);

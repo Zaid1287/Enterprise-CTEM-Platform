@@ -7,6 +7,7 @@
 
 import { logger } from "./logger";
 import { orchestratedFetch } from "./scanOrchestrator";
+import { lookupCvesFromCpes, type NvdCve } from "./nvdLookup";
 
 export type SbomFormat = "cyclonedx_json" | "cyclonedx_xml" | "spdx_json" | "spdx_tag_value";
 
@@ -221,6 +222,19 @@ export function parseSbom(content: string, format: SbomFormat): SbomParseResult 
   }
 }
 
+// ── NvdCve → OsvVuln adapter ──────────────────────────────────────────────────
+
+function nvdCveToOsvVuln(c: NvdCve): OsvVuln {
+  return {
+    id:       c.cve,
+    summary:  c.title ?? c.cve,
+    severity: c.severity ?? (c.cvss != null ? (c.cvss >= 9 ? "critical" : c.cvss >= 7 ? "high" : c.cvss >= 4 ? "medium" : "low") : "medium"),
+    cvss:     c.cvss ?? null,
+    aliases:  [c.cve],
+    fixed:    null,
+  };
+}
+
 // ── OSV API enrichment ────────────────────────────────────────────────────────
 
 const OSV_API = "https://api.osv.dev/v1/query";
@@ -285,7 +299,16 @@ export async function enrichSbomWithVulnerabilities(components: SbomComponent[])
 
     for (let j = 0; j < batch.length; j++) {
       const component = batch[j]!;
-      const vulns = batchResults[j]?.status === "fulfilled" ? (batchResults[j] as PromiseFulfilledResult<OsvVuln[]>).value : [];
+      let vulns = batchResults[j]?.status === "fulfilled" ? (batchResults[j] as PromiseFulfilledResult<OsvVuln[]>).value : [];
+
+      // CPE → NVD fallback: when OSV returns nothing and component has a CPE string
+      if (vulns.length === 0 && component.cpe) {
+        try {
+          const nvdResults = await lookupCvesFromCpes([component.cpe]);
+          if (nvdResults.length > 0) vulns = nvdResults.map(nvdCveToOsvVuln);
+        } catch { /* non-fatal */ }
+      }
+
       const riskLevel = calculateSbomRiskLevel(vulns);
       results.push({ component, vulns, riskLevel });
     }

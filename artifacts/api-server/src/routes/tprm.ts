@@ -25,6 +25,7 @@ import { logAudit } from "../lib/audit";
 import { logger } from "../lib/logger";
 import { enrichCompanyByDomain, runFullVendorScan } from "../lib/tprmEnrichment";
 import { parseSbom, detectSbomFormat, enrichSbomWithVulnerabilities } from "../lib/tprmSbom";
+import { enrichFindingsWithEpssKev } from "../lib/epssKev";
 
 const router = Router();
 const upload = multer({ limits: { fileSize: 50 * 1024 * 1024 } });
@@ -98,6 +99,121 @@ router.patch("/tprm/client/:tenantId/module", requireAuth, async (req: Authentic
     .onConflictDoUpdate({ target: tprmModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
   await logAudit(req.user!, isEnabled ? "tprm_enabled" : "tprm_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
   res.json({ isEnabled, tenantId: targetTenantId });
+});
+
+// ── Admin: global vendor library ───────────────────────────────────────────────
+
+router.get("/tprm/admin/global-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  try {
+    const vendors = await db.select().from(tprmVendorsTable)
+      .where(eq(tprmVendorsTable.isGlobal, true))
+      .orderBy(asc(tprmVendorsTable.companyName));
+    res.json(vendors);
+  } catch (err) {
+    logger.error({ err }, "TPRM admin global-vendors GET error");
+    res.status(500).json({ error: "Failed to fetch global vendors" });
+  }
+});
+
+router.post("/tprm/admin/global-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role, tenantId, userId } = req.user!;
+  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  const { companyName, domain, type, industry, description } = req.body;
+  if (!companyName || !domain) { res.status(400).json({ error: "companyName and domain are required" }); return; }
+  try {
+    const cleanDomain = domain.replace(/^www\./, "").split("/")[0].toLowerCase();
+    const slug = companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const [vendor] = await db.insert(tprmVendorsTable).values({
+      tenantId,
+      companyName,
+      domain:   cleanDomain,
+      slug:     `${slug}-${Date.now()}`,
+      type:     type ?? "service_provider",
+      industry: industry ?? null,
+      description: description ?? null,
+      isGlobal: true,
+      status:   "pending",
+    }).returning();
+    await logAudit(req.user!, "tprm_global_vendor_created", "vendor", vendor.id, JSON.stringify({ companyName, domain: cleanDomain }), req.ip ?? "");
+    setImmediate(() => {
+      runFullVendorScan(vendor.id, tenantId).catch(err => logger.error({ err, vendorId: vendor.id }, "TPRM global vendor scan failed"));
+    });
+    res.status(201).json(vendor);
+  } catch (err) {
+    logger.error({ err }, "TPRM admin global-vendor POST error");
+    res.status(500).json({ error: "Failed to create global vendor" });
+  }
+});
+
+router.patch("/tprm/admin/global-vendors/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  const vendorId = parseInt(req.params.id);
+  const { companyName, type, industry, description, status } = req.body;
+  try {
+    const [existing] = await db.select().from(tprmVendorsTable).where(and(eq(tprmVendorsTable.id, vendorId), eq(tprmVendorsTable.isGlobal, true)));
+    if (!existing) { res.status(404).json({ error: "Global vendor not found" }); return; }
+    const [updated] = await db.update(tprmVendorsTable).set({
+      ...(companyName && { companyName }),
+      ...(type        && { type }),
+      ...(industry    && { industry }),
+      ...(description !== undefined && { description }),
+      ...(status      && { status }),
+      updatedAt: new Date(),
+    }).where(eq(tprmVendorsTable.id, vendorId)).returning();
+    res.json(updated);
+  } catch (err) {
+    logger.error({ err }, "TPRM admin global-vendor PATCH error");
+    res.status(500).json({ error: "Failed to update global vendor" });
+  }
+});
+
+router.delete("/tprm/admin/global-vendors/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  const vendorId = parseInt(req.params.id);
+  try {
+    const [existing] = await db.select().from(tprmVendorsTable).where(and(eq(tprmVendorsTable.id, vendorId), eq(tprmVendorsTable.isGlobal, true)));
+    if (!existing) { res.status(404).json({ error: "Global vendor not found" }); return; }
+    await db.delete(tprmVendorsTable).where(eq(tprmVendorsTable.id, vendorId));
+    await logAudit(req.user!, "tprm_global_vendor_deleted", "vendor", vendorId, JSON.stringify({ companyName: existing.companyName }), req.ip ?? "");
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "TPRM admin global-vendor DELETE error");
+    res.status(500).json({ error: "Failed to delete global vendor" });
+  }
+});
+
+// ── Admin: cross-tenant all vendors (super_admin only) ─────────────────────────
+
+router.get("/tprm/admin/all-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  try {
+    const vendors = await db
+      .select({
+        id:          tprmVendorsTable.id,
+        companyName: tprmVendorsTable.companyName,
+        domain:      tprmVendorsTable.domain,
+        type:        tprmVendorsTable.type,
+        status:      tprmVendorsTable.status,
+        riskScore:   tprmVendorsTable.riskScore,
+        riskGrade:   tprmVendorsTable.riskGrade,
+        isGlobal:    tprmVendorsTable.isGlobal,
+        tenantId:    tprmVendorsTable.tenantId,
+        tenantName:  tenantsTable.name,
+        lastScannedAt: tprmVendorsTable.lastScannedAt,
+      })
+      .from(tprmVendorsTable)
+      .leftJoin(tenantsTable, eq(tprmVendorsTable.tenantId, tenantsTable.id))
+      .orderBy(desc(tprmVendorsTable.updatedAt));
+    res.json(vendors);
+  } catch (err) {
+    logger.error({ err }, "TPRM admin all-vendors error");
+    res.status(500).json({ error: "Failed to fetch vendors" });
+  }
 });
 
 // ── Admin overview ─────────────────────────────────────────────────────────────
@@ -725,6 +841,13 @@ router.post("/tprm/respond/:token", async (req, res) => {
       });
     } catch { /* non-fatal */ }
 
+    // Trigger background rescan so latest questionnaire score is blended into risk score
+    setImmediate(() => {
+      runFullVendorScan(q.vendorId, q.tenantId).catch(err =>
+        logger.warn({ err, vendorId: q.vendorId }, "TPRM: rescan after questionnaire completion failed")
+      );
+    });
+
     res.json({ ok: true, score, riskLevel, message: "Your response has been recorded. Thank you." });
   } catch (err) {
     logger.error({ err }, "TPRM respond POST error");
@@ -877,12 +1000,14 @@ router.post("/tprm/vendors/:id/sbom", requireAuth, requireTprm, upload.single("f
     });
 
     res.status(201).json({
-      uploadId:       upload.id,
+      uploadId:        upload.id,
       format,
-      specVersion:    parsed.specVersion,
-      toolName:       parsed.toolName,
-      componentCount: parsed.components.length,
-      message:        "SBOM uploaded. Vulnerability enrichment is running in the background.",
+      specVersion:     parsed.specVersion,
+      toolName:        parsed.toolName,
+      componentCount:  parsed.components.length,
+      vulnerableCount: 0,
+      criticalCount:   0,
+      message:         "SBOM uploaded. Vulnerability enrichment is running in the background.",
     });
   } catch (err) {
     logger.error({ err }, "TPRM SBOM upload error");
@@ -923,6 +1048,33 @@ router.get("/tprm/sbom/:uploadId/vulnerabilities", requireAuth, requireTprm, asy
       vulns.push({ ...v, component: node.name, version: node.version, purl: node.purl });
     }
   }
+
+  // Enrich CVE aliases with EPSS + KEV data
+  try {
+    const cveEntries = vulns.filter(v => {
+      const id: string = v.id ?? "";
+      return id.startsWith("CVE-") || (v.aliases ?? []).some((a: string) => a.startsWith("CVE-"));
+    });
+    if (cveEntries.length > 0) {
+      const mapped = cveEntries.map(v => ({
+        cve:      (v.aliases ?? []).find((a: string) => a.startsWith("CVE-")) ?? v.id,
+        severity: v.severity ?? "medium",
+        title:    v.summary ?? v.id,
+        cvss:     v.cvss ?? null,
+      }));
+      const enriched = await enrichFindingsWithEpssKev(mapped as any[]);
+      for (const ev of enriched as any[]) {
+        const match = vulns.find(v =>
+          v.id === ev.cve || (v.aliases ?? []).includes(ev.cve)
+        );
+        if (match) {
+          match.epss  = ev.epss  ?? null;
+          match.isKev = ev.isKev ?? false;
+        }
+      }
+    }
+  } catch { /* non-fatal — return unenriched vulns */ }
+
   res.json(vulns);
 });
 
