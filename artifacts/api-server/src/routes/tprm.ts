@@ -395,12 +395,15 @@ router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authentica
     );
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
 
+    // For global vendors, scan data is stored under the owner tenant — use ownerTenantId for all child queries
+    const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
+
     const [riskScores, assets, findings, fourthParties, supplyChain, contacts, questionnaires, complianceDocs] = await Promise.all([
-      db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, tenantId))).orderBy(desc(tprmVendorRiskScoresTable.calculatedAt)).limit(30),
-      db.select().from(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, tenantId))).limit(200),
-      db.select().from(tprmVendorFindingsTable).where(and(eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, tenantId))).orderBy(desc(tprmVendorFindingsTable.createdAt)).limit(100),
-      db.select().from(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, tenantId))),
-      db.select().from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, tenantId))).limit(200),
+      db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, ownerTenantId))).orderBy(desc(tprmVendorRiskScoresTable.calculatedAt)).limit(30),
+      db.select().from(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, ownerTenantId))).limit(200),
+      db.select().from(tprmVendorFindingsTable).where(and(eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, ownerTenantId))).orderBy(desc(tprmVendorFindingsTable.createdAt)).limit(100),
+      db.select().from(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, ownerTenantId))),
+      db.select().from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, ownerTenantId))).limit(200),
       db.select().from(tprmVendorContactsTable).where(and(eq(tprmVendorContactsTable.vendorId, vendorId), eq(tprmVendorContactsTable.tenantId, tenantId))),
       db.select().from(tprmVendorQuestionnairesTable).where(and(eq(tprmVendorQuestionnairesTable.vendorId, vendorId), eq(tprmVendorQuestionnairesTable.tenantId, tenantId))).orderBy(desc(tprmVendorQuestionnairesTable.createdAt)),
       db.select().from(tprmComplianceDocumentsTable).where(and(eq(tprmComplianceDocumentsTable.vendorId, vendorId), eq(tprmComplianceDocumentsTable.tenantId, tenantId))).orderBy(desc(tprmComplianceDocumentsTable.createdAt)),
@@ -713,7 +716,10 @@ router.post("/tprm/vendors/:id/questionnaires", requireAuth, requireTprm, async 
 
   try {
     const [template] = await db.select().from(tprmQuestionnaireTemplatesTable)
-      .where(and(eq(tprmQuestionnaireTemplatesTable.id, parseInt(templateId)), eq(tprmQuestionnaireTemplatesTable.tenantId, tenantId)));
+      .where(and(
+        eq(tprmQuestionnaireTemplatesTable.id, parseInt(templateId)),
+        or(eq(tprmQuestionnaireTemplatesTable.tenantId, tenantId), eq(tprmQuestionnaireTemplatesTable.isGlobal, true))!
+      ));
     if (!template) { res.status(404).json({ error: "Template not found" }); return; }
 
     const [q] = await db.insert(tprmVendorQuestionnairesTable).values({

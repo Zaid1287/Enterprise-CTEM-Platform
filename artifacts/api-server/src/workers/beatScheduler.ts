@@ -1233,14 +1233,31 @@ async function dispatchTprmComplianceExpiryReminders(): Promise<void> {
     for (const doc of docs) {
       const daysLeft = Math.ceil((new Date(doc.expiresAt!).getTime() - now.getTime()) / 86400000);
       if (![30, 14, 7, 3, 1].includes(daysLeft)) continue;
+
+      // Dedup: skip if an alert for this exact document + daysLeft milestone was already created today
+      // Use a 20-hour window (beat runs every 60s so same milestone can't fire twice in one day)
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      const dedupeTitle = `Compliance document expiring: ${doc.title}`;
+      const [existing] = await db
+        .select({ id: _alertsTable.id })
+        .from(_alertsTable)
+        .where(and(
+          eq(_alertsTable.tenantId, doc.tenantId),
+          eq(_alertsTable.title, dedupeTitle),
+          eq(_alertsTable.type, "tprm_compliance_expiry" as any),
+          sql`created_at >= ${todayStart.toISOString()}`,
+        ));
+      if (existing) continue;
+
       const [vendor] = await db.select({ companyName: tprmVendorsTable.companyName }).from(tprmVendorsTable).where(eq(tprmVendorsTable.id, doc.vendorId));
       await db.insert(_alertsTable).values({
         tenantId: doc.tenantId,
-        title: `Compliance document expiring: ${doc.title}`,
+        title: dedupeTitle,
         message: `${doc.documentType.toUpperCase()} for "${vendor?.companyName ?? "Unknown"}" expires in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.`,
         type: "tprm_compliance_expiry",
         severity: daysLeft <= 3 ? "high" : daysLeft <= 7 ? "medium" : "low",
-      }).onConflictDoNothing();
+      });
       reminded++;
     }
     if (reminded > 0) logger.info({ reminded }, "Beat: TPRM compliance expiry reminders dispatched");

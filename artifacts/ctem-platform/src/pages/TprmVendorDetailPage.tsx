@@ -426,8 +426,8 @@ export default function TprmVendorDetailPage() {
             <Card className="bg-blue-500/10 border-blue-500/30">
               <CardContent className="py-3 text-sm">
                 <p className="font-medium">Questionnaire link ready</p>
-                <p className="text-xs text-muted-foreground mt-0.5 font-mono break-all">{window.location.origin}{qPortalLink}</p>
-                <Button variant="link" className="text-xs p-0 h-auto mt-1" onClick={() => { navigator.clipboard.writeText(window.location.origin + qPortalLink); }}>Copy link</Button>
+                <p className="text-xs text-muted-foreground mt-0.5 font-mono break-all">{qPortalLink}</p>
+                <Button variant="link" className="text-xs p-0 h-auto mt-1" onClick={() => { navigator.clipboard.writeText(qPortalLink); }}>Copy link</Button>
               </CardContent>
             </Card>
           )}

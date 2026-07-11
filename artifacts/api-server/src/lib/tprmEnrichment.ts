@@ -881,15 +881,17 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
 
     // Persist findings — enrich CVE findings with EPSS/KEV first
     const rawFindings = buildFindingsFromProbe(probe);
+    // Always clear-and-replace findings so stale data from a previous scan never lingers.
+    // This is idempotent: if the new scan found nothing the table is left empty, which is correct.
+    await db.delete(tprmVendorFindingsTable).where(
+      and(eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, tenantId))
+    );
     if (rawFindings.length > 0) {
       let enriched = rawFindings as Array<typeof rawFindings[number] & { epss?: number | null; isKev?: boolean }>;
       try {
         const { enrichFindingsWithEpssKev } = await import("./epssKev");
         enriched = await enrichFindingsWithEpssKev(rawFindings.map(f => ({ ...f, cve: f.cve ?? null }))) as typeof enriched;
       } catch { /* non-fatal — proceed without enrichment */ }
-      await db.delete(tprmVendorFindingsTable).where(
-        and(eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, tenantId))
-      );
       await db.insert(tprmVendorFindingsTable).values(
         enriched.map(f => ({
           vendorId, tenantId,
@@ -906,18 +908,18 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
       );
     }
 
-    // Persist assets
+    // Persist assets — always clear first so empty scan results remove stale IPs/subdomains
     const assetValues: Array<{ vendorId: number; tenantId: number; assetType: string; value: string; riskLevel: string }> = [];
     for (const ip of probe.dns.a) assetValues.push({ vendorId, tenantId, assetType: "ip", value: ip, riskLevel: "low" });
     for (const sub of probe.subdomains.slice(0, 50)) assetValues.push({ vendorId, tenantId, assetType: "subdomain", value: sub, riskLevel: "low" });
+    await db.delete(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, tenantId)));
     if (assetValues.length > 0) {
-      await db.delete(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, tenantId)));
       await db.insert(tprmVendorAssetsTable).values(assetValues);
     }
 
-    // Persist 4th-party vendors
+    // Persist 4th-party vendors — always clear first so removed dependencies disappear
+    await db.delete(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, tenantId)));
     if (probe.fourthParties.length > 0) {
-      await db.delete(tprmFourthPartyVendorsTable).where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, tenantId)));
       await db.insert(tprmFourthPartyVendorsTable).values(probe.fourthParties.map(fp => ({
         parentVendorId:   vendorId,
         tenantId,
