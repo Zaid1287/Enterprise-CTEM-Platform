@@ -280,8 +280,18 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
                   <Zap className="w-2.5 h-2.5" /> Auto
                 </span>
               )}
+              {(scan.scanCount ?? 1) > 1 && (
+                <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded-full shrink-0">
+                  #{scan.scanCount} scan
+                </span>
+              )}
             </div>
-            <p className="text-[11px] text-muted-foreground mt-1">{formatDate(scan.createdAt)}</p>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              {scan.lastScannedAt
+                ? <>Last scanned {formatDate(scan.lastScannedAt)} · First seen {formatDate(scan.createdAt)}</>
+                : formatDate(scan.createdAt)
+              }
+            </p>
           </div>
           {/* Status pill */}
           <span className={cn("flex items-center gap-1 text-[11px] font-medium shrink-0", status.color)}>

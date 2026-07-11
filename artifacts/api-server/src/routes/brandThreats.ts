@@ -13,7 +13,7 @@ import {
   scanAssetResultsTable,
 } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
-import { runBrandThreatScan } from "../lib/brandThreatRunner";
+import { triggerBrandThreatScan, detectSubdomainThreats, type SubdomainThreat } from "../lib/brandThreatRunner";
 import { dispatchNotifications } from "../lib/notifier";
 import { logger } from "../lib/logger";
 
@@ -180,58 +180,23 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
   const raw = extractRootDomain(hostname);
 
   const tenantId = scanTenantId;
-  const role = user.role;
-  const isPrivileged = role === "super_admin" || role === "admin" || role === "account_manager";
 
-  // Block duplicate concurrent scans — if a scan for this domain is already pending/running, return it
-  const inProgressRows = isPrivileged
-    ? await db.select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status })
-        .from(brandThreatScansTable)
-        .where(and(eq(brandThreatScansTable.domain, raw), inArray(brandThreatScansTable.status, ["pending", "running"])))
-        .orderBy(desc(brandThreatScansTable.id))
-        .limit(1)
-    : await db.select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status })
-        .from(brandThreatScansTable)
-        .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, raw), inArray(brandThreatScansTable.status, ["pending", "running"])))
-        .orderBy(desc(brandThreatScansTable.id))
-        .limit(1);
-  if (inProgressRows.length > 0) {
-    // Return the in-progress scan instead of starting a duplicate
-    const [existing] = await db.select().from(brandThreatScansTable).where(eq(brandThreatScansTable.id, inProgressRows[0]!.id));
-    res.status(202).json({ ...toScanResponse(existing!), _alreadyRunning: true });
+  // Upsert: find existing scan for this tenant+domain, archive old results, reuse same row.
+  // Creates a new row only on first-ever scan for this domain.
+  const scan = await triggerBrandThreatScan(tenantId, raw);
+  if (!scan) {
+    // Already actively running — return current state
+    const [active] = await db.select().from(brandThreatScansTable)
+      .where(and(
+        eq(brandThreatScansTable.tenantId, tenantId),
+        eq(brandThreatScansTable.domain, raw),
+        inArray(brandThreatScansTable.status, ["pending", "running"]),
+      ))
+      .orderBy(desc(brandThreatScansTable.id))
+      .limit(1);
+    res.status(202).json({ ...(active ? toScanResponse(active) : {}), _alreadyRunning: true });
     return;
   }
-
-  // Always create a NEW scan record — previous scan records are preserved for history comparison
-  const [scan] = await db.insert(brandThreatScansTable).values({
-    tenantId,
-    domain: raw,
-    status: "pending",
-  }).returning();
-
-  const scanId = scan.id;
-  setImmediate(async () => {
-    try {
-      await runBrandThreatScan(scanId, raw);
-      const results = await db.select().from(brandThreatResultsTable)
-        .where(and(eq(brandThreatResultsTable.scanId, scanId), isNull(brandThreatResultsTable.archivedAt)));
-      const highRiskCount = results.filter(r => (r.riskScore ?? 0) >= 60).length;
-      const phishCount = results.filter(r => r.isPhishing).length;
-      await dispatchNotifications({
-        tenantId,
-        eventType: "brand_threat",
-        title: `Brand Threat Scan Complete — ${raw}`,
-        message: `Found ${results.length} lookalike domain${results.length !== 1 ? "s" : ""} for "${raw}". ${highRiskCount} high-risk. ${phishCount > 0 ? `${phishCount} confirmed phishing.` : ""}`,
-        severity: phishCount > 0 ? "critical" : highRiskCount > 0 ? "high" : results.length > 0 ? "medium" : "info",
-        findingsCount: results.length,
-        criticalCount: phishCount,
-        highCount: highRiskCount,
-        domain: raw,
-      });
-    } catch (err) {
-      logger.warn({ err, scanId }, "Brand threat scan or notification failed");
-    }
-  });
   res.json(toScanResponse(scan));
 });
 
@@ -325,6 +290,19 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
     pipelineSubdomains.sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  // Lazily compute + cache subdomain threat intelligence
+  let subdomainThreats: SubdomainThreat[] = [];
+  if (pipelineSubdomains.length > 0) {
+    if (Array.isArray(scan.subdomainThreats) && (scan.subdomainThreats as unknown[]).length > 0) {
+      subdomainThreats = scan.subdomainThreats as unknown as SubdomainThreat[];
+    } else {
+      subdomainThreats = await detectSubdomainThreats(pipelineSubdomains, scan.domain);
+      await db.update(brandThreatScansTable)
+        .set({ subdomainThreats: subdomainThreats as unknown as Record<string, unknown>[] })
+        .where(eq(brandThreatScansTable.id, scan.id));
+    }
+  }
+
   const metaAdsChecked = !!(metaAdsSetting[0]?.value);
   res.json({
     ...toScanResponse(scan),
@@ -336,6 +314,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
     adMonitoringResults: adMonitoring.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     scanHistory,
     pipelineSubdomains,
+    subdomainThreats,
   });
 });
 
@@ -619,16 +598,15 @@ router.post("/brand-threats/:id/rescan", requireAuth, async (req: AuthenticatedR
     }
   }
 
-  const { triggerBrandThreatScan } = await import("../lib/brandThreatRunner");
-  const newScan = await triggerBrandThreatScan(existing.tenantId, existing.domain);
-  if (!newScan) {
+  const reScan = await triggerBrandThreatScan(existing.tenantId, existing.domain);
+  if (!reScan) {
     res.status(409).json({
       error: "A scan is already running for this domain. Please wait for it to complete.",
       status: "running",
     });
     return;
   }
-  res.status(201).json(toScanResponse(newScan));
+  res.status(201).json(toScanResponse(reScan));
 });
 
 // ── GET /brand-threat-schedules ───────────────────────────────────────────────

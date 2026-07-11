@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import dns from "node:dns/promises";
-import { eq, and, gte, isNotNull, isNull, lt } from "drizzle-orm";
+import { eq, and, gte, isNotNull, isNull, lt, desc, sql } from "drizzle-orm";
 import {
   db,
   brandThreatScansTable, brandThreatResultsTable,
@@ -1170,6 +1170,7 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
       phishingCount,
       brandAbuseCount: brandAbuseCount + adMonitoringCount,
       completedAt: new Date(),
+      lastScannedAt: new Date(),
       checkpoint: null,
       permutationsCache: null,
       scanWarnings: socialWarnings.length > 0 ? (socialWarnings as any) : null,
@@ -1208,45 +1209,224 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
 
 const STUCK_SCAN_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
+// ── Subdomain takeover fingerprints ──────────────────────────────────────────
+const TAKEOVER_FINGERPRINTS: Record<string, string> = {
+  "github.io":              "GitHub Pages",
+  "githubusercontent.com":  "GitHub Pages",
+  "herokuapp.com":          "Heroku",
+  "s3.amazonaws.com":       "AWS S3",
+  "s3-website":             "AWS S3",
+  "cloudfront.net":         "AWS CloudFront",
+  "azurewebsites.net":      "Azure Web Apps",
+  "cloudapp.net":           "Azure Cloud",
+  "trafficmanager.net":     "Azure Traffic Manager",
+  "azureedge.net":          "Azure CDN",
+  "azurefd.net":            "Azure Front Door",
+  "webflow.io":             "Webflow",
+  "ghost.io":               "Ghost",
+  "tumblr.com":             "Tumblr",
+  "zendesk.com":            "Zendesk",
+  "helpscoutdocs.com":      "HelpScout",
+  "netlify.app":            "Netlify",
+  "netlify.com":            "Netlify",
+  "vercel.app":             "Vercel",
+  "vercel.com":             "Vercel",
+  "shopify.com":            "Shopify",
+  "myshopify.com":          "Shopify",
+  "hubspot.com":            "HubSpot",
+  "hubspotpagebuilder.com": "HubSpot",
+  "bitbucket.io":           "Bitbucket",
+  "cargo.site":             "Cargo",
+  "fastly.net":             "Fastly",
+  "squarespace.com":        "Squarespace",
+  "strikingly.com":         "Strikingly",
+  "surge.sh":               "Surge",
+  "wordpress.com":          "WordPress",
+  "gitbook.io":             "GitBook",
+  "readme.io":              "ReadMe",
+  "acquia-sites.com":       "Acquia",
+  "pantheonsite.io":        "Pantheon",
+  "kinsta.cloud":           "Kinsta",
+  "render.com":             "Render",
+  "fly.dev":                "Fly.io",
+  "pages.dev":              "Cloudflare Pages",
+  "workers.dev":            "Cloudflare Workers",
+  "wixsite.com":            "Wix",
+  "weebly.com":             "Weebly",
+  "freshdesk.com":          "Freshdesk",
+  "helpjuice.com":          "Helpjuice",
+  "smugmug.com":            "SmugMug",
+  "statuspage.io":          "Statuspage",
+  "pingdom.com":            "Pingdom",
+};
+
+/** High-value subdomain prefixes — more attractive targets for squatting / impersonation */
+const HIGH_VALUE_PREFIXES = new Set([
+  "login", "auth", "sso", "secure", "admin", "portal", "account",
+  "payment", "pay", "billing", "checkout", "mail", "email",
+  "vpn", "remote", "api", "app", "dashboard", "console",
+  "signup", "register", "support", "help", "helpdesk",
+]);
+
+export interface SubdomainThreat {
+  name:             string;
+  takeoverRisk:     "high" | "medium" | "none";
+  takeoverService?: string;
+  cnameTarget?:     string;
+  highValueTarget:  boolean;
+  squattingNote?:   string;
+}
+
+/**
+ * Analyse discovered subdomains for takeover risk and squatting exposure.
+ * Uses CNAME data from the scan (already captured) and does a quick DNS
+ * CNAME lookup for any subdomain that lacks CNAME data.
+ * Results are intended to be cached in brand_threat_scans.subdomain_threats.
+ */
+export async function detectSubdomainThreats(
+  subdomains: Array<{ name: string; ip?: string; cname?: string; status?: string }>,
+  _rootDomain: string,
+): Promise<SubdomainThreat[]> {
+  const threats: SubdomainThreat[] = [];
+
+  // Run CNAME lookups in parallel with a per-host timeout
+  const withCnames = await Promise.all(
+    subdomains.map(async sub => {
+      let cnameTarget = sub.cname ?? null;
+      if (!cnameTarget) {
+        try {
+          const cnames = await Promise.race([
+            dns.resolveCname(sub.name),
+            new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500)),
+          ]) as string[];
+          if (cnames.length > 0) cnameTarget = cnames[0]!;
+        } catch {
+          // No CNAME or timed out — skip DNS-based detection
+        }
+      }
+      return { ...sub, resolvedCname: cnameTarget };
+    }),
+  );
+
+  for (const sub of withCnames) {
+    let takeoverRisk: "high" | "medium" | "none" = "none";
+    let takeoverService: string | undefined;
+    const cnameTarget = sub.resolvedCname ?? undefined;
+
+    if (cnameTarget) {
+      const lower = cnameTarget.toLowerCase();
+      for (const [pattern, service] of Object.entries(TAKEOVER_FINGERPRINTS)) {
+        if (lower.includes(pattern)) {
+          takeoverRisk = "high";
+          takeoverService = service;
+          break;
+        }
+      }
+      // CNAME to something not in our fingerprints but also not self — medium risk
+      if (takeoverRisk === "none") {
+        takeoverRisk = "medium";
+        takeoverService = cnameTarget;
+      }
+    }
+
+    // Check if this is a high-value squatting target
+    const prefix = sub.name.split(".")[0]?.toLowerCase() ?? "";
+    const highValueTarget = HIGH_VALUE_PREFIXES.has(prefix);
+    const squattingNote = highValueTarget
+      ? `"${prefix}" subdomains are high-value phishing targets — monitor for lookalike registrations like ${prefix}-${_rootDomain.split(".")[0]}.com`
+      : undefined;
+
+    threats.push({
+      name:            sub.name,
+      takeoverRisk,
+      takeoverService: takeoverRisk !== "none" ? takeoverService : undefined,
+      cnameTarget:     takeoverRisk !== "none" ? cnameTarget : undefined,
+      highValueTarget,
+      squattingNote,
+    });
+  }
+
+  return threats;
+}
+
+/**
+ * Upsert brand threat scan: reuse the existing row for this tenant+domain
+ * (archiving old results for history) instead of creating a new row each time.
+ * Returns null when a scan is already actively running.
+ */
 export async function triggerBrandThreatScan(
   tenantId: number,
   domain: string,
   pipelineScanId?: number,
 ): Promise<typeof brandThreatScansTable.$inferSelect | null> {
-  const existing = await db
-    .select({ id: brandThreatScansTable.id, status: brandThreatScansTable.status, createdAt: brandThreatScansTable.createdAt })
+  // Find the most recent scan for this tenant+domain
+  const [latest] = await db
+    .select()
     .from(brandThreatScansTable)
-    .where(and(
-      eq(brandThreatScansTable.tenantId, tenantId),
-      eq(brandThreatScansTable.domain, domain),
-    ));
+    .where(and(eq(brandThreatScansTable.tenantId, tenantId), eq(brandThreatScansTable.domain, domain)))
+    .orderBy(desc(brandThreatScansTable.id))
+    .limit(1);
 
-  const active = existing.find(s => s.status === "running" || s.status === "pending");
-  if (active) {
-    const ageMs = Date.now() - new Date(active.createdAt).getTime();
-    if (active.status === "running" && ageMs > STUCK_SCAN_THRESHOLD_MS) {
-      // Stale running scan — reset it so a new scan can proceed
-      logger.warn(
-        { tenantId, domain, stuckScanId: active.id, ageMinutes: Math.round(ageMs / 60_000) },
-        "Brand threat scan stuck for >30 min — resetting to error and allowing new scan",
-      );
-      await db.update(brandThreatScansTable)
-        .set({ status: "error", error: "Scan timed out: automatically reset after 30 minutes of inactivity", completedAt: new Date() })
-        .where(eq(brandThreatScansTable.id, active.id));
-    } else {
-      logger.info({ tenantId, domain, activeScanId: active.id }, "Brand threat scan already in progress — skipping auto-trigger");
-      return null;
+  if (latest) {
+    if (latest.status === "running" || latest.status === "pending") {
+      const ageMs = Date.now() - new Date(latest.createdAt).getTime();
+      if (latest.status === "running" && ageMs > STUCK_SCAN_THRESHOLD_MS) {
+        logger.warn(
+          { tenantId, domain, stuckScanId: latest.id, ageMinutes: Math.round(ageMs / 60_000) },
+          "Brand threat scan stuck for >30 min — resetting to error and allowing rescan",
+        );
+        await db.update(brandThreatScansTable)
+          .set({ status: "error", error: "Scan timed out: automatically reset after 30 minutes of inactivity", completedAt: new Date() })
+          .where(eq(brandThreatScansTable.id, latest.id));
+        // Fall through — run fresh scan on same ID
+      } else {
+        logger.info({ tenantId, domain, activeScanId: latest.id }, "Brand threat scan already in progress — skipping");
+        return null;
+      }
     }
+
+    // Reuse existing scan row — archive live results to preserve history
+    const now = new Date();
+    await db.update(brandThreatResultsTable)
+      .set({ archivedAt: now })
+      .where(and(eq(brandThreatResultsTable.scanId, latest.id), isNull(brandThreatResultsTable.archivedAt)));
+    await Promise.all([
+      db.delete(phishingDetectionsTable).where(eq(phishingDetectionsTable.scanId, latest.id)),
+      db.delete(dataLeakResultsTable).where(eq(dataLeakResultsTable.scanId, latest.id)),
+      db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, latest.id)),
+      db.delete(adMonitoringResultsTable).where(eq(adMonitoringResultsTable.scanId, latest.id)),
+    ]);
+    await db.update(brandThreatScansTable).set({
+      status:            "pending",
+      progress:          0,
+      error:             null,
+      checkpoint:        null,
+      permutationsCache: null,
+      completedAt:       null,
+      subdomainThreats:  null,
+      scanCount:         sql`scan_count + 1`,
+      pipelineScanId:    pipelineScanId ?? latest.pipelineScanId,
+    }).where(eq(brandThreatScansTable.id, latest.id));
+
+    logger.info(
+      { scanId: latest.id, domain, scanCount: (latest.scanCount ?? 1) + 1, pipelineScanId },
+      "Reusing existing brand threat scan row — old results archived for history",
+    );
+    setImmediate(() => { void runBrandThreatScan(latest.id, domain); });
+    const [updated] = await db.select().from(brandThreatScansTable).where(eq(brandThreatScansTable.id, latest.id));
+    return updated!;
   }
 
+  // No existing scan — insert new row
   const [scan] = await db.insert(brandThreatScansTable).values({
     tenantId,
     domain,
-    status: "pending",
+    status:    "pending",
+    scanCount: 1,
     pipelineScanId: pipelineScanId ?? null,
   }).returning();
 
-  logger.info({ scanId: scan!.id, domain, pipelineScanId }, "Auto-triggered brand threat scan from pipeline");
+  logger.info({ scanId: scan!.id, domain, pipelineScanId }, "New brand threat scan created");
   setImmediate(() => { void runBrandThreatScan(scan!.id, domain); });
   return scan!;
 }

@@ -499,15 +499,44 @@ const SOCIAL_PLATFORM_LINKS: { name: string; searchUrl: (brand: string) => strin
 
 type PipelineSubdomain = { name: string; ip?: string; cname?: string; status?: string; sources?: string[] };
 
-function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains: PipelineSubdomain[]; pipelineScanId: number; scanDomain: string }) {
+interface SubdomainThreat {
+  name: string;
+  takeoverRisk: "high" | "medium" | "none";
+  takeoverService?: string;
+  cnameTarget?: string;
+  highValueTarget: boolean;
+  squattingNote?: string;
+}
+
+function SubdomainsTab({
+  subdomains,
+  pipelineScanId,
+  scanDomain,
+  subdomainThreats = [],
+}: {
+  subdomains: PipelineSubdomain[];
+  pipelineScanId: number;
+  scanDomain: string;
+  subdomainThreats?: SubdomainThreat[];
+}) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [riskFilter, setRiskFilter] = useState<"all" | "high" | "medium">("all");
+
+  const threatMap = new Map<string, SubdomainThreat>(subdomainThreats.map(t => [t.name, t]));
+  const highTakeoverCount  = subdomainThreats.filter(t => t.takeoverRisk === "high").length;
+  const highValueCount     = subdomainThreats.filter(t => t.highValueTarget).length;
 
   const filtered = subdomains.filter(s => {
     const q = search.trim().toLowerCase();
     if (q && !s.name.includes(q) && !(s.ip ?? "").includes(q) && !(s.cname ?? "").includes(q)) return false;
     if (statusFilter === "active" && s.status !== "active") return false;
     if (statusFilter === "inactive" && s.status === "active") return false;
+    if (riskFilter !== "all") {
+      const threat = threatMap.get(s.name);
+      if (riskFilter === "high" && threat?.takeoverRisk !== "high") return false;
+      if (riskFilter === "medium" && !["high","medium"].includes(threat?.takeoverRisk ?? "")) return false;
+    }
     return true;
   });
 
@@ -529,8 +558,9 @@ function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains:
           </div>
           <p className="text-xs text-muted-foreground">
             {subdomains.length} subdomain{subdomains.length !== 1 ? "s" : ""} enumerated for{" "}
-            <span className="font-mono text-foreground">{scanDomain}</span> — {activeCount} active (DNS resolves).
-            Review for shadow IT, forgotten services, and subdomain takeover candidates.
+            <span className="font-mono text-foreground">{scanDomain}</span> — {activeCount} active.
+            {highTakeoverCount > 0 && <span className="text-red-400 font-medium"> {highTakeoverCount} high takeover risk.</span>}
+            {highValueCount > 0 && <span className="text-amber-400 font-medium"> {highValueCount} high-value squatting targets.</span>}
           </p>
         </div>
         <div className="flex gap-4 shrink-0">
@@ -542,12 +572,54 @@ function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains:
             <p className="text-2xl font-bold text-green-400">{activeCount}</p>
             <p className="text-[10px] text-muted-foreground">active</p>
           </div>
+          {highTakeoverCount > 0 && (
+            <div className="text-center">
+              <p className="text-2xl font-bold text-red-400">{highTakeoverCount}</p>
+              <p className="text-[10px] text-muted-foreground">takeover</p>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* Threat summary cards */}
+      {subdomainThreats.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className={cn(
+            "rounded-xl border p-3 space-y-1",
+            highTakeoverCount > 0 ? "bg-red-500/5 border-red-500/20" : "bg-muted/20 border-border",
+          )}>
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle className={cn("w-3.5 h-3.5 shrink-0", highTakeoverCount > 0 ? "text-red-400" : "text-muted-foreground")} />
+              <p className="text-xs font-semibold">CNAME Takeover Risk</p>
+            </div>
+            <p className="text-2xl font-bold tabular-nums">{highTakeoverCount}</p>
+            <p className="text-[11px] text-muted-foreground">subdomain{highTakeoverCount !== 1 ? "s" : ""} with CNAME to 3rd-party services</p>
+          </div>
+          <div className={cn(
+            "rounded-xl border p-3 space-y-1",
+            highValueCount > 0 ? "bg-amber-500/5 border-amber-500/20" : "bg-muted/20 border-border",
+          )}>
+            <div className="flex items-center gap-1.5">
+              <Target className={cn("w-3.5 h-3.5 shrink-0", highValueCount > 0 ? "text-amber-400" : "text-muted-foreground")} />
+              <p className="text-xs font-semibold">Squatting Targets</p>
+            </div>
+            <p className="text-2xl font-bold tabular-nums">{highValueCount}</p>
+            <p className="text-[11px] text-muted-foreground">high-value prefix subdomains (auth, login, pay…)</p>
+          </div>
+          <div className="rounded-xl border bg-muted/20 border-border p-3 space-y-1">
+            <div className="flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+              <p className="text-xs font-semibold">Total Analyzed</p>
+            </div>
+            <p className="text-2xl font-bold tabular-nums">{subdomainThreats.length}</p>
+            <p className="text-[11px] text-muted-foreground">subdomains checked for CNAME &amp; squatting exposure</p>
+          </div>
+        </div>
+      )}
+
       {/* Search + filters */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap gap-2">
+        <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <input
             type="text"
@@ -562,21 +634,29 @@ function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains:
         </div>
         <div className="flex gap-1 bg-muted/30 rounded-xl p-1">
           {(["all", "active", "inactive"] as const).map(f => (
-            <button
-              key={f}
-              onClick={() => setStatusFilter(f)}
-              className={cn(
-                "px-3 py-1 rounded-lg text-xs font-medium transition-all capitalize",
-                statusFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
+            <button key={f} onClick={() => setStatusFilter(f)}
+              className={cn("px-3 py-1 rounded-lg text-xs font-medium transition-all capitalize",
+                statusFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
               {f}
             </button>
           ))}
         </div>
+        {subdomainThreats.length > 0 && (
+          <div className="flex gap-1 bg-muted/30 rounded-xl p-1">
+            {(["all", "high", "medium"] as const).map(f => (
+              <button key={f} onClick={() => setRiskFilter(f)}
+                className={cn("px-3 py-1 rounded-lg text-xs font-medium transition-all",
+                  riskFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  f === "high" && riskFilter === "high" ? "text-red-400" : "",
+                )}>
+                {f === "all" ? "All Risks" : f === "high" ? "⚠ Takeover" : "CNAME"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {(search || statusFilter !== "all") && (
+      {(search || statusFilter !== "all" || riskFilter !== "all") && (
         <p className="text-xs text-muted-foreground">
           Showing {filtered.length} of {subdomains.length} subdomains
           {search && <> matching <span className="font-mono text-foreground">"{search}"</span></>}
@@ -594,42 +674,72 @@ function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains:
                 <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">IP Address</th>
                 <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">CNAME</th>
                 <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">Status</th>
+                <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">Threat Intel</th>
                 <th className="px-4 py-2.5 text-left text-muted-foreground font-medium">Sources</th>
                 <th className="px-2 py-2.5" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map(sub => (
-                <tr key={sub.name} className="hover:bg-muted/20 transition-colors group">
-                  <td className="px-4 py-2.5">
-                    <span className="font-mono text-foreground">{sub.name}</span>
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-muted-foreground">{sub.ip ?? "—"}</td>
-                  <td className="px-4 py-2.5 font-mono text-muted-foreground max-w-[180px] truncate" title={sub.cname}>{sub.cname ?? "—"}</td>
-                  <td className="px-4 py-2.5">
-                    {sub.status === "active"
-                      ? <span className="inline-flex items-center gap-1 text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full font-medium">● active</span>
-                      : sub.status
-                        ? <span className="inline-flex items-center gap-1 text-muted-foreground bg-muted/30 border border-border px-2 py-0.5 rounded-full">{sub.status}</span>
-                        : <span className="text-muted-foreground/50">—</span>
-                    }
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex flex-wrap gap-1">
-                      {sub.sources?.map(src => (
-                        <span key={src} className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{src}</span>
-                      )) ?? <span className="text-muted-foreground/50">—</span>}
-                    </div>
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <a href={`https://${sub.name}`} target="_blank" rel="noopener noreferrer"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                      title={`Visit https://${sub.name}`}>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map(sub => {
+                const threat = threatMap.get(sub.name);
+                return (
+                  <tr key={sub.name} className={cn(
+                    "hover:bg-muted/20 transition-colors group",
+                    threat?.takeoverRisk === "high" ? "bg-red-500/5" : "",
+                  )}>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-foreground">{sub.name}</span>
+                        {threat?.highValueTarget && (
+                          <span className="text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1 py-0.5 rounded font-medium">HIGH-VALUE</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-muted-foreground">{sub.ip ?? "—"}</td>
+                    <td className="px-4 py-2.5 font-mono text-muted-foreground max-w-[160px] truncate" title={sub.cname ?? threat?.cnameTarget}>{sub.cname ?? threat?.cnameTarget ?? "—"}</td>
+                    <td className="px-4 py-2.5">
+                      {sub.status === "active"
+                        ? <span className="inline-flex items-center gap-1 text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full font-medium">● active</span>
+                        : sub.status
+                          ? <span className="inline-flex items-center gap-1 text-muted-foreground bg-muted/30 border border-border px-2 py-0.5 rounded-full">{sub.status}</span>
+                          : <span className="text-muted-foreground/50">—</span>
+                      }
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {threat?.takeoverRisk === "high" ? (
+                        <div className="space-y-0.5">
+                          <span className="inline-flex items-center gap-1 text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full font-medium text-[10px]">
+                            ⚠ Takeover Risk
+                          </span>
+                          {threat.takeoverService && (
+                            <p className="text-[10px] text-muted-foreground font-mono">{threat.takeoverService}</p>
+                          )}
+                        </div>
+                      ) : threat?.takeoverRisk === "medium" ? (
+                        <span className="inline-flex items-center gap-1 text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full font-medium text-[10px]">
+                          CNAME Risk
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/40 text-[10px]">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap gap-1">
+                        {sub.sources?.map(src => (
+                          <span key={src} className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{src}</span>
+                        )) ?? <span className="text-muted-foreground/50">—</span>}
+                      </div>
+                    </td>
+                    <td className="px-2 py-2.5">
+                      <a href={`https://${sub.name}`} target="_blank" rel="noopener noreferrer"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                        title={`Visit https://${sub.name}`}>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -637,7 +747,28 @@ function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains:
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
           <Server className="w-10 h-10 text-muted-foreground/20" />
           <p className="text-sm text-muted-foreground">No subdomains match the current filter</p>
-          <button onClick={() => { setSearch(""); setStatusFilter("all"); }} className="text-xs text-primary hover:underline">Clear filters</button>
+          <button onClick={() => { setSearch(""); setStatusFilter("all"); setRiskFilter("all"); }} className="text-xs text-primary hover:underline">Clear filters</button>
+        </div>
+      )}
+
+      {/* High-value squatting targets advisory */}
+      {subdomainThreats.filter(t => t.squattingNote).length > 0 && (
+        <div className="border border-amber-500/20 bg-amber-500/5 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Target className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <p className="text-xs font-semibold text-amber-300">Subdomain Squatting Targets</p>
+          </div>
+          <div className="space-y-1.5">
+            {subdomainThreats.filter(t => t.squattingNote).slice(0, 5).map(t => (
+              <div key={t.name} className="flex items-start gap-2">
+                <span className="font-mono text-[11px] text-amber-300/80 shrink-0">{t.name}</span>
+                <span className="text-[11px] text-muted-foreground">{t.squattingNote}</span>
+              </div>
+            ))}
+            {subdomainThreats.filter(t => t.squattingNote).length > 5 && (
+              <p className="text-[11px] text-muted-foreground/60">…and {subdomainThreats.filter(t => t.squattingNote).length - 5} more</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -648,8 +779,9 @@ function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains:
           <p className="text-xs font-semibold text-amber-300">Subdomain Takeover Advisory</p>
         </div>
         <p className="text-xs text-muted-foreground">
-          Subdomains with CNAME records pointing to decommissioned services are vulnerable to takeover.
-          Cross-reference against your asset inventory — any subdomain without an active controlled backend should be investigated.
+          Subdomains with CNAME records pointing to 3rd-party services (GitHub Pages, Heroku, Netlify, Vercel, etc.)
+          may be vulnerable to takeover if the underlying service account is deleted or expired.
+          Verify each flagged subdomain is still actively claimed on the target platform.
         </p>
       </div>
     </div>
@@ -2190,7 +2322,7 @@ export default function BrandThreatDetailPage() {
         {/* ── SUBDOMAINS tab ── */}
         {activeTab === "subdomains" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <SubdomainsTab subdomains={pipelineSubdomains} pipelineScanId={s.pipelineScanId as number} scanDomain={s.domain} />
+            <SubdomainsTab subdomains={pipelineSubdomains} pipelineScanId={s.pipelineScanId as number} scanDomain={s.domain} subdomainThreats={(s as any).subdomainThreats ?? []} />
           </div>
         )}
 
