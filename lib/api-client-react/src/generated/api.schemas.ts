@@ -1232,6 +1232,156 @@ export interface ScanTelemetryStats {
   dnsResolvers?: ScanTelemetryStatsDnsResolversItem[];
 }
 
+export interface TprmToggleModuleInput {
+  isEnabled: boolean;
+  tenantId?: number;
+}
+
+export interface TprmCreateVendorInput {
+  companyName: string;
+  domain: string;
+  type?: string;
+  industry?: string;
+  inherentRisk?: string;
+  businessImpact?: string;
+  scanFrequency?: string;
+}
+
+export interface TprmUpdateVendorInput {
+  companyName?: string;
+  domain?: string;
+  type?: string;
+  industry?: string;
+  inherentRisk?: string;
+  businessImpact?: string;
+  scanFrequency?: string;
+  status?: string;
+}
+
+export interface TprmSendQuestionnaireInput {
+  templateId: number;
+  dueDate?: string;
+  recipientEmail?: string;
+  notes?: string;
+}
+
+export type TprmCreateTemplateInputQuestionsItem = { [key: string]: unknown };
+
+export interface TprmCreateTemplateInput {
+  name: string;
+  description?: string;
+  category?: string;
+  questions?: TprmCreateTemplateInputQuestionsItem[];
+}
+
+export interface TprmVendor {
+  id?: number;
+  tenantId?: number;
+  companyName?: string;
+  domain?: string;
+  type?: string | null;
+  industry?: string | null;
+  riskScore?: number | null;
+  riskGrade?: string | null;
+  status?: string;
+  inherentRisk?: string;
+  businessImpact?: string;
+  scanFrequency?: string;
+  isGlobal?: boolean;
+  lastScannedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TprmVendorList {
+  vendors?: TprmVendor[];
+  total?: number;
+}
+
+export interface TprmVendorFinding {
+  id?: number;
+  vendorId?: number;
+  tenantId?: number;
+  title?: string;
+  severity?: string;
+  category?: string;
+  description?: string | null;
+  remediation?: string | null;
+  status?: string;
+  cvss?: number | null;
+  cve?: string | null;
+  epss?: number | null;
+  isKev?: boolean;
+  createdAt?: string;
+}
+
+export interface TprmVendorFindingList {
+  findings?: TprmVendorFinding[];
+  total?: number;
+}
+
+export interface TprmModuleStatus {
+  isEnabled?: boolean;
+  updatedAt?: string | null;
+  plan?: string | null;
+}
+
+export type TprmAdminOverviewTenantsItem = {
+  tenantId?: number;
+  tenantName?: string;
+  plan?: string;
+  isEnabled?: boolean;
+  vendorCount?: number;
+  avgRiskScore?: number;
+};
+
+export type TprmAdminOverviewStats = {
+  total?: number;
+  enabled?: number;
+  disabled?: number;
+};
+
+export interface TprmAdminOverview {
+  tenants?: TprmAdminOverviewTenantsItem[];
+  stats?: TprmAdminOverviewStats;
+}
+
+export type TprmVendorDetailAssetsItem = { [key: string]: unknown };
+
+export type TprmVendorDetailFourthPartiesItem = { [key: string]: unknown };
+
+export type TprmVendorDetailSupplyChainItem = { [key: string]: unknown };
+
+export type TprmVendorDetailContactsItem = { [key: string]: unknown };
+
+export type TprmVendorDetailQuestionnairesItem = { [key: string]: unknown };
+
+export type TprmVendorDetailComplianceDocsItem = { [key: string]: unknown };
+
+export interface TprmRiskScore {
+  id?: number;
+  vendorId?: number;
+  tenantId?: number;
+  overallScore?: number;
+  riskGrade?: string;
+  networkScore?: number | null;
+  dnsScore?: number | null;
+  webAppScore?: number | null;
+  tlsScore?: number | null;
+  calculatedAt?: string;
+}
+
+export type TprmVendorDetail = TprmVendor & {
+  riskScores?: TprmRiskScore[];
+  findings?: TprmVendorFinding[];
+  assets?: TprmVendorDetailAssetsItem[];
+  fourthParties?: TprmVendorDetailFourthPartiesItem[];
+  supplyChain?: TprmVendorDetailSupplyChainItem[];
+  contacts?: TprmVendorDetailContactsItem[];
+  questionnaires?: TprmVendorDetailQuestionnairesItem[];
+  complianceDocs?: TprmVendorDetailComplianceDocsItem[];
+};
+
 export type ListAssetsParams = {
 type?: string;
 tag?: string;
@@ -1334,5 +1484,13 @@ waf?: string;
  * Pass '1' to filter to captcha-detected requests
  */
 captcha?: string;
+};
+
+export type ListTprmVendorsParams = {
+page?: number;
+limit?: number;
+search?: string;
+riskGrade?: string;
+status?: string;
 };
 

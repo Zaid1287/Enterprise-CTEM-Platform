@@ -82,6 +82,7 @@ import type {
   ListScanTelemetryParams,
   ListScansParams,
   ListToolRunsParams,
+  ListTprmVendorsParams,
   LoginInput,
   NewBrandThreatScan,
   OrchestratorConfigPatch,
@@ -120,6 +121,18 @@ import type {
   ToolPipelineStep,
   ToolRun,
   ToolRunsPage,
+  TprmAdminOverview,
+  TprmCreateTemplateInput,
+  TprmCreateVendorInput,
+  TprmModuleStatus,
+  TprmRiskScore,
+  TprmSendQuestionnaireInput,
+  TprmToggleModuleInput,
+  TprmUpdateVendorInput,
+  TprmVendor,
+  TprmVendorDetail,
+  TprmVendorFindingList,
+  TprmVendorList,
   TrendPoint,
   UpdateOrchestratorConfig200,
   User,
@@ -9247,4 +9260,1497 @@ export function useGetScanTelemetryStats<TData = Awaited<ReturnType<typeof getSc
 
 
 
+
+export const getGetTprmModuleStatusUrl = () => {
+
+
+
+
+  return `/api/tprm/module`
+}
+
+/**
+ * @summary Get TPRM module status for current tenant
+ */
+export const getTprmModuleStatus = async ( options?: RequestInit): Promise<TprmModuleStatus> => {
+
+  return customFetch<TprmModuleStatus>(getGetTprmModuleStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTprmModuleStatusQueryKey = () => {
+    return [
+    `/api/tprm/module`
+    ] as const;
+    }
+
+
+export const getGetTprmModuleStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTprmModuleStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmModuleStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTprmModuleStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTprmModuleStatus>>> = ({ signal }) => getTprmModuleStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTprmModuleStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTprmModuleStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTprmModuleStatus>>>
+export type GetTprmModuleStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get TPRM module status for current tenant
+ */
+
+export function useGetTprmModuleStatus<TData = Awaited<ReturnType<typeof getTprmModuleStatus>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmModuleStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTprmModuleStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getPatchTprmModuleUrl = () => {
+
+
+
+
+  return `/api/tprm/module`
+}
+
+/**
+ * @summary Enable or disable TPRM module
+ */
+export const patchTprmModule = async (tprmToggleModuleInput: TprmToggleModuleInput, options?: RequestInit): Promise<TprmModuleStatus> => {
+
+  return customFetch<TprmModuleStatus>(getPatchTprmModuleUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tprmToggleModuleInput,)
+  }
+);}
+
+
+
+
+export const getPatchTprmModuleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchTprmModule>>, TError,{data: BodyType<TprmToggleModuleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchTprmModule>>, TError,{data: BodyType<TprmToggleModuleInput>}, TContext> => {
+
+const mutationKey = ['patchTprmModule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchTprmModule>>, {data: BodyType<TprmToggleModuleInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  patchTprmModule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchTprmModuleMutationResult = NonNullable<Awaited<ReturnType<typeof patchTprmModule>>>
+    export type PatchTprmModuleMutationBody = BodyType<TprmToggleModuleInput>
+    export type PatchTprmModuleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Enable or disable TPRM module
+ */
+export const usePatchTprmModule = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchTprmModule>>, TError,{data: BodyType<TprmToggleModuleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof patchTprmModule>>,
+        TError,
+        {data: BodyType<TprmToggleModuleInput>},
+        TContext
+      > => {
+      return useMutation(getPatchTprmModuleMutationOptions(options));
+    }
+
+export const getPatchTprmClientModuleUrl = (tenantId: number,) => {
+
+
+
+
+  return `/api/tprm/client/${tenantId}/module`
+}
+
+/**
+ * @summary Toggle TPRM module for a specific tenant (super_admin only)
+ */
+export const patchTprmClientModule = async (tenantId: number,
+    tprmToggleModuleInput: TprmToggleModuleInput, options?: RequestInit): Promise<TprmModuleStatus> => {
+
+  return customFetch<TprmModuleStatus>(getPatchTprmClientModuleUrl(tenantId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tprmToggleModuleInput,)
+  }
+);}
+
+
+
+
+export const getPatchTprmClientModuleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchTprmClientModule>>, TError,{tenantId: number;data: BodyType<TprmToggleModuleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchTprmClientModule>>, TError,{tenantId: number;data: BodyType<TprmToggleModuleInput>}, TContext> => {
+
+const mutationKey = ['patchTprmClientModule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchTprmClientModule>>, {tenantId: number;data: BodyType<TprmToggleModuleInput>}> = (props) => {
+          const {tenantId,data} = props ?? {};
+
+          return  patchTprmClientModule(tenantId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchTprmClientModuleMutationResult = NonNullable<Awaited<ReturnType<typeof patchTprmClientModule>>>
+    export type PatchTprmClientModuleMutationBody = BodyType<TprmToggleModuleInput>
+    export type PatchTprmClientModuleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Toggle TPRM module for a specific tenant (super_admin only)
+ */
+export const usePatchTprmClientModule = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchTprmClientModule>>, TError,{tenantId: number;data: BodyType<TprmToggleModuleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof patchTprmClientModule>>,
+        TError,
+        {tenantId: number;data: BodyType<TprmToggleModuleInput>},
+        TContext
+      > => {
+      return useMutation(getPatchTprmClientModuleMutationOptions(options));
+    }
+
+export const getGetTprmAdminOverviewUrl = () => {
+
+
+
+
+  return `/api/tprm/admin/overview`
+}
+
+/**
+ * @summary TPRM admin overview (admin/super_admin)
+ */
+export const getTprmAdminOverview = async ( options?: RequestInit): Promise<TprmAdminOverview> => {
+
+  return customFetch<TprmAdminOverview>(getGetTprmAdminOverviewUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTprmAdminOverviewQueryKey = () => {
+    return [
+    `/api/tprm/admin/overview`
+    ] as const;
+    }
+
+
+export const getGetTprmAdminOverviewQueryOptions = <TData = Awaited<ReturnType<typeof getTprmAdminOverview>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmAdminOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTprmAdminOverviewQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTprmAdminOverview>>> = ({ signal }) => getTprmAdminOverview({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTprmAdminOverview>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTprmAdminOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof getTprmAdminOverview>>>
+export type GetTprmAdminOverviewQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary TPRM admin overview (admin/super_admin)
+ */
+
+export function useGetTprmAdminOverview<TData = Awaited<ReturnType<typeof getTprmAdminOverview>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmAdminOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTprmAdminOverviewQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListTprmVendorsUrl = (params?: ListTprmVendorsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/tprm/vendors?${stringifiedParams}` : `/api/tprm/vendors`
+}
+
+/**
+ * @summary List TPRM vendors
+ */
+export const listTprmVendors = async (params?: ListTprmVendorsParams, options?: RequestInit): Promise<TprmVendorList> => {
+
+  return customFetch<TprmVendorList>(getListTprmVendorsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTprmVendorsQueryKey = (params?: ListTprmVendorsParams,) => {
+    return [
+    `/api/tprm/vendors`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListTprmVendorsQueryOptions = <TData = Awaited<ReturnType<typeof listTprmVendors>>, TError = ErrorType<unknown>>(params?: ListTprmVendorsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTprmVendorsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTprmVendors>>> = ({ signal }) => listTprmVendors(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTprmVendors>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTprmVendorsQueryResult = NonNullable<Awaited<ReturnType<typeof listTprmVendors>>>
+export type ListTprmVendorsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List TPRM vendors
+ */
+
+export function useListTprmVendors<TData = Awaited<ReturnType<typeof listTprmVendors>>, TError = ErrorType<unknown>>(
+ params?: ListTprmVendorsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTprmVendorsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateTprmVendorUrl = () => {
+
+
+
+
+  return `/api/tprm/vendors`
+}
+
+/**
+ * @summary Create a TPRM vendor
+ */
+export const createTprmVendor = async (tprmCreateVendorInput: TprmCreateVendorInput, options?: RequestInit): Promise<TprmVendor> => {
+
+  return customFetch<TprmVendor>(getCreateTprmVendorUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tprmCreateVendorInput,)
+  }
+);}
+
+
+
+
+export const getCreateTprmVendorMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTprmVendor>>, TError,{data: BodyType<TprmCreateVendorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createTprmVendor>>, TError,{data: BodyType<TprmCreateVendorInput>}, TContext> => {
+
+const mutationKey = ['createTprmVendor'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createTprmVendor>>, {data: BodyType<TprmCreateVendorInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createTprmVendor(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateTprmVendorMutationResult = NonNullable<Awaited<ReturnType<typeof createTprmVendor>>>
+    export type CreateTprmVendorMutationBody = BodyType<TprmCreateVendorInput>
+    export type CreateTprmVendorMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a TPRM vendor
+ */
+export const useCreateTprmVendor = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTprmVendor>>, TError,{data: BodyType<TprmCreateVendorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createTprmVendor>>,
+        TError,
+        {data: BodyType<TprmCreateVendorInput>},
+        TContext
+      > => {
+      return useMutation(getCreateTprmVendorMutationOptions(options));
+    }
+
+export const getGetTprmVendorUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}`
+}
+
+/**
+ * @summary Get vendor detail including risk scores, findings, assets, compliance
+ */
+export const getTprmVendor = async (id: number, options?: RequestInit): Promise<TprmVendorDetail> => {
+
+  return customFetch<TprmVendorDetail>(getGetTprmVendorUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTprmVendorQueryKey = (id: number,) => {
+    return [
+    `/api/tprm/vendors/${id}`
+    ] as const;
+    }
+
+
+export const getGetTprmVendorQueryOptions = <TData = Awaited<ReturnType<typeof getTprmVendor>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmVendor>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTprmVendorQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTprmVendor>>> = ({ signal }) => getTprmVendor(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTprmVendor>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTprmVendorQueryResult = NonNullable<Awaited<ReturnType<typeof getTprmVendor>>>
+export type GetTprmVendorQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get vendor detail including risk scores, findings, assets, compliance
+ */
+
+export function useGetTprmVendor<TData = Awaited<ReturnType<typeof getTprmVendor>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmVendor>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTprmVendorQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateTprmVendorUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}`
+}
+
+/**
+ * @summary Update a TPRM vendor
+ */
+export const updateTprmVendor = async (id: number,
+    tprmUpdateVendorInput?: TprmUpdateVendorInput, options?: RequestInit): Promise<TprmVendor> => {
+
+  return customFetch<TprmVendor>(getUpdateTprmVendorUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tprmUpdateVendorInput,)
+  }
+);}
+
+
+
+
+export const getUpdateTprmVendorMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTprmVendor>>, TError,{id: number;data?: BodyType<TprmUpdateVendorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTprmVendor>>, TError,{id: number;data?: BodyType<TprmUpdateVendorInput>}, TContext> => {
+
+const mutationKey = ['updateTprmVendor'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTprmVendor>>, {id: number;data?: BodyType<TprmUpdateVendorInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateTprmVendor(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTprmVendorMutationResult = NonNullable<Awaited<ReturnType<typeof updateTprmVendor>>>
+    export type UpdateTprmVendorMutationBody = BodyType<TprmUpdateVendorInput> | undefined
+    export type UpdateTprmVendorMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update a TPRM vendor
+ */
+export const useUpdateTprmVendor = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTprmVendor>>, TError,{id: number;data?: BodyType<TprmUpdateVendorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTprmVendor>>,
+        TError,
+        {id: number;data?: BodyType<TprmUpdateVendorInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateTprmVendorMutationOptions(options));
+    }
+
+export const getDeleteTprmVendorUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}`
+}
+
+/**
+ * @summary Delete a TPRM vendor
+ */
+export const deleteTprmVendor = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteTprmVendorUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteTprmVendorMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTprmVendor>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteTprmVendor>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteTprmVendor'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteTprmVendor>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteTprmVendor(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteTprmVendorMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTprmVendor>>>
+
+    export type DeleteTprmVendorMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a TPRM vendor
+ */
+export const useDeleteTprmVendor = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTprmVendor>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteTprmVendor>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteTprmVendorMutationOptions(options));
+    }
+
+export const getTriggerTprmVendorScanUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}/scan`
+}
+
+/**
+ * @summary Trigger a full vendor risk scan
+ */
+export const triggerTprmVendorScan = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getTriggerTprmVendorScanUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getTriggerTprmVendorScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerTprmVendorScan>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof triggerTprmVendorScan>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['triggerTprmVendorScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof triggerTprmVendorScan>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  triggerTprmVendorScan(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TriggerTprmVendorScanMutationResult = NonNullable<Awaited<ReturnType<typeof triggerTprmVendorScan>>>
+
+    export type TriggerTprmVendorScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Trigger a full vendor risk scan
+ */
+export const useTriggerTprmVendorScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerTprmVendorScan>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof triggerTprmVendorScan>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getTriggerTprmVendorScanMutationOptions(options));
+    }
+
+export const getListTprmVendorFindingsUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}/findings`
+}
+
+/**
+ * @summary List vendor findings
+ */
+export const listTprmVendorFindings = async (id: number, options?: RequestInit): Promise<TprmVendorFindingList> => {
+
+  return customFetch<TprmVendorFindingList>(getListTprmVendorFindingsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTprmVendorFindingsQueryKey = (id: number,) => {
+    return [
+    `/api/tprm/vendors/${id}/findings`
+    ] as const;
+    }
+
+
+export const getListTprmVendorFindingsQueryOptions = <TData = Awaited<ReturnType<typeof listTprmVendorFindings>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorFindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTprmVendorFindingsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTprmVendorFindings>>> = ({ signal }) => listTprmVendorFindings(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorFindings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTprmVendorFindingsQueryResult = NonNullable<Awaited<ReturnType<typeof listTprmVendorFindings>>>
+export type ListTprmVendorFindingsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List vendor findings
+ */
+
+export function useListTprmVendorFindings<TData = Awaited<ReturnType<typeof listTprmVendorFindings>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorFindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTprmVendorFindingsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetTprmVendorRiskHistoryUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}/risk-history`
+}
+
+/**
+ * @summary Get vendor risk score history
+ */
+export const getTprmVendorRiskHistory = async (id: number, options?: RequestInit): Promise<TprmRiskScore[]> => {
+
+  return customFetch<TprmRiskScore[]>(getGetTprmVendorRiskHistoryUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTprmVendorRiskHistoryQueryKey = (id: number,) => {
+    return [
+    `/api/tprm/vendors/${id}/risk-history`
+    ] as const;
+    }
+
+
+export const getGetTprmVendorRiskHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getTprmVendorRiskHistory>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmVendorRiskHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTprmVendorRiskHistoryQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTprmVendorRiskHistory>>> = ({ signal }) => getTprmVendorRiskHistory(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTprmVendorRiskHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTprmVendorRiskHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getTprmVendorRiskHistory>>>
+export type GetTprmVendorRiskHistoryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get vendor risk score history
+ */
+
+export function useGetTprmVendorRiskHistory<TData = Awaited<ReturnType<typeof getTprmVendorRiskHistory>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTprmVendorRiskHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTprmVendorRiskHistoryQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListTprmVendorComplianceUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}/compliance`
+}
+
+/**
+ * @summary List vendor compliance documents
+ */
+export const listTprmVendorCompliance = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getListTprmVendorComplianceUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTprmVendorComplianceQueryKey = (id: number,) => {
+    return [
+    `/api/tprm/vendors/${id}/compliance`
+    ] as const;
+    }
+
+
+export const getListTprmVendorComplianceQueryOptions = <TData = Awaited<ReturnType<typeof listTprmVendorCompliance>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorCompliance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTprmVendorComplianceQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTprmVendorCompliance>>> = ({ signal }) => listTprmVendorCompliance(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorCompliance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTprmVendorComplianceQueryResult = NonNullable<Awaited<ReturnType<typeof listTprmVendorCompliance>>>
+export type ListTprmVendorComplianceQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List vendor compliance documents
+ */
+
+export function useListTprmVendorCompliance<TData = Awaited<ReturnType<typeof listTprmVendorCompliance>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorCompliance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTprmVendorComplianceQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUploadTprmVendorSbomUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}/sbom`
+}
+
+/**
+ * @summary Upload a vendor SBOM file (multipart/form-data)
+ */
+export const uploadTprmVendorSbom = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getUploadTprmVendorSbomUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getUploadTprmVendorSbomMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadTprmVendorSbom>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof uploadTprmVendorSbom>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['uploadTprmVendorSbom'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uploadTprmVendorSbom>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  uploadTprmVendorSbom(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UploadTprmVendorSbomMutationResult = NonNullable<Awaited<ReturnType<typeof uploadTprmVendorSbom>>>
+
+    export type UploadTprmVendorSbomMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Upload a vendor SBOM file (multipart/form-data)
+ */
+export const useUploadTprmVendorSbom = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadTprmVendorSbom>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof uploadTprmVendorSbom>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getUploadTprmVendorSbomMutationOptions(options));
+    }
+
+export const getListTprmVendorQuestionnairesUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}/questionnaires`
+}
+
+/**
+ * @summary List questionnaires for a vendor
+ */
+export const listTprmVendorQuestionnaires = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getListTprmVendorQuestionnairesUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTprmVendorQuestionnairesQueryKey = (id: number,) => {
+    return [
+    `/api/tprm/vendors/${id}/questionnaires`
+    ] as const;
+    }
+
+
+export const getListTprmVendorQuestionnairesQueryOptions = <TData = Awaited<ReturnType<typeof listTprmVendorQuestionnaires>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorQuestionnaires>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTprmVendorQuestionnairesQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTprmVendorQuestionnaires>>> = ({ signal }) => listTprmVendorQuestionnaires(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorQuestionnaires>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTprmVendorQuestionnairesQueryResult = NonNullable<Awaited<ReturnType<typeof listTprmVendorQuestionnaires>>>
+export type ListTprmVendorQuestionnairesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List questionnaires for a vendor
+ */
+
+export function useListTprmVendorQuestionnaires<TData = Awaited<ReturnType<typeof listTprmVendorQuestionnaires>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmVendorQuestionnaires>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTprmVendorQuestionnairesQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getSendTprmVendorQuestionnaireUrl = (id: number,) => {
+
+
+
+
+  return `/api/tprm/vendors/${id}/questionnaires`
+}
+
+/**
+ * @summary Send a questionnaire to a vendor
+ */
+export const sendTprmVendorQuestionnaire = async (id: number,
+    tprmSendQuestionnaireInput: TprmSendQuestionnaireInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getSendTprmVendorQuestionnaireUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tprmSendQuestionnaireInput,)
+  }
+);}
+
+
+
+
+export const getSendTprmVendorQuestionnaireMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTprmVendorQuestionnaire>>, TError,{id: number;data: BodyType<TprmSendQuestionnaireInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendTprmVendorQuestionnaire>>, TError,{id: number;data: BodyType<TprmSendQuestionnaireInput>}, TContext> => {
+
+const mutationKey = ['sendTprmVendorQuestionnaire'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendTprmVendorQuestionnaire>>, {id: number;data: BodyType<TprmSendQuestionnaireInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  sendTprmVendorQuestionnaire(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendTprmVendorQuestionnaireMutationResult = NonNullable<Awaited<ReturnType<typeof sendTprmVendorQuestionnaire>>>
+    export type SendTprmVendorQuestionnaireMutationBody = BodyType<TprmSendQuestionnaireInput>
+    export type SendTprmVendorQuestionnaireMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Send a questionnaire to a vendor
+ */
+export const useSendTprmVendorQuestionnaire = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTprmVendorQuestionnaire>>, TError,{id: number;data: BodyType<TprmSendQuestionnaireInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendTprmVendorQuestionnaire>>,
+        TError,
+        {id: number;data: BodyType<TprmSendQuestionnaireInput>},
+        TContext
+      > => {
+      return useMutation(getSendTprmVendorQuestionnaireMutationOptions(options));
+    }
+
+export const getListTprmSupplyChainUrl = () => {
+
+
+
+
+  return `/api/tprm/supply-chain`
+}
+
+/**
+ * @summary List supply chain nodes
+ */
+export const listTprmSupplyChain = async ( options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getListTprmSupplyChainUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTprmSupplyChainQueryKey = () => {
+    return [
+    `/api/tprm/supply-chain`
+    ] as const;
+    }
+
+
+export const getListTprmSupplyChainQueryOptions = <TData = Awaited<ReturnType<typeof listTprmSupplyChain>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmSupplyChain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTprmSupplyChainQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTprmSupplyChain>>> = ({ signal }) => listTprmSupplyChain({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTprmSupplyChain>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTprmSupplyChainQueryResult = NonNullable<Awaited<ReturnType<typeof listTprmSupplyChain>>>
+export type ListTprmSupplyChainQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List supply chain nodes
+ */
+
+export function useListTprmSupplyChain<TData = Awaited<ReturnType<typeof listTprmSupplyChain>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmSupplyChain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTprmSupplyChainQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListTprmExpiringComplianceUrl = () => {
+
+
+
+
+  return `/api/tprm/compliance/expiring`
+}
+
+/**
+ * @summary List compliance documents expiring within 60 days
+ */
+export const listTprmExpiringCompliance = async ( options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getListTprmExpiringComplianceUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTprmExpiringComplianceQueryKey = () => {
+    return [
+    `/api/tprm/compliance/expiring`
+    ] as const;
+    }
+
+
+export const getListTprmExpiringComplianceQueryOptions = <TData = Awaited<ReturnType<typeof listTprmExpiringCompliance>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmExpiringCompliance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTprmExpiringComplianceQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTprmExpiringCompliance>>> = ({ signal }) => listTprmExpiringCompliance({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTprmExpiringCompliance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTprmExpiringComplianceQueryResult = NonNullable<Awaited<ReturnType<typeof listTprmExpiringCompliance>>>
+export type ListTprmExpiringComplianceQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List compliance documents expiring within 60 days
+ */
+
+export function useListTprmExpiringCompliance<TData = Awaited<ReturnType<typeof listTprmExpiringCompliance>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmExpiringCompliance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTprmExpiringComplianceQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListTprmQuestionnaireTemplatesUrl = () => {
+
+
+
+
+  return `/api/tprm/questionnaire-templates`
+}
+
+/**
+ * @summary List questionnaire templates
+ */
+export const listTprmQuestionnaireTemplates = async ( options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getListTprmQuestionnaireTemplatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTprmQuestionnaireTemplatesQueryKey = () => {
+    return [
+    `/api/tprm/questionnaire-templates`
+    ] as const;
+    }
+
+
+export const getListTprmQuestionnaireTemplatesQueryOptions = <TData = Awaited<ReturnType<typeof listTprmQuestionnaireTemplates>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmQuestionnaireTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTprmQuestionnaireTemplatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTprmQuestionnaireTemplates>>> = ({ signal }) => listTprmQuestionnaireTemplates({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTprmQuestionnaireTemplates>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTprmQuestionnaireTemplatesQueryResult = NonNullable<Awaited<ReturnType<typeof listTprmQuestionnaireTemplates>>>
+export type ListTprmQuestionnaireTemplatesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List questionnaire templates
+ */
+
+export function useListTprmQuestionnaireTemplates<TData = Awaited<ReturnType<typeof listTprmQuestionnaireTemplates>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTprmQuestionnaireTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTprmQuestionnaireTemplatesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateTprmQuestionnaireTemplateUrl = () => {
+
+
+
+
+  return `/api/tprm/questionnaire-templates`
+}
+
+/**
+ * @summary Create a questionnaire template
+ */
+export const createTprmQuestionnaireTemplate = async (tprmCreateTemplateInput: TprmCreateTemplateInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getCreateTprmQuestionnaireTemplateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tprmCreateTemplateInput,)
+  }
+);}
+
+
+
+
+export const getCreateTprmQuestionnaireTemplateMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTprmQuestionnaireTemplate>>, TError,{data: BodyType<TprmCreateTemplateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createTprmQuestionnaireTemplate>>, TError,{data: BodyType<TprmCreateTemplateInput>}, TContext> => {
+
+const mutationKey = ['createTprmQuestionnaireTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createTprmQuestionnaireTemplate>>, {data: BodyType<TprmCreateTemplateInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createTprmQuestionnaireTemplate(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateTprmQuestionnaireTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof createTprmQuestionnaireTemplate>>>
+    export type CreateTprmQuestionnaireTemplateMutationBody = BodyType<TprmCreateTemplateInput>
+    export type CreateTprmQuestionnaireTemplateMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a questionnaire template
+ */
+export const useCreateTprmQuestionnaireTemplate = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTprmQuestionnaireTemplate>>, TError,{data: BodyType<TprmCreateTemplateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createTprmQuestionnaireTemplate>>,
+        TError,
+        {data: BodyType<TprmCreateTemplateInput>},
+        TContext
+      > => {
+      return useMutation(getCreateTprmQuestionnaireTemplateMutationOptions(options));
+    }
 

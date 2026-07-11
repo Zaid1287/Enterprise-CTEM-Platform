@@ -17,6 +17,7 @@ import {
   tprmSbomUploadsTable,
   tenantsTable,
   platformSettingsTable,
+  alertsTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, or, ilike, sql, ne, lte, inArray, isNull } from "drizzle-orm";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
@@ -695,6 +696,17 @@ router.post("/tprm/respond/:token", async (req, res) => {
       riskLevel,
     }).where(eq(tprmVendorQuestionnairesTable.id, q.id));
 
+    // Dispatch questionnaire completion alert
+    try {
+      await db.insert(alertsTable).values({
+        tenantId: q.tenantId,
+        title: `Questionnaire completed — vendor #${q.vendorId}`,
+        message: `Security questionnaire completed${respondedBy ? ` by ${respondedBy}` : ""}. Score: ${score}/100 (${riskLevel} risk).`,
+        type: "tprm_questionnaire_completed",
+        severity: riskLevel === "critical" ? "critical" : riskLevel === "high" ? "high" : "medium",
+      });
+    } catch { /* non-fatal */ }
+
     res.json({ ok: true, score, riskLevel, message: "Your response has been recorded. Thank you." });
   } catch (err) {
     logger.error({ err }, "TPRM respond POST error");
@@ -796,6 +808,7 @@ router.get("/tprm/compliance/expiring", requireAuth, requireTprm, async (req: Au
 router.post("/tprm/vendors/:id/sbom", requireAuth, requireTprm, upload.single("file"), async (req: AuthenticatedRequest, res) => {
   const { tenantId, userId } = req.user!;
   const vendorId = parseInt(req.params.id);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
   if (!req.file) { res.status(400).json({ error: "SBOM file is required" }); return; }
 
   try {

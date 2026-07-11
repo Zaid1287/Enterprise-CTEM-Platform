@@ -42,6 +42,8 @@ tags:
     description: Dashboard and analytics
   - name: discovery
     description: Passive discovery engine — CT logs, WHOIS, ASN, DKIM, GitHub, and commercial intel APIs
+  - name: tprm
+    description: Third Party Risk Management — vendor risk scoring, supply chain, compliance, SBOM, 4th-party discovery
 paths:
   /healthz:
     get:
@@ -2485,6 +2487,382 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScanTelemetryStats"
 
+  # ──────────────────────────────────────────────────────────
+  # TPRM — Third Party Risk Management
+  # ──────────────────────────────────────────────────────────
+
+  /tprm/module:
+    get:
+      operationId: getTprmModuleStatus
+      tags: [tprm]
+      summary: Get TPRM module status for current tenant
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Module status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmModuleStatus"
+    patch:
+      operationId: patchTprmModule
+      tags: [tprm]
+      summary: Enable or disable TPRM module
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TprmToggleModuleInput"
+      responses:
+        "200":
+          description: Updated status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmModuleStatus"
+
+  /tprm/client/{tenantId}/module:
+    patch:
+      operationId: patchTprmClientModule
+      tags: [tprm]
+      summary: Toggle TPRM module for a specific tenant (super_admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TprmToggleModuleInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmModuleStatus"
+
+  /tprm/admin/overview:
+    get:
+      operationId: getTprmAdminOverview
+      tags: [tprm]
+      summary: TPRM admin overview (admin/super_admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmAdminOverview"
+
+  /tprm/vendors:
+    get:
+      operationId: listTprmVendors
+      tags: [tprm]
+      summary: List TPRM vendors
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: riskGrade
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated vendor list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmVendorList"
+    post:
+      operationId: createTprmVendor
+      tags: [tprm]
+      summary: Create a TPRM vendor
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TprmCreateVendorInput"
+      responses:
+        "201":
+          description: Created vendor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmVendor"
+
+  /tprm/vendors/{id}:
+    get:
+      operationId: getTprmVendor
+      tags: [tprm]
+      summary: Get vendor detail including risk scores, findings, assets, compliance
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Vendor detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmVendorDetail"
+    patch:
+      operationId: updateTprmVendor
+      tags: [tprm]
+      summary: Update a TPRM vendor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TprmUpdateVendorInput"
+      responses:
+        "200":
+          description: Updated vendor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmVendor"
+    delete:
+      operationId: deleteTprmVendor
+      tags: [tprm]
+      summary: Delete a TPRM vendor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+
+  /tprm/vendors/{id}/scan:
+    post:
+      operationId: triggerTprmVendorScan
+      tags: [tprm]
+      summary: Trigger a full vendor risk scan
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan started
+
+  /tprm/vendors/{id}/findings:
+    get:
+      operationId: listTprmVendorFindings
+      tags: [tprm]
+      summary: List vendor findings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Findings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TprmVendorFindingList"
+
+  /tprm/vendors/{id}/risk-history:
+    get:
+      operationId: getTprmVendorRiskHistory
+      tags: [tprm]
+      summary: Get vendor risk score history
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Risk score history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TprmRiskScore"
+
+  /tprm/vendors/{id}/compliance:
+    get:
+      operationId: listTprmVendorCompliance
+      tags: [tprm]
+      summary: List vendor compliance documents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Compliance documents and gaps
+
+  /tprm/vendors/{id}/sbom:
+    post:
+      operationId: uploadTprmVendorSbom
+      tags: [tprm]
+      summary: Upload a vendor SBOM file (multipart/form-data)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "201":
+          description: SBOM processed
+
+  /tprm/vendors/{id}/questionnaires:
+    get:
+      operationId: listTprmVendorQuestionnaires
+      tags: [tprm]
+      summary: List questionnaires for a vendor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Questionnaires
+    post:
+      operationId: sendTprmVendorQuestionnaire
+      tags: [tprm]
+      summary: Send a questionnaire to a vendor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TprmSendQuestionnaireInput"
+      responses:
+        "201":
+          description: Questionnaire sent
+
+  /tprm/supply-chain:
+    get:
+      operationId: listTprmSupplyChain
+      tags: [tprm]
+      summary: List supply chain nodes
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Supply chain nodes
+
+  /tprm/compliance/expiring:
+    get:
+      operationId: listTprmExpiringCompliance
+      tags: [tprm]
+      summary: List compliance documents expiring within 60 days
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Expiring documents
+
+  /tprm/questionnaire-templates:
+    get:
+      operationId: listTprmQuestionnaireTemplates
+      tags: [tprm]
+      summary: List questionnaire templates
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Templates
+    post:
+      operationId: createTprmQuestionnaireTemplate
+      tags: [tprm]
+      summary: Create a questionnaire template
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TprmCreateTemplateInput"
+      responses:
+        "201":
+          description: Template created
+
 components:
   schemas:
     AiMapperSummary:
@@ -4602,3 +4980,291 @@ components:
           type: array
           items:
             type: object
+
+    TprmToggleModuleInput:
+      type: object
+      required: [isEnabled]
+      properties:
+        isEnabled:
+          type: boolean
+        tenantId:
+          type: integer
+
+    TprmCreateVendorInput:
+      type: object
+      required: [companyName, domain]
+      properties:
+        companyName:
+          type: string
+        domain:
+          type: string
+        type:
+          type: string
+        industry:
+          type: string
+        inherentRisk:
+          type: string
+        businessImpact:
+          type: string
+        scanFrequency:
+          type: string
+
+    TprmUpdateVendorInput:
+      type: object
+      properties:
+        companyName:
+          type: string
+        domain:
+          type: string
+        type:
+          type: string
+        industry:
+          type: string
+        inherentRisk:
+          type: string
+        businessImpact:
+          type: string
+        scanFrequency:
+          type: string
+        status:
+          type: string
+
+    TprmSendQuestionnaireInput:
+      type: object
+      required: [templateId]
+      properties:
+        templateId:
+          type: integer
+        dueDate:
+          type: string
+        recipientEmail:
+          type: string
+        notes:
+          type: string
+
+    TprmCreateTemplateInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        questions:
+          type: array
+          items:
+            type: object
+
+    TprmVendorList:
+      type: object
+      properties:
+        vendors:
+          type: array
+          items:
+            $ref: "#/components/schemas/TprmVendor"
+        total:
+          type: integer
+
+    TprmVendorFindingList:
+      type: object
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/TprmVendorFinding"
+        total:
+          type: integer
+
+    TprmModuleStatus:
+      type: object
+      properties:
+        isEnabled:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        plan:
+          type: string
+          nullable: true
+
+    TprmAdminOverview:
+      type: object
+      properties:
+        tenants:
+          type: array
+          items:
+            type: object
+            properties:
+              tenantId:
+                type: integer
+              tenantName:
+                type: string
+              plan:
+                type: string
+              isEnabled:
+                type: boolean
+              vendorCount:
+                type: integer
+              avgRiskScore:
+                type: integer
+        stats:
+          type: object
+          properties:
+            total:
+              type: integer
+            enabled:
+              type: integer
+            disabled:
+              type: integer
+
+    TprmVendor:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        companyName:
+          type: string
+        domain:
+          type: string
+        type:
+          type: string
+          nullable: true
+        industry:
+          type: string
+          nullable: true
+        riskScore:
+          type: integer
+          nullable: true
+        riskGrade:
+          type: string
+          nullable: true
+        status:
+          type: string
+        inherentRisk:
+          type: string
+        businessImpact:
+          type: string
+        scanFrequency:
+          type: string
+        isGlobal:
+          type: boolean
+        lastScannedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TprmVendorDetail:
+      allOf:
+        - $ref: "#/components/schemas/TprmVendor"
+        - type: object
+          properties:
+            riskScores:
+              type: array
+              items:
+                $ref: "#/components/schemas/TprmRiskScore"
+            findings:
+              type: array
+              items:
+                $ref: "#/components/schemas/TprmVendorFinding"
+            assets:
+              type: array
+              items:
+                type: object
+            fourthParties:
+              type: array
+              items:
+                type: object
+            supplyChain:
+              type: array
+              items:
+                type: object
+            contacts:
+              type: array
+              items:
+                type: object
+            questionnaires:
+              type: array
+              items:
+                type: object
+            complianceDocs:
+              type: array
+              items:
+                type: object
+
+    TprmVendorFinding:
+      type: object
+      properties:
+        id:
+          type: integer
+        vendorId:
+          type: integer
+        tenantId:
+          type: integer
+        title:
+          type: string
+        severity:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+          nullable: true
+        remediation:
+          type: string
+          nullable: true
+        status:
+          type: string
+        cvss:
+          type: number
+          nullable: true
+        cve:
+          type: string
+          nullable: true
+        epss:
+          type: number
+          nullable: true
+        isKev:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    TprmRiskScore:
+      type: object
+      properties:
+        id:
+          type: integer
+        vendorId:
+          type: integer
+        tenantId:
+          type: integer
+        overallScore:
+          type: integer
+        riskGrade:
+          type: string
+        networkScore:
+          type: integer
+          nullable: true
+        dnsScore:
+          type: integer
+          nullable: true
+        webAppScore:
+          type: integer
+          nullable: true
+        tlsScore:
+          type: integer
+          nullable: true
+        calculatedAt:
+          type: string
+          format: date-time

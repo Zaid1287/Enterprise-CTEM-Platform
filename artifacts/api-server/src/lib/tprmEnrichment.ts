@@ -16,8 +16,8 @@ import dns from "node:dns/promises";
 import tls from "node:tls";
 import { logger } from "./logger";
 import { orchestratedFetch } from "./scanOrchestrator";
-import { db, platformSettingsTable, tprmVendorFindingsTable, tprmVendorAssetsTable, tprmVendorRiskScoresTable, tprmFourthPartyVendorsTable, tprmVendorsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { db, platformSettingsTable, tprmVendorFindingsTable, tprmVendorAssetsTable, tprmVendorRiskScoresTable, tprmFourthPartyVendorsTable, tprmVendorsTable, tprmSupplyChainNodesTable, alertsTable } from "@workspace/db";
+import { eq, and, desc, isNull } from "drizzle-orm";
 
 const UA = "Sentinelware-TPRM/1.0";
 
@@ -747,8 +747,48 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
       })));
     }
 
+    // Persist supply-chain topology nodes from scan probe
+    try {
+      const scNodes: Array<{ vendorId: number; tenantId: number; name: string; nodeType: "domain" | "ip"; riskLevel: string; vulnerabilities: any }> = [];
+      scNodes.push({ vendorId, tenantId, name: domain, nodeType: "domain", riskLevel: breakdown.riskGrade === "A" || breakdown.riskGrade === "B" ? "low" : breakdown.riskGrade === "C" ? "medium" : "high", vulnerabilities: [] });
+      for (const ip of probe.dns.a.slice(0, 5)) {
+        const shodanEntry = probe.shodan.find(s => s.ip === ip);
+        const vulns = shodanEntry?.vulns.slice(0, 10).map(v => ({ id: v })) ?? [];
+        scNodes.push({ vendorId, tenantId, name: ip, nodeType: "ip", riskLevel: vulns.length > 0 ? "high" : "low", vulnerabilities: vulns });
+      }
+      for (const sub of probe.subdomains.slice(0, 15)) {
+        scNodes.push({ vendorId, tenantId, name: sub, nodeType: "domain", riskLevel: "low", vulnerabilities: [] });
+      }
+      if (scNodes.length > 0) {
+        await db.delete(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, tenantId), isNull(tprmSupplyChainNodesTable.sbomUploadId)));
+        await db.insert(tprmSupplyChainNodesTable).values(scNodes);
+      }
+    } catch (scErr) { logger.warn({ scErr, vendorId }, "TPRM: supply-chain node persist failed (non-fatal)"); }
+
     // Persist risk score snapshot
     await db.insert(tprmVendorRiskScoresTable).values({ vendorId, tenantId, ...breakdown });
+
+    // Alert on significant vendor risk-score change
+    try {
+      const prevScores = await db.select({ overallScore: tprmVendorRiskScoresTable.overallScore })
+        .from(tprmVendorRiskScoresTable)
+        .where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, tenantId)))
+        .orderBy(desc(tprmVendorRiskScoresTable.calculatedAt))
+        .limit(2);
+      if (prevScores.length >= 2) {
+        const prevScore = prevScores[1]!.overallScore ?? breakdown.overallScore;
+        const delta = breakdown.overallScore - prevScore;
+        if (Math.abs(delta) >= 10) {
+          await db.insert(alertsTable).values({
+            tenantId,
+            title: `Vendor risk score changed: ${vendor.companyName}`,
+            message: `Risk score changed from ${prevScore} to ${breakdown.overallScore} (${delta > 0 ? "+" : ""}${delta} pts). Grade: ${breakdown.riskGrade}.`,
+            type: "tprm_vendor_risk_change",
+            severity: breakdown.overallScore < 50 ? "high" : "medium",
+          });
+        }
+      }
+    } catch { /* non-fatal */ }
 
     // Update vendor record
     await db.update(tprmVendorsTable)

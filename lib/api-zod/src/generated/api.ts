@@ -2535,3 +2535,345 @@ export const GetScanTelemetryStatsResponse = zod.object({
 })
 
 
+/**
+ * @summary Get TPRM module status for current tenant
+ */
+export const GetTprmModuleStatusResponse = zod.object({
+  "isEnabled": zod.boolean().optional(),
+  "updatedAt": zod.coerce.date().nullish(),
+  "plan": zod.string().nullish()
+})
+
+
+/**
+ * @summary Enable or disable TPRM module
+ */
+export const PatchTprmModuleBody = zod.object({
+  "isEnabled": zod.boolean(),
+  "tenantId": zod.number().optional()
+})
+
+export const PatchTprmModuleResponse = zod.object({
+  "isEnabled": zod.boolean().optional(),
+  "updatedAt": zod.coerce.date().nullish(),
+  "plan": zod.string().nullish()
+})
+
+
+/**
+ * @summary Toggle TPRM module for a specific tenant (super_admin only)
+ */
+export const PatchTprmClientModuleParams = zod.object({
+  "tenantId": zod.coerce.number()
+})
+
+export const PatchTprmClientModuleBody = zod.object({
+  "isEnabled": zod.boolean(),
+  "tenantId": zod.number().optional()
+})
+
+export const PatchTprmClientModuleResponse = zod.object({
+  "isEnabled": zod.boolean().optional(),
+  "updatedAt": zod.coerce.date().nullish(),
+  "plan": zod.string().nullish()
+})
+
+
+/**
+ * @summary TPRM admin overview (admin/super_admin)
+ */
+export const GetTprmAdminOverviewResponse = zod.object({
+  "tenants": zod.array(zod.object({
+  "tenantId": zod.number().optional(),
+  "tenantName": zod.string().optional(),
+  "plan": zod.string().optional(),
+  "isEnabled": zod.boolean().optional(),
+  "vendorCount": zod.number().optional(),
+  "avgRiskScore": zod.number().optional()
+})).optional(),
+  "stats": zod.object({
+  "total": zod.number().optional(),
+  "enabled": zod.number().optional(),
+  "disabled": zod.number().optional()
+}).optional()
+})
+
+
+/**
+ * @summary List TPRM vendors
+ */
+export const ListTprmVendorsQueryParams = zod.object({
+  "page": zod.coerce.number().optional(),
+  "limit": zod.coerce.number().optional(),
+  "search": zod.coerce.string().optional(),
+  "riskGrade": zod.coerce.string().optional(),
+  "status": zod.coerce.string().optional()
+})
+
+export const ListTprmVendorsResponse = zod.object({
+  "vendors": zod.array(zod.object({
+  "id": zod.number().optional(),
+  "tenantId": zod.number().optional(),
+  "companyName": zod.string().optional(),
+  "domain": zod.string().optional(),
+  "type": zod.string().nullish(),
+  "industry": zod.string().nullish(),
+  "riskScore": zod.number().nullish(),
+  "riskGrade": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "inherentRisk": zod.string().optional(),
+  "businessImpact": zod.string().optional(),
+  "scanFrequency": zod.string().optional(),
+  "isGlobal": zod.boolean().optional(),
+  "lastScannedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date().optional(),
+  "updatedAt": zod.coerce.date().optional()
+})).optional(),
+  "total": zod.number().optional()
+})
+
+
+/**
+ * @summary Create a TPRM vendor
+ */
+export const CreateTprmVendorBody = zod.object({
+  "companyName": zod.string(),
+  "domain": zod.string(),
+  "type": zod.string().optional(),
+  "industry": zod.string().optional(),
+  "inherentRisk": zod.string().optional(),
+  "businessImpact": zod.string().optional(),
+  "scanFrequency": zod.string().optional()
+})
+
+
+/**
+ * @summary Get vendor detail including risk scores, findings, assets, compliance
+ */
+export const GetTprmVendorParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetTprmVendorResponse = zod.object({
+  "id": zod.number().optional(),
+  "tenantId": zod.number().optional(),
+  "companyName": zod.string().optional(),
+  "domain": zod.string().optional(),
+  "type": zod.string().nullish(),
+  "industry": zod.string().nullish(),
+  "riskScore": zod.number().nullish(),
+  "riskGrade": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "inherentRisk": zod.string().optional(),
+  "businessImpact": zod.string().optional(),
+  "scanFrequency": zod.string().optional(),
+  "isGlobal": zod.boolean().optional(),
+  "lastScannedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date().optional(),
+  "updatedAt": zod.coerce.date().optional()
+}).and(zod.object({
+  "riskScores": zod.array(zod.object({
+  "id": zod.number().optional(),
+  "vendorId": zod.number().optional(),
+  "tenantId": zod.number().optional(),
+  "overallScore": zod.number().optional(),
+  "riskGrade": zod.string().optional(),
+  "networkScore": zod.number().nullish(),
+  "dnsScore": zod.number().nullish(),
+  "webAppScore": zod.number().nullish(),
+  "tlsScore": zod.number().nullish(),
+  "calculatedAt": zod.coerce.date().optional()
+})).optional(),
+  "findings": zod.array(zod.object({
+  "id": zod.number().optional(),
+  "vendorId": zod.number().optional(),
+  "tenantId": zod.number().optional(),
+  "title": zod.string().optional(),
+  "severity": zod.string().optional(),
+  "category": zod.string().optional(),
+  "description": zod.string().nullish(),
+  "remediation": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "cvss": zod.number().nullish(),
+  "cve": zod.string().nullish(),
+  "epss": zod.number().nullish(),
+  "isKev": zod.boolean().optional(),
+  "createdAt": zod.coerce.date().optional()
+})).optional(),
+  "assets": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "fourthParties": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "supplyChain": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "contacts": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "questionnaires": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "complianceDocs": zod.array(zod.object({
+
+}).passthrough()).optional()
+}))
+
+
+/**
+ * @summary Update a TPRM vendor
+ */
+export const UpdateTprmVendorParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateTprmVendorBody = zod.object({
+  "companyName": zod.string().optional(),
+  "domain": zod.string().optional(),
+  "type": zod.string().optional(),
+  "industry": zod.string().optional(),
+  "inherentRisk": zod.string().optional(),
+  "businessImpact": zod.string().optional(),
+  "scanFrequency": zod.string().optional(),
+  "status": zod.string().optional()
+})
+
+export const UpdateTprmVendorResponse = zod.object({
+  "id": zod.number().optional(),
+  "tenantId": zod.number().optional(),
+  "companyName": zod.string().optional(),
+  "domain": zod.string().optional(),
+  "type": zod.string().nullish(),
+  "industry": zod.string().nullish(),
+  "riskScore": zod.number().nullish(),
+  "riskGrade": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "inherentRisk": zod.string().optional(),
+  "businessImpact": zod.string().optional(),
+  "scanFrequency": zod.string().optional(),
+  "isGlobal": zod.boolean().optional(),
+  "lastScannedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date().optional(),
+  "updatedAt": zod.coerce.date().optional()
+})
+
+
+/**
+ * @summary Delete a TPRM vendor
+ */
+export const DeleteTprmVendorParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary Trigger a full vendor risk scan
+ */
+export const TriggerTprmVendorScanParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary List vendor findings
+ */
+export const ListTprmVendorFindingsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListTprmVendorFindingsResponse = zod.object({
+  "findings": zod.array(zod.object({
+  "id": zod.number().optional(),
+  "vendorId": zod.number().optional(),
+  "tenantId": zod.number().optional(),
+  "title": zod.string().optional(),
+  "severity": zod.string().optional(),
+  "category": zod.string().optional(),
+  "description": zod.string().nullish(),
+  "remediation": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "cvss": zod.number().nullish(),
+  "cve": zod.string().nullish(),
+  "epss": zod.number().nullish(),
+  "isKev": zod.boolean().optional(),
+  "createdAt": zod.coerce.date().optional()
+})).optional(),
+  "total": zod.number().optional()
+})
+
+
+/**
+ * @summary Get vendor risk score history
+ */
+export const GetTprmVendorRiskHistoryParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetTprmVendorRiskHistoryResponseItem = zod.object({
+  "id": zod.number().optional(),
+  "vendorId": zod.number().optional(),
+  "tenantId": zod.number().optional(),
+  "overallScore": zod.number().optional(),
+  "riskGrade": zod.string().optional(),
+  "networkScore": zod.number().nullish(),
+  "dnsScore": zod.number().nullish(),
+  "webAppScore": zod.number().nullish(),
+  "tlsScore": zod.number().nullish(),
+  "calculatedAt": zod.coerce.date().optional()
+})
+export const GetTprmVendorRiskHistoryResponse = zod.array(GetTprmVendorRiskHistoryResponseItem)
+
+
+/**
+ * @summary List vendor compliance documents
+ */
+export const ListTprmVendorComplianceParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary Upload a vendor SBOM file (multipart/form-data)
+ */
+export const UploadTprmVendorSbomParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary List questionnaires for a vendor
+ */
+export const ListTprmVendorQuestionnairesParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary Send a questionnaire to a vendor
+ */
+export const SendTprmVendorQuestionnaireParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const SendTprmVendorQuestionnaireBody = zod.object({
+  "templateId": zod.number(),
+  "dueDate": zod.string().optional(),
+  "recipientEmail": zod.string().optional(),
+  "notes": zod.string().optional()
+})
+
+
+/**
+ * @summary Create a questionnaire template
+ */
+export const CreateTprmQuestionnaireTemplateBody = zod.object({
+  "name": zod.string(),
+  "description": zod.string().optional(),
+  "category": zod.string().optional(),
+  "questions": zod.array(zod.object({
+
+}).passthrough()).optional()
+})
+
+

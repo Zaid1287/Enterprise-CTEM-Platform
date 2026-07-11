@@ -899,6 +899,7 @@ async function dispatchDueScans(): Promise<void> {
       dispatchToolUpdateCheck(),
       checkQueueDepth(),
       dispatchTprmVendorRescans(),
+      dispatchTprmComplianceExpiryReminders(),
     ]);
   } catch (err) {
     logger.error({ err }, "Beat scheduler error");
@@ -1210,6 +1211,42 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     runAutoTuner().catch(() => {});
     setInterval(runAutoTuner, 10 * 60_000);
   }, 3 * 60_000);
+}
+
+// ── TPRM compliance expiry reminders ─────────────────────────────────────────
+async function dispatchTprmComplianceExpiryReminders(): Promise<void> {
+  try {
+    const { tprmModuleAssignmentsTable, tprmComplianceDocumentsTable, tprmVendorsTable, alertsTable: _alertsTable } = await import("@workspace/db");
+    const { ne: _ne, inArray: _inArray } = await import("drizzle-orm");
+    const enabled = await db.select({ tenantId: tprmModuleAssignmentsTable.tenantId }).from(tprmModuleAssignmentsTable).where(eq(tprmModuleAssignmentsTable.isEnabled, true));
+    if (enabled.length === 0) return;
+    const tenantIds = enabled.map(t => t.tenantId);
+    const now = new Date();
+    const thirtyDaysOut = new Date(now.getTime() + 30 * 86400000);
+    const docs = await db.select().from(tprmComplianceDocumentsTable)
+      .where(and(
+        _inArray(tprmComplianceDocumentsTable.tenantId, tenantIds),
+        sql`expires_at IS NOT NULL AND expires_at > NOW() AND expires_at <= ${thirtyDaysOut.toISOString()}`,
+        _ne(tprmComplianceDocumentsTable.status, "expired"),
+      ));
+    let reminded = 0;
+    for (const doc of docs) {
+      const daysLeft = Math.ceil((new Date(doc.expiresAt!).getTime() - now.getTime()) / 86400000);
+      if (![30, 14, 7, 3, 1].includes(daysLeft)) continue;
+      const [vendor] = await db.select({ companyName: tprmVendorsTable.companyName }).from(tprmVendorsTable).where(eq(tprmVendorsTable.id, doc.vendorId));
+      await db.insert(_alertsTable).values({
+        tenantId: doc.tenantId,
+        title: `Compliance document expiring: ${doc.title}`,
+        message: `${doc.documentType.toUpperCase()} for "${vendor?.companyName ?? "Unknown"}" expires in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.`,
+        type: "tprm_compliance_expiry",
+        severity: daysLeft <= 3 ? "high" : daysLeft <= 7 ? "medium" : "low",
+      }).onConflictDoNothing();
+      reminded++;
+    }
+    if (reminded > 0) logger.info({ reminded }, "Beat: TPRM compliance expiry reminders dispatched");
+  } catch (err) {
+    logger.warn({ err }, "Beat: TPRM compliance expiry check failed (non-fatal)");
+  }
 }
 
 // ── TPRM vendor rescan ────────────────────────────────────────────────────────
