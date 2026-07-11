@@ -59,7 +59,7 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
 };
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns" | "favicon_clones" | "watchlist";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns" | "favicon_clones" | "watchlist" | "subdomains";
 
 function RiskScoreBar({ score }: { score: number }) {
   return (
@@ -497,52 +497,121 @@ const SOCIAL_PLATFORM_LINKS: { name: string; searchUrl: (brand: string) => strin
   },
 ];
 
-function DiscoveredSubdomainsCard({ subdomains, pipelineScanId }: { subdomains: string[]; pipelineScanId: number }) {
-  const [expanded, setExpanded] = useState(false);
-  const SHOW_LIMIT = 20;
-  const visible = expanded ? subdomains : subdomains.slice(0, SHOW_LIMIT);
+function SubdomainsTab({ subdomains, pipelineScanId, scanDomain }: { subdomains: string[]; pipelineScanId: number; scanDomain: string }) {
+  const [search, setSearch] = useState("");
+  const filtered = search.trim()
+    ? subdomains.filter(s => s.includes(search.trim().toLowerCase()))
+    : subdomains;
+
   return (
-    <div className="border border-border rounded-xl overflow-hidden bg-muted/10">
-      <button
-        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-muted/20 transition-colors"
-        onClick={() => setExpanded(v => !v)}
-      >
-        <Globe className="w-4 h-4 text-blue-400 shrink-0" />
-        <span className="text-sm font-semibold">Discovered Subdomains</span>
-        <span className="text-[10px] text-blue-400/70 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded-full font-mono ml-1">
-          pipeline scan #{pipelineScanId}
-        </span>
-        <span className="ml-1 text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded-full">
-          {subdomains.length}
-        </span>
-        <div className="flex-1" />
-        <span className="text-xs text-muted-foreground mr-1">{subdomains.length} subdomain{subdomains.length !== 1 ? "s" : ""} enumerated</span>
-        {expanded
-          ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-          : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-      </button>
-      {expanded && (
-        <div className="border-t border-border px-5 py-4 space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Subdomains discovered during the linked asset pipeline scan. Review for shadow IT, forgotten services, or subdomain takeover risks.
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {visible.map(sub => (
-              <span key={sub} className="font-mono text-[11px] px-2 py-1 rounded-lg bg-blue-500/5 border border-blue-500/15 text-blue-300">
-                {sub}
-              </span>
-            ))}
+    <div className="p-6 space-y-5">
+      {/* Header card */}
+      <div className="flex items-start gap-4 p-5 bg-blue-500/5 border border-blue-500/20 rounded-xl">
+        <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+          <Server className="w-5 h-5 text-blue-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-sm font-semibold">Discovered Subdomains</span>
+            <span className="text-[10px] font-mono text-blue-400/70 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded-full">
+              pipeline scan #{pipelineScanId}
+            </span>
           </div>
-          {subdomains.length > SHOW_LIMIT && !expanded && (
-            <button onClick={() => setExpanded(true)} className="text-xs text-primary hover:underline">
-              +{subdomains.length - SHOW_LIMIT} more
-            </button>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {subdomains.length} subdomain{subdomains.length !== 1 ? "s" : ""} enumerated for <span className="font-mono text-foreground">{scanDomain}</span> during the linked asset scan.
+            Review for shadow IT, forgotten services, exposed dev environments, or subdomain takeover candidates.
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-2xl font-bold text-blue-400">{subdomains.length}</p>
+          <p className="text-[10px] text-muted-foreground">subdomains</p>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Filter subdomains…"
+          className="w-full pl-8 pr-3 py-2 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/40"
+        />
+        {search && (
+          <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* Results count */}
+      {search && (
+        <p className="text-xs text-muted-foreground">
+          Showing {filtered.length} of {subdomains.length} subdomains matching <span className="font-mono text-foreground">"{search}"</span>
+        </p>
+      )}
+
+      {/* Subdomain grid */}
+      {filtered.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {filtered.map(sub => {
+            const isApex = sub === scanDomain || sub === `www.${scanDomain}`;
+            const label = sub.replace(`.${scanDomain}`, "");
+            return (
+              <div
+                key={sub}
+                className={cn(
+                  "flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border text-sm transition-all group",
+                  isApex
+                    ? "bg-blue-500/10 border-blue-500/25"
+                    : "bg-background border-border hover:border-blue-500/30 hover:bg-blue-500/5",
+                )}
+              >
+                <Globe className={cn("w-3.5 h-3.5 shrink-0", isApex ? "text-blue-400" : "text-muted-foreground group-hover:text-blue-400")} />
+                <div className="flex-1 min-w-0">
+                  <span className="font-mono text-xs truncate block">{sub}</span>
+                  {!isApex && label !== sub && (
+                    <span className="text-[10px] text-muted-foreground">.{scanDomain}</span>
+                  )}
+                </div>
+                <a
+                  href={`https://${sub}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  title={`Open https://${sub}`}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+          <Server className="w-10 h-10 text-muted-foreground/20" />
+          <p className="text-sm text-muted-foreground">No subdomains match <span className="font-mono">"{search}"</span></p>
+          <button onClick={() => setSearch("")} className="text-xs text-primary hover:underline">Clear filter</button>
         </div>
       )}
+
+      {/* Risk advisory */}
+      <div className="border border-amber-500/20 bg-amber-500/5 rounded-xl p-4 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <p className="text-xs font-semibold text-amber-300">Subdomain Takeover Advisory</p>
+        </div>
+        <p className="text-xs text-muted-foreground ml-5.5">
+          Subdomains pointing to decommissioned services (dangling DNS) may be vulnerable to takeover.
+          Cross-reference with your asset inventory and verify each subdomain has an active, controlled backend.
+          Run a dedicated scan on any subdomain that appears in your asset list but is not actively monitored.
+        </p>
+      </div>
     </div>
   );
 }
+
 
 function SocialPlatformMonitor({ scanDomain }: { scanDomain?: string }) {
   const brand = scanDomain?.replace(/\.[^.]+$/, "") ?? "brand";
@@ -1451,6 +1520,8 @@ export default function BrandThreatDetailPage() {
   const faviconPivotCount = s?.faviconSearchUrls ? Object.keys(s.faviconSearchUrls as object).filter(k => k !== "_error").length : 0;
   const hasFaviconData = !!(s?.faviconMd5 || s?.favihunterStatus === "done");
 
+  const pipelineSubdomains: string[] = Array.isArray(s?.pipelineSubdomains) ? (s.pipelineSubdomains as string[]) : [];
+
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
     { id: "typosquatting", label: "Typosquatting", icon: <Globe className="w-3.5 h-3.5" />, count: results.length },
     { id: "phishing",      label: "Phishing",      icon: <Fish className="w-3.5 h-3.5" />,  count: phishingDetections.length, color: phishingDetections.length > 0 ? "text-red-400" : undefined },
@@ -1458,6 +1529,7 @@ export default function BrandThreatDetailPage() {
     { id: "brand_abuse",   label: "Brand Abuse",   icon: <Target className="w-3.5 h-3.5" />,   count: brandAbuse.length, color: brandAbuse.length > 0 ? "text-yellow-400" : undefined },
     { id: "malicious_ads", label: "Malicious Ads", icon: <Megaphone className="w-3.5 h-3.5" />, count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
     ...(hasFaviconData ? [{ id: "favicon_clones" as TabMode, label: "Favicon Clones", icon: <Fingerprint className="w-3.5 h-3.5" />, count: shodanCloneCount, color: shodanCloneCount > 0 ? "text-violet-400" : undefined }] : []),
+    ...(pipelineSubdomains.length > 0 ? [{ id: "subdomains" as TabMode, label: "Subdomains", icon: <Server className="w-3.5 h-3.5" />, count: pipelineSubdomains.length, color: "text-blue-400" }] : []),
     { id: "watchlist",     label: "Watchlist",     icon: <BookmarkCheck className="w-3.5 h-3.5" />, count: allWatchlistItems.length, color: allWatchlistItems.length > 0 ? "text-blue-400" : undefined },
     { id: "takedowns",     label: "Takedowns",     icon: <Shield className="w-3.5 h-3.5" /> },
   ];
@@ -1874,25 +1946,6 @@ export default function BrandThreatDetailPage() {
         );
       })()}
 
-      {/* ── Favicon Intelligence — standalone card ────────────────────────────── */}
-      {s.status === "done" && (s.faviconMd5 || s.favihunterStatus === "running" || s.favihunterStatus === "pending") && (
-        <div className="mx-6 mt-4 shrink-0 space-y-3">
-          <FaviconIntelPanel scan={s} />
-          {((s.faviconShodanMatches as any[] | null)?.length ?? 0) > 0 && (
-            <ShodanFaviconPanel matches={s.faviconShodanMatches as any[]} />
-          )}
-        </div>
-      )}
-
-      {/* ── Discovered Subdomains — from pipeline scan ──────────────────────── */}
-      {s.status === "done" && ((s.pipelineSubdomains as string[] | null)?.length ?? 0) > 0 && (
-        <div className="mx-6 mt-4 shrink-0">
-          <DiscoveredSubdomainsCard
-            subdomains={s.pipelineSubdomains as string[]}
-            pipelineScanId={s.pipelineScanId as number}
-          />
-        </div>
-      )}
 
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       {s.status === "done" && (
@@ -2085,6 +2138,13 @@ export default function BrandThreatDetailPage() {
                 </p>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── SUBDOMAINS tab ── */}
+        {activeTab === "subdomains" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <SubdomainsTab subdomains={pipelineSubdomains} pipelineScanId={s.pipelineScanId as number} scanDomain={s.domain} />
           </div>
         )}
 
