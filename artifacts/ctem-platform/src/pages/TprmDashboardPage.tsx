@@ -194,7 +194,7 @@ export default function TprmDashboardPage() {
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Continuous Assessment Vendors</CardTitle></CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-16" /> : (
-              <AssessmentBreakdown label="Continuous" data={data?.continuousBreakdown ?? { poor:0, average:0, good:0 }} total={(data?.continuousBreakdown.poor ?? 0) + (data?.continuousBreakdown.average ?? 0) + (data?.continuousBreakdown.good ?? 0)} />
+              <AssessmentBreakdown label="Continuous" data={data?.continuousBreakdown ?? { poor:0, average:0, good:0 }} total={(data?.continuousBreakdown?.poor ?? 0) + (data?.continuousBreakdown?.average ?? 0) + (data?.continuousBreakdown?.good ?? 0)} />
             )}
           </CardContent>
         </Card>
@@ -202,7 +202,7 @@ export default function TprmDashboardPage() {
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">One-Time Assessment Vendors</CardTitle></CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-16" /> : (
-              <AssessmentBreakdown label="One-Time" data={data?.oneTimeBreakdown ?? { poor:0, average:0, good:0 }} total={(data?.oneTimeBreakdown.poor ?? 0) + (data?.oneTimeBreakdown.average ?? 0) + (data?.oneTimeBreakdown.good ?? 0)} />
+              <AssessmentBreakdown label="One-Time" data={data?.oneTimeBreakdown ?? { poor:0, average:0, good:0 }} total={(data?.oneTimeBreakdown?.poor ?? 0) + (data?.oneTimeBreakdown?.average ?? 0) + (data?.oneTimeBreakdown?.good ?? 0)} />
             )}
           </CardContent>
         </Card>
@@ -283,49 +283,70 @@ export default function TprmDashboardPage() {
             <p className="text-muted-foreground text-sm py-8 text-center">No vendors yet — <Link href="/tprm/vendors/new" className="text-primary underline">add your first vendor</Link></p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[1100px]">
                 <thead>
                   <tr className="border-b border-border/50">
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Vendor Name</th>
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Rating</th>
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Assessment Type</th>
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Incidents</th>
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">New Issues</th>
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Total Issues</th>
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Assets</th>
-                    <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Status Break-up</th>
-                    <th className="px-4 py-2.5" />
+                    <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5 sticky left-0 bg-card z-10">Vendor Name</th>
+                    <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5">Rating</th>
+                    <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5">Assessment</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Ext. Assets</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Brand Threat</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Data Breach</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Darkweb</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Social Media</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Fake Ads</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Score Δ</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">New Issues</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Issues Solved</th>
+                    <th className="text-right text-xs text-muted-foreground font-medium px-3 py-2.5">Total Issues</th>
+                    <th className="text-left text-xs text-muted-foreground font-medium px-3 py-2.5">Status Break-up</th>
+                    <th className="px-3 py-2.5" />
                   </tr>
                 </thead>
                 <tbody>
-                  {data!.vendorSummary.slice(0, 10).map((v: any) => (
-                    <tr key={v.id} className="border-b border-border/30 hover:bg-accent/20 transition-colors">
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          {v.logoUrl ? <img src={v.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-white/10" /> : <div className="w-5 h-5 rounded bg-muted flex items-center justify-center text-[10px] font-bold">{v.companyName[0]}</div>}
-                          <span className="font-medium truncate max-w-[140px]">{v.companyName}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">{gradeBadgeSm(v.riskGrade)} <span className="text-xs text-muted-foreground ml-1">{v.riskScore}</span></td>
-                      <td className="px-4 py-2.5"><Badge variant="outline" className="text-[10px]">{v.assessmentType === "continuous" ? "Continuous" : "One-Time"}</Badge></td>
-                      <td className="px-4 py-2.5 text-xs font-semibold">{v.incidents > 0 ? <span className="text-red-400">{v.incidents}</span> : <span className="text-muted-foreground">0</span>}</td>
-                      <td className="px-4 py-2.5 text-xs">{v.newIssues > 0 ? <span className="text-orange-400 flex items-center gap-1"><TrendingUp className="w-3 h-3" />{v.newIssues}</span> : <span className="text-muted-foreground">0</span>}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{v.totalIssues}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{v.totalAssets}</td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex gap-1 text-[10px]">
-                          {v.statusBreakup.open > 0 && <span className="bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded">{v.statusBreakup.open} open</span>}
-                          {v.statusBreakup.mitigated > 0 && <span className="bg-green-500/15 text-green-400 px-1.5 py-0.5 rounded">{v.statusBreakup.mitigated} mitigated</span>}
-                          {v.statusBreakup.open === 0 && v.statusBreakup.mitigated === 0 && <span className="text-muted-foreground">—</span>}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <Button size="sm" variant="ghost" className="h-6 text-xs" asChild>
-                          <Link href={`/tprm/vendors/${v.id}`}><Eye className="w-3 h-3 mr-1" />View</Link>
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                  {data!.vendorSummary.slice(0, 15).map((v: any) => {
+                    const scoreInc = v.scoreIncrease ?? 0;
+                    return (
+                      <tr key={v.id} className="border-b border-border/30 hover:bg-accent/20 transition-colors">
+                        <td className="px-3 py-2 sticky left-0 bg-card z-10">
+                          <div className="flex items-center gap-2">
+                            {v.logoUrl ? <img src={v.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-white/10 shrink-0" /> : <div className="w-5 h-5 rounded bg-muted flex items-center justify-center text-[10px] font-bold shrink-0">{v.companyName[0]}</div>}
+                            <span className="font-medium truncate max-w-[130px] text-xs">{v.companyName}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">{gradeBadgeSm(v.riskGrade)} <span className="text-[10px] text-muted-foreground ml-1">{v.riskScore}</span></td>
+                        <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{v.assessmentType === "continuous" ? "Continuous" : "One-Time"}</Badge></td>
+                        <td className="px-3 py-2 text-xs text-right text-muted-foreground">{v.externalAssets}</td>
+                        <td className="px-3 py-2 text-xs text-right">{v.brandThreat > 0 ? <span className="text-orange-400 font-medium">{v.brandThreat}</span> : <span className="text-muted-foreground">0</span>}</td>
+                        <td className="px-3 py-2 text-xs text-right">{v.dataBreach > 0 ? <span className="text-red-400 font-medium">{v.dataBreach}</span> : <span className="text-muted-foreground">0</span>}</td>
+                        <td className="px-3 py-2 text-xs text-right">{v.darkwebMentions > 0 ? <span className="text-purple-400 font-medium">{v.darkwebMentions}</span> : <span className="text-muted-foreground">0</span>}</td>
+                        <td className="px-3 py-2 text-xs text-right">{v.socialMedia > 0 ? <span className="text-blue-400 font-medium">{v.socialMedia}</span> : <span className="text-muted-foreground">0</span>}</td>
+                        <td className="px-3 py-2 text-xs text-right">{v.fakeAds > 0 ? <span className="text-yellow-400 font-medium">{v.fakeAds}</span> : <span className="text-muted-foreground">0</span>}</td>
+                        <td className="px-3 py-2 text-xs text-right font-semibold">
+                          {scoreInc > 0 ? <span className="text-red-400 flex items-center justify-end gap-0.5"><TrendingUp className="w-3 h-3" />+{scoreInc}</span>
+                            : scoreInc < 0 ? <span className="text-green-400 flex items-center justify-end gap-0.5"><TrendingDown className="w-3 h-3" />{scoreInc}</span>
+                            : <span className="text-muted-foreground flex items-center justify-end gap-0.5"><Minus className="w-3 h-3" />0</span>}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-right">{v.newIssues > 0 ? <span className="text-orange-400">{v.newIssues}</span> : <span className="text-muted-foreground">0</span>}</td>
+                        <td className="px-3 py-2 text-xs text-right">{v.issuesSolved > 0 ? <span className="text-green-400">{v.issuesSolved}</span> : <span className="text-muted-foreground">0</span>}</td>
+                        <td className="px-3 py-2 text-xs text-right text-muted-foreground">{v.totalIssues}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex gap-1 text-[10px] flex-wrap">
+                            {v.statusBreakup?.open > 0 && <span className="bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded">{v.statusBreakup.open} open</span>}
+                            {v.statusBreakup?.in_progress > 0 && <span className="bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded">{v.statusBreakup.in_progress} active</span>}
+                            {v.statusBreakup?.mitigated > 0 && <span className="bg-green-500/15 text-green-400 px-1.5 py-0.5 rounded">{v.statusBreakup.mitigated} mitigated</span>}
+                            {v.statusBreakup?.accepted > 0 && <span className="bg-slate-500/15 text-slate-400 px-1.5 py-0.5 rounded">{v.statusBreakup.accepted} accepted</span>}
+                            {!v.statusBreakup?.open && !v.statusBreakup?.mitigated && !v.statusBreakup?.in_progress && !v.statusBreakup?.accepted && <span className="text-muted-foreground">—</span>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <Button size="sm" variant="ghost" className="h-6 text-xs" asChild>
+                            <Link href={`/tprm/vendors/${v.id}`}><Eye className="w-3 h-3 mr-1" />View</Link>
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

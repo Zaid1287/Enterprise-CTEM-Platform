@@ -250,20 +250,29 @@ export default function TprmVendorDetailPage() {
                 </Card>
               ))}
             </div>
-            {/* Insights from last scan */}
-            {criticalCount > 0 && (
-              <Card className="border-orange-500/30 bg-orange-500/5">
-                <CardContent className="py-3">
-                  <p className="text-xs font-semibold text-orange-300 mb-1.5">Insights from last scan</p>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {criticalCount > 0 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">{criticalCount} critical finding{criticalCount > 1 ? "s" : ""} require immediate attention</span>}
-                    {openFindings.filter((f: any) => f.severity === "high").length > 0 && <span className="bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded">{openFindings.filter((f: any) => f.severity === "high").length} high severity issues open</span>}
-                    {delta !== null && delta > 5 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">Risk score increased by {delta} points since last scan</span>}
-                    {delta !== null && delta < -5 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">Risk score improved by {Math.abs(delta)} points</span>}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {/* Insights from last scan — always show when any findings or score change */}
+            {(openFindings.length > 0 || mitigated.length > 0 || delta !== null) && (() => {
+              const highCount  = openFindings.filter((f: any) => f.severity === "high").length;
+              const medCount   = openFindings.filter((f: any) => f.severity === "medium").length;
+              const hasWarning = criticalCount > 0 || highCount > 0 || (delta !== null && delta > 5);
+              return (
+                <Card className={hasWarning ? "border-orange-500/30 bg-orange-500/5" : "border-green-500/30 bg-green-500/5"}>
+                  <CardContent className="py-3">
+                    <p className={`text-xs font-semibold mb-1.5 ${hasWarning ? "text-orange-300" : "text-green-300"}`}>Insights from last scan</p>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {criticalCount > 0 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">{criticalCount} critical finding{criticalCount > 1 ? "s" : ""} require immediate attention</span>}
+                      {highCount > 0 && <span className="bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded">{highCount} high severity issue{highCount > 1 ? "s" : ""} open</span>}
+                      {medCount > 0 && <span className="bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded">{medCount} medium severity issue{medCount > 1 ? "s" : ""}</span>}
+                      {mitigated.length > 0 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">{mitigated.length} issue{mitigated.length > 1 ? "s" : ""} mitigated</span>}
+                      {delta !== null && delta > 5 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">Risk score increased by {delta} points since last scan</span>}
+                      {delta !== null && delta < -5 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">Risk score improved by {Math.abs(delta)} points</span>}
+                      {delta !== null && delta >= -5 && delta <= 5 && <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded">Risk score stable (Δ {delta >= 0 ? "+" : ""}{delta})</span>}
+                      {openFindings.length === 0 && mitigated.length === 0 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">No open findings — clean scan</span>}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
           </div>
         );
       })()}

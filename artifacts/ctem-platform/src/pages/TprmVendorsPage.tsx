@@ -4,14 +4,15 @@ import { apiFetch } from "@/lib/apiFetch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
-import { Plus, Search, RefreshCw, Building2, Loader2, Globe, LayoutGrid, LayoutList, ExternalLink } from "lucide-react";
+import { Plus, Search, RefreshCw, Building2, Loader2, Globe, LayoutGrid, LayoutList, ExternalLink, TrendingUp } from "lucide-react";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, BarChart, Bar, Cell } from "recharts";
 
 const VENDOR_TYPES = [
   { value: "service_provider",  label: "Service Provider" },
@@ -85,6 +86,9 @@ export default function TprmVendorsPage() {
   const [form, setForm]         = useState({ companyName: "", type: "service_provider", industry: "", description: "", inherentRisk: "medium", businessImpact: "5", scanFrequency: "weekly" });
   const [saving, setSaving]     = useState(false);
 
+  const [assetsSummary, setAssetsSummary] = useState<{ domains: number; subdomains: number; ipAddresses: number; webApps: number; mobileApps: number } | null>(null);
+  const [timeline, setTimeline] = useState<{ weeks: { label: string; assetCount: number; issueCount: number; vendorCount: number }[]; topAssetTypes: { type: string; count: number }[] } | null>(null);
+
   const load = () => {
     setLoading(true);
     const params = new URLSearchParams({ page: String(page), limit: "30" });
@@ -97,6 +101,11 @@ export default function TprmVendorsPage() {
       .finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, [search, type, riskGrade, page]);
+
+  useEffect(() => {
+    apiFetch<any>("/api/tprm/vendors/assets-summary").then(setAssetsSummary).catch(() => {});
+    apiFetch<any>("/api/tprm/vendors/timeline").then(setTimeline).catch(() => {});
+  }, []);
 
   const handleEnrich = async () => {
     if (!domain.trim()) return;
@@ -157,6 +166,77 @@ export default function TprmVendorsPage() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      {/* Digital Assets Count */}
+      <div>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Digital Assets Count</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {[
+            { label: "Domains",     value: assetsSummary?.domains     ?? 0, color: "text-blue-400" },
+            { label: "Subdomains",  value: assetsSummary?.subdomains  ?? 0, color: "text-cyan-400" },
+            { label: "IP Addresses",value: assetsSummary?.ipAddresses ?? 0, color: "text-purple-400" },
+            { label: "Mobile Apps", value: assetsSummary?.mobileApps  ?? 0, color: "text-green-400" },
+            { label: "Web Apps",    value: assetsSummary?.webApps     ?? 0, color: "text-orange-400" },
+          ].map(k => (
+            <Card key={k.label} className="bg-card/60">
+              <CardContent className="pt-3 pb-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{k.label}</p>
+                {!assetsSummary ? <Skeleton className="h-7 w-12 mt-1" /> : <p className={`text-2xl font-bold mt-0.5 ${k.color}`}>{k.value}</p>}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* Attack Surface Timeline */}
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card className="md:col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-muted-foreground" />Attack Surface Timeline
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!timeline ? <Skeleton className="h-40" /> : (timeline.weeks.length < 2 || (timeline.weeks.every(w => w.assetCount === 0 && w.issueCount === 0))) ? (
+              <p className="text-xs text-muted-foreground py-8 text-center">No scan history yet — run vendor scans to populate the timeline</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={160}>
+                <LineChart data={timeline.weeks} margin={{ left: -10 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.08} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={30} />
+                  <Tooltip contentStyle={{ fontSize: 11 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="assetCount" name="Assets" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="issueCount" name="Open Issues" stroke="#ef4444" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="vendorCount" name="Vendors" stroke="#a855f7" strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Asset Types Discovered</CardTitle></CardHeader>
+          <CardContent>
+            {!timeline ? <Skeleton className="h-40" /> : !timeline.topAssetTypes?.length ? (
+              <p className="text-xs text-muted-foreground py-8 text-center">No assets discovered yet</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={timeline.topAssetTypes} layout="vertical" barSize={14} margin={{ left: 30 }}>
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="type" tick={{ fontSize: 10 }} width={70} />
+                  <Tooltip contentStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="count" name="Count" fill="#3b82f6" radius={[0, 3, 3, 0]}>
+                    {(timeline.topAssetTypes ?? []).map((_: any, i: number) => (
+                      <Cell key={i} fill={["#3b82f6","#a855f7","#06b6d4","#22c55e","#f97316"][i % 5]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Filters */}

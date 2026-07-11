@@ -385,6 +385,75 @@ router.post("/tprm/vendors", requireAuth, requireTprm, async (req: Authenticated
   }
 });
 
+// Static sub-paths MUST come before /tprm/vendors/:id to avoid param shadowing
+
+router.get("/tprm/vendors/assets-summary", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  try {
+    const vendorIds = (await db.select({ id: tprmVendorsTable.id }).from(tprmVendorsTable)
+      .where(or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!)).map(v => v.id);
+
+    if (vendorIds.length === 0) { res.json({ domains: 0, subdomains: 0, ipAddresses: 0, webApps: 0, mobileApps: 0 }); return; }
+
+    const rows = await db.select({ assetType: tprmVendorAssetsTable.assetType, count: sql<number>`count(*)::int` })
+      .from(tprmVendorAssetsTable).where(inArray(tprmVendorAssetsTable.vendorId, vendorIds)).groupBy(tprmVendorAssetsTable.assetType);
+
+    const out = { domains: 0, subdomains: 0, ipAddresses: 0, webApps: 0, mobileApps: 0 };
+    for (const r of rows) {
+      if (r.assetType === "domain")          out.domains     += r.count;
+      else if (r.assetType === "subdomain")  out.subdomains  += r.count;
+      else if (r.assetType === "ip")         out.ipAddresses += r.count;
+      else if (r.assetType === "web_app")    out.webApps     += r.count;
+      else if (r.assetType === "mobile_app") out.mobileApps  += r.count;
+    }
+    if (out.domains === 0) out.domains = vendorIds.length;
+    res.json(out);
+  } catch (err) {
+    logger.error({ err }, "TPRM assets-summary error");
+    res.status(500).json({ error: "Failed to load assets summary" });
+  }
+});
+
+router.get("/tprm/vendors/timeline", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  try {
+    const vendorIds = (await db.select({ id: tprmVendorsTable.id }).from(tprmVendorsTable)
+      .where(or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!)).map(v => v.id);
+
+    if (vendorIds.length === 0) { res.json({ weeks: [], topAssetTypes: [] }); return; }
+
+    const weeks: { label: string; assetCount: number; issueCount: number; vendorCount: number }[] = [];
+    const now = new Date();
+    for (let w = 7; w >= 0; w--) {
+      const weekEnd = new Date(now.getTime() - w * 7 * 86400000);
+      const label   = weekEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const [assetRow, issueRow, vendorRow] = await Promise.all([
+        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_assets WHERE vendor_id = ANY(${vendorIds}::int[]) AND created_at <= ${weekEnd}`),
+        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_findings WHERE vendor_id = ANY(${vendorIds}::int[]) AND created_at <= ${weekEnd} AND status = 'open'`),
+        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendors WHERE id = ANY(${vendorIds}::int[]) AND created_at <= ${weekEnd}`),
+      ]);
+      weeks.push({
+        label,
+        assetCount:  Number((assetRow.rows[0] as any)?.c ?? 0),
+        issueCount:  Number((issueRow.rows[0] as any)?.c ?? 0),
+        vendorCount: Number((vendorRow.rows[0] as any)?.c ?? 0),
+      });
+    }
+
+    const topTypeRows = await db.execute(sql`
+      SELECT asset_type, count(*)::int AS c FROM tprm_vendor_assets
+      WHERE vendor_id = ANY(${vendorIds}::int[])
+      GROUP BY asset_type ORDER BY c DESC LIMIT 5
+    `);
+    const topAssetTypes = (topTypeRows.rows as any[]).map(r => ({ type: r.asset_type, count: Number(r.c) }));
+
+    res.json({ weeks, topAssetTypes });
+  } catch (err) {
+    logger.error({ err }, "TPRM vendors timeline error");
+    res.status(500).json({ error: "Failed to load timeline" });
+  }
+});
+
 router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id);
@@ -638,13 +707,31 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
 
     if (vendorIds.length > 0) {
       const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
-      const [assets, findings, recentFindings, assetTypeCounts] = await Promise.all([
+      const [assets, findings, allFindings, recentFindings, assetTypeCounts, latestRiskScores, prevRiskScores] = await Promise.all([
         db.select({ assetType: tprmVendorAssetsTable.assetType, count: sql<number>`count(*)::int` })
           .from(tprmVendorAssetsTable).where(inArray(tprmVendorAssetsTable.vendorId, vendorIds)).groupBy(tprmVendorAssetsTable.assetType),
         db.select().from(tprmVendorFindingsTable).where(and(inArray(tprmVendorFindingsTable.vendorId, vendorIds), eq(tprmVendorFindingsTable.status, "open"))),
+        db.select().from(tprmVendorFindingsTable).where(inArray(tprmVendorFindingsTable.vendorId, vendorIds)),
         db.select().from(tprmVendorFindingsTable).where(and(inArray(tprmVendorFindingsTable.vendorId, vendorIds), sql`${tprmVendorFindingsTable.createdAt} >= ${sevenDaysAgo}`)),
         db.select({ vendorId: tprmVendorAssetsTable.vendorId, count: sql<number>`count(*)::int` })
           .from(tprmVendorAssetsTable).where(inArray(tprmVendorAssetsTable.vendorId, vendorIds)).groupBy(tprmVendorAssetsTable.vendorId),
+        // Latest risk score per vendor (rank=1)
+        db.execute(sql`
+          SELECT DISTINCT ON (vendor_id) vendor_id, overall_score, network_score, dns_score, web_app_score,
+            email_score, cloud_score, tls_score, info_leak_score, reputation_score, dark_web_mentions, calculated_at
+          FROM tprm_vendor_risk_scores
+          WHERE vendor_id = ANY(${vendorIds}::int[])
+          ORDER BY vendor_id, calculated_at DESC
+        `),
+        // 2nd latest score per vendor for score delta
+        db.execute(sql`
+          SELECT vendor_id, overall_score FROM (
+            SELECT vendor_id, overall_score, calculated_at,
+              ROW_NUMBER() OVER (PARTITION BY vendor_id ORDER BY calculated_at DESC) AS rn
+            FROM tprm_vendor_risk_scores
+            WHERE vendor_id = ANY(${vendorIds}::int[])
+          ) t WHERE rn = 2
+        `),
       ]);
 
       for (const a of assets) {
@@ -671,23 +758,51 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
       activeDataLeaks    = recentFindings.filter(f => f.severity === "critical" || f.severity === "high").length;
       activeSecurityRisks= findings.length;
 
-      // Per-vendor summary with incident/status counts
+      // Build per-vendor risk score maps
+      const latestScoreMap: Record<number, any> = {};
+      for (const r of (latestRiskScores.rows as any[])) latestScoreMap[Number(r.vendor_id)] = r;
+      const prevScoreMap: Record<number, number> = {};
+      for (const r of (prevRiskScores.rows as any[])) prevScoreMap[Number(r.vendor_id)] = Number(r.overall_score);
+
+      // Per-vendor summary with incident/status counts + security ratings
       const assetCountMap = Object.fromEntries(assetTypeCounts.map(a => [a.vendorId, a.count]));
       for (const v of allVendors) {
-        const vFindings = findings.filter(f => f.vendorId === v.id);
-        const vNewFindings = recentFindings.filter(f => f.vendorId === v.id);
+        const vFindings     = findings.filter(f => f.vendorId === v.id);
+        const vAllFindings  = allFindings.filter(f => f.vendorId === v.id);
+        const vNewFindings  = recentFindings.filter(f => f.vendorId === v.id);
+        const rs            = latestScoreMap[v.id];
+        const prevScore     = prevScoreMap[v.id] ?? null;
         const statusBreakup = {
-          open: vFindings.filter(f => f.status === "open").length,
-          mitigated: vFindings.filter(f => f.status === "mitigated").length,
+          open:      vFindings.filter(f => f.status === "open").length,
+          mitigated: vAllFindings.filter(f => f.status === "mitigated").length,
+          in_progress: vAllFindings.filter(f => f.status === "in_progress").length,
+          accepted:  vAllFindings.filter(f => f.status === "accepted_risk").length,
         };
+        // Security ratings per vendor
+        const externalAssets = assetCountMap[v.id] ?? 0;
+        const brandThreat    = rs ? Number(rs.reputation_score ?? 0) : vFindings.filter(f => f.category === "brand_threat").length;
+        const dataBreach     = rs ? Number(rs.info_leak_score ?? 0) : vFindings.filter(f => f.category === "info_leak").length;
+        const darkwebMentions= rs ? Number(rs.dark_web_mentions ?? 0) : (v.darkWebMentions ?? 0);
+        const socialMedia    = vFindings.filter(f => f.title?.toLowerCase().includes("social") || f.category === "social_media").length;
+        const fakeAds        = vFindings.filter(f => f.title?.toLowerCase().includes("fake") || f.title?.toLowerCase().includes("phish") || f.title?.toLowerCase().includes("typosquat")).length;
+        const scoreIncrease  = prevScore !== null ? v.riskScore - prevScore : 0;
         vendorSummaryData.push({
           id: v.id, companyName: v.companyName, riskGrade: v.riskGrade, riskScore: v.riskScore,
           assessmentType: v.assessmentType, status: v.status, domain: v.domain, logoUrl: v.logoUrl,
           incidents: vFindings.filter(f => f.severity === "critical" || f.severity === "high").length,
           newIssues: vNewFindings.length,
-          totalIssues: vFindings.length,
-          totalAssets: assetCountMap[v.id] ?? 0,
+          issuesSolved: vAllFindings.filter(f => f.status === "mitigated").length,
+          totalIssues: vAllFindings.length,
+          totalAssets: externalAssets,
           statusBreakup,
+          // Security ratings columns
+          externalAssets,
+          brandThreat,
+          dataBreach,
+          darkwebMentions,
+          socialMedia,
+          fakeAds,
+          scoreIncrease,
         });
       }
     }
