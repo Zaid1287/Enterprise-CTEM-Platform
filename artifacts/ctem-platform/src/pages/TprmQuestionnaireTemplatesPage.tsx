@@ -78,6 +78,8 @@ export default function TprmQuestionnaireTemplatesPage() {
   const [optionInput, setOptionInput]   = useState("");
   const [libOpen, setLibOpen]     = useState(false);
   const [libSelected, setLibSelected] = useState<Set<string>>(new Set());
+  const [dragIdx, setDragIdx]     = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -137,6 +139,27 @@ export default function TprmQuestionnaireTemplatesPage() {
     [next[idx], next[target]] = [next[target], next[idx]];
     setQuestions(next);
   };
+
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    setDragIdx(idx);
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (idx !== dragOverIdx) setDragOverIdx(idx);
+  };
+  const handleDrop = (e: React.DragEvent, toIdx: number) => {
+    e.preventDefault();
+    if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); setDragOverIdx(null); return; }
+    const next = [...questions];
+    const [moved] = next.splice(dragIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setQuestions(next);
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
+  const handleDragEnd = () => { setDragIdx(null); setDragOverIdx(null); };
 
   const removeQ = (idx: number) => setQuestions(q => q.filter((_, i) => i !== idx));
 
@@ -352,8 +375,16 @@ export default function TprmQuestionnaireTemplatesPage() {
                 ) : (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto border rounded-md p-2">
                     {questions.map((q, i) => (
-                      <div key={q.id} className="flex items-start gap-1.5 p-1.5 rounded hover:bg-accent/20 group">
-                        <GripVertical className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      <div
+                        key={q.id}
+                        draggable
+                        onDragStart={e => handleDragStart(e, i)}
+                        onDragOver={e => handleDragOver(e, i)}
+                        onDrop={e => handleDrop(e, i)}
+                        onDragEnd={handleDragEnd}
+                        className={`flex items-start gap-1.5 p-1.5 rounded hover:bg-accent/20 group transition-colors ${dragOverIdx === i && dragIdx !== i ? "border border-primary/50 bg-primary/5" : ""} ${dragIdx === i ? "opacity-40" : ""}`}
+                      >
+                        <GripVertical className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5 cursor-grab active:cursor-grabbing" />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs truncate">{q.text || <span className="text-muted-foreground italic">empty</span>}</p>
                           <div className="flex gap-1 mt-0.5 flex-wrap">

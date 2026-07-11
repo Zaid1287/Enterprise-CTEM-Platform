@@ -191,7 +191,7 @@ export default function TprmVendorDetailPage() {
       </div>
 
       {/* Score overview */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card className="bg-card/60 col-span-2 md:col-span-1">
           <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center h-full gap-1">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Overall Score</p>
@@ -208,6 +208,13 @@ export default function TprmVendorDetailPage() {
             </CardContent>
           </Card>
         ))}
+        <Card className="bg-card/50">
+          <CardContent className="pt-3 pb-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Dark Web Mentions</p>
+            <p className={`text-xl font-semibold ${(vendor.darkWebMentions ?? 0) > 0 ? "text-red-400" : ""}`}>{vendor.darkWebMentions ?? 0}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{vendor.assessmentType === "continuous" ? "Continuous" : vendor.assessmentType === "one_time" ? "One-Time" : "—"} scan</p>
+          </CardContent>
+        </Card>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -264,6 +271,9 @@ export default function TprmVendorDetailPage() {
                   ["Industry", vendor.industry], ["Location", vendor.location],
                   ["Company Type", vendor.companyType], ["Founded", vendor.founded],
                   ["Employees", vendor.employeeCount ? vendor.employeeCount.toLocaleString() : null],
+                  ["Market Cap", vendor.marketCap ?? null],
+                  ["Assessment Type", vendor.assessmentType === "continuous" ? "Continuous" : vendor.assessmentType === "one_time" ? "One-Time" : (vendor.assessmentType ?? null)],
+                  ["Scan Frequency", vendor.scanFrequency ? vendor.scanFrequency.charAt(0).toUpperCase() + vendor.scanFrequency.slice(1) : null],
                   ["Inherent Risk", vendor.inherentRisk], ["Business Impact", `${vendor.businessImpact}/10`],
                 ].filter(([, v]) => v).map(([k, v]) => (
                   <div key={k as string} className="flex justify-between">
