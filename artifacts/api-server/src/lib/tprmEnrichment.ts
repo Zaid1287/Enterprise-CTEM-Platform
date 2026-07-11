@@ -933,15 +933,17 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
 
     // Persist supply-chain topology nodes from scan probe
     try {
-      const scNodes: Array<{ vendorId: number; tenantId: number; name: string; nodeType: "domain" | "ip"; riskLevel: string; vulnerabilities: any }> = [];
-      scNodes.push({ vendorId, tenantId, name: domain, nodeType: "domain", riskLevel: breakdown.riskGrade === "A" || breakdown.riskGrade === "B" ? "low" : breakdown.riskGrade === "C" ? "medium" : "high", vulnerabilities: [] });
+      // nodeType taxonomy: software | saas | api | cdn | infra
+      // OSINT-derived nodes: apex domain and subdomains → "saas"; resolved IPs → "infra"
+      const scNodes: Array<{ vendorId: number; tenantId: number; name: string; nodeType: "saas" | "infra"; riskLevel: string; vulnerabilities: any }> = [];
+      scNodes.push({ vendorId, tenantId, name: domain, nodeType: "saas", riskLevel: breakdown.riskGrade === "A" || breakdown.riskGrade === "B" ? "low" : breakdown.riskGrade === "C" ? "medium" : "high", vulnerabilities: [] });
       for (const ip of probe.dns.a.slice(0, 5)) {
         const shodanEntry = probe.shodan.find(s => s.ip === ip);
         const vulns = shodanEntry?.vulns.slice(0, 10).map(v => ({ id: v })) ?? [];
-        scNodes.push({ vendorId, tenantId, name: ip, nodeType: "ip", riskLevel: vulns.length > 0 ? "high" : "low", vulnerabilities: vulns });
+        scNodes.push({ vendorId, tenantId, name: ip, nodeType: "infra", riskLevel: vulns.length > 0 ? "high" : "low", vulnerabilities: vulns });
       }
       for (const sub of probe.subdomains.slice(0, 15)) {
-        scNodes.push({ vendorId, tenantId, name: sub, nodeType: "domain", riskLevel: "low", vulnerabilities: [] });
+        scNodes.push({ vendorId, tenantId, name: sub, nodeType: "saas", riskLevel: "low", vulnerabilities: [] });
       }
       if (scNodes.length > 0) {
         await db.delete(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, tenantId), isNull(tprmSupplyChainNodesTable.sbomUploadId)));

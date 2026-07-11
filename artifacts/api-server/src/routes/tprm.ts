@@ -787,6 +787,11 @@ router.get("/tprm/respond/:token", async (req, res) => {
     const [q] = await db.select().from(tprmVendorQuestionnairesTable).where(eq(tprmVendorQuestionnairesTable.accessToken, token as any));
     if (!q) { res.status(404).json({ error: "Questionnaire not found or expired" }); return; }
     if (q.status === "expired") { res.status(410).json({ error: "This questionnaire link has expired" }); return; }
+    // Enforce due-date expiry: auto-expire and reject if past due and not yet completed
+    if (q.dueDate && new Date(q.dueDate) < new Date() && q.status !== "completed") {
+      await db.update(tprmVendorQuestionnairesTable).set({ status: "expired" }).where(eq(tprmVendorQuestionnairesTable.id, q.id));
+      res.status(410).json({ error: "This questionnaire link has expired (past due date)" }); return;
+    }
     const [template] = q.templateId ? await db.select().from(tprmQuestionnaireTemplatesTable).where(eq(tprmQuestionnaireTemplatesTable.id, q.templateId)) : [null];
     const [vendor] = await db.select({ id: tprmVendorsTable.id, companyName: tprmVendorsTable.companyName }).from(tprmVendorsTable).where(eq(tprmVendorsTable.id, q.vendorId));
     const rawQuestions: any[] = (template?.questions as any[]) ?? [];
@@ -813,18 +818,30 @@ router.post("/tprm/respond/:token", async (req, res) => {
     const [q] = await db.select().from(tprmVendorQuestionnairesTable).where(eq(tprmVendorQuestionnairesTable.accessToken, token as any));
     if (!q) { res.status(404).json({ error: "Questionnaire not found" }); return; }
     if (q.status === "completed") { res.status(409).json({ error: "Questionnaire already completed" }); return; }
+    if (q.status === "expired") { res.status(410).json({ error: "Questionnaire link has expired" }); return; }
+    // Enforce due-date: reject submission if past due
+    if (q.dueDate && new Date(q.dueDate) < new Date()) {
+      await db.update(tprmVendorQuestionnairesTable).set({ status: "expired" }).where(eq(tprmVendorQuestionnairesTable.id, q.id));
+      res.status(410).json({ error: "Questionnaire link has expired (past due date)" }); return;
+    }
 
-    // Auto-score: simple average of ratings, yes=100 no=0
+    // Weighted scoring: each question may carry a weight (default 1); sum(score*weight)/sum(weight)
     const [template] = q.templateId ? await db.select().from(tprmQuestionnaireTemplatesTable).where(eq(tprmQuestionnaireTemplatesTable.id, q.templateId)) : [null];
     const questions = (template?.questions as any[]) ?? [];
-    let totalScore = 0, scoredCount = 0;
+    let totalWeighted = 0, totalWeight = 0;
     for (const ans of (responses as any[]) ?? []) {
-      const q_def = questions.find((q: any) => q.id === ans.questionId);
+      const q_def = questions.find((qd: any) => qd.id === ans.questionId);
       if (!q_def) continue;
-      if (q_def.type === "boolean") { totalScore += ans.answer === true || ans.answer === "yes" ? 100 : 0; scoredCount++; }
-      else if (q_def.type === "rating") { totalScore += (parseInt(ans.answer) / 5) * 100; scoredCount++; }
+      const w = typeof q_def.weight === "number" && q_def.weight > 0 ? q_def.weight : 1;
+      if (q_def.type === "boolean") {
+        totalWeighted += (ans.answer === true || ans.answer === "yes" ? 100 : 0) * w;
+        totalWeight += w;
+      } else if (q_def.type === "rating") {
+        const rating = parseInt(String(ans.answer), 10);
+        if (!isNaN(rating)) { totalWeighted += (rating / 5) * 100 * w; totalWeight += w; }
+      }
     }
-    const score = scoredCount > 0 ? Math.round(totalScore / scoredCount) : 50;
+    const score = totalWeight > 0 ? Math.round(totalWeighted / totalWeight) : 50;
     const riskLevel = score >= 80 ? "low" : score >= 60 ? "medium" : score >= 40 ? "high" : "critical";
 
     await db.update(tprmVendorQuestionnairesTable).set({
@@ -836,13 +853,16 @@ router.post("/tprm/respond/:token", async (req, res) => {
       riskLevel,
     }).where(eq(tprmVendorQuestionnairesTable.id, q.id));
 
-    // Dispatch questionnaire completion alert
+    // Dispatch questionnaire completion notification through the full notification pipeline
+    // (inserts DB alert + fires tenant alert rules + platform fallbacks)
     try {
-      await db.insert(alertsTable).values({
+      const { dispatchNotifications } = await import("../lib/notifier");
+      const [v] = await db.select({ companyName: tprmVendorsTable.companyName }).from(tprmVendorsTable).where(eq(tprmVendorsTable.id, q.vendorId));
+      await dispatchNotifications({
         tenantId: q.tenantId,
-        title: `Questionnaire completed — vendor #${q.vendorId}`,
+        eventType: "tprm_questionnaire_completed",
+        title: `Questionnaire completed — ${v?.companyName ?? `vendor #${q.vendorId}`}`,
         message: `Security questionnaire completed${respondedBy ? ` by ${respondedBy}` : ""}. Score: ${score}/100 (${riskLevel} risk).`,
-        type: "tprm_questionnaire_completed",
         severity: riskLevel === "critical" ? "critical" : riskLevel === "high" ? "high" : "medium",
       });
     } catch { /* non-fatal */ }

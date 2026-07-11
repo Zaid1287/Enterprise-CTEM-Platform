@@ -1251,13 +1251,17 @@ async function dispatchTprmComplianceExpiryReminders(): Promise<void> {
       if (existing) continue;
 
       const [vendor] = await db.select({ companyName: tprmVendorsTable.companyName }).from(tprmVendorsTable).where(eq(tprmVendorsTable.id, doc.vendorId));
-      await db.insert(_alertsTable).values({
-        tenantId: doc.tenantId,
-        title: dedupeTitle,
-        message: `${doc.documentType.toUpperCase()} for "${vendor?.companyName ?? "Unknown"}" expires in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.`,
-        type: "tprm_compliance_expiry",
-        severity: daysLeft <= 3 ? "high" : daysLeft <= 7 ? "medium" : "low",
-      });
+      // Dispatch through the full notification pipeline (DB alert + tenant rules + email/Slack/webhook)
+      try {
+        const { dispatchNotifications } = await import("../lib/notifier");
+        await dispatchNotifications({
+          tenantId: doc.tenantId,
+          eventType: "tprm_compliance_expiry",
+          title: dedupeTitle,
+          message: `${doc.documentType.toUpperCase()} for "${vendor?.companyName ?? "Unknown"}" expires in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.`,
+          severity: daysLeft <= 3 ? "high" : daysLeft <= 7 ? "medium" : "low",
+        });
+      } catch { /* non-fatal */ }
       reminded++;
     }
     if (reminded > 0) logger.info({ reminded }, "Beat: TPRM compliance expiry reminders dispatched");
