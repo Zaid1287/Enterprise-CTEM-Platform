@@ -697,14 +697,19 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
 
     const breakdown = calculateVendorRiskScore(probe, null, compliancePenalty);
 
-    // Persist findings
+    // Persist findings — enrich CVE findings with EPSS/KEV first
     const rawFindings = buildFindingsFromProbe(probe);
     if (rawFindings.length > 0) {
+      let enriched = rawFindings as Array<typeof rawFindings[number] & { epss?: number | null; isKev?: boolean }>;
+      try {
+        const { enrichFindingsWithEpssKev } = await import("./epssKev");
+        enriched = await enrichFindingsWithEpssKev(rawFindings.map(f => ({ ...f, cve: f.cve ?? null }))) as typeof enriched;
+      } catch { /* non-fatal — proceed without enrichment */ }
       await db.delete(tprmVendorFindingsTable).where(
         and(eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, tenantId))
       );
       await db.insert(tprmVendorFindingsTable).values(
-        rawFindings.map(f => ({
+        enriched.map(f => ({
           vendorId, tenantId,
           title:       f.title,
           severity:    f.severity,
@@ -713,6 +718,8 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
           remediation: f.remediation,
           cvss:        f.cvss ?? null,
           cve:         f.cve ?? null,
+          epss:        f.epss ?? null,
+          isKev:       f.isKev ?? false,
         }))
       );
     }
