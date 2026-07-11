@@ -464,33 +464,158 @@ interface ScanWarning {
   timestamp: string;
 }
 
-function BrandAbuseTab({ abuse, warnings }: { abuse: any[]; warnings?: ScanWarning[] }) {
+const SOCIAL_PLATFORM_LINKS: { name: string; searchUrl: (brand: string) => string; color: string; bg: string; border: string }[] = [
+  {
+    name: "Twitter/X",
+    searchUrl: (b) => `https://twitter.com/search?q=%22${encodeURIComponent(b)}%22&f=user`,
+    color: "text-slate-300", bg: "bg-slate-500/10", border: "border-slate-500/25",
+  },
+  {
+    name: "Instagram",
+    searchUrl: (b) => `https://www.instagram.com/explore/search/?q=${encodeURIComponent(b)}`,
+    color: "text-pink-400", bg: "bg-pink-500/10", border: "border-pink-500/25",
+  },
+  {
+    name: "TikTok",
+    searchUrl: (b) => `https://www.tiktok.com/search/user?q=${encodeURIComponent(b)}`,
+    color: "text-cyan-400", bg: "bg-cyan-500/10", border: "border-cyan-500/25",
+  },
+  {
+    name: "Facebook",
+    searchUrl: (b) => `https://www.facebook.com/search/pages?q=${encodeURIComponent(b)}`,
+    color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/25",
+  },
+  {
+    name: "YouTube",
+    searchUrl: (b) => `https://www.youtube.com/results?search_query=${encodeURIComponent(b)}+official&sp=EgIQAg%3D%3D`,
+    color: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/25",
+  },
+  {
+    name: "LinkedIn",
+    searchUrl: (b) => `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(b)}`,
+    color: "text-sky-400", bg: "bg-sky-500/10", border: "border-sky-500/25",
+  },
+];
+
+function DiscoveredSubdomainsCard({ subdomains, pipelineScanId }: { subdomains: string[]; pipelineScanId: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const SHOW_LIMIT = 20;
+  const visible = expanded ? subdomains : subdomains.slice(0, SHOW_LIMIT);
+  return (
+    <div className="border border-border rounded-xl overflow-hidden bg-muted/10">
+      <button
+        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-muted/20 transition-colors"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <Globe className="w-4 h-4 text-blue-400 shrink-0" />
+        <span className="text-sm font-semibold">Discovered Subdomains</span>
+        <span className="text-[10px] text-blue-400/70 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded-full font-mono ml-1">
+          pipeline scan #{pipelineScanId}
+        </span>
+        <span className="ml-1 text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded-full">
+          {subdomains.length}
+        </span>
+        <div className="flex-1" />
+        <span className="text-xs text-muted-foreground mr-1">{subdomains.length} subdomain{subdomains.length !== 1 ? "s" : ""} enumerated</span>
+        {expanded
+          ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+          : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {expanded && (
+        <div className="border-t border-border px-5 py-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Subdomains discovered during the linked asset pipeline scan. Review for shadow IT, forgotten services, or subdomain takeover risks.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {visible.map(sub => (
+              <span key={sub} className="font-mono text-[11px] px-2 py-1 rounded-lg bg-blue-500/5 border border-blue-500/15 text-blue-300">
+                {sub}
+              </span>
+            ))}
+          </div>
+          {subdomains.length > SHOW_LIMIT && !expanded && (
+            <button onClick={() => setExpanded(true)} className="text-xs text-primary hover:underline">
+              +{subdomains.length - SHOW_LIMIT} more
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SocialPlatformMonitor({ scanDomain }: { scanDomain?: string }) {
+  const brand = scanDomain?.replace(/\.[^.]+$/, "") ?? "brand";
+  return (
+    <div className="border border-border rounded-xl p-5 bg-muted/10 space-y-4">
+      <div className="flex items-start gap-3">
+        <AtSign className="w-4 h-4 text-pink-400 shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold">Social Media Monitor</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Automated social platform scanning requires API tokens. Use the links below to manually investigate each platform for impersonating accounts or pages.
+          </p>
+        </div>
+        <a href="/settings/platform" className="text-[10px] text-primary hover:text-primary/80 shrink-0 flex items-center gap-1">
+          Configure APIs <ExternalLink className="w-2.5 h-2.5" />
+        </a>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {SOCIAL_PLATFORM_LINKS.map(p => (
+          <a
+            key={p.name}
+            href={p.searchUrl(brand)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all hover:scale-105",
+              p.color, p.bg, p.border,
+            )}
+          >
+            {p.name} <ExternalLink className="w-3 h-3 opacity-60" />
+          </a>
+        ))}
+      </div>
+      <p className="text-[10px] text-muted-foreground/50">
+        Search for <span className="font-mono text-muted-foreground">"{brand}"</span> on each platform to find impersonating accounts, squatted pages, or brand-abuse content.
+        To enable automated scanning, configure Twitter/X Bearer Token, Instagram Graph Token, TikTok Research Token, or YouTube API Key in{" "}
+        <a href="/settings/platform" className="text-primary hover:underline">Platform Settings → Brand Intelligence</a>.
+      </p>
+    </div>
+  );
+}
+
+function BrandAbuseTab({ abuse, warnings, scanDomain }: { abuse: any[]; warnings?: ScanWarning[]; scanDomain?: string }) {
   const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
+  const socialResults = abuse.filter(r => r.type === "fake_social");
 
   if (!abuse.length) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-center">
-        <Shield className="w-10 h-10 text-green-400/40 mb-3" />
-        <p className="text-base font-semibold text-green-400">No brand abuse found</p>
-        <p className="text-sm text-muted-foreground mt-1">
-          Certificate transparency, DNS lookalike, and app store checks found no brand abuse.
-        </p>
-        {activeWarnings.length > 0 && (
-          <div className="mt-6 w-full max-w-lg text-left space-y-2">
-            {activeWarnings.map((w, i) => (
-              <div key={i} className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-semibold text-amber-300">{w.platform} rate limited</p>
-                  <p className="text-xs text-amber-200/80 mt-0.5">{w.message}</p>
+      <div className="p-6 space-y-5">
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Shield className="w-10 h-10 text-green-400/40 mb-3" />
+          <p className="text-base font-semibold text-green-400">No brand abuse found</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Certificate transparency, DNS lookalike, and app store checks found no brand abuse.
+          </p>
+          {activeWarnings.length > 0 && (
+            <div className="mt-6 w-full max-w-lg text-left space-y-2">
+              {activeWarnings.map((w, i) => (
+                <div key={i} className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-amber-300">{w.platform} rate limited</p>
+                    <p className="text-xs text-amber-200/80 mt-0.5">{w.message}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+          <div className="mt-4">
+            <SocialSourceBadges />
           </div>
-        )}
-        <div className="mt-4">
-          <SocialSourceBadges />
         </div>
+        <SocialPlatformMonitor scanDomain={scanDomain} />
       </div>
     );
   }
@@ -687,6 +812,11 @@ function BrandAbuseTab({ abuse, warnings }: { abuse: any[]; warnings?: ScanWarni
           </div>
         </div>
       ))}
+
+      {/* Social platform monitor — always shown when no automated social results */}
+      {socialResults.length === 0 && (
+        <SocialPlatformMonitor scanDomain={scanDomain} />
+      )}
     </div>
   );
 }
@@ -1744,6 +1874,26 @@ export default function BrandThreatDetailPage() {
         );
       })()}
 
+      {/* ── Favicon Intelligence — standalone card ────────────────────────────── */}
+      {s.status === "done" && (s.faviconMd5 || s.favihunterStatus === "running" || s.favihunterStatus === "pending") && (
+        <div className="mx-6 mt-4 shrink-0 space-y-3">
+          <FaviconIntelPanel scan={s} />
+          {((s.faviconShodanMatches as any[] | null)?.length ?? 0) > 0 && (
+            <ShodanFaviconPanel matches={s.faviconShodanMatches as any[]} />
+          )}
+        </div>
+      )}
+
+      {/* ── Discovered Subdomains — from pipeline scan ──────────────────────── */}
+      {s.status === "done" && ((s.pipelineSubdomains as string[] | null)?.length ?? 0) > 0 && (
+        <div className="mx-6 mt-4 shrink-0">
+          <DiscoveredSubdomainsCard
+            subdomains={s.pipelineSubdomains as string[]}
+            pipelineScanId={s.pipelineScanId as number}
+          />
+        </div>
+      )}
+
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       {s.status === "done" && (
         <div className="px-6 pt-4 shrink-0">
@@ -1798,7 +1948,7 @@ export default function BrandThreatDetailPage() {
         {/* ── BRAND ABUSE tab ── */}
         {activeTab === "brand_abuse" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <BrandAbuseTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} />
+            <BrandAbuseTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanDomain={s.domain} />
           </div>
         )}
 
@@ -2361,15 +2511,6 @@ export default function BrandThreatDetailPage() {
                   </div>
                 )}
 
-                {/* ── Favicon Intelligence — full-width below domain permutations ── */}
-                {(s.faviconMd5 || s.favihunterStatus === "running" || s.favihunterStatus === "pending") && (
-                  <div className="px-5 py-4 border-t border-border space-y-3">
-                    <FaviconIntelPanel scan={s} />
-                    {s.faviconShodanMatches?.length > 0 && (
-                      <ShodanFaviconPanel matches={s.faviconShodanMatches} />
-                    )}
-                  </div>
-                )}
               </div>
 
               {totalPages > 1 && (

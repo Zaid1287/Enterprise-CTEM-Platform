@@ -10,6 +10,7 @@ import {
   platformSettingsTable,
   assetsTable,
   brandThreatSchedulesTable,
+  scanAssetResultsTable,
 } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { runBrandThreatScan } from "../lib/brandThreatRunner";
@@ -290,6 +291,23 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
   }
   const scanHistory = Object.values(scanRounds).sort((a, b) => new Date(b.archivedAt).getTime() - new Date(a.archivedAt).getTime());
 
+  // Fetch discovered subdomains from the linked pipeline scan (if any)
+  let pipelineSubdomains: string[] = [];
+  if (scan.pipelineScanId) {
+    const sarRows = await db.select({ subdomains: scanAssetResultsTable.subdomains })
+      .from(scanAssetResultsTable)
+      .where(eq(scanAssetResultsTable.scanId, scan.pipelineScanId));
+    const allSubs = new Set<string>();
+    for (const row of sarRows) {
+      if (Array.isArray(row.subdomains)) {
+        for (const sub of row.subdomains as unknown[]) {
+          if (typeof sub === "string" && sub.trim()) allSubs.add(sub.toLowerCase().trim());
+        }
+      }
+    }
+    pipelineSubdomains = Array.from(allSubs).sort();
+  }
+
   const metaAdsChecked = !!(metaAdsSetting[0]?.value);
   res.json({
     ...toScanResponse(scan),
@@ -300,6 +318,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
     brandAbuse: brandAbuse.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     adMonitoringResults: adMonitoring.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
     scanHistory,
+    pipelineSubdomains,
   });
 });
 
