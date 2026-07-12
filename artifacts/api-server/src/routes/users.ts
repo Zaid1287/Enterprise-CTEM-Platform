@@ -31,7 +31,7 @@ function toUserResponse(u: typeof usersTable.$inferSelect, tenantName?: string) 
 router.get("/users", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { role, tenantId, userId } = req.user!;
 
-  if (role === "super_admin") {
+  if (role === "super_admin" || role === "admin") {
     const users = await db.select().from(usersTable).orderBy(usersTable.createdAt);
     const tIds = [...new Set(users.map(u => u.tenantId))];
     const tenants = tIds.length > 0
@@ -105,7 +105,7 @@ router.get("/users/:userId", requireAuth, async (req: AuthenticatedRequest, res)
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const { role, tenantId } = req.user!;
 
-  if (role === "super_admin") {
+  if (role === "super_admin" || role === "admin") {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, params.data.userId));
     if (!user) { res.status(404).json({ error: "User not found" }); return; }
     const [tenant] = await db.select({ name: tenantsTable.name }).from(tenantsTable).where(eq(tenantsTable.id, user.tenantId));
@@ -139,16 +139,13 @@ router.patch("/users/:userId", requireAuth, async (req: AuthenticatedRequest, re
   }
   if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
 
-  // Super admin only fields
-  if (role === "super_admin") {
+  // Super admin + admin: can update email, password, disable 2FA
+  if (role === "super_admin" || role === "admin") {
     if (body.email !== undefined && String(body.email).trim()) {
       updateData.email = String(body.email).trim().toLowerCase();
     }
     if (body.newPassword !== undefined && String(body.newPassword).length >= 8) {
       updateData.passwordHash = await hashPassword(String(body.newPassword));
-    }
-    if (body.tenantId !== undefined && body.tenantId !== "") {
-      updateData.tenantId = Number(body.tenantId);
     }
     if (body.twoFactorEnabled === false) {
       updateData.twoFactorEnabled = false;
@@ -157,11 +154,18 @@ router.patch("/users/:userId", requireAuth, async (req: AuthenticatedRequest, re
     }
   }
 
+  // Super admin only: can reassign tenant
+  if (role === "super_admin") {
+    if (body.tenantId !== undefined && body.tenantId !== "") {
+      updateData.tenantId = Number(body.tenantId);
+    }
+  }
+
   if (Object.keys(updateData).length === 0) {
     res.status(400).json({ error: "No valid fields to update" }); return;
   }
 
-  const whereClause = role === "super_admin"
+  const whereClause = (role === "super_admin" || role === "admin")
     ? eq(usersTable.id, params.data.userId)
     : and(eq(usersTable.id, params.data.userId), eq(usersTable.tenantId, tenantId));
 
@@ -169,7 +173,7 @@ router.patch("/users/:userId", requireAuth, async (req: AuthenticatedRequest, re
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
   await logAudit(req.user! as any, "update_user", "user", user.id);
 
-  const [tenant] = role === "super_admin"
+  const [tenant] = (role === "super_admin" || role === "admin")
     ? await db.select({ name: tenantsTable.name }).from(tenantsTable).where(eq(tenantsTable.id, user.tenantId))
     : [];
   res.json(toUserResponse(user, (tenant as any)?.name));
@@ -180,7 +184,7 @@ router.delete("/users/:userId", requireAuth, async (req: AuthenticatedRequest, r
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const { role, tenantId } = req.user!;
 
-  const whereClause = role === "super_admin"
+  const whereClause = (role === "super_admin" || role === "admin")
     ? eq(usersTable.id, params.data.userId)
     : and(eq(usersTable.id, params.data.userId), eq(usersTable.tenantId, tenantId));
 

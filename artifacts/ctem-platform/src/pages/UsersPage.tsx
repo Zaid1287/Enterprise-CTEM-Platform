@@ -28,7 +28,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const ROLE_OPTIONS: Record<string, string[]> = {
   super_admin: ["super_admin", "admin", "account_manager", "client"],
-  admin: ["admin", "client"],
+  admin: ["admin", "account_manager", "client"],
   account_manager: ["client"],
   client: [],
 };
@@ -77,6 +77,7 @@ export default function UsersPage() {
   const role = me?.role ?? "client";
   const allowedRoles = ROLE_OPTIONS[role] ?? [];
   const isSuperAdmin = role === "super_admin";
+  const isAdminOrSA = role === "super_admin" || role === "admin";
   const { toast } = useToast();
 
   const [showCreate, setShowCreate] = useState(false);
@@ -111,8 +112,8 @@ export default function UsersPage() {
   const createUser = useCreateUser();
   const deleteUser = useDeleteUser();
 
-  const needsTenantId = (role === "super_admin" || role === "account_manager") &&
-    (form.role === "admin" || form.role === "client");
+  const needsTenantId = (role === "super_admin" || role === "account_manager" || role === "admin") &&
+    (form.role === "admin" || form.role === "client" || form.role === "account_manager");
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,15 +149,17 @@ export default function UsersPage() {
         role: editState.role,
         isActive: editState.isActive,
       };
-      if (isSuperAdmin) {
+      if (isAdminOrSA) {
         body.email = editState.email;
-        body.tenantId = editState.tenantId;
         if (!editState.twoFactorEnabled && editUser.twoFactorEnabled) {
           body.twoFactorEnabled = false;
         }
         if (editState.newPassword.length >= 8) {
           body.newPassword = editState.newPassword;
         }
+      }
+      if (isSuperAdmin) {
+        body.tenantId = editState.tenantId;
       }
       await apiFetch(`${BASE}/api/users/${editUser.id}`, {
         method: "PATCH",
@@ -232,7 +235,7 @@ export default function UsersPage() {
   };
 
   const userList = Array.isArray(users) ? users as any[] : [];
-  const showTenantCol = role === "super_admin" || role === "account_manager";
+  const showTenantCol = role === "super_admin" || role === "admin" || role === "account_manager";
 
   const stats = {
     total: userList.length,
@@ -248,7 +251,7 @@ export default function UsersPage() {
         <div>
           <h1 className="text-lg font-semibold">User Management</h1>
           <p className="text-sm text-muted-foreground">
-            {isSuperAdmin ? "All users across every tenant" :
+            {isAdminOrSA ? "All users across every tenant" :
               role === "account_manager" ? "Users in your assigned client tenants" :
               "Users in your organization"}
           </p>
@@ -624,15 +627,15 @@ export default function UsersPage() {
                 <div className="space-y-1.5">
                   <Label className="text-xs flex items-center gap-1">
                     <Mail className="w-3 h-3" /> Email Address
-                    {!isSuperAdmin && <span className="text-muted-foreground">(read-only)</span>}
+                    {!isAdminOrSA && <span className="text-muted-foreground">(read-only)</span>}
                   </Label>
                   <Input
                     type="email"
                     value={editState.email}
                     onChange={e => setEditState(p => ({ ...p, email: e.target.value }))}
                     className="h-9"
-                    readOnly={!isSuperAdmin}
-                    disabled={!isSuperAdmin}
+                    readOnly={!isAdminOrSA}
+                    disabled={!isAdminOrSA}
                   />
                 </div>
               </div>
@@ -688,8 +691,8 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              {/* Security — super_admin only */}
-              {isSuperAdmin && (
+              {/* Security — admin + super_admin */}
+              {isAdminOrSA && (
                 <div className="space-y-3">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <Key className="w-3.5 h-3.5" /> Security
