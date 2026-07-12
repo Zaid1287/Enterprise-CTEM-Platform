@@ -7,11 +7,10 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
-// All CDN-whitelist endpoints are super_admin only.
-router.use(requireAuth, requireRole("super_admin"));
-
 // ── GET /cdn-whitelist ────────────────────────────────────────────────────────
-router.get("/cdn-whitelist", async (_req: AuthenticatedRequest, res): Promise<void> => {
+// All CDN-whitelist endpoints are super_admin only — applied per-route so this
+// middleware does NOT intercept requests destined for other routers (e.g. aiMapper).
+router.get("/cdn-whitelist", requireAuth, requireRole("super_admin"), async (_req: AuthenticatedRequest, res): Promise<void> => {
   try {
     const rows = await db
       .select()
@@ -25,7 +24,7 @@ router.get("/cdn-whitelist", async (_req: AuthenticatedRequest, res): Promise<vo
 });
 
 // ── POST /cdn-whitelist ───────────────────────────────────────────────────────
-router.post("/cdn-whitelist", async (req: AuthenticatedRequest, res): Promise<void> => {
+router.post("/cdn-whitelist", requireAuth, requireRole("super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const { label, cidr, description } = req.body ?? {};
   if (!label || !cidr) {
     res.status(400).json({ error: "label and cidr are required" });
@@ -55,7 +54,7 @@ router.post("/cdn-whitelist", async (req: AuthenticatedRequest, res): Promise<vo
 });
 
 // ── PATCH /cdn-whitelist/:id ──────────────────────────────────────────────────
-router.patch("/cdn-whitelist/:id", async (req: AuthenticatedRequest, res): Promise<void> => {
+router.patch("/cdn-whitelist/:id", requireAuth, requireRole("super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
@@ -90,7 +89,7 @@ router.patch("/cdn-whitelist/:id", async (req: AuthenticatedRequest, res): Promi
 });
 
 // ── DELETE /cdn-whitelist/:id ─────────────────────────────────────────────────
-router.delete("/cdn-whitelist/:id", async (req: AuthenticatedRequest, res): Promise<void> => {
+router.delete("/cdn-whitelist/:id", requireAuth, requireRole("super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
