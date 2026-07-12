@@ -167,16 +167,29 @@ router.post("/ai-mapper/scans", requireAuth, requireAiMapper, async (req: Authen
 });
 
 router.get("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const tenantId = req.user!.tenantId;
-  const [scan] = await db.select().from(aiMapperScansTable).where(and(eq(aiMapperScansTable.id, Number(req.params.id)), eq(aiMapperScansTable.tenantId, tenantId)));
+  const { role, tenantId } = req.user!;
+  const isPrivileged = role === "admin" || role === "super_admin";
+  const scanId = Number(req.params.id);
+  const cond = isPrivileged
+    ? eq(aiMapperScansTable.id, scanId)
+    : and(eq(aiMapperScansTable.id, scanId), eq(aiMapperScansTable.tenantId, tenantId));
+  const [scan] = await db.select().from(aiMapperScansTable).where(cond);
   if (!scan) { res.status(404).json({ error: "Not found" }); return; }
-  const endpoints = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.scanId, scan.id), eq(aiMapperEndpointsTable.tenantId, tenantId))).orderBy(desc(aiMapperEndpointsTable.riskScore)).limit(200);
+  const epCond = isPrivileged
+    ? eq(aiMapperEndpointsTable.scanId, scan.id)
+    : and(eq(aiMapperEndpointsTable.scanId, scan.id), eq(aiMapperEndpointsTable.tenantId, tenantId));
+  const endpoints = await db.select().from(aiMapperEndpointsTable).where(epCond).orderBy(desc(aiMapperEndpointsTable.riskScore)).limit(200);
   res.json({ ...scan, endpoints });
 });
 
 router.delete("/ai-mapper/scans/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const tenantId = req.user!.tenantId;
-  await db.update(aiMapperScansTable).set({ status: "cancelled", completedAt: new Date() }).where(and(eq(aiMapperScansTable.id, Number(req.params.id)), eq(aiMapperScansTable.tenantId, tenantId)));
+  const { role, tenantId } = req.user!;
+  const isPrivileged = role === "admin" || role === "super_admin";
+  const scanId = Number(req.params.id);
+  const cond = isPrivileged
+    ? eq(aiMapperScansTable.id, scanId)
+    : and(eq(aiMapperScansTable.id, scanId), eq(aiMapperScansTable.tenantId, tenantId));
+  await db.update(aiMapperScansTable).set({ status: "cancelled", completedAt: new Date() }).where(cond);
   res.json({ ok: true });
 });
 
@@ -255,9 +268,19 @@ router.get("/ai-mapper/endpoints/:id", requireAuth, requireAiMapper, async (req:
 // ── Scan Schedules ────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/scan-schedules", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  const isPrivileged = role === "admin" || role === "super_admin" || role === "account_manager";
   const scopeIds = await getAiScopeTenantIds(req);
   const cond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperScanSchedulesTable.tenantId, scopeIds) : sql`false`;
-  res.json(await db.select().from(aiMapperScanSchedulesTable).where(cond).orderBy(desc(aiMapperScanSchedulesTable.createdAt)));
+  const schedules = await db.select().from(aiMapperScanSchedulesTable).where(cond).orderBy(desc(aiMapperScanSchedulesTable.createdAt));
+  if (isPrivileged) {
+    const ids = [...new Set(schedules.map(s => s.tenantId))];
+    const tenants = ids.length ? await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).where(inArray(tenantsTable.id, ids)) : [];
+    const tm = Object.fromEntries(tenants.map(t => [t.id, t.name]));
+    res.json(schedules.map(s => ({ ...s, tenantName: tm[s.tenantId] ?? `Tenant #${s.tenantId}` })));
+  } else {
+    res.json(schedules);
+  }
 });
 
 router.post("/ai-mapper/scan-schedules", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {

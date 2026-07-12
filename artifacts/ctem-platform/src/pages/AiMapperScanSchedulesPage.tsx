@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { CalendarClock, Plus, Pencil, Trash2, Play, Loader2, Clock } from "lucide-react";
+import { CalendarClock, Plus, Pencil, Trash2, Play, Loader2, Clock, Building2 } from "lucide-react";
 
 interface Schedule {
   id: number;
@@ -24,6 +25,7 @@ interface Schedule {
   cidrScope: string | null;
   queryPresets: string[];
   createdAt: string;
+  tenantName?: string;
 }
 
 const FREQ_LABELS: Record<string, string> = {
@@ -109,6 +111,8 @@ function ScheduleForm({
 
 export default function AiMapperScanSchedulesPage() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isAdminOrSA = user?.role === "admin" || user?.role === "super_admin";
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState<Schedule | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null);
@@ -179,7 +183,7 @@ export default function AiMapperScanSchedulesPage() {
               <Card key={sch.id} className={`bg-card/60 border-border/40 transition-opacity ${!sch.isActive ? "opacity-60" : ""}`}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
                       <CardTitle className="text-base font-semibold text-white">{sch.name}</CardTitle>
                       <Badge variant={sch.isActive ? "default" : "secondary"} className="text-xs">
                         {sch.isActive ? "Active" : "Paused"}
@@ -187,6 +191,11 @@ export default function AiMapperScanSchedulesPage() {
                       <Badge variant="outline" className="text-xs">
                         <Clock className="w-3 h-3 mr-1" />{FREQ_LABELS[sch.frequency] ?? sch.frequency}
                       </Badge>
+                      {isAdminOrSA && sch.tenantName && (
+                        <Badge variant="outline" className="text-xs text-violet-400 border-violet-500/40">
+                          <Building2 className="w-3 h-3 mr-1" />{sch.tenantName}
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch

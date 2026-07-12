@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
+import { useAuth } from "@/hooks/useAuth";
 import { useAiMapperWs } from "@/hooks/useAiMapperWs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Trash2, Eye, Play, Clock, CheckCircle2, XCircle, Loader2,
-  Server, Target, Search, ChevronRight, MapPin,
+  Server, Target, Search, ChevronRight, MapPin, Building2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,7 @@ interface AiMapperScan {
   totalHosts?: number; liveHosts?: number; scannedHosts?: number;
   endpointCount?: number; queryPresets?: string[]; cidrScope?: string;
   createdAt: string; startedAt?: string; completedAt?: string;
+  tenantName?: string;
 }
 
 interface ShodanPreset {
@@ -78,6 +80,8 @@ interface Asset {
 export default function AiMapperScansPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdminOrSA = user?.role === "admin" || user?.role === "super_admin";
   const qc = useQueryClient();
 
   const [wsConnectedSet, setWsConnectedSet] = useState<Set<number>>(new Set());
@@ -257,7 +261,14 @@ export default function AiMapperScansPage() {
                         <div className={cn("w-2 h-2 rounded-full", STATUS_COLOR[scan.status] ?? "bg-slate-400")} />
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-medium truncate max-w-56">{scan.title}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium truncate max-w-56">{scan.title}</p>
+                          {isAdminOrSA && scan.tenantName && (
+                            <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 shrink-0">
+                              <Building2 className="w-3 h-3" />{scan.tenantName}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground capitalize flex items-center gap-1 mt-0.5">
                           <Icon className={cn("w-3 h-3", scan.status === "running" && "animate-spin")} />
                           {scan.status}

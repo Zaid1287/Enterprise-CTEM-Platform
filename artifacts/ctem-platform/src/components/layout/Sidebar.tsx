@@ -178,6 +178,7 @@ export function Sidebar() {
     { label: "Scans",      href: "/ai-mapper/scans",      icon: Radar        },
     { label: "AI BOM",     href: "/ai-mapper/bom",        icon: ClipboardList },
     ...(isAM ? [{ label: "My Clients", href: "/ai-mapper/clients", icon: Users }] : []),
+    ...(isAdminOrSA ? [{ label: "Scan Schedules", href: "/ai-mapper/scan-schedules", icon: Activity }] : []),
     ...(isAdminOrSA ? [{ label: "Admin Overview", href: "/ai-mapper/admin", icon: ShieldAlert }] : []),
   ] : [];
 
