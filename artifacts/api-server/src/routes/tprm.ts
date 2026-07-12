@@ -61,7 +61,7 @@ async function getVendorScopeTenantIds(req: AuthenticatedRequest): Promise<numbe
   }
   if (role === "account_manager") {
     const ids = await getAmClientTenantIds(userId);
-    return ids.length > 0 ? ids : [tenantId];
+    return [...new Set([tenantId, ...ids])]; // own platform tenant + all assigned client tenants
   }
   return [tenantId];
 }
@@ -127,8 +127,7 @@ router.patch("/tprm/module", requireAuth, async (req: AuthenticatedRequest, res)
   const { role, tenantId: callerTenantId } = req.user!;
   if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   const requestedTenantId = req.body.tenantId ? Number(req.body.tenantId) : callerTenantId;
-  const targetTenantId = role === "super_admin" ? requestedTenantId : callerTenantId;
-  if (role === "admin" && requestedTenantId !== callerTenantId) { res.status(403).json({ error: "Admins can only toggle their own tenant" }); return; }
+  const targetTenantId = requestedTenantId; // both admin and super_admin can toggle any tenant
   const isEnabled = !!req.body.isEnabled;
   await db.insert(tprmModuleAssignmentsTable)
     .values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })
@@ -154,7 +153,7 @@ router.patch("/tprm/client/:tenantId/module", requireAuth, async (req: Authentic
 
 router.get("/tprm/admin/global-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
-  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   try {
     const vendors = await db.select().from(tprmVendorsTable)
       .where(eq(tprmVendorsTable.isGlobal, true))
@@ -168,7 +167,7 @@ router.get("/tprm/admin/global-vendors", requireAuth, async (req: AuthenticatedR
 
 router.post("/tprm/admin/global-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role, tenantId, userId } = req.user!;
-  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   const { companyName, domain, type, industry, description } = req.body;
   if (!companyName || !domain) { res.status(400).json({ error: "companyName and domain are required" }); return; }
   try {
@@ -198,7 +197,7 @@ router.post("/tprm/admin/global-vendors", requireAuth, async (req: Authenticated
 
 router.patch("/tprm/admin/global-vendors/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
-  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   const vendorId = parseInt(req.params.id as string);
   const { companyName, type, industry, description, status } = req.body;
   try {
@@ -221,7 +220,7 @@ router.patch("/tprm/admin/global-vendors/:id", requireAuth, async (req: Authenti
 
 router.delete("/tprm/admin/global-vendors/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
-  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   const vendorId = parseInt(req.params.id as string);
   try {
     const [existing] = await db.select().from(tprmVendorsTable).where(and(eq(tprmVendorsTable.id, vendorId), eq(tprmVendorsTable.isGlobal, true)));
@@ -239,7 +238,7 @@ router.delete("/tprm/admin/global-vendors/:id", requireAuth, async (req: Authent
 
 router.get("/tprm/admin/all-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
-  if (role !== "super_admin") { res.status(403).json({ error: "super_admin only" }); return; }
+  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   try {
     const vendors = await db
       .select({
@@ -268,12 +267,10 @@ router.get("/tprm/admin/all-vendors", requireAuth, async (req: AuthenticatedRequ
 // ── Admin overview ─────────────────────────────────────────────────────────────
 
 router.get("/tprm/admin/overview", requireAuth, async (req: AuthenticatedRequest, res) => {
-  const { role, tenantId: callerTenantId } = req.user!;
+  const { role } = req.user!;
   if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   try {
-    const tenants = role === "super_admin"
-      ? await db.select().from(tenantsTable)
-      : await db.select().from(tenantsTable).where(eq(tenantsTable.id, callerTenantId));
+    const tenants = await db.select().from(tenantsTable); // both admin and super_admin see all tenants
     const moduleRows = await db.select().from(tprmModuleAssignmentsTable);
     const moduleMap: Record<number, boolean> = {};
     for (const r of moduleRows) moduleMap[r.tenantId] = r.isEnabled ?? false;

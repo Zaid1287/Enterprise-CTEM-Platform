@@ -60,7 +60,7 @@ const RISK_GRADE_COLOR: Record<string, string> = {
 
 export default function TprmAdminPage() {
   const { user } = useAuth();
-  const isSA = user?.role === "super_admin";
+  const isAdminOrSA = user?.role === "super_admin" || user?.role === "admin";
 
   const [tab, setTab] = useState<Tab>("module");
 
@@ -210,12 +210,12 @@ export default function TprmAdminPage() {
         <button className={tabClass("module")} onClick={() => setTab("module")}>
           <span className="flex items-center gap-1.5"><Shield className="w-4 h-4" />Module Settings</span>
         </button>
-        {isSA && (
+        {isAdminOrSA && (
           <button className={tabClass("global_library")} onClick={() => setTab("global_library")}>
             <span className="flex items-center gap-1.5"><Globe className="w-4 h-4" />Global Vendor Library</span>
           </button>
         )}
-        {isSA && (
+        {isAdminOrSA && (
           <button className={tabClass("all_vendors")} onClick={() => setTab("all_vendors")}>
             <span className="flex items-center gap-1.5"><LayoutList className="w-4 h-4" />All Vendors</span>
           </button>
@@ -225,31 +225,8 @@ export default function TprmAdminPage() {
       {/* ── Tab: Module Settings ── */}
       {tab === "module" && (
         <div className="space-y-4">
-          {/* Own tenant toggle for admins */}
-          {user?.role === "admin" && (
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Your Organization</CardTitle></CardHeader>
-              <CardContent className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium">Enable TPRM Module</p>
-                  <p className="text-xs text-muted-foreground">Enable Third Party Risk Management for your organization</p>
-                </div>
-                {loadingOv ? <Skeleton className="h-6 w-12" /> : (
-                  <div className="flex items-center gap-2">
-                    {toggling === user.tenantId && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-                    <Switch
-                      checked={overview?.tenants.find(t => t.tenantId === user.tenantId)?.isEnabled ?? false}
-                      onCheckedChange={() => toggle(user.tenantId, overview?.tenants.find(t => t.tenantId === user.tenantId)?.isEnabled ?? false)}
-                      disabled={toggling !== null}
-                    />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Super admin tenant table */}
-          {isSA && (
+          {/* All tenants toggle table — visible to both admin and super_admin */}
+          {isAdminOrSA && (
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-sm">All Tenants — TPRM Toggle</CardTitle></CardHeader>
               <CardContent className="p-0">
@@ -304,11 +281,11 @@ export default function TprmAdminPage() {
       )}
 
       {/* ── Tab: Global Vendor Library ── */}
-      {tab === "global_library" && isSA && (
+      {tab === "global_library" && isAdminOrSA && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              Global vendors are shared across all tenants. All tenants can view and scan them, but only super_admins can create or delete them.
+              Global vendors are shared across all tenants. All tenants can view and scan them. Admins and super admins can create or delete them.
             </p>
             <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5">
               <Plus className="w-4 h-4" />Add Global Vendor
@@ -367,7 +344,7 @@ export default function TprmAdminPage() {
       )}
 
       {/* ── Tab: All Vendors (cross-tenant) ── */}
-      {tab === "all_vendors" && isSA && (
+      {tab === "all_vendors" && isAdminOrSA && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <Input
