@@ -7,13 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, Search, RefreshCw, Building2, Loader2, Globe, LayoutGrid, LayoutList, ExternalLink, TrendingUp, Play, ScanLine } from "lucide-react";
+import { Plus, Search, RefreshCw, Building2, Loader2, Globe, LayoutGrid, LayoutList, ExternalLink, TrendingUp, Play, ScanLine, Pencil, Trash2 } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, Legend, BarChart, Bar, Cell } from "recharts";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 
 const VENDOR_TYPES = [
   { value: "service_provider",  label: "Service Provider" },
@@ -78,6 +80,11 @@ interface EnrichPreview {
 
 export default function TprmVendorsPage() {
   const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const role = user?.role ?? "client";
+  const canManage = role === "super_admin" || role === "admin" || role === "account_manager";
+
   const [vendors, setVendors]   = useState<Vendor[]>([]);
   const [total, setTotal]       = useState(0);
   const [loading, setLoading]   = useState(true);
@@ -98,6 +105,13 @@ export default function TprmVendorsPage() {
   const [preview, setPreview]   = useState<EnrichPreview | null>(null);
   const [form, setForm]         = useState({ companyName: "", type: "service_provider", industry: "", description: "", inherentRisk: "medium", businessImpact: "5", scanFrequency: "weekly" });
   const [saving, setSaving]     = useState(false);
+
+  // Edit / Delete state
+  const [showEdit, setShowEdit]           = useState(false);
+  const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
+  const [editForm, setEditForm]           = useState({ companyName: "", type: "service_provider", industry: "", description: "", inherentRisk: "medium", scanFrequency: "weekly", status: "active" });
+  const [editSaving, setEditSaving]       = useState(false);
+  const [deletingId, setDeletingId]       = useState<number | null>(null);
 
   const [assetsSummary, setAssetsSummary] = useState<{ domains: number; subdomains: number; ipAddresses: number; webApps: number; mobileApps: number } | null>(null);
   const [timeline, setTimeline] = useState<{ weeks: { label: string; assetCount: number; issueCount: number; vendorCount: number }[]; topAssetTypes: { type: string; count: number }[] } | null>(null);
@@ -199,6 +213,45 @@ export default function TprmVendorsPage() {
       navigate(`/tprm/vendors/${v.id}`);
     } catch { /* ignore */ }
     setSaving(false);
+  };
+
+  const openEdit = (e: React.MouseEvent, v: Vendor) => {
+    e.stopPropagation();
+    setEditingVendor(v);
+    setEditForm({ companyName: v.companyName, type: v.type, industry: v.industry ?? "", description: "", inherentRisk: v.inherentRisk ?? "medium", scanFrequency: v.scanFrequency ?? "weekly", status: v.status ?? "active" });
+    setShowEdit(true);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingVendor) return;
+    setEditSaving(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${editingVendor.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(editForm),
+      });
+      setShowEdit(false);
+      setEditingVendor(null);
+      load();
+      toast({ title: "Vendor updated", description: `${editForm.companyName} has been updated.` });
+    } catch (err: any) {
+      toast({ title: "Update failed", description: err?.error ?? err?.message ?? "Unknown error", variant: "destructive" });
+    }
+    setEditSaving(false);
+  };
+
+  const handleDelete = async (e: React.MouseEvent, v: Vendor) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${v.companyName}"? This will remove all associated scan data and findings.`)) return;
+    setDeletingId(v.id);
+    try {
+      await apiFetch(`/api/tprm/vendors/${v.id}`, { method: "DELETE" });
+      load();
+      toast({ title: "Vendor deleted", description: `${v.companyName} has been removed.` });
+    } catch (err: any) {
+      toast({ title: "Delete failed", description: err?.error ?? err?.message ?? "Unknown error", variant: "destructive" });
+    }
+    setDeletingId(null);
   };
 
   const typeLabel = (t: string) => VENDOR_TYPES.find(v => v.value === t)?.label ?? t.replace(/_/g, " ");
@@ -470,7 +523,7 @@ export default function TprmVendorsPage() {
                         : <Badge variant={v.status === "active" ? "default" : "secondary"} className="text-[10px]">{v.status}</Badge>
                       }
                     </td>
-                    {/* Problem 8: Per-row scan button (visible for all roles) */}
+                    {/* Actions */}
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1">
                         <TooltipProvider>
@@ -495,6 +548,25 @@ export default function TprmVendorsPage() {
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); navigate(`/tprm/vendors/${v.id}`); }}>
                           <ExternalLink className="w-3.5 h-3.5" />
                         </Button>
+                        {canManage && (
+                          <>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => openEdit(e, v)} title="Edit vendor">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              disabled={deletingId === v.id}
+                              onClick={e => handleDelete(e, v)}
+                              title="Delete vendor"
+                            >
+                              {deletingId === v.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Trash2 className="w-3.5 h-3.5" />
+                              }
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -529,6 +601,16 @@ export default function TprmVendorsPage() {
                     >
                       {isScanning(v) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                     </Button>
+                    {canManage && (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={e => { e.preventDefault(); openEdit(e, v); }} title="Edit">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-destructive hover:text-destructive" disabled={deletingId === v.id} onClick={e => { e.preventDefault(); handleDelete(e, v); }} title="Delete">
+                          {deletingId === v.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                        </Button>
+                      </>
+                    )}
                   </div>
                   <div className="mt-3 space-y-1">
                     <div className="flex items-center justify-between text-xs">
@@ -566,6 +648,77 @@ export default function TprmVendorsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Edit Vendor Dialog ────────────────────────────────────────────────────────── */}
+      <Dialog open={showEdit} onOpenChange={o => { if (!o) { setShowEdit(false); setEditingVendor(null); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Vendor</DialogTitle>
+            <DialogDescription>Update vendor details.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">Company Name <span className="text-red-400">*</span></Label>
+              <Input className="mt-1 h-8 text-sm" value={editForm.companyName} onChange={e => setEditForm(f => ({ ...f, companyName: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Type</Label>
+                <Select value={editForm.type} onValueChange={v => setEditForm(f => ({ ...f, type: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {VENDOR_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Industry</Label>
+                <Input className="mt-1 h-8 text-sm" value={editForm.industry} onChange={e => setEditForm(f => ({ ...f, industry: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Inherent Risk</Label>
+                <Select value={editForm.inherentRisk} onValueChange={v => setEditForm(f => ({ ...f, inherentRisk: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["low","medium","high","critical"].map(r => <SelectItem key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Scan Frequency</Label>
+                <Select value={editForm.scanFrequency} onValueChange={v => setEditForm(f => ({ ...f, scanFrequency: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {SCAN_FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Status</Label>
+                <Select value={editForm.status} onValueChange={v => setEditForm(f => ({ ...f, status: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                    <SelectItem value="under_review">Under Review</SelectItem>
+                    <SelectItem value="offboarding">Offboarding</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Description</Label>
+              <Textarea className="mt-1 text-sm" rows={2} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowEdit(false); setEditingVendor(null); }}>Cancel</Button>
+            <Button onClick={handleEditSave} disabled={editSaving || !editForm.companyName.trim()}>
+              {editSaving && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Vendor Dialog */}
       <Dialog open={showAdd} onOpenChange={v => { setShowAdd(v); if (!v) { setPreview(null); setDomain(""); } }}>

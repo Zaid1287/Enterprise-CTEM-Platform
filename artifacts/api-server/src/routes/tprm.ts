@@ -639,17 +639,19 @@ router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authentica
 });
 
 router.patch("/tprm/vendors/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
   const allowed = ["companyName", "type", "industry", "description", "logoUrl", "website", "employeeCount", "companySize", "founded", "location", "marketCap", "companyType", "inherentRisk", "businessImpact", "scanFrequency", "status", "source", "assessmentType", "slaUptimePercent", "slaResponseTimeHours", "slaReviewDate", "slaNotes", "slaBreachCount"];
   const updates: Record<string, any> = { updatedAt: new Date() };
   for (const k of allowed) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
 
   try {
+    const existing = await resolveVendorForRole(vendorId, req);
+    if (!existing) { res.status(404).json({ error: "Vendor not found" }); return; }
     const [vendor] = await db.update(tprmVendorsTable).set(updates)
-      .where(and(eq(tprmVendorsTable.id, vendorId), eq(tprmVendorsTable.tenantId, tenantId)))
+      .where(eq(tprmVendorsTable.id, vendorId))
       .returning();
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+    await logAudit(req.user!, "tprm_vendor_updated", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName }), req.ip ?? "");
     res.json(vendor);
   } catch (err) {
     logger.error({ err }, "TPRM update vendor error");
@@ -658,13 +660,14 @@ router.patch("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authenti
 });
 
 router.delete("/tprm/vendors/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
+  const { role } = req.user!;
   const vendorId = parseInt(req.params.id as string);
   try {
-    const [vendor] = await db.select().from(tprmVendorsTable).where(eq(tprmVendorsTable.id, vendorId));
+    const vendor = await resolveVendorForRole(vendorId, req);
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-    if (vendor.isGlobal && role !== "super_admin") { res.status(403).json({ error: "Only super_admin can delete global vendors" }); return; }
-    if (!vendor.isGlobal && vendor.tenantId !== tenantId) { res.status(403).json({ error: "Not your vendor" }); return; }
+    if (vendor.isGlobal && role !== "super_admin" && role !== "admin") {
+      res.status(403).json({ error: "Only super_admin or admin can delete global vendors" }); return;
+    }
     await db.delete(tprmVendorsTable).where(eq(tprmVendorsTable.id, vendorId));
     await logAudit(req.user!, "tprm_vendor_deleted", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName }), req.ip ?? "");
     res.json({ ok: true });

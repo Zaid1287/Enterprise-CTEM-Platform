@@ -74,15 +74,26 @@ interface ShodanPreset {
 
 interface Asset {
   id: number; name: string; type: string; domain?: string;
-  ip?: string; url?: string; status: string;
+  ip?: string; url?: string; status: string; tenantId?: number;
+  verificationStatus?: string;
 }
 
 export default function AiMapperScansPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, aiMapperEnabled } = useAuth();
   const isAdminOrSA = user?.role === "admin" || user?.role === "super_admin";
   const qc = useQueryClient();
+
+  // AI Mapper module status per tenant (for asset selector)
+  const [moduleMap, setModuleMap] = useState<Record<number, boolean>>({});
+  useEffect(() => {
+    if (isAdminOrSA) {
+      apiFetch<Record<number, boolean>>("/api/ai-mapper/module/all")
+        .then(m => setModuleMap(m))
+        .catch(() => {});
+    }
+  }, [isAdminOrSA]);
 
   const [wsConnectedSet, setWsConnectedSet] = useState<Set<number>>(new Set());
   const handleConnectedChange = useCallback((id: number, conn: boolean) => {
@@ -459,9 +470,14 @@ export default function AiMapperScansPage() {
                 ) : (
                   <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
                     {filteredAssets.map(a => {
-                      const target = (a as any).value || (a as any).ipAddress;
-                      const isVerified = (a as any).verificationStatus === "verified";
-                      const isDisabled = !target || !isVerified;
+                      const target = (a as any).value || (a as any).ipAddress || a.ip || a.domain;
+                      const isVerified = (a.verificationStatus ?? (a as any).verificationStatus) === "verified";
+                      // Check AI Mapper module active for this asset's tenant
+                      const assetTenantId = a.tenantId ?? user?.tenantId;
+                      const aiModuleActive = isAdminOrSA
+                        ? (assetTenantId === user?.tenantId ? true : (moduleMap[assetTenantId!] ?? false))
+                        : aiMapperEnabled;
+                      const isDisabled = !target || !isVerified || !aiModuleActive;
                       const isSelected = selectedAssets.has(a.id);
                       return (
                         <button
@@ -488,6 +504,9 @@ export default function AiMapperScansPage() {
                             <div className="flex items-center gap-1 shrink-0">
                               {!isVerified && (
                                 <span className="text-[10px] text-amber-400 border border-amber-500/30 rounded px-1 py-0.5">Unverified</span>
+                              )}
+                              {!aiModuleActive && (
+                                <span className="text-[10px] text-red-400 border border-red-500/30 rounded px-1 py-0.5">AI Inactive</span>
                               )}
                               <Badge variant="outline" className="text-xs capitalize">{a.type}</Badge>
                             </div>
