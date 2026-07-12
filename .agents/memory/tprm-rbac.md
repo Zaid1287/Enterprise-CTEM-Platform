@@ -31,3 +31,12 @@ Three roles, three access levels:
 **Why:** AM needs to see ALL their assigned clients' vendors (including ones where TPRM is disabled) so they have visibility into what's configured, while the badge communicates the disabled state. Admin/SA always get `tprmEnabled: true` on every vendor.
 
 **How to apply:** Any new TPRM read endpoint that filters by tenant must call `getVendorScopeTenantIds(req)` and build its `inArray(...)` condition from the result. Always guard against empty array with `ids.length > 0 ? inArray(...) : sql\`false\`` (or `undefined` for no-filter case). Vendor write endpoints (PATCH, DELETE) should still enforce ownership via `resolveVendorForRole` before mutating.
+
+## Scan + enrichment patterns
+
+- **Bulk scan**: `POST /tprm/vendors/bulk-scan` — must be registered BEFORE `/tprm/vendors/:id` routes. Stagger individual scans by 3 s setTimeout to avoid OOM.
+- **Enrichment chain**: Brandfetch → Clearbit autocomplete → HTTP homepage `<title>`/`og:site_name` scrape → DNS MX fallback. Source field is "brandfetch"/"clearbit"/"homepage"/"dns".
+- **Supply chain auto-population**: `runFullVendorScan` in tprmEnrichment.ts auto-writes `tprm_supply_chain_nodes` from scan probe (IPs→infra, subdomains→saas) AND 4th party signals (cdn/hosting→infra, rest→saas). Existing SBOM-upload nodes kept via `isNull(sbomUploadId)` filter on delete.
+- **Questionnaire scoring**: `score = null` (not 50) when `totalWeight === 0` (all-text questions). Frontend shows "Manual review required" instead of score.
+- **Compliance auto-verify**: `POST /tprm/vendors/:id/compliance/auto-verify` bulk-upgrades `pending_review` docs with future expiry to `valid`/`expiring_soon`. PATCH compliance also auto-recalculates status from `expiresAt`.
+- **Scan frequency options**: manual / daily / weekly / monthly — beat scheduler in beatScheduler.ts already has `daily: 86_400_000` interval.

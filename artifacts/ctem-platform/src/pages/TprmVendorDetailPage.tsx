@@ -801,7 +801,18 @@ export default function TprmVendorDetailPage() {
 
         {/* Compliance */}
         <TabsContent value="compliance" className="mt-4 space-y-3">
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {/* Problem 7: Auto-verify all pending docs with future expiry */}
+            {(vendor.complianceDocs ?? []).some((d: any) => d.status === "pending_review" && d.expiresAt) && (
+              <Button size="sm" variant="outline" onClick={async () => {
+                try {
+                  const r = await apiFetch<{ verified: number; message: string }>(`/api/tprm/vendors/${id}/compliance/auto-verify`, { method: "POST" });
+                  if (r.verified > 0) loadVendor();
+                } catch { /* ignore */ }
+              }}>
+                <CheckCircle2 className="w-4 h-4 mr-1.5" />Auto-Verify All
+              </Button>
+            )}
             <Button size="sm" onClick={() => setShowUploadDoc(true)}><Upload className="w-4 h-4 mr-1.5" />Upload Document</Button>
           </div>
           {(vendor.complianceDocs ?? []).length === 0 ? (
@@ -811,6 +822,10 @@ export default function TprmVendorDetailPage() {
               {(vendor.complianceDocs ?? []).map((d: any) => {
                 const exp = d.expiresAt ? new Date(d.expiresAt) : null;
                 const days = exp ? Math.ceil((exp.getTime() - Date.now()) / 86400000) : null;
+                const statusColor = d.status === "valid" ? "border-green-500/40 text-green-400"
+                  : d.status === "expiring_soon" ? "border-yellow-500/40 text-yellow-400"
+                  : d.status === "expired" ? "border-red-500/40 text-red-400"
+                  : "border-muted-foreground/40 text-muted-foreground";
                 return (
                   <Card key={d.id} className="bg-card/60">
                     <CardContent className="py-3 flex items-center gap-3">
@@ -826,8 +841,19 @@ export default function TprmVendorDetailPage() {
                             {days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d remaining`}
                           </p>
                         )}
-                        {d.status && <Badge variant="outline" className="text-[10px] mt-0.5">{d.status.replace(/_/g, " ")}</Badge>}
+                        {d.status && <Badge variant="outline" className={`text-[10px] mt-0.5 ${statusColor}`}>{d.status.replace(/_/g, " ")}</Badge>}
                       </div>
+                      {/* Problem 7: Per-doc Verify button for pending_review docs */}
+                      {d.status === "pending_review" && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs text-green-400 hover:text-green-300" onClick={async () => {
+                          try {
+                            await apiFetch(`/api/tprm/vendors/${id}/compliance/${d.id}`, { method: "PATCH", body: JSON.stringify({ status: "valid" }) });
+                            loadVendor();
+                          } catch { /* ignore */ }
+                        }}>
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" />Verify
+                        </Button>
+                      )}
                       {d.fileName && (
                         <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
                           <a href={`/api/tprm/vendors/${id}/compliance/${d.id}/download`} download={d.fileName}><Download className="w-4 h-4" /></a>
@@ -869,7 +895,10 @@ export default function TprmVendorDetailPage() {
                       <p className="text-xs text-muted-foreground">{q.respondedBy ?? "No respondent set"}{q.sentAt ? ` • Sent ${new Date(q.sentAt).toLocaleDateString()}` : ""}</p>
                     </div>
                     <Badge variant="outline" className="text-[10px] capitalize">{q.status}</Badge>
-                    {q.score !== null && q.score !== undefined && <span className="text-sm font-semibold">{q.score}/100</span>}
+                    {q.score !== null && q.score !== undefined
+                      ? <span className="text-sm font-semibold">{q.score}/100</span>
+                      : q.status === "completed" && <span className="text-xs text-muted-foreground italic">Manual review required</span>
+                    }
                     {q.dueDate && <span className="text-xs text-muted-foreground">Due {new Date(q.dueDate).toLocaleDateString()}</span>}
                   </CardContent>
                 </Card>

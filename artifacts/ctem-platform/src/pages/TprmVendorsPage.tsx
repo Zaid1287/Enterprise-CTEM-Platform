@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
 import { Badge } from "@/components/ui/badge";
@@ -11,8 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
-import { Plus, Search, RefreshCw, Building2, Loader2, Globe, LayoutGrid, LayoutList, ExternalLink, TrendingUp } from "lucide-react";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, BarChart, Bar, Cell } from "recharts";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Plus, Search, RefreshCw, Building2, Loader2, Globe, LayoutGrid, LayoutList, ExternalLink, TrendingUp, Play, ScanLine } from "lucide-react";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, Legend, BarChart, Bar, Cell } from "recharts";
 
 const VENDOR_TYPES = [
   { value: "service_provider",  label: "Service Provider" },
@@ -24,6 +25,13 @@ const VENDOR_TYPES = [
   { value: "partner",           label: "Partner" },
   { value: "subsidiary",        label: "Subsidiary" },
   { value: "prospecting",       label: "Prospecting" },
+];
+
+const SCAN_FREQUENCIES = [
+  { value: "manual",     label: "Manual",              desc: "Only scan when you trigger it manually" },
+  { value: "daily",      label: "Daily (Continuous)",  desc: "Scan every day — recommended for critical vendors" },
+  { value: "weekly",     label: "Weekly",              desc: "Scan once per week — good for high-risk vendors" },
+  { value: "monthly",    label: "Monthly",             desc: "Scan once per month — suitable for low-risk vendors" },
 ];
 
 interface Vendor {
@@ -79,6 +87,11 @@ export default function TprmVendorsPage() {
   const [page, setPage]         = useState(1);
   const [view, setView]         = useState<"table" | "grid">("table");
 
+  // Per-vendor scanning state (problems 3 & 8)
+  const [scanningIds, setScanningIds] = useState<Set<number>>(new Set());
+  const [bulkScanning, setBulkScanning] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [showAdd, setShowAdd]   = useState(false);
   const [domain, setDomain]     = useState("");
   const [enriching, setEnriching] = useState(false);
@@ -102,10 +115,62 @@ export default function TprmVendorsPage() {
   };
   useEffect(() => { load(); }, [search, type, riskGrade, page]);
 
+  // Auto-poll every 5 s when any vendor is scanning (problems 3)
+  useEffect(() => {
+    const hasPending = vendors.some(v => v.status === "pending" || v.status === "scanning") || scanningIds.size > 0 || bulkScanning;
+    if (hasPending && !pollRef.current) {
+      pollRef.current = setInterval(() => {
+        const params = new URLSearchParams({ page: String(page), limit: "30" });
+        if (search) params.set("search", search);
+        if (type !== "all") params.set("type", type);
+        if (riskGrade !== "all") params.set("riskGrade", riskGrade);
+        apiFetch<{ vendors: Vendor[]; total: number }>(`/api/tprm/vendors?${params}`)
+          .then(r => {
+            setVendors(r.vendors);
+            setTotal(r.total);
+            const stillPending = r.vendors.some(v => v.status === "pending" || v.status === "scanning");
+            if (!stillPending) {
+              setScanningIds(new Set());
+              setBulkScanning(false);
+              if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            }
+          })
+          .catch(() => {});
+      }, 5000);
+    } else if (!hasPending && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    return () => {
+      if (pollRef.current && !hasPending) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+  }, [vendors, scanningIds, bulkScanning]);
+
   useEffect(() => {
     apiFetch<any>("/api/tprm/vendors/assets-summary").then(setAssetsSummary).catch(() => {});
     apiFetch<any>("/api/tprm/vendors/timeline").then(setTimeline).catch(() => {});
   }, []);
+
+  // Problem 8: Per-row individual scan trigger (all roles can use this)
+  const handleScan = async (e: React.MouseEvent, vendorId: number) => {
+    e.stopPropagation();
+    if (scanningIds.has(vendorId)) return;
+    setScanningIds(prev => new Set([...prev, vendorId]));
+    try {
+      await apiFetch(`/api/tprm/vendors/${vendorId}/scan`, { method: "POST" });
+    } catch { /* ignore */ }
+  };
+
+  // Problem 1: Bulk Rescan All button
+  const handleBulkScan = async () => {
+    if (bulkScanning) return;
+    setBulkScanning(true);
+    try {
+      await apiFetch("/api/tprm/vendors/bulk-scan", { method: "POST" });
+    } catch {
+      setBulkScanning(false);
+    }
+  };
 
   const handleEnrich = async () => {
     if (!domain.trim()) return;
@@ -141,6 +206,9 @@ export default function TprmVendorsPage() {
   const prospectingCount      = vendors.filter(v => v.type === "prospecting").length;
   const subsidiaryCount       = vendors.filter(v => v.type === "subsidiary").length;
 
+  // Determine if a vendor row is actively scanning
+  const isScanning = (v: Vendor) => scanningIds.has(v.id) || v.status === "pending" || v.status === "scanning";
+
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
       <div className="flex items-center justify-between">
@@ -148,7 +216,16 @@ export default function TprmVendorsPage() {
           <h1 className="text-xl font-bold">3rd Party Companies</h1>
           <p className="text-muted-foreground text-sm">{total} vendor{total !== 1 ? "s" : ""} tracked</p>
         </div>
-        <Button size="sm" onClick={() => setShowAdd(true)}><Plus className="w-4 h-4 mr-1.5" />Add Organization</Button>
+        <div className="flex items-center gap-2">
+          {/* Problem 1: Rescan All button */}
+          <Button size="sm" variant="outline" onClick={handleBulkScan} disabled={bulkScanning || vendors.length === 0}>
+            {bulkScanning
+              ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Scanning…</>
+              : <><ScanLine className="w-4 h-4 mr-1.5" />Rescan All</>
+            }
+          </Button>
+          <Button size="sm" onClick={() => setShowAdd(true)}><Plus className="w-4 h-4 mr-1.5" />Add Organization</Button>
+        </div>
       </div>
 
       {/* Header KPI cards */}
@@ -206,7 +283,7 @@ export default function TprmVendorsPage() {
                   <CartesianGrid strokeDasharray="3 3" opacity={0.08} />
                   <XAxis dataKey="label" tick={{ fontSize: 10 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={30} />
-                  <Tooltip contentStyle={{ fontSize: 11 }} />
+                  <RechartsTooltip contentStyle={{ fontSize: 11 }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Line type="monotone" dataKey="assetCount" name="Assets" stroke="#3b82f6" strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="issueCount" name="Open Issues" stroke="#ef4444" strokeWidth={2} dot={false} />
@@ -226,7 +303,7 @@ export default function TprmVendorsPage() {
                 <BarChart data={timeline.topAssetTypes} layout="vertical" barSize={14} margin={{ left: 30 }}>
                   <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
                   <YAxis type="category" dataKey="type" tick={{ fontSize: 10 }} width={70} />
-                  <Tooltip contentStyle={{ fontSize: 11 }} />
+                  <RechartsTooltip contentStyle={{ fontSize: 11 }} />
                   <Bar dataKey="count" name="Count" fill="#3b82f6" radius={[0, 3, 3, 0]}>
                     {(timeline.topAssetTypes ?? []).map((_: any, i: number) => (
                       <Cell key={i} fill={["#3b82f6","#a855f7","#06b6d4","#22c55e","#f97316"][i % 5]} />
@@ -320,18 +397,46 @@ export default function TprmVendorsPage() {
                         <Badge variant="outline" className={`text-[10px] ${v.inherentRisk === "critical" ? "border-red-500/40 text-red-400" : v.inherentRisk === "high" ? "border-orange-500/40 text-orange-400" : v.inherentRisk === "medium" ? "border-yellow-500/40 text-yellow-400" : "border-green-500/40 text-green-400"}`}>{v.inherentRisk}</Badge>
                       ) : "—"}
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground capitalize">{v.scanFrequency ?? "—"}</td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground capitalize">{v.scanFrequency === "daily" ? "Daily" : v.scanFrequency ?? "—"}</td>
                     <td className="px-4 py-2.5">{gradeBadge(v.riskGrade)}</td>
                     <td className="px-4 py-2.5">{riskBar(v.riskScore)}</td>
                     <td className="px-4 py-2.5 text-xs text-center">{v.assetCount}</td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(v.lastScannedAt)}</td>
+                    {/* Problem 3: Show scanning indicator inline */}
                     <td className="px-4 py-2.5">
-                      <Badge variant={v.status === "active" ? "default" : "secondary"} className="text-[10px]">{v.status}</Badge>
+                      {isScanning(v)
+                        ? <Badge className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 animate-pulse">
+                            <Loader2 className="w-2.5 h-2.5 mr-1 animate-spin inline" />Scanning
+                          </Badge>
+                        : <Badge variant={v.status === "active" ? "default" : "secondary"} className="text-[10px]">{v.status}</Badge>
+                      }
                     </td>
+                    {/* Problem 8: Per-row scan button (visible for all roles) */}
                     <td className="px-4 py-2.5">
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); navigate(`/tprm/vendors/${v.id}`); }}>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost" size="icon" className="h-7 w-7"
+                                disabled={isScanning(v)}
+                                onClick={e => handleScan(e, v.id)}
+                              >
+                                {isScanning(v)
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <Play className="w-3.5 h-3.5" />
+                                }
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" className="text-xs">
+                              {isScanning(v) ? "Scanning in progress…" : "Run security scan"}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); navigate(`/tprm/vendors/${v.id}`); }}>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -357,6 +462,14 @@ export default function TprmVendorsPage() {
                       </div>
                       <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5"><Globe className="w-3 h-3" />{v.domain}</p>
                     </div>
+                    {/* Scan button on grid card */}
+                    <Button
+                      variant="ghost" size="icon" className="h-7 w-7 shrink-0"
+                      disabled={isScanning(v)}
+                      onClick={e => { e.preventDefault(); handleScan(e, v.id); }}
+                    >
+                      {isScanning(v) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                    </Button>
                   </div>
                   <div className="mt-3 space-y-1">
                     <div className="flex items-center justify-between text-xs">
@@ -365,6 +478,13 @@ export default function TprmVendorsPage() {
                     </div>
                     <Progress value={v.riskScore} className="h-1.5" />
                   </div>
+                  {isScanning(v) && (
+                    <div className="mt-2">
+                      <Badge className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 animate-pulse w-full justify-center">
+                        <Loader2 className="w-2.5 h-2.5 mr-1 animate-spin" />Scanning…
+                      </Badge>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 mt-2.5 flex-wrap">
                     <Badge variant="outline" className="text-[10px] py-0">{typeLabel(v.type)}</Badge>
                     {v.industry && <Badge variant="outline" className="text-[10px] py-0">{v.industry}</Badge>}
@@ -421,9 +541,17 @@ export default function TprmVendorsPage() {
                     <p className="text-sm font-semibold">{preview.companyName}</p>
                     {preview.industry && <p className="text-xs text-muted-foreground">{preview.industry}</p>}
                     {preview.location && <p className="text-xs text-muted-foreground">{preview.location}</p>}
-                    <Badge variant="outline" className="text-[10px] mt-0.5">via {preview.source}</Badge>
+                    <Badge variant="outline" className="text-[10px] mt-0.5">
+                      via {preview.source === "homepage" ? "website" : preview.source}
+                    </Badge>
                   </div>
                 </div>
+                {preview.source === "dns" && (
+                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <span className="text-yellow-400">⚠</span>
+                    Company info not found in public databases — you can edit the name and details below.
+                  </p>
+                )}
               </>
             )}
 
@@ -441,14 +569,20 @@ export default function TprmVendorsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              {/* Problem 4: Scan frequency with all options + tooltips */}
               <div>
                 <Label className="text-xs">Scan Frequency</Label>
                 <Select value={form.scanFrequency} onValueChange={v => setForm(f => ({ ...f, scanFrequency: v }))}>
                   <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="manual">Manual</SelectItem>
-                    <SelectItem value="weekly">Weekly</SelectItem>
-                    <SelectItem value="monthly">Monthly</SelectItem>
+                    {SCAN_FREQUENCIES.map(f => (
+                      <SelectItem key={f.value} value={f.value}>
+                        <div>
+                          <div className="font-medium text-sm">{f.label}</div>
+                          <div className="text-xs text-muted-foreground">{f.desc}</div>
+                        </div>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

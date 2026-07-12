@@ -531,6 +531,47 @@ router.get("/tprm/vendors/timeline", requireAuth, requireTprm, async (req: Authe
   }
 });
 
+// ── Bulk Scan — must be before /:id to avoid param shadowing ──────────────────
+router.post("/tprm/vendors/bulk-scan", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  try {
+    const scopeTenantIds = await getVendorScopeTenantIds(req);
+    const vendorCond = scopeTenantIds.length === 0
+      ? sql`false`
+      : inArray(tprmVendorsTable.tenantId, scopeTenantIds);
+
+    const vendors = await db
+      .select({ id: tprmVendorsTable.id, tenantId: tprmVendorsTable.tenantId, status: tprmVendorsTable.status })
+      .from(tprmVendorsTable)
+      .where(and(vendorCond, ne(tprmVendorsTable.status, "scanning")));
+
+    if (vendors.length === 0) {
+      res.json({ ok: true, queued: 0, message: "No vendors to scan" });
+      return;
+    }
+
+    // Mark all as pending immediately so the frontend can show progress
+    const vendorIds = vendors.map(v => v.id);
+    await db.update(tprmVendorsTable)
+      .set({ status: "pending", updatedAt: new Date() })
+      .where(inArray(tprmVendorsTable.id, vendorIds));
+
+    // Queue each scan in background — stagger by 3s to avoid OOM
+    vendors.forEach((vendor, idx) => {
+      setTimeout(() => {
+        runFullVendorScan(vendor.id, vendor.tenantId).catch(err =>
+          logger.error({ err, vendorId: vendor.id }, "TPRM bulk-scan failed for vendor")
+        );
+      }, idx * 3000);
+    });
+
+    logger.info({ queued: vendors.length, userId: req.user!.userId }, "TPRM bulk-scan triggered");
+    res.json({ ok: true, queued: vendors.length, message: `Started scanning ${vendors.length} vendor${vendors.length !== 1 ? "s" : ""}` });
+  } catch (err) {
+    logger.error({ err }, "TPRM bulk-scan error");
+    res.status(500).json({ error: "Failed to start bulk scan" });
+  }
+});
+
 router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
@@ -1244,8 +1285,9 @@ router.post("/tprm/respond/:token", async (req, res) => {
         if (!isNaN(rating)) { totalWeighted += (rating / 5) * 100 * w; totalWeight += w; }
       }
     }
-    const score = totalWeight > 0 ? Math.round(totalWeighted / totalWeight) : 50;
-    const riskLevel = score >= 80 ? "low" : score >= 60 ? "medium" : score >= 40 ? "high" : "critical";
+    // When no weighted (boolean/rating) questions answered, score is indeterminate
+    const score: number | null = totalWeight > 0 ? Math.round(totalWeighted / totalWeight) : null;
+    const riskLevel: string | null = score === null ? null : score >= 80 ? "low" : score >= 60 ? "medium" : score >= 40 ? "high" : "critical";
 
     await db.update(tprmVendorQuestionnairesTable).set({
       status:      "completed",
@@ -1330,12 +1372,50 @@ router.post("/tprm/vendors/:id/compliance", requireAuth, requireTprm, upload.sin
 router.patch("/tprm/vendors/:id/compliance/:docId", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const docId = parseInt(req.params.docId as string);
-  const allowed = ["auditor", "auditPeriodStart", "auditPeriodEnd", "expiresAt", "coverageScope", "title"];
+  const allowed = ["auditor", "auditPeriodStart", "auditPeriodEnd", "expiresAt", "coverageScope", "title", "status"];
   const updates: Record<string, any> = { updatedAt: new Date() };
   for (const k of allowed) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
+
+  // Auto-recalculate status from expiry date when expiresAt changes (unless caller explicitly sets status)
+  if (updates.expiresAt !== undefined && updates.status === undefined) {
+    const today = new Date();
+    const expDate = updates.expiresAt ? new Date(updates.expiresAt) : null;
+    if (!expDate) {
+      updates.status = "pending_review";
+    } else if (expDate < today) {
+      updates.status = "expired";
+    } else if (expDate.getTime() - today.getTime() < 30 * 86400000) {
+      updates.status = "expiring_soon";
+    } else {
+      updates.status = "valid";
+    }
+  }
+
   const [doc] = await db.update(tprmComplianceDocumentsTable).set(updates).where(and(eq(tprmComplianceDocumentsTable.id, docId), eq(tprmComplianceDocumentsTable.tenantId, tenantId))).returning();
   if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
   res.json({ ...doc, fileData: undefined });
+});
+
+// Bulk auto-verify: set docs with future expiry to "valid"
+router.post("/tprm/vendors/:id/compliance/auto-verify", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const today = new Date();
+  const docs = await db.select().from(tprmComplianceDocumentsTable)
+    .where(and(eq(tprmComplianceDocumentsTable.vendorId, vendorId), eq(tprmComplianceDocumentsTable.tenantId, tenantId)));
+  let verified = 0;
+  for (const doc of docs) {
+    if (doc.status === "pending_review" && doc.expiresAt) {
+      const exp = new Date(doc.expiresAt);
+      if (exp > today) {
+        const newStatus = exp.getTime() - today.getTime() < 30 * 86400000 ? "expiring_soon" : "valid";
+        await db.update(tprmComplianceDocumentsTable).set({ status: newStatus, updatedAt: new Date() }).where(eq(tprmComplianceDocumentsTable.id, doc.id));
+        verified++;
+      }
+    }
+  }
+  res.json({ ok: true, verified, message: `Auto-verified ${verified} document${verified !== 1 ? "s" : ""}` });
 });
 
 router.delete("/tprm/vendors/:id/compliance/:docId", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {

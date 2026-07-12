@@ -118,7 +118,33 @@ export async function enrichCompanyByDomain(inputDomain: string): Promise<Compan
     }
   } catch { /* fallthrough */ }
 
-  // 3. DNS fallback — get MX to infer email provider, SOA for age hint
+  // 3. HTTP homepage title — extract company name from <title> tag
+  try {
+    const httpRes = await safeFetch(`https://${domain}`, { headers: { Accept: "text/html,application/xhtml+xml" } });
+    if (httpRes?.ok) {
+      const html = await httpRes.text().catch(() => "");
+      const m = html.match(/<title[^>]*>([^<]{3,80})<\/title>/i);
+      if (m?.[1]) {
+        // Strip trailing separator like "| Company" or "- Home" from title
+        const raw = m[1].trim().replace(/\s*[|·—\-–]\s*.{0,40}$/, "").trim();
+        if (raw.length >= 3 && raw.length <= 80) {
+          base.companyName = raw;
+          base.source = "homepage";
+        }
+      }
+      // If title failed, try og:site_name meta tag
+      if (base.source !== "homepage") {
+        const ogM = html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']{3,60})["']/i)
+          ?? html.match(/<meta[^>]+content=["']([^"']{3,60})["'][^>]+property=["']og:site_name["']/i);
+        if (ogM?.[1]) {
+          base.companyName = ogM[1].trim();
+          base.source = "homepage";
+        }
+      }
+    }
+  } catch { /* fallthrough */ }
+
+  // 4. DNS fallback — get MX to infer email provider, SOA for age hint
   try {
     const [mx, soa] = await Promise.allSettled([
       dns.resolveMx(domain).catch(() => []),
@@ -130,7 +156,7 @@ export async function enrichCompanyByDomain(inputDomain: string): Promise<Compan
       else if (mxHost.includes("outlook") || mxHost.includes("microsoft")) base.description = (base.description ?? "") + " (Email: Microsoft 365)";
     }
     if (soa.status === "fulfilled" && soa.value) {
-      base.source = "dns";
+      base.source = base.source === "homepage" ? "homepage" : "dns";
     }
   } catch { /* ignore */ }
 
@@ -1271,6 +1297,21 @@ export async function runFullVendorScan(vendorId: number, tenantId: number): Pro
       }
       for (const sub of probe.subdomains.slice(0, 15)) {
         scNodes.push({ vendorId, tenantId, name: sub, nodeType: "saas", riskLevel: "low", vulnerabilities: [] });
+      }
+      // Auto-populate supply chain nodes from 4th party discovery signals
+      // (CDNs, analytics providers, payment processors, API services)
+      const seen4pNames = new Set<string>();
+      for (const fp of probe.fourthParties.slice(0, 25)) {
+        const key = (fp.domain || fp.name).toLowerCase();
+        if (seen4pNames.has(key)) continue;
+        seen4pNames.add(key);
+        const nodeType: "saas" | "infra" =
+          fp.category === "cdn" || fp.category === "hosting" || fp.category === "cloud" ? "infra" : "saas";
+        const riskLevel =
+          fp.riskLevel === "critical" ? "high"
+          : fp.riskLevel === "high" ? "high"
+          : fp.riskLevel === "medium" ? "medium" : "low";
+        scNodes.push({ vendorId, tenantId, name: fp.name, nodeType, riskLevel, vulnerabilities: [] });
       }
       if (scNodes.length > 0) {
         await db.delete(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, tenantId), isNull(tprmSupplyChainNodesTable.sbomUploadId)));
