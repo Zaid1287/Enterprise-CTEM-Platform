@@ -27,7 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const ROLE_OPTIONS: Record<string, string[]> = {
-  super_admin: ["super_admin", "admin", "account_manager", "client"],
+  super_admin: ["admin", "account_manager", "client"],
   admin: ["admin", "account_manager", "client"],
   account_manager: ["client"],
   client: [],
@@ -96,6 +96,18 @@ export default function UsersPage() {
   });
   const queryClient = useQueryClient();
 
+  const [tenants, setTenants] = useState<{ id: number; name: string }[]>([]);
+
+  useEffect(() => {
+    if (!isAdminOrSA) return;
+    apiFetch(`${BASE}/api/tenants`)
+      .then((data: any) => {
+        const list = Array.isArray(data) ? data : [];
+        setTenants(list.map((t: any) => ({ id: t.id, name: t.name ?? `Tenant #${t.id}` })));
+      })
+      .catch(() => setTenants([]));
+  }, [isAdminOrSA]);
+
   const [invitations, setInvitations] = useState<any[]>([]);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteSending, setInviteSending] = useState(false);
@@ -146,9 +158,12 @@ export default function UsersPage() {
       const body: Record<string, unknown> = {
         firstName: editState.firstName,
         lastName: editState.lastName,
-        role: editState.role,
         isActive: editState.isActive,
       };
+      // Only send role if it actually changed (prevents 403 when editing super_admin users)
+      if (editState.role !== editUser.role) {
+        body.role = editState.role;
+      }
       if (isAdminOrSA) {
         body.email = editState.email;
         if (!editState.twoFactorEnabled && editUser.twoFactorEnabled) {
@@ -158,7 +173,8 @@ export default function UsersPage() {
           body.newPassword = editState.newPassword;
         }
       }
-      if (isSuperAdmin) {
+      // Admin and super_admin can reassign tenant
+      if (isAdminOrSA && editState.tenantId && String(editState.tenantId) !== String(editUser.tenantId)) {
         body.tenantId = editState.tenantId;
       }
       await apiFetch(`${BASE}/api/users/${editUser.id}`, {
@@ -578,8 +594,22 @@ export default function UsersPage() {
             </div>
             {needsTenantId && (
               <div className="space-y-1.5">
-                <Label className="text-xs">Tenant ID <span className="text-muted-foreground">(optional)</span></Label>
-                <Input type="number" value={form.tenantId} onChange={e => setForm(p => ({ ...p, tenantId: e.target.value }))} min="1" className="h-9" placeholder="Leave blank for platform tenant" />
+                <Label className="text-xs flex items-center gap-1">
+                  <Building2 className="w-3 h-3" /> Tenant <span className="text-muted-foreground">(optional)</span>
+                </Label>
+                {tenants.length > 0 ? (
+                  <Select value={form.tenantId} onValueChange={v => setForm(p => ({ ...p, tenantId: v }))}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Platform tenant (default)" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Platform tenant (default)</SelectItem>
+                      {tenants.map(t => (
+                        <SelectItem key={t.id} value={String(t.id)}>{t.name} <span className="text-muted-foreground text-[10px]">#{t.id}</span></SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input type="number" value={form.tenantId} onChange={e => setForm(p => ({ ...p, tenantId: e.target.value }))} min="1" className="h-9" placeholder="Leave blank for platform tenant" />
+                )}
               </div>
             )}
             <div className="space-y-1.5">
@@ -648,27 +678,46 @@ export default function UsersPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs">Role</Label>
-                    <Select value={editState.role} onValueChange={v => setEditState(p => ({ ...p, role: v }))}>
-                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {allowedRoles.map(r => (
-                          <SelectItem key={r} value={r}>{ROLE_META[r]?.label ?? r}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {editUser?.role === "super_admin" ? (
+                      <div className="h-9 flex items-center px-3 rounded-md border border-border/50 bg-muted/30 gap-2">
+                        <RoleBadge role="super_admin" />
+                        <span className="text-[11px] text-muted-foreground">locked</span>
+                      </div>
+                    ) : (
+                      <Select value={editState.role} onValueChange={v => setEditState(p => ({ ...p, role: v }))}>
+                        <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {allowedRoles.filter(r => r !== "super_admin").map(r => (
+                            <SelectItem key={r} value={r}>{ROLE_META[r]?.label ?? r}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
-                  {isSuperAdmin && (
+                  {isAdminOrSA && (
                     <div className="space-y-1.5">
                       <Label className="text-xs flex items-center gap-1">
-                        <Building2 className="w-3 h-3" /> Tenant ID
+                        <Building2 className="w-3 h-3" /> Tenant
                       </Label>
-                      <Input
-                        type="number"
-                        value={editState.tenantId}
-                        onChange={e => setEditState(p => ({ ...p, tenantId: e.target.value }))}
-                        className="h-9"
-                        min="1"
-                      />
+                      {tenants.length > 0 ? (
+                        <Select value={String(editState.tenantId)} onValueChange={v => setEditState(p => ({ ...p, tenantId: v }))}>
+                          <SelectTrigger className="h-9"><SelectValue placeholder="Select tenant" /></SelectTrigger>
+                          <SelectContent>
+                            {tenants.map(t => (
+                              <SelectItem key={t.id} value={String(t.id)}>{t.name} <span className="text-muted-foreground text-[10px]">#{t.id}</span></SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          type="number"
+                          value={editState.tenantId}
+                          onChange={e => setEditState(p => ({ ...p, tenantId: e.target.value }))}
+                          className="h-9"
+                          min="1"
+                          placeholder="Tenant ID"
+                        />
+                      )}
                     </div>
                   )}
                 </div>

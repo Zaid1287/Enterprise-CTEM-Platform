@@ -9,7 +9,7 @@ const router = Router();
 router.use(denyExternalMembers);
 
 const ROLE_HIERARCHY: Record<string, string[]> = {
-  super_admin: ["super_admin", "admin", "account_manager", "client"],
+  super_admin: ["admin", "account_manager", "client"],
   admin: ["admin", "account_manager", "client"],
   account_manager: ["client"],
   client: [],
@@ -82,13 +82,21 @@ router.post("/users", requireAuth, async (req: AuthenticatedRequest, res): Promi
     } else if (role === "account_manager") {
       targetTenantId = requestedTenantId;
     } else if (role === "admin") {
-      const [childTenant] = await db.select({ id: tenantsTable.id })
-        .from(tenantsTable)
-        .where(and(eq(tenantsTable.id, requestedTenantId), eq(tenantsTable.parentTenantId, tenantId)));
-      if (!childTenant) {
-        res.status(403).json({ error: "Admins can only create users in their own child client tenants" }); return;
+      // Platform admins (isPlatform=true) can create users in any tenant, just like super_admin
+      const [myTenantRow] = await db.select({ isPlatform: tenantsTable.isPlatform })
+        .from(tenantsTable).where(eq(tenantsTable.id, tenantId));
+      if (myTenantRow?.isPlatform) {
+        targetTenantId = requestedTenantId;
+      } else {
+        // Non-platform admin: only child tenants
+        const [childTenant] = await db.select({ id: tenantsTable.id })
+          .from(tenantsTable)
+          .where(and(eq(tenantsTable.id, requestedTenantId), eq(tenantsTable.parentTenantId, tenantId)));
+        if (!childTenant) {
+          res.status(403).json({ error: "Admins can only create users in their own child client tenants" }); return;
+        }
+        targetTenantId = requestedTenantId;
       }
-      targetTenantId = requestedTenantId;
     }
   }
 
@@ -154,8 +162,8 @@ router.patch("/users/:userId", requireAuth, async (req: AuthenticatedRequest, re
     }
   }
 
-  // Super admin only: can reassign tenant
-  if (role === "super_admin") {
+  // Super admin + admin: can reassign tenant
+  if (role === "super_admin" || role === "admin") {
     if (body.tenantId !== undefined && body.tenantId !== "") {
       updateData.tenantId = Number(body.tenantId);
     }
