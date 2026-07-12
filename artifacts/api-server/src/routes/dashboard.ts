@@ -214,16 +214,8 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     createdAt: tenantsTable.createdAt,
   }).from(tenantsTable).where(eq(tenantsTable.id, req.user!.tenantId));
 
-  // Super admin and platform-admin see all client tenants.
-  // Non-platform admin sees only direct child tenants.
-  let visibleClientTenants: typeof allClientTenants;
-  if (callerRole === "super_admin") {
-    visibleClientTenants = allClientTenants;
-  } else {
-    visibleClientTenants = ownTenant?.isPlatform
-      ? allClientTenants
-      : allClientTenants.filter(t => t.parentTenantId === req.user!.tenantId);
-  }
+  // Both super_admin and admin see ALL client tenants so their dashboards are in sync.
+  const visibleClientTenants: typeof allClientTenants = allClientTenants;
 
   const clientTenants = visibleClientTenants;
   const clientTenantIds = clientTenants.map(t => t.id);

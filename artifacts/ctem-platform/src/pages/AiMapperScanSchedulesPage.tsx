@@ -14,8 +14,9 @@ import { CalendarClock, Plus, Pencil, Trash2, Play, Loader2, Clock } from "lucid
 interface Schedule {
   id: number;
   tenantId: number;
-  title: string;
+  name: string;
   frequency: string;
+  runTime: string;
   nextRunAt: string;
   lastRunAt: string | null;
   lastScanId: number | null;
@@ -48,28 +49,40 @@ function ScheduleForm({
   onClose: () => void;
   loading: boolean;
 }) {
-  const [title, setTitle] = useState(initial?.title ?? "Scheduled AI Scan");
+  const [name, setName] = useState(initial?.name ?? "Scheduled AI Scan");
   const [frequency, setFrequency] = useState(initial?.frequency ?? "daily");
+  const [runTime, setRunTime] = useState(initial?.runTime ?? "02:00");
   const [cidrScope, setCidrScope] = useState(initial?.cidrScope ?? "");
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
 
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <Label>Title</Label>
-        <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Scheduled AI Surface Scan" />
+        <Label>Name</Label>
+        <Input value={name} onChange={e => setName(e.target.value)} placeholder="Scheduled AI Surface Scan" />
       </div>
-      <div className="space-y-1">
-        <Label>Frequency</Label>
-        <Select value={frequency} onValueChange={setFrequency}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="hourly">Every Hour</SelectItem>
-            <SelectItem value="daily">Every Day</SelectItem>
-            <SelectItem value="weekly">Every Week</SelectItem>
-            <SelectItem value="monthly">Every Month</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <Label>Frequency</Label>
+          <Select value={frequency} onValueChange={setFrequency}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hourly">Every Hour</SelectItem>
+              <SelectItem value="daily">Every Day</SelectItem>
+              <SelectItem value="weekly">Every Week</SelectItem>
+              <SelectItem value="monthly">Every Month</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label>Run Time</Label>
+          <Input
+            type="time"
+            value={runTime}
+            onChange={e => setRunTime(e.target.value)}
+            className="font-mono"
+          />
+        </div>
       </div>
       <div className="space-y-1">
         <Label>CIDR Scope <span className="text-muted-foreground text-xs">(optional — leave blank to scan asset inventory)</span></Label>
@@ -86,7 +99,7 @@ function ScheduleForm({
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
-        <Button onClick={() => onSave({ title, frequency, cidrScope: cidrScope.trim() || null, isActive })} disabled={loading || !title.trim()}>
+        <Button onClick={() => onSave({ name, frequency, runTime, cidrScope: cidrScope.trim() || null, isActive })} disabled={loading || !name.trim()}>
           {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : "Save Schedule"}
         </Button>
       </DialogFooter>
@@ -167,7 +180,7 @@ export default function AiMapperScanSchedulesPage() {
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <CardTitle className="text-base font-semibold text-white">{sch.title}</CardTitle>
+                      <CardTitle className="text-base font-semibold text-white">{sch.name}</CardTitle>
                       <Badge variant={sch.isActive ? "default" : "secondary"} className="text-xs">
                         {sch.isActive ? "Active" : "Paused"}
                       </Badge>
@@ -244,7 +257,7 @@ export default function AiMapperScanSchedulesPage() {
           <DialogContent>
             <DialogHeader><DialogTitle>Delete Schedule</DialogTitle></DialogHeader>
             <p className="text-muted-foreground text-sm">
-              Are you sure you want to delete <span className="text-white font-medium">"{deleteTarget?.title}"</span>? This cannot be undone.
+              Are you sure you want to delete <span className="text-white font-medium">"{deleteTarget?.name}"</span>? This cannot be undone.
             </p>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>

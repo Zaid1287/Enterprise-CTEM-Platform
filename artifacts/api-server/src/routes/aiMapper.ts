@@ -271,21 +271,32 @@ router.post("/ai-mapper/scan-schedules", requireAuth, requireAiMapper, async (re
 });
 
 router.patch("/ai-mapper/scan-schedules/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
+  const { role } = req.user!;
   if (role !== "admin" && role !== "super_admin" && role !== "manager") { res.status(403).json({ error: "Insufficient permissions" }); return; }
   const id = Number(req.params.id);
-  const [existing] = await db.select().from(aiMapperScanSchedulesTable).where(and(eq(aiMapperScanSchedulesTable.id, id), eq(aiMapperScanSchedulesTable.tenantId, tenantId)));
+  // admin and super_admin can edit any schedule (cross-tenant sync); manager/client restricted to own tenant
+  const existingCond = (role === "admin" || role === "super_admin")
+    ? eq(aiMapperScanSchedulesTable.id, id)
+    : and(eq(aiMapperScanSchedulesTable.id, id), eq(aiMapperScanSchedulesTable.tenantId, req.user!.tenantId));
+  const [existing] = await db.select().from(aiMapperScanSchedulesTable).where(existingCond);
   if (!existing) { res.status(404).json({ error: "Not found" }); return; }
   const { name, frequency, runTime, dayOfWeek, dayOfMonth, queryPresets, cidrScope, isActive } = req.body;
   const nextRunAt = computeNextRunAt(frequency ?? existing.frequency, runTime ?? existing.runTime, dayOfWeek ?? existing.dayOfWeek, dayOfMonth ?? existing.dayOfMonth);
-  const [updated] = await db.update(aiMapperScanSchedulesTable).set({ ...(name !== undefined && { name }), ...(frequency !== undefined && { frequency }), ...(runTime !== undefined && { runTime }), ...(dayOfWeek !== undefined && { dayOfWeek }), ...(dayOfMonth !== undefined && { dayOfMonth }), ...(queryPresets !== undefined && { queryPresets }), ...(cidrScope !== undefined && { cidrScope }), ...(isActive !== undefined && { isActive }), nextRunAt }).where(and(eq(aiMapperScanSchedulesTable.id, id), eq(aiMapperScanSchedulesTable.tenantId, tenantId))).returning();
+  const updateCond = (role === "admin" || role === "super_admin")
+    ? eq(aiMapperScanSchedulesTable.id, id)
+    : and(eq(aiMapperScanSchedulesTable.id, id), eq(aiMapperScanSchedulesTable.tenantId, req.user!.tenantId));
+  const [updated] = await db.update(aiMapperScanSchedulesTable).set({ ...(name !== undefined && { name }), ...(frequency !== undefined && { frequency }), ...(runTime !== undefined && { runTime }), ...(dayOfWeek !== undefined && { dayOfWeek }), ...(dayOfMonth !== undefined && { dayOfMonth }), ...(queryPresets !== undefined && { queryPresets }), ...(cidrScope !== undefined && { cidrScope }), ...(isActive !== undefined && { isActive }), nextRunAt }).where(updateCond).returning();
   res.json(updated);
 });
 
 router.delete("/ai-mapper/scan-schedules/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
+  const { role } = req.user!;
   if (role !== "admin" && role !== "super_admin" && role !== "manager") { res.status(403).json({ error: "Insufficient permissions" }); return; }
-  await db.delete(aiMapperScanSchedulesTable).where(and(eq(aiMapperScanSchedulesTable.id, Number(req.params.id)), eq(aiMapperScanSchedulesTable.tenantId, tenantId)));
+  // admin and super_admin can delete any schedule (cross-tenant sync)
+  const deleteCond = (role === "admin" || role === "super_admin")
+    ? eq(aiMapperScanSchedulesTable.id, Number(req.params.id))
+    : and(eq(aiMapperScanSchedulesTable.id, Number(req.params.id)), eq(aiMapperScanSchedulesTable.tenantId, req.user!.tenantId));
+  await db.delete(aiMapperScanSchedulesTable).where(deleteCond);
   res.json({ ok: true });
 });
 
