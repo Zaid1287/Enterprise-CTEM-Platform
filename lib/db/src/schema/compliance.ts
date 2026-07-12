@@ -35,3 +35,12 @@ export const complianceControlsTable = pgTable("compliance_controls", {
 export const insertComplianceControlSchema = createInsertSchema(complianceControlsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertComplianceControl = z.infer<typeof insertComplianceControlSchema>;
 export type ComplianceControl = typeof complianceControlsTable.$inferSelect;
+
+// Junction table: many-to-many between compliance controls and assets
+export const complianceControlAssetsTable = pgTable("compliance_control_assets", {
+  id: serial("id").primaryKey(),
+  controlId: integer("control_id").notNull().references(() => complianceControlsTable.id, { onDelete: "cascade" }),
+  assetId: integer("asset_id").notNull().references(() => assetsTable.id, { onDelete: "cascade" }),
+  tenantId: integer("tenant_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { eq, and, count, sql, inArray } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
-import { db, complianceFrameworksTable, complianceControlsTable, tenantsTable, assetGroupsTable, assetsTable } from "@workspace/db";
+import { db, complianceFrameworksTable, complianceControlsTable, complianceControlAssetsTable, tenantsTable, assetGroupsTable, assetsTable } from "@workspace/db";
 import {
   GetComplianceControlParams, UpdateComplianceControlParams,
   UpdateComplianceControlBody, ListComplianceControlsQueryParams,
@@ -33,17 +33,46 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-function toControlResponse(control: typeof complianceControlsTable.$inferSelect, frameworkName: string | null, groupName?: string | null, assetName?: string | null) {
+function toControlResponse(
+  control: typeof complianceControlsTable.$inferSelect,
+  frameworkName: string | null,
+  groupName?: string | null,
+  assetName?: string | null,
+  assetScopes?: { assetId: number; assetName: string }[],
+) {
   return {
     id: control.id, frameworkId: control.frameworkId, frameworkName: frameworkName ?? "",
     controlId: control.controlId, title: control.title, description: control.description,
     status: control.status, evidence: control.evidence, assignedTo: control.assignedTo,
-    targetGroupId: (control as any).targetGroupId ?? null,
+    targetGroupId: control.targetGroupId ?? null,
     targetGroupName: groupName ?? null,
-    targetAssetId: (control as any).targetAssetId ?? null,
+    targetAssetId: control.targetAssetId ?? null,
     targetAssetName: assetName ?? null,
+    // Multi-asset scopes: array of { assetId, assetName }
+    assetScopes: assetScopes ?? [],
     dueDate: control.dueDate, createdAt: control.createdAt.toISOString(),
   };
+}
+
+/** Fetch asset scopes for a list of control IDs from the junction table */
+async function fetchAssetScopes(controlIds: number[]): Promise<Map<number, { assetId: number; assetName: string }[]>> {
+  if (controlIds.length === 0) return new Map();
+  const rows = await db.select({
+    controlId: complianceControlAssetsTable.controlId,
+    assetId: complianceControlAssetsTable.assetId,
+    assetName: assetsTable.name,
+  })
+    .from(complianceControlAssetsTable)
+    .leftJoin(assetsTable, eq(complianceControlAssetsTable.assetId, assetsTable.id))
+    .where(inArray(complianceControlAssetsTable.controlId, controlIds));
+
+  const map = new Map<number, { assetId: number; assetName: string }[]>();
+  for (const row of rows) {
+    const list = map.get(row.controlId) ?? [];
+    list.push({ assetId: row.assetId, assetName: row.assetName ?? "" });
+    map.set(row.controlId, list);
+  }
+  return map;
 }
 
 router.get("/compliance/frameworks", requireAuth, async (_req, res): Promise<void> => {
@@ -82,10 +111,17 @@ router.get("/compliance/controls", requireAuth, async (req: AuthenticatedRequest
     assetName: assetsTable.name,
   }).from(complianceControlsTable)
     .leftJoin(complianceFrameworksTable, eq(complianceControlsTable.frameworkId, complianceFrameworksTable.id))
-    .leftJoin(assetGroupsTable, eq((complianceControlsTable as any).targetGroupId, assetGroupsTable.id))
-    .leftJoin(assetsTable, eq((complianceControlsTable as any).targetAssetId, assetsTable.id))
+    .leftJoin(assetGroupsTable, eq(complianceControlsTable.targetGroupId, assetGroupsTable.id))
+    .leftJoin(assetsTable, eq(complianceControlsTable.targetAssetId, assetsTable.id))
     .where(and(...filters));
-  res.json(controls.map(({ control, frameworkName, groupName, assetName }) => toControlResponse(control, frameworkName, groupName, assetName)));
+
+  // Fetch multi-asset scopes from junction table
+  const controlIds = controls.map(c => c.control.id);
+  const assetScopeMap = await fetchAssetScopes(controlIds);
+
+  res.json(controls.map(({ control, frameworkName, groupName, assetName }) =>
+    toControlResponse(control, frameworkName, groupName, assetName, assetScopeMap.get(control.id) ?? [])
+  ));
 });
 
 router.get("/compliance/controls/:controlId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -98,7 +134,8 @@ router.get("/compliance/controls/:controlId", requireAuth, async (req: Authentic
     .leftJoin(complianceFrameworksTable, eq(complianceControlsTable.frameworkId, complianceFrameworksTable.id))
     .where(and(eq(complianceControlsTable.id, params.data.controlId), eq(complianceControlsTable.tenantId, req.user!.tenantId)));
   if (!row) { res.status(404).json({ error: "Control not found" }); return; }
-  res.json(toControlResponse(row.control, row.frameworkName));
+  const assetScopeMap = await fetchAssetScopes([params.data.controlId]);
+  res.json(toControlResponse(row.control, row.frameworkName, null, null, assetScopeMap.get(params.data.controlId) ?? []));
 });
 
 router.patch("/compliance/controls/:controlId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -107,34 +144,76 @@ router.patch("/compliance/controls/:controlId", requireAuth, async (req: Authent
   }
   const params = UpdateComplianceControlParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const parsed = UpdateComplianceControlBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  // Accept targetGroupId / targetAssetId alongside the standard Zod-validated fields
+
   const rawBody = req.body as any;
+
+  // Strip fields we handle manually so Zod doesn't see them
+  const zodBody: any = { ...rawBody };
+  delete zodBody.assignedTo;
+  delete zodBody.targetGroupId;
+  delete zodBody.targetAssetId;
+  delete zodBody.assetIds;
+
+  const parsed = UpdateComplianceControlBody.safeParse(zodBody);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
   const updatePayload: any = { ...parsed.data };
+
+  // assignedTo: handle null (clearing) and any string value
+  if ("assignedTo" in rawBody) {
+    const v = rawBody.assignedTo;
+    updatePayload.assignedTo = (typeof v === "string" && v.trim()) ? v.trim() : null;
+  }
+
+  // Legacy single-asset FK (kept for backward compat)
   if ("targetGroupId" in rawBody) {
-    updatePayload.targetGroupId = rawBody.targetGroupId === null ? null : parseInt(rawBody.targetGroupId, 10) || null;
+    updatePayload.targetGroupId = rawBody.targetGroupId === null ? null : (parseInt(rawBody.targetGroupId, 10) || null);
   }
   if ("targetAssetId" in rawBody) {
-    updatePayload.targetAssetId = rawBody.targetAssetId === null ? null : parseInt(rawBody.targetAssetId, 10) || null;
+    updatePayload.targetAssetId = rawBody.targetAssetId === null ? null : (parseInt(rawBody.targetAssetId, 10) || null);
   }
+
   const [control] = await db.update(complianceControlsTable).set(updatePayload)
     .where(and(eq(complianceControlsTable.id, params.data.controlId), eq(complianceControlsTable.tenantId, req.user!.tenantId)))
     .returning();
   if (!control) { res.status(404).json({ error: "Control not found" }); return; }
-  await logAudit(req.user!, "update_compliance_control", "compliance", control.id, `status: ${parsed.data.status ?? "unchanged"}`);
+
+  // Multi-asset scopes: replace all entries in junction table
+  if ("assetIds" in rawBody && Array.isArray(rawBody.assetIds)) {
+    const newAssetIds: number[] = (rawBody.assetIds as any[])
+      .map((id: any) => parseInt(String(id), 10))
+      .filter((id: number) => !isNaN(id) && id > 0);
+
+    await db.delete(complianceControlAssetsTable)
+      .where(eq(complianceControlAssetsTable.controlId, params.data.controlId));
+
+    if (newAssetIds.length > 0) {
+      await db.insert(complianceControlAssetsTable)
+        .values(newAssetIds.map(assetId => ({
+          controlId: params.data.controlId,
+          assetId,
+          tenantId: req.user!.tenantId,
+        })))
+        .onConflictDoNothing();
+    }
+  }
+
+  await logAudit(req.user!, "update_compliance_control", "compliance", control.id,
+    `status: ${parsed.data.status ?? "unchanged"}${("assignedTo" in rawBody) ? ` | assignedTo: ${updatePayload.assignedTo ?? "cleared"}` : ""}`);
+
   const [fw] = await db.select().from(complianceFrameworksTable).where(eq(complianceFrameworksTable.id, control.frameworkId));
   let groupName: string | null = null;
-  if ((control as any).targetGroupId) {
-    const [grp] = await db.select({ name: assetGroupsTable.name }).from(assetGroupsTable).where(eq(assetGroupsTable.id, (control as any).targetGroupId));
+  if (control.targetGroupId) {
+    const [grp] = await db.select({ name: assetGroupsTable.name }).from(assetGroupsTable).where(eq(assetGroupsTable.id, control.targetGroupId));
     groupName = grp?.name ?? null;
   }
   let assetName: string | null = null;
-  if ((control as any).targetAssetId) {
-    const [ast] = await db.select({ name: assetsTable.name }).from(assetsTable).where(eq(assetsTable.id, (control as any).targetAssetId));
+  if (control.targetAssetId) {
+    const [ast] = await db.select({ name: assetsTable.name }).from(assetsTable).where(eq(assetsTable.id, control.targetAssetId));
     assetName = ast?.name ?? null;
   }
-  res.json(toControlResponse(control, fw?.name ?? null, groupName, assetName));
+  const assetScopeMap = await fetchAssetScopes([params.data.controlId]);
+  res.json(toControlResponse(control, fw?.name ?? null, groupName, assetName, assetScopeMap.get(params.data.controlId) ?? []));
 });
 
 router.post(
@@ -168,8 +247,8 @@ router.post(
     try {
       const raw = row.control.evidence;
       if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) existing = parsed;
+        const p = JSON.parse(raw);
+        if (Array.isArray(p)) existing = p;
       }
     } catch {}
 
@@ -250,7 +329,6 @@ router.delete(
 );
 
 // ── Create a new compliance control ──────────────────────────────────────────
-// Platform SA: propagates to all client tenants automatically.
 router.post(
   "/compliance/controls",
   requireAuth,
@@ -280,7 +358,7 @@ router.post(
       status: controlStatus,
     }).returning();
 
-    // Platform SA: propagate to all client tenants (same controlId within same framework)
+    // Platform SA: propagate to all client tenants
     if (tenantId === platformId) {
       const clientTenants = await db.select({ id: tenantsTable.id })
         .from(tenantsTable).where(eq(tenantsTable.isPlatform, false));
@@ -312,7 +390,6 @@ router.post(
 );
 
 // ── Delete a compliance control ───────────────────────────────────────────────
-// Platform SA: also removes the same control from all client tenants.
 router.delete(
   "/compliance/controls/:controlId",
   requireAuth,
@@ -332,7 +409,6 @@ router.delete(
       .where(and(eq(complianceControlsTable.id, controlId), eq(complianceControlsTable.tenantId, tenantId)));
     if (!row) { res.status(404).json({ error: "Control not found" }); return; }
 
-    // Platform SA: propagate deletion to all client tenants
     if (tenantId === platformId) {
       const { controlId: cId, frameworkId: fId } = row.control;
       const clientTenants = await db.select({ id: tenantsTable.id })
