@@ -262,7 +262,7 @@ export default function ScansPage() {
             frequency: schedForm.frequency,
             runTime: schedForm.runTime,
             timezone: schedForm.timezone,
-            assetId,
+            assetToolConfig: [{ assetId, toolIds: [] }],
           };
           if (schedForm.frequency === "weekly") payload.dayOfWeek = schedForm.dayOfWeek;
           if (schedForm.frequency === "monthly") payload.dayOfMonth = schedForm.dayOfMonth;

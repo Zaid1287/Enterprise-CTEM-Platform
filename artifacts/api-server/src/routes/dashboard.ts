@@ -698,13 +698,13 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
 
   // ── False Positive Status ────────────────────────────────────────────────────
   const fpSubmitted = allFindings.filter(f => f.falsePositiveStatus === "submitted").length;
-  const fpConfirmed = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpConfirmed = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive || f.status === "false_positive").length;
   const fpRejected  = allFindings.filter(f => f.falsePositiveStatus === "rejected").length;
   const falsePositiveFindings = allFindings
-    .filter(f => f.falsePositiveStatus && f.falsePositiveStatus !== "none")
+    .filter(f => f.status === "false_positive" || (f.falsePositiveStatus && f.falsePositiveStatus !== "none"))
     .map(f => ({
       id: f.id, title: f.title, severity: f.severity, status: f.status,
-      cveId: f.cveId, falsePositiveStatus: f.falsePositiveStatus,
+      cveId: f.cveId, falsePositiveStatus: f.falsePositiveStatus ?? (f.status === "false_positive" ? "confirmed" : "none"),
       assetId: f.assetId, assetName: rawAssets.find(a => a.id === f.assetId)?.name ?? "Unknown",
       updatedAt: f.updatedAt.toISOString(),
     }));
@@ -834,19 +834,19 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
 
   // False positive breakdown — use the scoped `findings` and `assets` vars (client-scoped)
   const fpSubmitted = findings.filter(f => f.falsePositiveStatus === "submitted").length;
-  const fpConfirmed = findings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpConfirmed = findings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive || f.status === "false_positive").length;
   const fpRejected  = findings.filter(f => f.falsePositiveStatus === "rejected").length;
 
-  // Full list of false positive findings (any non-"none" status) with asset name for display
+  // Full list of false positive findings (any non-"none" status OR status=false_positive) with asset name for display
   const assetNameMap = new Map(assets.map(a => [a.id, a.name]));
   const falsePositiveFindings = findings
-    .filter(f => f.falsePositiveStatus && f.falsePositiveStatus !== "none")
+    .filter(f => f.status === "false_positive" || (f.falsePositiveStatus && f.falsePositiveStatus !== "none"))
     .map(f => ({
       id: f.id,
       title: f.title,
       severity: f.severity,
       status: f.status,
-      falsePositiveStatus: f.falsePositiveStatus,
+      falsePositiveStatus: f.falsePositiveStatus ?? (f.status === "false_positive" ? "confirmed" : "none"),
       isFalsePositive: f.isFalsePositive,
       assetId: f.assetId,
       assetName: assetNameMap.get(f.assetId ?? -1) ?? "Unknown Asset",
@@ -1188,14 +1188,14 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
 
   // False positive breakdown (same logic as platform-overview)
   const fpSubmittedAdmin = allFindings.filter(f => f.falsePositiveStatus === "submitted").length;
-  const fpConfirmedAdmin = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive).length;
+  const fpConfirmedAdmin = allFindings.filter(f => f.falsePositiveStatus === "confirmed" || f.isFalsePositive || f.status === "false_positive").length;
   const fpRejectedAdmin  = allFindings.filter(f => f.falsePositiveStatus === "rejected").length;
   const assetNameMapAdmin = new Map(allAssets.map(a => [a.id, a.name]));
   const falsePositiveFindingsAdmin = allFindings
-    .filter(f => f.falsePositiveStatus && f.falsePositiveStatus !== "none")
+    .filter(f => f.status === "false_positive" || (f.falsePositiveStatus && f.falsePositiveStatus !== "none"))
     .map(f => ({
       id: f.id, title: f.title, severity: f.severity, status: f.status,
-      falsePositiveStatus: f.falsePositiveStatus,
+      falsePositiveStatus: f.falsePositiveStatus ?? (f.status === "false_positive" ? "confirmed" : "none"),
       isFalsePositive: f.isFalsePositive,
       assetId: f.assetId,
       assetName: assetNameMapAdmin.get(f.assetId ?? -1) ?? "Unknown Asset",

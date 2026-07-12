@@ -6,7 +6,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { Paperclip, Upload, FileText, X, Trash2, Bot, Loader2, Link2 } from "lucide-react";
+import { Paperclip, Upload, FileText, X, Trash2, Bot, Loader2, Link2, ChevronLeft, ChevronRight, Pencil, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,6 +17,7 @@ import { getToken } from "@/lib/auth";
 import { apiFetch } from "@/lib/apiFetch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const PAGE_SIZE = 25;
 
 const FRAMEWORK_COLORS: Record<string, string> = {
   ISO27001: "border-blue-500/40 bg-blue-500/5",
@@ -98,10 +99,64 @@ function EvidenceFiles({
   );
 }
 
+function InlineAssignedTo({
+  value,
+  onSave,
+}: {
+  value: string | null;
+  onSave: (v: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+  const [saving, setSaving] = useState(false);
+
+  const commit = async () => {
+    setSaving(true);
+    try { await onSave(draft.trim()); } finally { setSaving(false); }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          className="h-6 px-1.5 text-xs border border-primary/40 rounded bg-background text-foreground w-28 focus:outline-none focus:ring-1 focus:ring-primary/50"
+          placeholder="Name or email"
+        />
+        <button onClick={commit} disabled={saving} className="text-green-400 hover:text-green-300 transition-colors">
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+        </button>
+        <button onClick={() => setEditing(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setDraft(value ?? ""); setEditing(true); }}
+      className="group flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      title="Click to assign"
+    >
+      <span>{value || "—"}</span>
+      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity" />
+    </button>
+  );
+}
+
 export default function CompliancePage() {
   const [selectedFramework, setSelectedFramework] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
   const { user } = useAuth();
   const [uploadingId, setUploadingId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -109,8 +164,6 @@ export default function CompliancePage() {
   const [aiGuidanceControl, setAiGuidanceControl] = useState<any | null>(null);
   const [aiGuidanceText, setAiGuidanceText] = useState<string>("");
   const [aiLoading, setAiLoading] = useState(false);
-
-  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   const handleAiGuidance = async (control: any) => {
     setAiGuidanceControl(control);
@@ -137,6 +190,7 @@ export default function CompliancePage() {
     queryKey: [...getGetComplianceSummaryQueryKey(), tenantFilter],
     queryFn: () => apiFetch(summaryUrl),
   });
+
   const controlParams = {
     frameworkId: selectedFramework ?? undefined,
     status: statusFilter || undefined,
@@ -147,13 +201,15 @@ export default function CompliancePage() {
   });
   const updateControl = useUpdateComplianceControl();
 
-  const { data: verifiedAssetsData } = useQuery({
-    queryKey: ["compliance-verified-assets"],
-    queryFn: () => apiFetch<{ id: number; name: string; domain: string | null; type: string }[]>(
-      `${BASE}/api/assets?verificationStatus=verified`
+  // Fetch ALL assets (not just verified) so assigned assets always appear in the dropdown.
+  // Verified assets are marked with a ✓ suffix so users still know their status.
+  const { data: allAssetsData } = useQuery({
+    queryKey: ["compliance-all-assets"],
+    queryFn: () => apiFetch<{ id: number; name: string; domain: string | null; type: string; verificationStatus: string }[]>(
+      `${BASE}/api/assets`
     ),
   });
-  const verifiedAssets = (verifiedAssetsData as any[]) ?? [];
+  const allAssets = (allAssetsData as any[]) ?? [];
 
   const handleStatusChange = async (controlId: number, status: string) => {
     await updateControl.mutateAsync({ controlId, data: { status } });
@@ -165,6 +221,14 @@ export default function CompliancePage() {
     await apiFetch(`${BASE}/api/compliance/controls/${controlId}`, {
       method: "PATCH",
       body: JSON.stringify({ targetAssetId: assetId }),
+    });
+    queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() });
+  };
+
+  const handleAssignedToSave = async (controlId: number, assignedTo: string) => {
+    await apiFetch(`${BASE}/api/compliance/controls/${controlId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ assignedTo: assignedTo || null }),
     });
     queryClient.invalidateQueries({ queryKey: getListComplianceControlsQueryKey() });
   };
@@ -191,9 +255,12 @@ export default function CompliancePage() {
   };
 
   const frameworks = summary as any[] ?? [];
-
   const allControls = (controls as any[] ?? []);
-  const displayControls = allControls;
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(allControls.length / PAGE_SIZE));
+  const safePageIndex = Math.min(page, totalPages);
+  const displayControls = allControls.slice((safePageIndex - 1) * PAGE_SIZE, safePageIndex * PAGE_SIZE);
 
   return (
     <div className="space-y-5">
@@ -227,7 +294,10 @@ export default function CompliancePage() {
           {frameworks.map((fw: any) => (
             <button
               key={fw.frameworkId}
-              onClick={() => setSelectedFramework(selectedFramework === fw.frameworkId ? null : fw.frameworkId)}
+              onClick={() => {
+                setSelectedFramework(selectedFramework === fw.frameworkId ? null : fw.frameworkId);
+                setPage(1);
+              }}
               className={cn(
                 "text-left bg-card rounded-xl p-4 border transition-all",
                 FRAMEWORK_COLORS[fw.shortName] ?? "border-border",
@@ -257,14 +327,20 @@ export default function CompliancePage() {
 
       {/* Controls Table */}
       <div>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h2 className="text-sm font-medium">
             {selectedFramework
               ? `Controls — ${frameworks.find((f: any) => f.frameworkId === selectedFramework)?.frameworkName ?? ""}`
               : "All Controls"}
+            {allControls.length > 0 && (
+              <span className="ml-2 text-xs text-muted-foreground font-normal">({allControls.length} total)</span>
+            )}
           </h2>
-          <div className="flex gap-2">
-            <Select value={statusFilter || "_all_"} onValueChange={(v) => setStatusFilter(v === "_all_" ? "" : v)}>
+          <div className="flex gap-2 items-center">
+            <Select
+              value={statusFilter || "_all_"}
+              onValueChange={(v) => { setStatusFilter(v === "_all_" ? "" : v); setPage(1); }}
+            >
               <SelectTrigger className="w-36 h-7 text-xs">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
@@ -277,7 +353,9 @@ export default function CompliancePage() {
               </SelectContent>
             </Select>
             {selectedFramework && (
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setSelectedFramework(null)}>Clear</Button>
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setSelectedFramework(null); setPage(1); }}>
+                Clear
+              </Button>
             )}
           </div>
         </div>
@@ -289,14 +367,20 @@ export default function CompliancePage() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Control ID</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Title</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Framework</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Asset Scope</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Assigned To</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
+                  Asset Scope
+                  <span className="ml-1 text-[10px] text-muted-foreground/60 font-normal">(✓ = verified)</span>
+                </th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
+                  Assigned To
+                  <span className="ml-1 text-[10px] text-muted-foreground/60 font-normal">(click to edit)</span>
+                </th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Evidence</th>
               </tr>
             </thead>
             <tbody>
-              {loadingControls && [...Array(5)].map((_, i) => (
+              {loadingControls && [...Array(8)].map((_, i) => (
                 <tr key={i} className="border-b border-border/50">
                   {[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
@@ -313,17 +397,21 @@ export default function CompliancePage() {
                     />
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.frameworkName}</td>
-                  {/* Asset Scope — assign control to a verified asset */}
+
+                  {/* Asset Scope — assign to any asset; verified ones marked with ✓ */}
                   <td className="px-4 py-2.5 text-xs">
                     <select
                       value={c.targetAssetId ?? ""}
                       onChange={e => handleAssetAssign(c.id, e.target.value ? Number(e.target.value) : null)}
-                      className="h-6 px-2 text-xs border border-border rounded bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors max-w-[150px]"
-                      title="Assign to verified asset"
+                      className="h-6 px-2 text-xs border border-border rounded bg-background text-foreground appearance-none cursor-pointer hover:border-primary/40 transition-colors max-w-[160px]"
+                      title="Assign to an asset"
                     >
                       <option value="">— unscoped —</option>
-                      {verifiedAssets.map((a: any) => (
-                        <option key={a.id} value={a.id}>{a.name || a.domain || `Asset #${a.id}`}</option>
+                      {allAssets.map((a: any) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name || a.domain || `Asset #${a.id}`}
+                          {a.verificationStatus === "verified" ? " ✓" : ""}
+                        </option>
                       ))}
                     </select>
                     {c.targetAssetName && (
@@ -332,7 +420,15 @@ export default function CompliancePage() {
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.assignedTo ?? "—"}</td>
+
+                  {/* Assigned To — inline editable; click the name or "—" to edit */}
+                  <td className="px-4 py-2.5 text-xs">
+                    <InlineAssignedTo
+                      value={c.assignedTo}
+                      onSave={(v) => handleAssignedToSave(c.id, v)}
+                    />
+                  </td>
+
                   <td className="px-4 py-2.5">
                     <Select value={c.status} onValueChange={(v) => handleStatusChange(c.id, v)}>
                       <SelectTrigger className={cn("h-6 text-xs border-0 px-2 py-0 w-32", statusBadgeClass(c.status))}>
@@ -372,11 +468,64 @@ export default function CompliancePage() {
                   </td>
                 </tr>
               ))}
-              {!loadingControls && displayControls.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">No controls found.</td></tr>
+              {!loadingControls && allControls.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">No controls found.</td>
+                </tr>
               )}
             </tbody>
           </table>
+
+          {/* Pagination footer */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-card/50">
+              <p className="text-xs text-muted-foreground">
+                Showing {((safePageIndex - 1) * PAGE_SIZE) + 1}–{Math.min(safePageIndex * PAGE_SIZE, allControls.length)} of {allControls.length} controls
+              </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  disabled={safePageIndex <= 1}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                </Button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter(p => p === 1 || p === totalPages || Math.abs(p - safePageIndex) <= 2)
+                  .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                    if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push("…");
+                    acc.push(p);
+                    return acc;
+                  }, [])
+                  .map((p, i) =>
+                    p === "…"
+                      ? <span key={`ellipsis-${i}`} className="w-6 text-center text-xs text-muted-foreground">…</span>
+                      : (
+                        <Button
+                          key={p}
+                          variant={p === safePageIndex ? "default" : "outline"}
+                          size="sm"
+                          className="h-6 w-6 p-0 text-xs"
+                          onClick={() => setPage(p as number)}
+                        >
+                          {p}
+                        </Button>
+                      )
+                  )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  disabled={safePageIndex >= totalPages}
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                >
+                  <ChevronRight className="w-3 h-3" />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

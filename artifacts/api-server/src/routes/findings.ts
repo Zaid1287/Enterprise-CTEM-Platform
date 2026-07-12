@@ -416,7 +416,19 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
   } else {
     patchWhere = and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
   }
-  const [finding] = await db.update(findingsTable).set(parsed.data)
+  // When status is set to "false_positive" via the dropdown, sync the FP tracking fields
+  // so the finding appears in dashboard FP counts and the false-positive findings list.
+  const updateData: Record<string, unknown> = { ...parsed.data };
+  if (parsed.data.status === "false_positive") {
+    updateData.falsePositiveStatus = "confirmed";
+    updateData.isFalsePositive = true;
+  }
+  // When status is changed away from false_positive, clear the FP tracking fields
+  if (parsed.data.status && parsed.data.status !== "false_positive") {
+    updateData.falsePositiveStatus = "none";
+    updateData.isFalsePositive = false;
+  }
+  const [finding] = await db.update(findingsTable).set(updateData as any)
     .where(patchWhere)
     .returning();
   if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
