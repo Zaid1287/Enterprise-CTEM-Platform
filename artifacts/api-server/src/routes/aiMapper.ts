@@ -72,10 +72,12 @@ router.get("/ai-mapper/module", requireAuth, async (req: AuthenticatedRequest, r
   res.json({ isEnabled: row?.isEnabled ?? false, updatedAt: row?.updatedAt ?? null });
 });
 
-// Admin + super_admin: bulk module status across all tenants (used by scan dialog asset selector)
+// Admin + super_admin + account_manager: bulk module status (used by scan dialog asset selector)
 router.get("/ai-mapper/module/all", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
-  if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (role !== "super_admin" && role !== "admin" && role !== "account_manager") {
+    res.status(403).json({ error: "Insufficient permissions" }); return;
+  }
   const rows = await db.select({ tenantId: aiMapperModuleAssignmentsTable.tenantId, isEnabled: aiMapperModuleAssignmentsTable.isEnabled }).from(aiMapperModuleAssignmentsTable);
   const map: Record<number, boolean> = {};
   for (const r of rows) map[r.tenantId] = r.isEnabled ?? false;

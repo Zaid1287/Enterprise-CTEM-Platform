@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Trash2, Eye, Play, Clock, CheckCircle2, XCircle, Loader2,
   Server, Target, Search, ChevronRight, MapPin, Building2,
+  ShieldCheck, ShieldAlert, Zap, ZapOff, Ban,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -75,7 +76,7 @@ interface ShodanPreset {
 interface Asset {
   id: number; name: string; type: string; domain?: string;
   ip?: string; url?: string; status: string; tenantId?: number;
-  verificationStatus?: string;
+  verificationStatus?: string; tenantName?: string | null;
 }
 
 export default function AiMapperScansPage() {
@@ -83,17 +84,21 @@ export default function AiMapperScansPage() {
   const { toast } = useToast();
   const { user, aiMapperEnabled } = useAuth();
   const isAdminOrSA = user?.role === "admin" || user?.role === "super_admin";
+  const isAM = user?.role === "account_manager";
   const qc = useQueryClient();
 
-  // AI Mapper module status per tenant (for asset selector)
+  // Per-tenant AI Mapper module status (admin, super_admin, account_manager all need this)
   const [moduleMap, setModuleMap] = useState<Record<number, boolean>>({});
+  const [moduleMapLoaded, setModuleMapLoaded] = useState(false);
   useEffect(() => {
-    if (isAdminOrSA) {
+    if (isAdminOrSA || isAM) {
       apiFetch<Record<number, boolean>>("/api/ai-mapper/module/all")
-        .then(m => setModuleMap(m))
-        .catch(() => {});
+        .then(m => { setModuleMap(m); setModuleMapLoaded(true); })
+        .catch(() => setModuleMapLoaded(true));
+    } else {
+      setModuleMapLoaded(true);
     }
-  }, [isAdminOrSA]);
+  }, [isAdminOrSA, isAM]);
 
   const [wsConnectedSet, setWsConnectedSet] = useState<Set<number>>(new Set());
   const handleConnectedChange = useCallback((id: number, conn: boolean) => {
@@ -451,14 +456,14 @@ export default function AiMapperScansPage() {
               {/* Asset Selector Tab */}
               <TabsContent value="assets" className="mt-3">
                 <p className="text-xs text-muted-foreground mb-2">
-                  Select assets from your inventory. Their IPs and domains will be added as scan targets.
+                  Select assets from your inventory. Only <span className="text-green-400 font-medium">Verified</span> assets with <span className="text-violet-400 font-medium">AI Active</span> can be scanned.
                 </p>
                 <div className="relative mb-2">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                   <Input
                     value={assetSearch}
                     onChange={e => setAssetSearch(e.target.value)}
-                    placeholder="Search assets…"
+                    placeholder="Search assets by name, IP, or domain…"
                     className="pl-8 h-8 text-sm"
                   />
                 </div>
@@ -468,64 +473,123 @@ export default function AiMapperScansPage() {
                     No assets in inventory yet
                   </div>
                 ) : (
-                  <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                  <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
                     {filteredAssets.map(a => {
-                      const target = (a as any).value || (a as any).ipAddress || a.ip || a.domain;
-                      const isVerified = (a.verificationStatus ?? (a as any).verificationStatus) === "verified";
-                      // Check AI Mapper module active for this asset's tenant
+                      const target = a.ip || a.domain || (a as any).url || (a as any).value || (a as any).ipAddress;
+                      const isVerified = a.verificationStatus === "verified";
+                      const isPending = a.verificationStatus === "pending";
+
+                      // Per-tenant AI module check
+                      // admin/SA/AM: look up each asset's tenant in the moduleMap fetched from the API
+                      // client: use their auth store aiMapperEnabled flag (single-tenant)
                       const assetTenantId = a.tenantId ?? user?.tenantId;
-                      const aiModuleActive = isAdminOrSA
-                        ? (assetTenantId === user?.tenantId ? true : (moduleMap[assetTenantId!] ?? false))
-                        : aiMapperEnabled;
-                      const isDisabled = !target || !isVerified || !aiModuleActive;
+                      const aiModuleActive = (isAdminOrSA || isAM)
+                        ? (moduleMap[assetTenantId!] ?? false)
+                        : (aiMapperEnabled ?? false);
+
+                      const hasTarget = !!target;
+                      const canSelect = hasTarget && isVerified && aiModuleActive;
                       const isSelected = selectedAssets.has(a.id);
+
                       return (
                         <button
                           key={a.id}
-                          onClick={() => !isDisabled && toggleAsset(a.id)}
-                          disabled={isDisabled}
+                          onClick={() => canSelect && toggleAsset(a.id)}
+                          disabled={!canSelect}
                           className={cn(
-                            "w-full text-left px-3 py-2 rounded-md border text-sm transition-colors",
-                            isDisabled && "opacity-40 cursor-not-allowed",
-                            !isDisabled && isSelected
-                              ? "border-primary bg-primary/10 text-primary"
-                              : !isDisabled
+                            "w-full text-left px-3 py-2.5 rounded-md border text-sm transition-colors",
+                            !canSelect && "opacity-50 cursor-not-allowed",
+                            canSelect && isSelected
+                              ? "border-primary bg-primary/10"
+                              : canSelect
                               ? "border-border hover:border-primary/40 hover:bg-muted/40"
-                              : "border-border"
+                              : "border-border/60 bg-muted/10"
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <div className="font-medium text-xs">{a.name}</div>
-                              <div className="text-xs text-muted-foreground font-mono">
-                                {target ?? "No IP or domain — cannot scan"}
+                          <div className="flex items-start justify-between gap-2">
+                            {/* Left: name + target + tenant */}
+                            <div className="min-w-0 flex-1">
+                              <div className={cn("font-medium text-xs truncate", canSelect && isSelected && "text-primary")}>
+                                {a.name}
                               </div>
+                              <div className="text-[11px] text-muted-foreground font-mono truncate mt-0.5">
+                                {hasTarget ? target : <span className="text-muted-foreground/50 italic">No IP or domain — cannot scan</span>}
+                              </div>
+                              {(isAdminOrSA || isAM) && a.tenantName && (
+                                <div className="text-[10px] text-muted-foreground/50 mt-0.5 flex items-center gap-1">
+                                  <Building2 className="w-2.5 h-2.5" />{a.tenantName}
+                                </div>
+                              )}
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {!isVerified && (
-                                <span className="text-[10px] text-amber-400 border border-amber-500/30 rounded px-1 py-0.5">Unverified</span>
+
+                            {/* Right: status badges + type */}
+                            <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end mt-0.5">
+                              {/* Verification badge — always shown */}
+                              {isVerified ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-green-400 border border-green-500/30 bg-green-500/5 rounded px-1.5 py-0.5">
+                                  <ShieldCheck className="w-2.5 h-2.5" />Verified
+                                </span>
+                              ) : isPending ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-400 border border-blue-500/30 bg-blue-500/5 rounded px-1.5 py-0.5">
+                                  <ShieldAlert className="w-2.5 h-2.5" />Pending
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-400 border border-amber-500/30 bg-amber-500/5 rounded px-1.5 py-0.5">
+                                  <ShieldAlert className="w-2.5 h-2.5" />Unverified
+                                </span>
                               )}
-                              {!aiModuleActive && (
-                                <span className="text-[10px] text-red-400 border border-red-500/30 rounded px-1 py-0.5">AI Inactive</span>
+
+                              {/* AI Module badge — always shown */}
+                              {aiModuleActive ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-400 border border-violet-500/30 bg-violet-500/5 rounded px-1.5 py-0.5">
+                                  <Zap className="w-2.5 h-2.5" />AI Active
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-red-400 border border-red-500/30 bg-red-500/5 rounded px-1.5 py-0.5">
+                                  <ZapOff className="w-2.5 h-2.5" />AI Inactive
+                                </span>
                               )}
-                              <Badge variant="outline" className="text-xs capitalize">{a.type}</Badge>
+
+                              {/* No target badge */}
+                              {!hasTarget && (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground border border-border rounded px-1.5 py-0.5">
+                                  <Ban className="w-2.5 h-2.5" />No Target
+                                </span>
+                              )}
+
+                              <Badge variant="outline" className="text-[10px] capitalize px-1.5 py-0.5">{a.type}</Badge>
                             </div>
                           </div>
                         </button>
                       );
                     })}
                     {filteredAssets.length === 0 && (
-                      <p className="py-4 text-center text-sm text-muted-foreground">No assets match</p>
+                      <p className="py-4 text-center text-sm text-muted-foreground">No assets match your search</p>
                     )}
                   </div>
                 )}
-                {selectedAssets.size > 0 && (
-                  <button
-                    className="mt-2 text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => setSelectedAssets(new Set())}
-                  >
-                    Deselect {selectedAssets.size} asset{selectedAssets.size !== 1 ? "s" : ""}
-                  </button>
+
+                {/* Legend */}
+                {assets.length > 0 && (
+                  <div className="mt-2 flex items-center gap-3 flex-wrap">
+                    {selectedAssets.size > 0 && (
+                      <button
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setSelectedAssets(new Set())}
+                      >
+                        Deselect {selectedAssets.size} asset{selectedAssets.size !== 1 ? "s" : ""}
+                      </button>
+                    )}
+                    <span className="text-[10px] text-muted-foreground/60 ml-auto">
+                      {assets.filter(a => {
+                        const t = a.ip || a.domain || (a as any).url || (a as any).value;
+                        const ver = a.verificationStatus === "verified";
+                        const tid = a.tenantId ?? user?.tenantId;
+                        const ai = (isAdminOrSA || isAM) ? (moduleMap[tid!] ?? false) : (aiMapperEnabled ?? false);
+                        return t && ver && ai;
+                      }).length} of {assets.length} eligible to scan
+                    </span>
+                  </div>
                 )}
               </TabsContent>
 
