@@ -46,6 +46,7 @@ interface Vendor {
   riskGrade: string;
   status: string;
   logoUrl: string | null;
+  website: string | null;
   lastScannedAt: string | null;
   assetCount: number;
   inherentRisk: string | null;
@@ -109,7 +110,7 @@ export default function TprmVendorsPage() {
   // Edit / Delete state
   const [showEdit, setShowEdit]           = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
-  const [editForm, setEditForm]           = useState({ companyName: "", type: "service_provider", industry: "", description: "", inherentRisk: "medium", scanFrequency: "weekly", status: "active" });
+  const [editForm, setEditForm]           = useState({ companyName: "", type: "service_provider", industry: "", description: "", inherentRisk: "medium", scanFrequency: "weekly", status: "active", website: "" });
   const [editSaving, setEditSaving]       = useState(false);
   const [deletingId, setDeletingId]       = useState<number | null>(null);
 
@@ -218,7 +219,16 @@ export default function TprmVendorsPage() {
   const openEdit = (e: React.MouseEvent, v: Vendor) => {
     e.stopPropagation();
     setEditingVendor(v);
-    setEditForm({ companyName: v.companyName, type: v.type, industry: v.industry ?? "", description: "", inherentRisk: v.inherentRisk ?? "medium", scanFrequency: v.scanFrequency ?? "weekly", status: v.status ?? "active" });
+    setEditForm({
+      companyName:   v.companyName,
+      type:          v.type,
+      industry:      v.industry ?? "",
+      description:   (v as any).description ?? "",
+      inherentRisk:  v.inherentRisk ?? "medium",
+      scanFrequency: v.scanFrequency ?? "weekly",
+      status:        v.status ?? "active",
+      website:       v.website ?? "",
+    });
     setShowEdit(true);
   };
 
@@ -651,19 +661,38 @@ export default function TprmVendorsPage() {
 
       {/* ── Edit Vendor Dialog ────────────────────────────────────────────────────────── */}
       <Dialog open={showEdit} onOpenChange={o => { if (!o) { setShowEdit(false); setEditingVendor(null); } }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit Vendor</DialogTitle>
-            <DialogDescription>Update vendor details.</DialogDescription>
+            <DialogDescription>
+              Update details for <span className="font-semibold text-foreground">{editingVendor?.companyName}</span>
+              {editingVendor?.domain && <span className="text-muted-foreground"> · {editingVendor.domain}</span>}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
+            {/* Row 1: Company Name */}
             <div>
               <Label className="text-xs">Company Name <span className="text-red-400">*</span></Label>
               <Input className="mt-1 h-8 text-sm" value={editForm.companyName} onChange={e => setEditForm(f => ({ ...f, companyName: e.target.value }))} />
             </div>
+
+            {/* Row 2: Website URL (the primary ask) */}
+            <div>
+              <Label className="text-xs flex items-center gap-1">
+                <Globe className="w-3 h-3" /> Website URL
+              </Label>
+              <Input
+                className="mt-1 h-8 text-sm"
+                placeholder="https://vendor.com"
+                value={editForm.website}
+                onChange={e => setEditForm(f => ({ ...f, website: e.target.value }))}
+              />
+            </div>
+
+            {/* Row 3: Type + Industry */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs">Type</Label>
+                <Label className="text-xs">Vendor Type</Label>
                 <Select value={editForm.type} onValueChange={v => setEditForm(f => ({ ...f, type: v }))}>
                   <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -673,8 +702,12 @@ export default function TprmVendorsPage() {
               </div>
               <div>
                 <Label className="text-xs">Industry</Label>
-                <Input className="mt-1 h-8 text-sm" value={editForm.industry} onChange={e => setEditForm(f => ({ ...f, industry: e.target.value }))} />
+                <Input className="mt-1 h-8 text-sm" placeholder="e.g. FinTech, Healthcare" value={editForm.industry} onChange={e => setEditForm(f => ({ ...f, industry: e.target.value }))} />
               </div>
+            </div>
+
+            {/* Row 4: Inherent Risk + Scan Frequency + Status */}
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Inherent Risk</Label>
                 <Select value={editForm.inherentRisk} onValueChange={v => setEditForm(f => ({ ...f, inherentRisk: v }))}>
@@ -706,9 +739,11 @@ export default function TprmVendorsPage() {
                 </Select>
               </div>
             </div>
+
+            {/* Row 5: Description */}
             <div>
               <Label className="text-xs">Description</Label>
-              <Textarea className="mt-1 text-sm" rows={2} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
+              <Textarea className="mt-1 text-sm resize-none" rows={2} placeholder="Brief description of this vendor…" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
             </div>
           </div>
           <DialogFooter>

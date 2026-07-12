@@ -77,9 +77,9 @@ async function resolveVendorForRole(vendorId: number, req: AuthenticatedRequest)
   }
   if (role === "account_manager") {
     const clientIds = await getAmClientTenantIds(userId);
-    if (clientIds.length === 0) return null;
+    const allTenantIds = [...new Set([tenantId, ...clientIds])];
     const [v] = await db.select().from(tprmVendorsTable).where(
-      and(eq(tprmVendorsTable.id, vendorId), inArray(tprmVendorsTable.tenantId, clientIds))
+      and(eq(tprmVendorsTable.id, vendorId), inArray(tprmVendorsTable.tenantId, allTenantIds))
     );
     return v ?? null;
   }
