@@ -5,7 +5,7 @@ import {
   ShieldX, Wifi, WifiOff, RotateCcw, TrendingDown, Timer,
   Radio, CircleDot, Plus, Trash2, Pencil, Loader2, TestTube2,
   Upload, Check, X, KeyRound, Eye, EyeOff, ChevronDown, ChevronRight,
-  Monitor, Smartphone, Globe, Save, Info, ShieldOff,
+  Monitor, Smartphone, Globe, Save, Info,
   Download, Filter, Search, Shield,
 } from "lucide-react";
 import {
@@ -1199,14 +1199,14 @@ function ConfigTab() {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const isSuperAdmin = user?.role === "super_admin";
+  const isAdminOrSA = user?.role === "super_admin" || user?.role === "admin";
   const [values, setValues] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
 
   const { data, isLoading } = useQuery<{ config: Record<string, string> }>({
     queryKey: ["orch-config"],
     queryFn: () => api("/api/orchestrator-config"),
-    enabled: isSuperAdmin,
+    enabled: isAdminOrSA,
   });
 
   useEffect(() => {
@@ -1219,16 +1219,6 @@ function ConfigTab() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["orch-config"] }); toast({ title: "Configuration saved", description: "Changes take effect within 60 seconds." }); setDirty(false); },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
-
-  if (!isSuperAdmin) {
-    return (
-      <div className="flex flex-col items-center gap-4 text-center py-16 max-w-md mx-auto">
-        <div className="p-4 rounded-full bg-destructive/10"><ShieldOff className="w-10 h-10 text-destructive" /></div>
-        <h2 className="text-xl font-bold">Access Restricted</h2>
-        <p className="text-sm text-muted-foreground">Orchestrator configuration is limited to super administrators.</p>
-      </div>
-    );
-  }
 
   const set = (key: string, val: string) => { setValues(v => ({ ...v, [key]: val })); setDirty(true); };
 
@@ -2161,7 +2151,7 @@ const TABS: TabDef[] = [
   { key: "dashboard",     label: "Dashboard" },
   { key: "proxies",       label: "Proxy Pool" },
   { key: "fingerprints",  label: "Fingerprints" },
-  { key: "config",        label: "Config",          superAdminOnly: true },
+  { key: "config",        label: "Config" },
   { key: "logs",          label: "Telemetry Log" },
   { key: "waf-dashboard", label: "WAF Dashboard" },
   { key: "dry-run",       label: "Dry-Run Test" },
@@ -2172,10 +2162,10 @@ const TABS: TabDef[] = [
 /* ─── Main Page ───────────────────────────────────────────────────────── */
 export default function OrchestratorPage() {
   const { user } = useAuth();
-  const isSuperAdmin = user?.role === "super_admin";
+  const isAdminOrSA = user?.role === "super_admin" || user?.role === "admin";
   const [tab, setTab] = useState<TabKey>("dashboard");
 
-  const visibleTabs = TABS.filter(t => !t.superAdminOnly || isSuperAdmin);
+  const visibleTabs = TABS.filter(t => !t.superAdminOnly || isAdminOrSA);
 
   return (
     <div className="p-6 space-y-6 w-full">

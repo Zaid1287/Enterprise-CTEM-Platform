@@ -346,9 +346,9 @@ function Router() {
       <Route path="/discovery" component={() => <ProtectedRoute component={DiscoveryPage} />} />
       <Route path="/exposure" component={() => <ProtectedRoute component={ExposurePage} />} />
       <Route path="/scan-orchestration" component={() => <AdminRoute component={ScanOrchestrationPage} />} />
-      <Route path="/settings/scan-proxies" component={() => <SuperAdminRoute component={ScanProxiesPage} />} />
-      <Route path="/settings/scan-fingerprints" component={() => <SuperAdminRoute component={ScanFingerprintsPage} />} />
-      <Route path="/settings/orchestrator-config" component={() => <SuperAdminRoute component={OrchestratorConfigPage} />} />
+      <Route path="/settings/scan-proxies" component={() => <AdminRoute component={ScanProxiesPage} />} />
+      <Route path="/settings/scan-fingerprints" component={() => <AdminRoute component={ScanFingerprintsPage} />} />
+      <Route path="/settings/orchestrator-config" component={() => <AdminRoute component={OrchestratorConfigPage} />} />
       <Route path="/scan-telemetry" component={() => <AdminRoute component={ScanTelemetryPage} />} />
       <Route path="/settings/orchestration" component={() => <AdminRoute component={OrchestratorPage} />} />
 

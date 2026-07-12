@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Loader2, RefreshCw, Info, ShieldOff } from "lucide-react";
+import { Save, Loader2, RefreshCw, Info } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,13 +80,13 @@ export default function OrchestratorConfigPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
 
-  const isSuperAdmin = user?.role === "super_admin";
+  const isAdminOrSA = user?.role === "super_admin" || user?.role === "admin";
 
   /* All hooks must be declared before any conditional return */
   const { data, isLoading } = useQuery<{ config: Record<string, string> }>({
     queryKey: ["orchestrator-config"],
     queryFn: () => api("/api/orchestrator-config"),
-    enabled: isSuperAdmin,
+    enabled: isAdminOrSA,
   });
 
   useEffect(() => {
@@ -106,22 +106,6 @@ export default function OrchestratorConfigPage() {
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
-
-  /* Role guard — checked after all hooks */
-  if (user && !isSuperAdmin) {
-    return (
-      <div className="p-12 flex flex-col items-center gap-4 text-center max-w-md mx-auto mt-16">
-        <div className="p-4 rounded-full bg-destructive/10">
-          <ShieldOff className="w-10 h-10 text-destructive" />
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight">Access Restricted</h1>
-        <p className="text-muted-foreground text-sm">
-          Orchestrator configuration is limited to super administrators.
-          Contact your platform admin if you need to make changes.
-        </p>
-      </div>
-    );
-  }
 
   const set = (key: string, val: string) => {
     setValues(v => ({ ...v, [key]: val }));

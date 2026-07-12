@@ -102,9 +102,9 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "Orchestration",    href: "/settings/orchestration",      icon: SlidersHorizontal },
       { label: "Dashboard",        href: "/scan-orchestration",          icon: Cpu },
-      { label: "Proxy Pool",       href: "/settings/scan-proxies",       icon: Radio,        onlyFor: ["super_admin"] },
-      { label: "Fingerprints",     href: "/settings/scan-fingerprints",  icon: Fingerprint,  onlyFor: ["super_admin"] },
-      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders,     onlyFor: ["super_admin"] },
+      { label: "Proxy Pool",       href: "/settings/scan-proxies",       icon: Radio,        onlyFor: ["admin", "super_admin"] },
+      { label: "Fingerprints",     href: "/settings/scan-fingerprints",  icon: Fingerprint,  onlyFor: ["admin", "super_admin"] },
+      { label: "Config",           href: "/settings/orchestrator-config", icon: Sliders,     onlyFor: ["admin", "super_admin"] },
       { label: "Telemetry Logs",   href: "/scan-telemetry",              icon: ScrollText },
     ],
   },
