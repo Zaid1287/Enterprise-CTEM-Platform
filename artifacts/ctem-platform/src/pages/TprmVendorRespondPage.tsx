@@ -7,13 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Loader2, Shield, Star } from "lucide-react";
+import { CheckCircle2, Loader2, Paperclip, Shield, Star } from "lucide-react";
 import { apiFetch } from "@/lib/apiFetch";
 
 interface QuestionDef {
   id: string;
   text: string;
-  type: "boolean" | "text" | "rating" | "select";
+  type: "boolean" | "text" | "rating" | "select" | "file";
   category: string;
   required: boolean;
   options?: string[];
@@ -193,6 +193,33 @@ export default function TprmVendorRespondPage() {
                             {opt}
                           </button>
                         ))}
+                      </div>
+                    )}
+                    {q.type === "file" && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded border border-dashed border-border hover:bg-accent text-sm text-muted-foreground transition-colors">
+                            <Paperclip className="w-4 h-4" />
+                            {answers[q.id]?.name ?? "Choose file to upload…"}
+                            <input type="file" className="hidden" onChange={async e => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const fd = new FormData();
+                              fd.append("file", file);
+                              try {
+                                const r = await fetch(`/api/tprm/questionnaire-respond-file/${token}/${q.id}`, { method: "POST", body: fd });
+                                const data = await r.json();
+                                if (data.ok) setAnswer(q.id, { name: file.name, ref: data.fileName });
+                              } catch { /* ignore */ }
+                            }} />
+                          </label>
+                          {answers[q.id]?.name && (
+                            <span className="text-xs text-green-400 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />{answers[q.id].name} uploaded
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">Accepted: PDF, DOCX, images, spreadsheets. Max 10 MB.</p>
                       </div>
                     )}
                   </div>
