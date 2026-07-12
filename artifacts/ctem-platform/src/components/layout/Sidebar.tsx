@@ -170,12 +170,15 @@ export function Sidebar() {
 
   const isAM = role === "account_manager";
 
-  const aiMapperItems: NavItem[] = aiMapperEnabled ? [
+  const aiMapperVisible = aiMapperEnabled || role === "admin" || role === "super_admin" || role === "account_manager";
+  const isAdminOrSA = role === "admin" || role === "super_admin";
+  const aiMapperItems: NavItem[] = aiMapperVisible ? [
     { label: "Overview",   href: "/ai-mapper",            icon: Globe2       },
     { label: "Endpoints",  href: "/ai-mapper/endpoints",  icon: Crosshair    },
     { label: "Scans",      href: "/ai-mapper/scans",      icon: Radar        },
     { label: "AI BOM",     href: "/ai-mapper/bom",        icon: ClipboardList },
     ...(isAM ? [{ label: "My Clients", href: "/ai-mapper/clients", icon: Users }] : []),
+    ...(isAdminOrSA ? [{ label: "Admin Overview", href: "/ai-mapper/admin", icon: ShieldAlert }] : []),
   ] : [];
 
   const aiMapperGroup: NavGroup | null = aiMapperItems.length > 0

@@ -346,8 +346,11 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     .from(aiMapperModuleAssignmentsTable)
     .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
     .limit(1);
-  // All roles respect the tenant module setting (admin/SA can enable/disable per-tenant).
-  const aiMapperEnabled = moduleRow?.isEnabled ?? false;
+  // Admin/SA/AM always have AI Mapper access; clients are gated by per-tenant module flag.
+  const { role } = req.user!;
+  const aiMapperEnabled = (role === "admin" || role === "super_admin" || role === "account_manager")
+    ? true
+    : (moduleRow?.isEnabled ?? false);
   res.json({ ...toUserResponse(user), aiMapperEnabled });
 });
 

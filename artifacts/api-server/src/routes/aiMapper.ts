@@ -52,8 +52,8 @@ async function requireAiMapper(req: AuthenticatedRequest, res: ExpressResponse, 
   const tenantId = req.user?.tenantId;
   const role = req.user?.role;
   if (!tenantId) { res.status(401).json({ error: "Unauthorized" }); return; }
-  // admin and super_admin always have full AI Mapper access regardless of tenant module flag
-  if (role === "admin" || role === "super_admin") { next(); return; }
+  // admin, super_admin, and account_manager always have full AI Mapper access
+  if (role === "admin" || role === "super_admin" || role === "account_manager") { next(); return; }
   try {
     const [row] = await db.select().from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, tenantId));
     if (!row?.isEnabled) { res.status(403).json({ error: "AI Mapper module is not enabled for this tenant" }); return; }
@@ -64,7 +64,10 @@ async function requireAiMapper(req: AuthenticatedRequest, res: ExpressResponse, 
 // ── Module management ─────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/module", requireAuth, async (req: AuthenticatedRequest, res) => {
-  const tenantId = req.user!.tenantId;
+  const { tenantId, role } = req.user!;
+  if (role === "admin" || role === "super_admin" || role === "account_manager") {
+    res.json({ isEnabled: true, updatedAt: null }); return;
+  }
   const [row] = await db.select().from(aiMapperModuleAssignmentsTable).where(eq(aiMapperModuleAssignmentsTable.tenantId, tenantId));
   res.json({ isEnabled: row?.isEnabled ?? false, updatedAt: row?.updatedAt ?? null });
 });
@@ -98,23 +101,22 @@ router.patch("/ai-mapper/module", requireAuth, async (req: AuthenticatedRequest,
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/stats", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
-  const eCond = isAdmin ? sql`1=1` : eq(aiMapperEndpointsTable.tenantId, tenantId);
-  const sCond = isAdmin ? sql`1=1` : eq(aiMapperScansTable.tenantId, tenantId);
+  const { role } = req.user!;
+  const isPrivileged = role === "admin" || role === "super_admin" || role === "account_manager";
+  const scopeIds = await getAiScopeTenantIds(req);
+  const eCond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperEndpointsTable.tenantId, scopeIds) : sql`false`;
+  const sCond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperScansTable.tenantId, scopeIds) : sql`false`;
   const [eRow] = await db.select({ total: sql<number>`count(*)`, critical: sql<number>`count(*) filter (where risk_level = 'critical')`, high: sql<number>`count(*) filter (where risk_level = 'high')`, noAuth: sql<number>`count(*) filter (where auth_status = 'none')`, systemPromptLeaks: sql<number>`count(*) filter (where system_prompt_leaked = true)` }).from(aiMapperEndpointsTable).where(eCond);
   const [sRow] = await db.select({ active: sql<number>`count(*) filter (where status = 'running')`, total: sql<number>`count(*)` }).from(aiMapperScansTable).where(sCond);
-  res.json({ total: Number(eRow?.total ?? 0), critical: Number(eRow?.critical ?? 0), high: Number(eRow?.high ?? 0), noAuth: Number(eRow?.noAuth ?? 0), systemPromptLeaks: Number(eRow?.systemPromptLeaks ?? 0), activeScans: Number(sRow?.active ?? 0), totalScans: Number(sRow?.total ?? 0), allTenants: isAdmin });
+  res.json({ total: Number(eRow?.total ?? 0), critical: Number(eRow?.critical ?? 0), high: Number(eRow?.high ?? 0), noAuth: Number(eRow?.noAuth ?? 0), systemPromptLeaks: Number(eRow?.systemPromptLeaks ?? 0), activeScans: Number(sRow?.active ?? 0), totalScans: Number(sRow?.total ?? 0), allTenants: isPrivileged });
 });
 
 // ── Globe ─────────────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/globe", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
-  const cond = isAdmin
-    ? sql`lat IS NOT NULL AND lng IS NOT NULL`
-    : and(eq(aiMapperEndpointsTable.tenantId, tenantId), sql`lat IS NOT NULL AND lng IS NOT NULL`);
+  const scopeIds = await getAiScopeTenantIds(req);
+  const tenantCond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperEndpointsTable.tenantId, scopeIds) : sql`false`;
+  const cond = and(tenantCond, sql`lat IS NOT NULL AND lng IS NOT NULL`);
   const rows = await db.select({ id: aiMapperEndpointsTable.id, tenantId: aiMapperEndpointsTable.tenantId, ip: aiMapperEndpointsTable.ip, lat: aiMapperEndpointsTable.lat, lng: aiMapperEndpointsTable.lng, protocol: aiMapperEndpointsTable.protocol, port: aiMapperEndpointsTable.port, riskScore: aiMapperEndpointsTable.riskScore, riskLevel: aiMapperEndpointsTable.riskLevel, authStatus: aiMapperEndpointsTable.authStatus, country: aiMapperEndpointsTable.country }).from(aiMapperEndpointsTable).where(cond!).limit(5000);
   res.json(rows.map(r => ({ ...r, color: PROTOCOL_COLORS[r.protocol ?? "generic"] ?? "#ef4444", altitude: (r.riskScore / 10) * 0.3 })));
 });
@@ -122,13 +124,14 @@ router.get("/ai-mapper/globe", requireAuth, requireAiMapper, async (req: Authent
 // ── BOM ───────────────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/bom", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
-  const bomCond  = isAdmin ? sql`1=1` : eq(aiMapperBomItemsTable.tenantId, tenantId);
-  const distCond = isAdmin ? sql`1=1` : eq(aiMapperEndpointsTable.tenantId, tenantId);
+  const { role } = req.user!;
+  const isPrivileged = role === "admin" || role === "super_admin" || role === "account_manager";
+  const scopeIds = await getAiScopeTenantIds(req);
+  const bomCond  = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperBomItemsTable.tenantId, scopeIds) : sql`false`;
+  const distCond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperEndpointsTable.tenantId, scopeIds) : sql`false`;
   const bom  = await db.select().from(aiMapperBomItemsTable).where(bomCond).orderBy(desc(aiMapperBomItemsTable.endpointCount));
   const dist = await db.select({ protocol: aiMapperEndpointsTable.protocol, count: sql<number>`count(*)` }).from(aiMapperEndpointsTable).where(distCond).groupBy(aiMapperEndpointsTable.protocol);
-  res.json({ bom, protocolDistribution: dist, allTenants: isAdmin });
+  res.json({ bom, protocolDistribution: dist, allTenants: isPrivileged });
 });
 
 router.get("/ai-mapper/query-presets", requireAuth, (_req, res) => res.json(SHODAN_PRESETS));
@@ -136,11 +139,12 @@ router.get("/ai-mapper/query-presets", requireAuth, (_req, res) => res.json(SHOD
 // ── Scans ─────────────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/scans", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
-  const cond = isAdmin ? sql`1=1` : eq(aiMapperScansTable.tenantId, tenantId);
+  const { role } = req.user!;
+  const isPrivileged = role === "admin" || role === "super_admin" || role === "account_manager";
+  const scopeIds = await getAiScopeTenantIds(req);
+  const cond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperScansTable.tenantId, scopeIds) : sql`false`;
   const scans = await db.select().from(aiMapperScansTable).where(cond).orderBy(desc(aiMapperScansTable.createdAt)).limit(100);
-  if (isAdmin) {
+  if (isPrivileged) {
     const ids = [...new Set(scans.map(s => s.tenantId))];
     const tenants = ids.length ? await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).where(inArray(tenantsTable.id, ids)) : [];
     const tm = Object.fromEntries(tenants.map(t => [t.id, t.name]));
@@ -208,14 +212,15 @@ router.post("/ai-mapper/scans/:id/progress", async (req: AuthenticatedRequest, r
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/endpoints", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
+  const { role } = req.user!;
+  const isPrivileged = role === "admin" || role === "super_admin" || role === "account_manager";
+  const scopeIds = await getAiScopeTenantIds(req);
   const page  = Math.max(1, Number(req.query.page  ?? 1));
   const limit = Math.min(100, Number(req.query.limit ?? 25));
   const q     = String(req.query.q   ?? "").trim();
   const sort  = String(req.query.sort ?? "riskScore");
   const order = String(req.query.order ?? "desc");
-  const conds: ReturnType<typeof eq>[] = isAdmin ? [] : [eq(aiMapperEndpointsTable.tenantId, tenantId)];
+  const conds: any[] = scopeIds === null ? [] : scopeIds.length > 0 ? [inArray(aiMapperEndpointsTable.tenantId, scopeIds)] : [sql`false`];
   if (q) {
     const p = parseQ(q);
     if (p.protocol)        conds.push(eq(aiMapperEndpointsTable.protocol,  p.protocol));
@@ -237,7 +242,7 @@ router.get("/ai-mapper/endpoints", requireAuth, requireAiMapper, async (req: Aut
   const whereCond = conds.length > 0 ? and(...conds) : undefined;
   const [{ total }] = await db.select({ total: sql<number>`count(*)` }).from(aiMapperEndpointsTable).where(whereCond);
   const rows = await db.select().from(aiMapperEndpointsTable).where(whereCond).orderBy(orderCol).limit(limit).offset((page - 1) * limit);
-  res.json({ data: rows, total: Number(total), page, limit, allTenants: isAdmin });
+  res.json({ data: rows, total: Number(total), page, limit, allTenants: isPrivileged });
 });
 
 router.get("/ai-mapper/endpoints/:id", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
@@ -250,9 +255,8 @@ router.get("/ai-mapper/endpoints/:id", requireAuth, requireAiMapper, async (req:
 // ── Scan Schedules ────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/scan-schedules", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
-  const cond = isAdmin ? sql`1=1` : eq(aiMapperScanSchedulesTable.tenantId, tenantId);
+  const scopeIds = await getAiScopeTenantIds(req);
+  const cond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperScanSchedulesTable.tenantId, scopeIds) : sql`false`;
   res.json(await db.select().from(aiMapperScanSchedulesTable).where(cond).orderBy(desc(aiMapperScanSchedulesTable.createdAt)));
 });
 
@@ -288,9 +292,8 @@ router.delete("/ai-mapper/scan-schedules/:id", requireAuth, requireAiMapper, asy
 // ── Reports ───────────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/reports/csv", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
-  const cond = isAdmin ? sql`1=1` : eq(aiMapperEndpointsTable.tenantId, tenantId);
+  const scopeIds = await getAiScopeTenantIds(req);
+  const cond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperEndpointsTable.tenantId, scopeIds) : sql`false`;
   const rows = await db.select().from(aiMapperEndpointsTable).where(cond).orderBy(desc(aiMapperEndpointsTable.riskScore)).limit(10000);
   const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const header = ["id","tenantId","ip","port","url","protocol","framework","authStatus","riskScore","riskLevel","hasTls","systemPromptLeaked","corsPolicy","country","org","city","certIssuer","certExpiry","firstSeenAt","lastSeenAt"].join(",");
@@ -301,9 +304,8 @@ router.get("/ai-mapper/reports/csv", requireAuth, requireAiMapper, async (req: A
 });
 
 router.get("/ai-mapper/reports/pdf", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const isAdmin = role === "admin" || role === "super_admin";
-  const cond = isAdmin ? sql`1=1` : eq(aiMapperEndpointsTable.tenantId, tenantId);
+  const scopeIds = await getAiScopeTenantIds(req);
+  const cond = scopeIds === null ? sql`1=1` : scopeIds.length > 0 ? inArray(aiMapperEndpointsTable.tenantId, scopeIds) : sql`false`;
   const [sr] = await db.select({ total: sql<number>`count(*)`, critical: sql<number>`count(*) filter (where risk_level='critical')`, high: sql<number>`count(*) filter (where risk_level='high')`, noAuth: sql<number>`count(*) filter (where auth_status='none')` }).from(aiMapperEndpointsTable).where(cond);
   const endpoints = await db.select().from(aiMapperEndpointsTable).where(cond).orderBy(desc(aiMapperEndpointsTable.riskScore)).limit(200);
   const RISK_COLORS: Record<string, string> = { critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e" };
@@ -1143,6 +1145,18 @@ async function runAttackSuite(runId: number, ep: typeof aiMapperEndpointsTable.$
 }
 
 // ── Cross-tenant access control ────────────────────────────────────────────────
+
+async function getAiScopeTenantIds(req: AuthenticatedRequest): Promise<number[] | null> {
+  const { role, tenantId, userId } = req.user!;
+  if (role === "admin" || role === "super_admin") return null; // null = all tenants, no filter
+  if (role === "account_manager") {
+    const rows = await db.select({ clientTenantId: accountManagerClientsTable.clientTenantId })
+      .from(accountManagerClientsTable)
+      .where(eq(accountManagerClientsTable.accountManagerUserId, userId as any));
+    return rows.map(r => r.clientTenantId);
+  }
+  return [tenantId]; // client/manager: own tenant only
+}
 
 async function assertTenantAccess(req: AuthenticatedRequest, targetTenantId: number): Promise<boolean> {
   const { role, userId } = req.user!;

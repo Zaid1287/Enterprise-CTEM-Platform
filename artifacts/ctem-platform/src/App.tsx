@@ -117,9 +117,14 @@ function PageLoader() {
 }
 
 function AiMapperBootstrap() {
-  const { isAuthenticated, setAiMapperEnabled } = useAuth();
+  const { isAuthenticated, user, setAiMapperEnabled } = useAuth();
   useEffect(() => {
     if (!isAuthenticated) return;
+    const role = user?.role;
+    if (role === "admin" || role === "super_admin" || role === "account_manager") {
+      setAiMapperEnabled(true);
+      return;
+    }
     apiFetch<{ aiMapperEnabled?: boolean }>("/api/auth/me")
       .then(data => setAiMapperEnabled(data.aiMapperEnabled ?? false))
       .catch(() => setAiMapperEnabled(false));
@@ -189,13 +194,14 @@ function SuperAdminRoute({ component: Component }: { component: React.ComponentT
 }
 
 function AiMapperRoute({ component: Component }: { component: React.ComponentType }) {
-  const { isAuthenticated, aiMapperEnabled, aiMapperLoaded } = useAuth();
+  const { isAuthenticated, user, aiMapperEnabled, aiMapperLoaded } = useAuth();
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  const isPrivileged = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
 
   useEffect(() => {
     if (!aiMapperLoaded) return;
-    if (isAuthenticated && !aiMapperEnabled) {
+    if (isAuthenticated && !isPrivileged && !aiMapperEnabled) {
       toast({
         title: "AI Mapper not enabled",
         description: "AI Mapper module is not enabled for your organization. Contact an administrator.",
@@ -207,7 +213,7 @@ function AiMapperRoute({ component: Component }: { component: React.ComponentTyp
 
   if (!isAuthenticated) return <Redirect to="/login" />;
   if (!aiMapperLoaded) return <AppLayout><PageLoader /></AppLayout>;
-  if (!aiMapperEnabled) return null;
+  if (!isPrivileged && !aiMapperEnabled) return null;
   return (
     <AppLayout>
       <Suspense fallback={<PageLoader />}>
