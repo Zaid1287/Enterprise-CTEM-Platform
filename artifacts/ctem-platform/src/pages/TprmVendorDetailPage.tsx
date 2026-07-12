@@ -16,6 +16,7 @@ import {
   ArrowLeft, RefreshCw, Globe, Shield, Bug, Package, FileText, AlertTriangle,
   CheckCircle2, Loader2, Upload, Plus, Mail, Phone, User,
   Building2, Clock, Download, Trash2, Send, ChevronRight, Eye, Zap, Lock, Database, Search,
+  Flame, RadioTower, ScanSearch, ShieldAlert,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
@@ -82,6 +83,35 @@ export default function TprmVendorDetailPage() {
   const [sendingQ, setSendingQ]     = useState(false);
   const [qPortalLink, setQPortalLink] = useState<string | null>(null);
 
+  // SLA state
+  const [slaForm, setSlaForm] = useState({ slaUptimePercent: "", slaResponseTimeHours: "", slaReviewDate: "", slaNotes: "", slaBreachCount: "" });
+  const [savingSla, setSavingSla] = useState(false);
+  const [slaLoaded, setSlaLoaded] = useState(false);
+
+  // Contact email dialog
+  const [emailContact, setEmailContact] = useState<any | null>(null);
+  const [emailForm, setEmailForm] = useState({ subject: "", message: "" });
+  const [sendingEmail, setSendingEmail] = useState(false);
+
+  // Compliance requirements state
+  const [requirements, setRequirements] = useState<any[]>([]);
+  const [showAddReq, setShowAddReq] = useState(false);
+  const [reqForm, setReqForm] = useState({ documentType: "", dueDate: "", reminderDays: "30", notes: "" });
+  const [savingReq, setSavingReq] = useState(false);
+
+  // AI parse state (per doc)
+  const [parsingDocId, setParsingDocId] = useState<number | null>(null);
+
+  // SBOM discover
+  const [discoveringSbom, setDiscoveringSbom] = useState(false);
+
+  // 4th party deep scan
+  const [deepScanning4p, setDeepScanning4p] = useState(false);
+
+  // Propagate findings
+  const [propagating, setPropagating] = useState(false);
+  const [propagateResult, setPropagateResult] = useState<string | null>(null);
+
   const loadVendor = () => {
     setLoading(true);
     apiFetch<any>(`/api/tprm/vendors/${id}`)
@@ -93,7 +123,22 @@ export default function TprmVendorDetailPage() {
   useEffect(() => { loadVendor(); }, [id]);
   useEffect(() => {
     apiFetch<any[]>("/api/tprm/questionnaire-templates").then(setTemplates).catch(() => {});
-  }, []);
+    apiFetch<any[]>(`/api/tprm/vendors/${id}/compliance-requirements`).then(setRequirements).catch(() => {});
+  }, [id]);
+
+  // Pre-populate SLA form when vendor loads
+  useEffect(() => {
+    if (vendor && !slaLoaded) {
+      setSlaForm({
+        slaUptimePercent: vendor.slaUptimePercent != null ? String(vendor.slaUptimePercent) : "",
+        slaResponseTimeHours: vendor.slaResponseTimeHours != null ? String(vendor.slaResponseTimeHours) : "",
+        slaReviewDate: vendor.slaReviewDate ?? "",
+        slaNotes: vendor.slaNotes ?? "",
+        slaBreachCount: vendor.slaBreachCount != null ? String(vendor.slaBreachCount) : "0",
+      });
+      setSlaLoaded(true);
+    }
+  }, [vendor]);
 
   useEffect(() => {
     if (tab !== "intelligence" || !id) return;
@@ -178,6 +223,107 @@ export default function TprmVendorDetailPage() {
       loadVendor();
     } catch { /* ignore */ }
     setSendingQ(false);
+  };
+
+  const saveSla = async () => {
+    setSavingSla(true);
+    try {
+      const body: Record<string, any> = {};
+      if (slaForm.slaUptimePercent)     body.slaUptimePercent     = parseFloat(slaForm.slaUptimePercent);
+      if (slaForm.slaResponseTimeHours) body.slaResponseTimeHours = parseInt(slaForm.slaResponseTimeHours);
+      if (slaForm.slaReviewDate)        body.slaReviewDate        = slaForm.slaReviewDate;
+      if (slaForm.slaNotes)             body.slaNotes             = slaForm.slaNotes;
+      if (slaForm.slaBreachCount)       body.slaBreachCount       = parseInt(slaForm.slaBreachCount);
+      await apiFetch(`/api/tprm/vendors/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+      loadVendor();
+    } catch { /* ignore */ }
+    setSavingSla(false);
+  };
+
+  const sendContactEmail = async () => {
+    if (!emailContact || !emailForm.subject || !emailForm.message) return;
+    setSendingEmail(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/contacts/${emailContact.id}/send-email`, { method: "POST", body: JSON.stringify(emailForm) });
+      setEmailContact(null);
+      setEmailForm({ subject: "", message: "" });
+    } catch { /* ignore */ }
+    setSendingEmail(false);
+  };
+
+  const sendContactVerification = async (contactId: number) => {
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/contacts/${contactId}/send-verification`, { method: "POST" });
+    } catch { /* ignore */ }
+  };
+
+  const deleteContact = async (contactId: number) => {
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/contacts/${contactId}`, { method: "DELETE" });
+      loadVendor();
+    } catch { /* ignore */ }
+  };
+
+  const addRequirement = async () => {
+    if (!reqForm.documentType) return;
+    setSavingReq(true);
+    try {
+      const r = await apiFetch<any>(`/api/tprm/vendors/${id}/compliance-requirements`, { method: "POST", body: JSON.stringify({ ...reqForm, reminderDays: parseInt(reqForm.reminderDays) }) });
+      setRequirements(prev => [...prev, r]);
+      setShowAddReq(false);
+      setReqForm({ documentType: "", dueDate: "", reminderDays: "30", notes: "" });
+    } catch { /* ignore */ }
+    setSavingReq(false);
+  };
+
+  const deleteRequirement = async (reqId: number) => {
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/compliance-requirements/${reqId}`, { method: "DELETE" });
+      setRequirements(prev => prev.filter(r => r.id !== reqId));
+    } catch { /* ignore */ }
+  };
+
+  const notifyRequirement = async (reqId: number) => {
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/compliance-requirements/${reqId}/notify`, { method: "POST" });
+    } catch { /* ignore */ }
+  };
+
+  const aiParseDoc = async (docId: number) => {
+    setParsingDocId(docId);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/compliance/${docId}/ai-parse`, { method: "POST" });
+      loadVendor();
+    } catch { /* ignore */ }
+    setParsingDocId(null);
+  };
+
+  const discoverSbom = async () => {
+    setDiscoveringSbom(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/sbom/discover`, { method: "POST" });
+      setTimeout(loadVendor, 12000);
+    } catch { /* ignore */ }
+    setDiscoveringSbom(false);
+  };
+
+  const deepScanFourthParties = async () => {
+    setDeepScanning4p(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/fourth-party/deep-scan`, { method: "POST" });
+      setTimeout(loadVendor, 15000);
+    } catch { /* ignore */ }
+    setDeepScanning4p(false);
+  };
+
+  const propagateFindings = async () => {
+    setPropagating(true);
+    setPropagateResult(null);
+    try {
+      const r = await apiFetch<any>(`/api/tprm/vendors/${id}/propagate-findings`, { method: "POST" });
+      setPropagateResult(r.message);
+    } catch { /* ignore */ }
+    setPropagating(false);
   };
 
   if (loading) return <div className="p-6"><Skeleton className="h-48 w-full" /></div>;
@@ -314,6 +460,7 @@ export default function TprmVendorDetailPage() {
           <TabsTrigger value="questionnaires" className="text-xs">Questionnaires ({vendor.questionnaires?.length ?? 0})</TabsTrigger>
           <TabsTrigger value="sbom" className="text-xs">SBOM</TabsTrigger>
           <TabsTrigger value="contacts" className="text-xs">Contacts ({vendor.contacts?.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="sla" className="text-xs">SLA</TabsTrigger>
         </TabsList>
 
         {/* Overview */}
@@ -481,6 +628,8 @@ export default function TprmVendorDetailPage() {
                                 <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
                                   {f.cvss && <span>CVSS {f.cvss.toFixed(1)}</span>}
                                   {f.cve && <span className="text-orange-400">{f.cve}</span>}
+                                  {f.isKev && <span className="bg-red-600/20 text-red-400 border border-red-600/30 px-1 py-0.5 rounded text-[9px] font-bold flex items-center gap-0.5"><Flame className="w-2.5 h-2.5" />KEV</span>}
+                                  {f.epss != null && <span className="text-purple-400">EPSS {(f.epss * 100).toFixed(1)}%</span>}
                                   {f.category && <span className="capitalize">{f.category.replace(/_/g, " ")}</span>}
                                 </div>
                               </div>
@@ -568,13 +717,26 @@ export default function TprmVendorDetailPage() {
 
         {/* 4th Party */}
         <TabsContent value="fourth-party" className="mt-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">{(vendor.fourthParties ?? []).length} dependencies discovered across {new Set((vendor.fourthParties ?? []).map((f: any) => f.category)).size} categories</p>
-            <Button size="sm" variant="outline" onClick={rescanFourthParties} disabled={rescanning4p}>
-              {rescanning4p ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Search className="w-3.5 h-3.5 mr-1.5" />}
-              Deep Rescan
-            </Button>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-sm text-muted-foreground">{(vendor.fourthParties ?? []).length} dependencies across {new Set((vendor.fourthParties ?? []).map((f: any) => f.category)).size} categories</p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={deepScanFourthParties} disabled={deepScanning4p}>
+                {deepScanning4p ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ScanSearch className="w-3.5 h-3.5 mr-1.5" />}
+                Deep Security Scan
+              </Button>
+              <Button size="sm" variant="outline" onClick={rescanFourthParties} disabled={rescanning4p}>
+                {rescanning4p ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Search className="w-3.5 h-3.5 mr-1.5" />}
+                Rescan Dependencies
+              </Button>
+              <Button size="sm" variant="outline" onClick={propagateFindings} disabled={propagating}>
+                {propagating ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5 mr-1.5" />}
+                Propagate to Platform
+              </Button>
+            </div>
           </div>
+          {propagateResult && (
+            <Card className="bg-blue-500/10 border-blue-500/30"><CardContent className="py-2 text-sm text-blue-300">{propagateResult}</CardContent></Card>
+          )}
           {(() => {
             const fps: any[] = vendor.fourthParties ?? [];
             const byCategory = fps.reduce((acc: Record<string, any[]>, fp: any) => {
@@ -800,9 +962,42 @@ export default function TprmVendorDetailPage() {
         </TabsContent>
 
         {/* Compliance */}
-        <TabsContent value="compliance" className="mt-4 space-y-3">
+        <TabsContent value="compliance" className="mt-4 space-y-4">
+          {/* Requirements management section */}
+          <Card>
+            <CardHeader className="pb-2 pt-3">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2"><FileText className="w-4 h-4" />Compliance Requirements ({requirements.length})</span>
+                <Button size="sm" variant="outline" onClick={() => setShowAddReq(true)}><Plus className="w-3.5 h-3.5 mr-1" />Add Requirement</Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pb-3">
+              {requirements.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-3 text-center">No requirements defined. Add required documents to track vendor compliance obligations.</p>
+              ) : (
+                <div className="space-y-2">
+                  {requirements.map((r: any) => (
+                    <div key={r.id} className="flex items-center gap-3 p-2 rounded bg-muted/30 border border-border/50">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium">{r.documentType}</p>
+                        {r.dueDate && <p className="text-[10px] text-muted-foreground">Due: {new Date(r.dueDate).toLocaleDateString()}</p>}
+                        {r.notes && <p className="text-[10px] text-muted-foreground">{r.notes}</p>}
+                      </div>
+                      <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 hover:text-blue-300" onClick={() => notifyRequirement(r.id)}>
+                        <Mail className="w-3 h-3 mr-1" />Notify
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteRequirement(r.id)}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Documents */}
           <div className="flex justify-end gap-2">
-            {/* Problem 7: Auto-verify all pending docs with future expiry */}
             {(vendor.complianceDocs ?? []).some((d: any) => d.status === "pending_review" && d.expiresAt) && (
               <Button size="sm" variant="outline" onClick={async () => {
                 try {
@@ -843,7 +1038,11 @@ export default function TprmVendorDetailPage() {
                         )}
                         {d.status && <Badge variant="outline" className={`text-[10px] mt-0.5 ${statusColor}`}>{d.status.replace(/_/g, " ")}</Badge>}
                       </div>
-                      {/* Problem 7: Per-doc Verify button for pending_review docs */}
+                      {d.fileData && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs text-purple-400 hover:text-purple-300" onClick={() => aiParseDoc(d.id)} disabled={parsingDocId === d.id}>
+                          {parsingDocId === d.id ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1" />}AI Parse
+                        </Button>
+                      )}
                       {d.status === "pending_review" && (
                         <Button variant="ghost" size="sm" className="h-7 text-xs text-green-400 hover:text-green-300" onClick={async () => {
                           try {
@@ -910,9 +1109,15 @@ export default function TprmVendorDetailPage() {
         {/* SBOM */}
         <TabsContent value="sbom" className="mt-4 space-y-3">
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">Upload SBOM File</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center justify-between">
+              <span>Upload SBOM File</span>
+              <Button size="sm" variant="outline" onClick={discoverSbom} disabled={discoveringSbom || !vendor.domain}>
+                {discoveringSbom ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Search className="w-3.5 h-3.5 mr-1.5" />}
+                Auto-Discover
+              </Button>
+            </CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">Supports CycloneDX JSON/XML and SPDX JSON/tag-value formats. Components are automatically enriched with CVE data from the OSV database.</p>
+              <p className="text-xs text-muted-foreground">Supports CycloneDX JSON/XML and SPDX JSON/tag-value formats. Components are automatically enriched with CVE data from the OSV database. Use <strong>Auto-Discover</strong> to automatically find SBOM files at well-known paths on the vendor domain.</p>
               <div className="flex items-center gap-2">
                 <input ref={sbomInputRef} type="file" accept=".json,.xml,.spdx,.txt" className="text-sm file:mr-2 file:text-xs file:py-1 file:px-2 file:rounded file:border-0 file:bg-primary/10 file:text-primary cursor-pointer" onChange={e => setSbomFile(e.target.files?.[0] ?? null)} />
                 <Button size="sm" onClick={uploadSbom} disabled={!sbomFile || uploadingSbom}>
@@ -933,6 +1138,78 @@ export default function TprmVendorDetailPage() {
           </Link>
         </TabsContent>
 
+        {/* SLA */}
+        <TabsContent value="sla" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><RadioTower className="w-4 h-4" />Service Level Agreement</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-xs">Target Uptime (%)</Label>
+                  <Input className="mt-1 h-8 text-sm" type="number" min="0" max="100" step="0.001" placeholder="e.g. 99.9" value={slaForm.slaUptimePercent} onChange={e => setSlaForm(f => ({ ...f, slaUptimePercent: e.target.value }))} />
+                </div>
+                <div>
+                  <Label className="text-xs">Response Time SLA (hours)</Label>
+                  <Input className="mt-1 h-8 text-sm" type="number" min="0" placeholder="e.g. 4" value={slaForm.slaResponseTimeHours} onChange={e => setSlaForm(f => ({ ...f, slaResponseTimeHours: e.target.value }))} />
+                </div>
+                <div>
+                  <Label className="text-xs">Review Date</Label>
+                  <Input className="mt-1 h-8 text-sm" type="date" value={slaForm.slaReviewDate} onChange={e => setSlaForm(f => ({ ...f, slaReviewDate: e.target.value }))} />
+                </div>
+                <div>
+                  <Label className="text-xs">Breach Count</Label>
+                  <Input className="mt-1 h-8 text-sm" type="number" min="0" placeholder="0" value={slaForm.slaBreachCount} onChange={e => setSlaForm(f => ({ ...f, slaBreachCount: e.target.value }))} />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">SLA Notes</Label>
+                <Textarea className="mt-1 text-sm" rows={3} placeholder="Key SLA terms, penalties, exclusions…" value={slaForm.slaNotes} onChange={e => setSlaForm(f => ({ ...f, slaNotes: e.target.value }))} />
+              </div>
+              <Button size="sm" onClick={saveSla} disabled={savingSla}>
+                {savingSla && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save SLA
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* SLA status summary */}
+          {(vendor.slaUptimePercent != null || vendor.slaResponseTimeHours != null) && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {vendor.slaUptimePercent != null && (
+                <Card className="bg-card/50">
+                  <CardContent className="pt-3 pb-3 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Target Uptime</p>
+                    <p className={`text-2xl font-bold ${vendor.slaUptimePercent >= 99.9 ? "text-green-400" : vendor.slaUptimePercent >= 99 ? "text-yellow-400" : "text-red-400"}`}>{vendor.slaUptimePercent}%</p>
+                  </CardContent>
+                </Card>
+              )}
+              {vendor.slaResponseTimeHours != null && (
+                <Card className="bg-card/50">
+                  <CardContent className="pt-3 pb-3 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Response SLA</p>
+                    <p className="text-2xl font-bold">{vendor.slaResponseTimeHours}h</p>
+                  </CardContent>
+                </Card>
+              )}
+              {vendor.slaBreachCount != null && (
+                <Card className={`bg-card/50 ${vendor.slaBreachCount > 0 ? "border-red-500/30" : ""}`}>
+                  <CardContent className="pt-3 pb-3 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">SLA Breaches</p>
+                    <p className={`text-2xl font-bold ${vendor.slaBreachCount > 0 ? "text-red-400" : "text-green-400"}`}>{vendor.slaBreachCount}</p>
+                  </CardContent>
+                </Card>
+              )}
+              {vendor.slaReviewDate && (
+                <Card className="bg-card/50">
+                  <CardContent className="pt-3 pb-3 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Next Review</p>
+                    <p className="text-sm font-medium">{new Date(vendor.slaReviewDate).toLocaleDateString()}</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+        </TabsContent>
+
         {/* Contacts */}
         <TabsContent value="contacts" className="mt-4 space-y-3">
           <div className="flex justify-end">
@@ -946,9 +1223,29 @@ export default function TprmVendorDetailPage() {
                 <Card key={c.id} className="bg-card/60">
                   <CardContent className="py-3 flex items-center gap-3">
                     <User className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium">{c.name}{c.isPrimary && <Badge variant="secondary" className="ml-1.5 text-[10px]">Primary</Badge>}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-medium">{c.name}</p>
+                        {c.isPrimary && <Badge variant="secondary" className="text-[10px]">Primary</Badge>}
+                        {c.isEmailVerified
+                          ? <Badge className="text-[10px] bg-green-500/20 text-green-400 border-green-500/30">✓ Verified</Badge>
+                          : <Badge variant="outline" className="text-[10px] text-muted-foreground">Unverified</Badge>
+                        }
+                      </div>
                       <p className="text-xs text-muted-foreground">{c.email}{c.role ? ` • ${c.role}` : ""}</p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {!c.isEmailVerified && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs text-yellow-400 hover:text-yellow-300" onClick={() => sendContactVerification(c.id)}>
+                          <Mail className="w-3.5 h-3.5 mr-1" />Verify
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setEmailContact(c); setEmailForm({ subject: `Security Update — ${vendor.companyName}`, message: "" }); }}>
+                        <Send className="w-3.5 h-3.5 mr-1" />Email
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-400" onClick={() => deleteContact(c.id)}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
@@ -971,6 +1268,49 @@ export default function TprmVendorDetailPage() {
             <Button variant="outline" onClick={() => setShowAddContact(false)}>Cancel</Button>
             <Button onClick={addContact} disabled={savingContact || !contactForm.name || !contactForm.email}>
               {savingContact && <Loader2 className="w-4 h-4 mr-1 animate-spin" />} Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send Email to Contact Dialog */}
+      <Dialog open={!!emailContact} onOpenChange={o => { if (!o) setEmailContact(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Email {emailContact?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label className="text-xs">To</Label><Input className="mt-1 h-8 text-sm bg-muted" readOnly value={emailContact?.email ?? ""} /></div>
+            <div><Label className="text-xs">Subject *</Label><Input className="mt-1 h-8 text-sm" value={emailForm.subject} onChange={e => setEmailForm(f => ({ ...f, subject: e.target.value }))} /></div>
+            <div><Label className="text-xs">Message *</Label><Textarea className="mt-1 text-sm" rows={5} value={emailForm.message} onChange={e => setEmailForm(f => ({ ...f, message: e.target.value }))} placeholder="Enter your message…" /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmailContact(null)}>Cancel</Button>
+            <Button onClick={sendContactEmail} disabled={sendingEmail || !emailForm.subject || !emailForm.message}>
+              {sendingEmail && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}<Send className="w-4 h-4 mr-1" />Send Email
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Compliance Requirement Dialog */}
+      <Dialog open={showAddReq} onOpenChange={setShowAddReq}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Compliance Requirement</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Document Type *</Label>
+              <Select value={reqForm.documentType} onValueChange={v => setReqForm(f => ({ ...f, documentType: v }))}>
+                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectContent>{["SOC2 Type I", "SOC2 Type II", "ISO 27001", "ISO 27017", "ISO 27701", "PCI DSS", "HIPAA BAA", "GDPR DPA", "CSA STAR", "NIST CSF", "Penetration Test Report", "Insurance Certificate", "Other"].map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1 h-8 text-sm" value={reqForm.dueDate} onChange={e => setReqForm(f => ({ ...f, dueDate: e.target.value }))} /></div>
+            <div><Label className="text-xs">Reminder (days before due)</Label><Input type="number" min="1" className="mt-1 h-8 text-sm" value={reqForm.reminderDays} onChange={e => setReqForm(f => ({ ...f, reminderDays: e.target.value }))} /></div>
+            <div><Label className="text-xs">Notes</Label><Textarea className="mt-1 text-sm" rows={2} value={reqForm.notes} onChange={e => setReqForm(f => ({ ...f, notes: e.target.value }))} placeholder="Specific requirements or instructions…" /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddReq(false)}>Cancel</Button>
+            <Button onClick={addRequirement} disabled={savingReq || !reqForm.documentType}>
+              {savingReq && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Add
             </Button>
           </DialogFooter>
         </DialogContent>

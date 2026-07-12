@@ -35,11 +35,16 @@ export const tprmVendorsTable = pgTable("tprm_vendors", {
   scanFrequency:  text("scan_frequency").notNull().default("weekly"),
   status:         text("status").notNull().default("pending"),
   source:         text("source").notNull().default("manual"),
-  assessmentType: text("assessment_type").notNull().default("continuous"),
-  lastScannedAt:  timestamp("last_scanned_at", { withTimezone: true }),
-  createdBy:      integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
-  createdAt:      timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt:      timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  assessmentType:        text("assessment_type").notNull().default("continuous"),
+  slaUptimePercent:      real("sla_uptime_percent"),
+  slaResponseTimeHours:  integer("sla_response_time_hours"),
+  slaReviewDate:         date("sla_review_date"),
+  slaNotes:              text("sla_notes"),
+  slaBreachCount:        integer("sla_breach_count").notNull().default(0),
+  lastScannedAt:         timestamp("last_scanned_at", { withTimezone: true }),
+  createdBy:             integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt:             timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:             timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const tprmVendorRiskScoresTable = pgTable("tprm_vendor_risk_scores", {
@@ -185,14 +190,17 @@ export const tprmSupplyChainNodesTable = pgTable("tprm_supply_chain_nodes", {
 });
 
 export const tprmVendorContactsTable = pgTable("tprm_vendor_contacts", {
-  id:        serial("id").primaryKey(),
-  vendorId:  integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
-  tenantId:  integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
-  name:      text("name").notNull(),
-  email:     text("email").notNull(),
-  role:      text("role"),
-  isPrimary: boolean("is_primary").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  id:                      serial("id").primaryKey(),
+  vendorId:                integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
+  tenantId:                integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  name:                    text("name").notNull(),
+  email:                   text("email").notNull(),
+  role:                    text("role"),
+  isPrimary:               boolean("is_primary").notNull().default(false),
+  isEmailVerified:         boolean("is_email_verified").notNull().default(false),
+  emailVerifiedAt:         timestamp("email_verified_at", { withTimezone: true }),
+  emailVerificationToken:  text("email_verification_token"),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const tprmQuestionnaireTemplatesTable = pgTable("tprm_questionnaire_templates", {

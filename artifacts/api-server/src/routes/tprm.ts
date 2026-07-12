@@ -531,6 +531,43 @@ router.get("/tprm/vendors/timeline", requireAuth, requireTprm, async (req: Authe
   }
 });
 
+// ── Risk comparison — static sub-path, must be before /:id ───────────────────
+router.get("/tprm/vendors/compare", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { ids } = req.query as { ids?: string };
+    const scopeIds = await getVendorScopeTenantIds(req);
+    let vendorIds: number[] = [];
+    if (ids) {
+      vendorIds = ids.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n)).slice(0, 5);
+    } else {
+      // Default: top 5 by risk score
+      const top = await db.select({ id: tprmVendorsTable.id })
+        .from(tprmVendorsTable)
+        .where(scopeIds.length === 0 ? sql`false` : inArray(tprmVendorsTable.tenantId, scopeIds))
+        .orderBy(desc(tprmVendorsTable.riskScore))
+        .limit(5);
+      vendorIds = top.map(v => v.id);
+    }
+    if (vendorIds.length === 0) { res.json([]); return; }
+    const vendors = await db.select().from(tprmVendorsTable).where(inArray(tprmVendorsTable.id, vendorIds));
+    const result = await Promise.all(vendors.map(async v => {
+      const scores = await db.select({ overallScore: tprmVendorRiskScoresTable.overallScore, calculatedAt: tprmVendorRiskScoresTable.calculatedAt })
+        .from(tprmVendorRiskScoresTable)
+        .where(and(eq(tprmVendorRiskScoresTable.vendorId, v.id), eq(tprmVendorRiskScoresTable.tenantId, v.tenantId)))
+        .orderBy(asc(tprmVendorRiskScoresTable.calculatedAt))
+        .limit(30);
+      const [findings] = await db.select({ critical: sql<number>`count(*) filter (where severity='critical')::int`, high: sql<number>`count(*) filter (where severity='high')::int`, medium: sql<number>`count(*) filter (where severity='medium')::int`, low: sql<number>`count(*) filter (where severity='low')::int` })
+        .from(tprmVendorFindingsTable)
+        .where(and(eq(tprmVendorFindingsTable.vendorId, v.id), eq(tprmVendorFindingsTable.tenantId, v.tenantId)));
+      return { id: v.id, companyName: v.companyName, riskScore: v.riskScore, riskGrade: v.riskGrade, domain: v.domain, logoUrl: v.logoUrl, industry: v.industry, riskHistory: scores.map(s => ({ score: s.overallScore, date: s.calculatedAt })), findings: findings ?? { critical: 0, high: 0, medium: 0, low: 0 } };
+    }));
+    res.json(result);
+  } catch (err) {
+    logger.error({ err }, "TPRM compare error");
+    res.status(500).json({ error: "Failed to compare vendors" });
+  }
+});
+
 // ── Bulk Scan — must be before /:id to avoid param shadowing ──────────────────
 router.post("/tprm/vendors/bulk-scan", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   try {
@@ -604,7 +641,7 @@ router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authentica
 router.patch("/tprm/vendors/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
-  const allowed = ["companyName", "type", "industry", "description", "logoUrl", "website", "employeeCount", "companySize", "founded", "location", "marketCap", "companyType", "inherentRisk", "businessImpact", "scanFrequency", "status", "source", "assessmentType"];
+  const allowed = ["companyName", "type", "industry", "description", "logoUrl", "website", "employeeCount", "companySize", "founded", "location", "marketCap", "companyType", "inherentRisk", "businessImpact", "scanFrequency", "status", "source", "assessmentType", "slaUptimePercent", "slaResponseTimeHours", "slaReviewDate", "slaNotes", "slaBreachCount"];
   const updates: Record<string, any> = { updatedAt: new Date() };
   for (const k of allowed) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
 
@@ -1604,6 +1641,359 @@ router.post("/tprm/vendors/:id/contacts", requireAuth, requireTprm, async (req: 
   if (!name || !email) { res.status(400).json({ error: "name and email are required" }); return; }
   const [row] = await db.insert(tprmVendorContactsTable).values({ vendorId, tenantId, name, email, role: contactRole ?? null, isPrimary: !!isPrimary }).returning();
   res.status(201).json(row);
+});
+
+router.delete("/tprm/vendors/:id/contacts/:cid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const contactId = parseInt(req.params.cid as string);
+  await db.delete(tprmVendorContactsTable).where(and(eq(tprmVendorContactsTable.id, contactId), eq(tprmVendorContactsTable.tenantId, tenantId)));
+  res.json({ ok: true });
+});
+
+// #14: Send email to vendor contact
+router.post("/tprm/vendors/:id/contacts/:cid/send-email", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const contactId = parseInt(req.params.cid as string);
+  const { subject, message } = req.body;
+  if (!subject || !message) { res.status(400).json({ error: "subject and message are required" }); return; }
+  const [contact] = await db.select().from(tprmVendorContactsTable).where(and(eq(tprmVendorContactsTable.id, contactId), eq(tprmVendorContactsTable.tenantId, tenantId)));
+  if (!contact) { res.status(404).json({ error: "Contact not found" }); return; }
+  try {
+    const { sendEmail } = await import("../lib/email");
+    await sendEmail({ to: contact.email, subject, html: `<p>${message.replace(/\n/g, "<br>")}</p>` });
+    res.json({ ok: true, message: `Email sent to ${contact.email}` });
+  } catch (err) {
+    logger.warn({ err, contactId }, "TPRM: contact send-email failed");
+    res.status(500).json({ error: "Failed to send email — check email provider configuration" });
+  }
+});
+
+// #11: Send verification email to contact
+router.post("/tprm/vendors/:id/contacts/:cid/send-verification", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const contactId = parseInt(req.params.cid as string);
+  const [contact] = await db.select().from(tprmVendorContactsTable).where(and(eq(tprmVendorContactsTable.id, contactId), eq(tprmVendorContactsTable.tenantId, tenantId)));
+  if (!contact) { res.status(404).json({ error: "Contact not found" }); return; }
+  if (contact.isEmailVerified) { res.json({ ok: true, message: "Contact already verified" }); return; }
+  const { randomBytes } = await import("node:crypto");
+  const token = randomBytes(32).toString("hex");
+  await db.update(tprmVendorContactsTable).set({ emailVerificationToken: token }).where(eq(tprmVendorContactsTable.id, contactId));
+  const platformDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
+  const baseUrl = platformDomain ? `https://${platformDomain}` : "https://your-platform.com";
+  const verifyLink = `${baseUrl}/api/tprm/contacts/verify/${token}`;
+  try {
+    const { sendEmail } = await import("../lib/email");
+    await sendEmail({
+      to: contact.email,
+      subject: "[Sentinelware] Please verify your email address",
+      html: `<p>Hi ${contact.name},</p><p>Please verify your email address by clicking the link below:</p><p><a href="${verifyLink}" style="display:inline-block;background:#3b82f6;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none">Verify Email</a></p><p>Or copy: ${verifyLink}</p>`,
+    });
+    res.json({ ok: true, message: `Verification email sent to ${contact.email}` });
+  } catch (err) {
+    logger.warn({ err }, "TPRM: send-verification email failed");
+    res.status(500).json({ error: "Failed to send verification email — check email provider configuration" });
+  }
+});
+
+// #11: Public email verification callback
+router.get("/tprm/contacts/verify/:token", async (req, res: any) => {
+  const { token } = req.params as { token: string };
+  const [contact] = await db.select().from(tprmVendorContactsTable).where(eq(tprmVendorContactsTable.emailVerificationToken, token));
+  if (!contact) { res.status(400).send("<h2>Invalid or expired verification link.</h2>"); return; }
+  await db.update(tprmVendorContactsTable).set({ isEmailVerified: true, emailVerifiedAt: new Date(), emailVerificationToken: null }).where(eq(tprmVendorContactsTable.id, contact.id));
+  res.send("<h2 style='font-family:sans-serif;color:#22c55e'>✓ Email verified successfully. You may close this tab.</h2>");
+});
+
+// ── Compliance Requirements Management ────────────────────────────────────────
+
+router.post("/tprm/vendors/:id/compliance-requirements", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const { documentType, required, dueDate, reminderDays, notes } = req.body;
+  if (!documentType) { res.status(400).json({ error: "documentType is required" }); return; }
+  const [row] = await db.insert(tprmComplianceRequirementsTable).values({
+    vendorId, tenantId, documentType, required: required !== false, dueDate: dueDate ?? null, reminderDays: reminderDays ?? 30, notes: notes ?? null,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.delete("/tprm/vendors/:id/compliance-requirements/:reqId", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const reqId = parseInt(req.params.reqId as string);
+  await db.delete(tprmComplianceRequirementsTable).where(and(eq(tprmComplianceRequirementsTable.id, reqId), eq(tprmComplianceRequirementsTable.tenantId, tenantId)));
+  res.json({ ok: true });
+});
+
+// #15: Notify vendors about compliance requirements (send email)
+router.post("/tprm/vendors/:id/compliance-requirements/:reqId/notify", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  const reqId = parseInt(req.params.reqId as string);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const [req_] = await db.select().from(tprmComplianceRequirementsTable).where(and(eq(tprmComplianceRequirementsTable.id, reqId), eq(tprmComplianceRequirementsTable.tenantId, tenantId)));
+  if (!req_) { res.status(404).json({ error: "Requirement not found" }); return; }
+  const contacts = await db.select().from(tprmVendorContactsTable).where(and(eq(tprmVendorContactsTable.vendorId, vendorId), eq(tprmVendorContactsTable.tenantId, tenantId)));
+  const targets = contacts.filter(c => c.isPrimary || contacts.length === 1);
+  if (targets.length === 0) { res.status(400).json({ error: "No primary contacts to notify" }); return; }
+  try {
+    const { sendEmail } = await import("../lib/email");
+    const due = req_.dueDate ? new Date(req_.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "as soon as possible";
+    for (const contact of targets) {
+      await sendEmail({
+        to: contact.email,
+        subject: `[Sentinelware] Compliance Document Required: ${req_.documentType}`,
+        html: `<p>Hi ${contact.name},</p><p>A compliance document is required from <strong>${vendor.companyName}</strong>:</p><ul><li><strong>Document type:</strong> ${req_.documentType}</li><li><strong>Required by:</strong> ${due}</li>${req_.notes ? `<li><strong>Notes:</strong> ${req_.notes}</li>` : ""}</ul><p>Please submit the document to your account manager at your earliest convenience.</p>`,
+      });
+    }
+    res.json({ ok: true, notified: targets.length });
+  } catch (err) {
+    logger.warn({ err }, "TPRM: compliance requirement notify failed");
+    res.status(500).json({ error: "Failed to send notification — check email provider configuration" });
+  }
+});
+
+// ── AI Compliance Document Parsing ────────────────────────────────────────────
+// #8: Use AI to extract key fields from uploaded compliance documents
+
+router.post("/tprm/vendors/:id/compliance/:docId/ai-parse", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const docId = parseInt(req.params.docId as string);
+  const [doc] = await db.select().from(tprmComplianceDocumentsTable).where(and(eq(tprmComplianceDocumentsTable.id, docId), eq(tprmComplianceDocumentsTable.tenantId, tenantId)));
+  if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
+  if (!doc.fileData) { res.status(400).json({ error: "Document has no file attached" }); return; }
+
+  try {
+    const { llmComplete, isLLMAvailable } = await import("../lib/llm.js");
+    if (!isLLMAvailable()) { res.status(503).json({ error: "AI not configured — set OPENAI_API_KEY to enable" }); return; }
+
+    // Decode base64 → text (handle PDF/text; truncate to 8000 chars for context)
+    const rawText = Buffer.from(doc.fileData, "base64").toString("utf-8", 0, 16000).slice(0, 8000);
+    const prompt = `You are a compliance analyst. Extract key information from this document text and return ONLY a JSON object with these fields: { "documentType": string, "auditor": string|null, "auditPeriodStart": "YYYY-MM-DD"|null, "auditPeriodEnd": "YYYY-MM-DD"|null, "expiresAt": "YYYY-MM-DD"|null, "coverageScope": string|null, "summary": string }. Document text:\n\n${rawText}`;
+
+    const result = await llmComplete([{ role: "user", content: prompt }], { temperature: 0, maxTokens: 500 });
+    const jsonMatch = result?.match(/\{[\s\S]+\}/);
+    if (!jsonMatch) { res.status(500).json({ error: "AI could not parse document" }); return; }
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    // Auto-apply extracted fields to the document
+    const updates: Record<string, any> = { updatedAt: new Date() };
+    if (parsed.auditor)          updates.auditor          = parsed.auditor;
+    if (parsed.auditPeriodStart) updates.auditPeriodStart = parsed.auditPeriodStart;
+    if (parsed.auditPeriodEnd)   updates.auditPeriodEnd   = parsed.auditPeriodEnd;
+    if (parsed.expiresAt) {
+      updates.expiresAt = parsed.expiresAt;
+      const today = new Date(); const exp = new Date(parsed.expiresAt);
+      updates.status = exp < today ? "expired" : exp.getTime() - today.getTime() < 30 * 86400000 ? "expiring_soon" : "valid";
+    }
+    if (parsed.coverageScope) updates.coverageScope = parsed.coverageScope;
+    await db.update(tprmComplianceDocumentsTable).set(updates).where(eq(tprmComplianceDocumentsTable.id, docId));
+    res.json({ ok: true, parsed, applied: Object.keys(updates).filter(k => k !== "updatedAt") });
+  } catch (err) {
+    logger.warn({ err, docId }, "TPRM: AI compliance parse failed");
+    res.status(500).json({ error: "AI parsing failed" });
+  }
+});
+
+// ── SBOM Automated Discovery ──────────────────────────────────────────────────
+// #7: Crawl vendor domain for SBOM files at well-known paths
+
+router.post("/tprm/vendors/:id/sbom/discover", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, userId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+
+  const WELL_KNOWN_PATHS = [
+    "/.well-known/sbom", "/.well-known/sbom.json", "/sbom.json", "/sbom.xml",
+    "/bom.json", "/bom.xml", "/.well-known/security.json",
+    "/security/sbom.json", "/docs/sbom.json",
+  ];
+
+  res.json({ ok: true, message: "SBOM discovery started — check SBOM tab in a moment", vendorId });
+
+  setImmediate(async () => {
+    try {
+      const baseUrls = [`https://${vendor.domain}`, `https://www.${vendor.domain}`];
+      for (const base of baseUrls) {
+        for (const path of WELL_KNOWN_PATHS) {
+          try {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 8000);
+            const r = await fetch(`${base}${path}`, { signal: ctrl.signal, headers: { "User-Agent": "Sentinelware-TPRM/1.0" } });
+            clearTimeout(t);
+            if (!r.ok) continue;
+            const ct = r.headers.get("content-type") ?? "";
+            if (!ct.includes("json") && !ct.includes("xml") && !ct.includes("text")) continue;
+            const content = await r.text();
+            if (content.length < 50) continue;
+            const fileName = path.split("/").pop() ?? "sbom.json";
+            const format = detectSbomFormat(content, fileName);
+            const parsed = parseSbom(content, format);
+            if (parsed.components.length === 0) continue;
+
+            // Save upload record
+            const [upload] = await db.insert(tprmSbomUploadsTable).values({
+              vendorId, tenantId,
+              fileName: `discovered-${fileName}`,
+              format,
+              specVersion: parsed.specVersion ?? null,
+              toolName: parsed.toolName ?? null,
+              componentCount: parsed.components.length,
+              fileData: Buffer.from(content).toString("base64"),
+              uploadedBy: userId as any,
+            }).returning();
+
+            // Enrich with vulnerabilities in background
+            const enriched = await enrichSbomWithVulnerabilities(parsed.components);
+            const vulnCount = enriched.filter(e => e.vulns.length > 0).length;
+            await db.update(tprmSbomUploadsTable).set({ vulnerableComponentCount: vulnCount }).where(eq(tprmSbomUploadsTable.id, upload.id));
+            if (enriched.length > 0) {
+              await db.insert(tprmSupplyChainNodesTable).values(
+                enriched.map(e => ({
+                  vendorId, tenantId,
+                  name: e.component.name, version: e.component.version ?? null,
+                  nodeType: "software" as const, cpe: e.component.cpe ?? null, purl: e.component.purl ?? null,
+                  license: e.component.licenses[0] ?? null, supplier: e.component.supplier ?? null,
+                  riskLevel: e.riskLevel === "none" ? "low" : e.riskLevel,
+                  vulnerabilities: e.vulns, sbomUploadId: upload.id,
+                }))
+              );
+            }
+            logger.info({ vendorId, path, components: parsed.components.length }, "TPRM: auto-discovered SBOM");
+            return; // Stop after first successful SBOM
+          } catch { /* try next path */ }
+        }
+      }
+      logger.info({ vendorId }, "TPRM: no SBOM found at well-known paths");
+    } catch (err) {
+      logger.warn({ err, vendorId }, "TPRM: SBOM discovery failed");
+    }
+  });
+});
+
+// ── 4th Party → Platform Asset Findings ──────────────────────────────────────
+// #16: Propagate critical/high 4th party risks as platform asset findings
+
+router.post("/tprm/vendors/:id/propagate-findings", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+
+  const criticalFindings = await db.select().from(tprmVendorFindingsTable)
+    .where(and(
+      eq(tprmVendorFindingsTable.vendorId, vendorId),
+      eq(tprmVendorFindingsTable.tenantId, tenantId),
+      or(eq(tprmVendorFindingsTable.severity, "critical"), eq(tprmVendorFindingsTable.severity, "high"))!,
+      eq(tprmVendorFindingsTable.status, "open"),
+    )).limit(20);
+
+  if (criticalFindings.length === 0) { res.json({ ok: true, propagated: 0, message: "No critical/high findings to propagate" }); return; }
+
+  // Create platform alerts for each finding
+  let propagated = 0;
+  for (const f of criticalFindings) {
+    try {
+      await db.insert(alertsTable).values({
+        tenantId,
+        title: `[TPRM] ${vendor.companyName}: ${f.title}`,
+        message: `Third-party risk finding from vendor ${vendor.companyName} (${vendor.domain}): ${f.description ?? f.title}. Severity: ${f.severity}. ${f.cve ? `CVE: ${f.cve}.` : ""}`,
+        type: "tprm_vendor_finding_propagated" as any,
+        severity: f.severity,
+      });
+      propagated++;
+    } catch { /* non-fatal per finding */ }
+  }
+  res.json({ ok: true, propagated, message: `Propagated ${propagated} finding${propagated !== 1 ? "s" : ""} to platform alerts` });
+});
+
+// ── Recursive 4th Party Security Scanning ────────────────────────────────────
+// #9: For each discovered 4th party, run a lightweight security probe on their domain
+
+router.post("/tprm/vendors/:id/fourth-party/deep-scan", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+
+  const fourthParties = await db.select().from(tprmFourthPartyVendorsTable)
+    .where(and(eq(tprmFourthPartyVendorsTable.parentVendorId, vendorId), eq(tprmFourthPartyVendorsTable.tenantId, tenantId)))
+    .limit(10);
+
+  if (fourthParties.length === 0) { res.json({ ok: true, scanned: 0, message: "No 4th parties to scan — run a vendor scan first" }); return; }
+
+  res.json({ ok: true, scanned: fourthParties.length, message: `Deep scanning ${fourthParties.length} 4th party vendor${fourthParties.length !== 1 ? "s" : ""}` });
+
+  setImmediate(async () => {
+    for (const fp of fourthParties) {
+      if (!fp.domain) continue;
+      try {
+        const dns_ = await import("node:dns/promises");
+        const ips = await dns_.resolve4(fp.domain).catch(() => [] as string[]);
+
+        // Check Shodan InternetDB for each IP
+        const shodanResults: { ip: string; vulns: string[]; ports: number[] }[] = [];
+        for (const ip of ips.slice(0, 3)) {
+          try {
+            const r = await fetch(`https://internetdb.shodan.io/${ip}`, { headers: { "User-Agent": "Sentinelware-TPRM/1.0" }, signal: AbortSignal.timeout(8000) });
+            if (r.ok) {
+              const data: any = await r.json().catch(() => null);
+              if (data) shodanResults.push({ ip, vulns: data.vulns ?? [], ports: data.ports ?? [] });
+            }
+          } catch { /* ignore per-IP */ }
+        }
+
+        const totalVulns = shodanResults.reduce((n, s) => n + s.vulns.length, 0);
+        const dangerousPorts = [22, 23, 3389, 21, 25, 110, 143, 3306, 5432, 6379, 27017].filter(p => shodanResults.some(s => s.ports.includes(p)));
+        const newRisk = totalVulns > 5 || dangerousPorts.length > 0 ? "high" : totalVulns > 0 ? "medium" : "low";
+
+        await db.update(tprmFourthPartyVendorsTable)
+          .set({ riskLevel: newRisk, details: { shodanResults: shodanResults.slice(0, 3), dangerousPorts, scannedAt: new Date().toISOString() } })
+          .where(eq(tprmFourthPartyVendorsTable.id, fp.id));
+
+        // If high risk, create a finding on the parent vendor
+        if (newRisk === "high") {
+          const cves = [...new Set(shodanResults.flatMap(s => s.vulns))].slice(0, 3);
+          await db.insert(tprmVendorFindingsTable).values({
+            vendorId, tenantId,
+            title: `4th party risk: ${fp.name} (${fp.domain}) has critical exposure`,
+            severity: "high",
+            category: "fourth_party",
+            description: `Shodan found ${totalVulns} known CVE${totalVulns !== 1 ? "s" : ""} on ${fp.domain} IPs. ${dangerousPorts.length > 0 ? `Dangerous ports open: ${dangerousPorts.join(", ")}.` : ""} ${cves.length > 0 ? `CVEs: ${cves.join(", ")}.` : ""}`,
+            remediation: `Review and remediate exposure on ${fp.domain} or switch to a less exposed ${fp.category} provider.`,
+            cve: cves[0] ?? null,
+          }).onConflictDoNothing();
+        }
+      } catch (e) {
+        logger.warn({ e, fpDomain: fp.domain }, "TPRM: 4th party deep scan failed (non-fatal)");
+      }
+      // Small delay between 4th party probes
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  });
+});
+
+// ── Questionnaire file-upload answer handling ─────────────────────────────────
+// #17: Allow file-type answers to be uploaded separately and stored as base64
+
+router.post("/tprm/questionnaire-respond-file/:token/:questionId", upload.single("file"), async (req: any, res: any) => {
+  const { token, questionId } = req.params as { token: string; questionId: string };
+  if (!req.file) { res.status(400).json({ error: "file is required" }); return; }
+  try {
+    const [q] = await db.select().from(tprmVendorQuestionnairesTable).where(eq(tprmVendorQuestionnairesTable.accessToken, token as any));
+    if (!q || q.status === "completed") { res.status(404).json({ error: "Questionnaire not found or already submitted" }); return; }
+    const existing = (q.responses as any[]) ?? [];
+    const fileRef = { type: "file", fileName: req.file.originalname, fileSize: req.file.size, mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") };
+    const updated = existing.filter((r: any) => r.questionId !== questionId);
+    updated.push({ questionId, answer: fileRef });
+    await db.update(tprmVendorQuestionnairesTable).set({ responses: updated }).where(eq(tprmVendorQuestionnairesTable.id, q.id));
+    res.json({ ok: true, questionId, fileName: req.file.originalname });
+  } catch (err) {
+    logger.error({ err }, "TPRM: questionnaire file upload failed");
+    res.status(500).json({ error: "Failed to upload file answer" });
+  }
 });
 
 export default router;

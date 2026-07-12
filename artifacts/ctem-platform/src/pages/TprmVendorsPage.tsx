@@ -146,9 +146,12 @@ export default function TprmVendorsPage() {
     };
   }, [vendors, scanningIds, bulkScanning]);
 
+  const [comparison, setComparison] = useState<any[] | null>(null);
+
   useEffect(() => {
     apiFetch<any>("/api/tprm/vendors/assets-summary").then(setAssetsSummary).catch(() => {});
     apiFetch<any>("/api/tprm/vendors/timeline").then(setTimeline).catch(() => {});
+    apiFetch<any[]>("/api/tprm/vendors/compare").then(setComparison).catch(() => {});
   }, []);
 
   // Problem 8: Per-row individual scan trigger (all roles can use this)
@@ -315,6 +318,62 @@ export default function TprmVendorsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Risk Comparison */}
+      {comparison && comparison.length > 1 && (
+        <div>
+          <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Vendor Risk Comparison</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border/50">
+                  <th className="text-left py-2 px-3 font-medium text-muted-foreground">Vendor</th>
+                  <th className="text-center py-2 px-3 font-medium text-muted-foreground">Risk Score</th>
+                  <th className="text-center py-2 px-3 font-medium text-muted-foreground">Critical</th>
+                  <th className="text-center py-2 px-3 font-medium text-muted-foreground">High</th>
+                  <th className="text-center py-2 px-3 font-medium text-muted-foreground">Open Findings</th>
+                  <th className="text-center py-2 px-3 font-medium text-muted-foreground">Compliance</th>
+                  <th className="text-center py-2 px-3 font-medium text-muted-foreground">4th Parties</th>
+                  <th className="text-center py-2 px-3 font-medium text-muted-foreground">Inherited Risk</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparison.slice(0, 10).map((v: any) => (
+                  <tr key={v.id} className="border-b border-border/30 hover:bg-muted/20 cursor-pointer" onClick={() => window.location.href = `/tprm/vendors/${v.id}`}>
+                    <td className="py-2 px-3">
+                      <div className="flex items-center gap-2">
+                        {v.logoUrl && <img src={v.logoUrl} alt="" className="w-5 h-5 rounded object-contain" />}
+                        <span className="font-medium">{v.companyName}</span>
+                      </div>
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={`font-bold ${v.riskScore >= 75 ? "text-red-400" : v.riskScore >= 50 ? "text-orange-400" : v.riskScore >= 25 ? "text-yellow-400" : "text-green-400"}`}>
+                        {v.riskScore ?? "—"}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      {v.criticalFindings > 0 ? <span className="text-red-400 font-bold">{v.criticalFindings}</span> : <span className="text-muted-foreground">0</span>}
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      {v.highFindings > 0 ? <span className="text-orange-400 font-semibold">{v.highFindings}</span> : <span className="text-muted-foreground">0</span>}
+                    </td>
+                    <td className="py-2 px-3 text-center text-muted-foreground">{v.openFindings}</td>
+                    <td className="py-2 px-3 text-center">
+                      {v.complianceScore != null ? (
+                        <span className={`font-medium ${v.complianceScore >= 80 ? "text-green-400" : v.complianceScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>{v.complianceScore}%</span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="py-2 px-3 text-center text-muted-foreground">{v.fourthPartyCount}</td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={`capitalize px-1.5 py-0.5 rounded text-[10px] font-medium ${v.inherentRisk === "critical" ? "bg-red-500/20 text-red-400" : v.inherentRisk === "high" ? "bg-orange-500/20 text-orange-400" : v.inherentRisk === "medium" ? "bg-yellow-500/20 text-yellow-400" : "bg-green-500/20 text-green-400"}`}>{v.inherentRisk ?? "low"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">

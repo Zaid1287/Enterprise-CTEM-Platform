@@ -237,6 +237,34 @@ function nvdCveToOsvVuln(c: NvdCve): OsvVuln {
 
 // ── OSV API enrichment ────────────────────────────────────────────────────────
 
+/** Infer OSV ecosystem from PURL prefix or CPE string so we don't hardcode "npm". */
+function inferEcosystem(component: SbomComponent): string {
+  if (component.purl) {
+    const m = component.purl.match(/^pkg:([^/]+)/);
+    const purlType = m?.[1]?.toLowerCase();
+    const MAP: Record<string, string> = {
+      npm: "npm", yarn: "npm", pypi: "PyPI", python: "PyPI",
+      maven: "Maven", gradle: "Maven", "gradle-plugin": "Maven",
+      go: "Go", golang: "Go", cargo: "crates.io", gem: "RubyGems",
+      nuget: "NuGet", cocoapods: "CocoaPods", composer: "Packagist",
+      hex: "Hex", pub: "Pub", hackage: "Hackage", swift: "SwiftURL",
+      docker: "GitHub Actions", github: "GitHub Actions",
+    };
+    if (purlType && MAP[purlType]) return MAP[purlType];
+  }
+  if (component.cpe) {
+    const cpe = component.cpe.toLowerCase();
+    if (cpe.includes("python") || cpe.includes("pip")) return "PyPI";
+    if (cpe.includes("rubygems") || cpe.includes("ruby")) return "RubyGems";
+    if (cpe.includes("maven") || cpe.includes("java") || cpe.includes("springframework")) return "Maven";
+    if (cpe.includes("nuget") || cpe.includes("dotnet") || cpe.includes("csharp")) return "NuGet";
+    if (cpe.includes("golang")) return "Go";
+    if (cpe.includes("cargo") || cpe.includes("rust")) return "crates.io";
+  }
+  // Default: try npm (most common in web supply chains)
+  return "npm";
+}
+
 const OSV_API = "https://api.osv.dev/v1/query";
 const OSV_BATCH_SIZE = 20;
 
@@ -246,7 +274,9 @@ async function queryOsv(component: SbomComponent): Promise<OsvVuln[]> {
     body.package = { purl: component.purl };
     if (component.version) body.version = component.version;
   } else if (component.name) {
-    body.package = { name: component.name, ecosystem: "npm" };
+    // Infer ecosystem from PURL prefix or CPE; fall back to multi-ecosystem query
+    const eco = inferEcosystem(component);
+    body.package = { name: component.name, ecosystem: eco };
     if (component.version) body.version = component.version;
   } else {
     return [];
