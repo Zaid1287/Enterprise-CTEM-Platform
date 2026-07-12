@@ -28,6 +28,7 @@ import { logger } from "../lib/logger";
 import { enrichCompanyByDomain, runFullVendorScan } from "../lib/tprmEnrichment";
 import { parseSbom, detectSbomFormat, enrichSbomWithVulnerabilities } from "../lib/tprmSbom";
 import { enrichFindingsWithEpssKev } from "../lib/epssKev";
+import { getAmClientTenantIds } from "../lib/amScoping";
 
 const router = Router();
 const upload = multer({ limits: { fileSize: 50 * 1024 * 1024 } });
@@ -37,7 +38,8 @@ async function requireTprm(req: AuthenticatedRequest, res: any, next: Function) 
   const tenantId = req.user?.tenantId;
   const role     = req.user?.role;
   if (!tenantId) { res.status(401).json({ error: "Unauthorized" }); return; }
-  if (role === "admin" || role === "super_admin") { next(); return; }
+  // Admin, super_admin, and account_manager always have TPRM access
+  if (role === "admin" || role === "super_admin" || role === "account_manager") { next(); return; }
   try {
     const [row] = await db.select().from(tprmModuleAssignmentsTable).where(eq(tprmModuleAssignmentsTable.tenantId, tenantId));
     if (!row?.isEnabled) { res.status(403).json({ error: "TPRM module is not enabled for this tenant" }); return; }
@@ -46,7 +48,46 @@ async function requireTprm(req: AuthenticatedRequest, res: any, next: Function) 
 }
 
 /**
- * Resolve a vendor by ID while enforcing tenant ownership.
+ * Returns the list of tenant IDs the calling user can access for TPRM vendor queries.
+ * - super_admin / admin: all tenants (platform + client)
+ * - account_manager: only their assigned client tenants
+ * - client / others: only their own tenant
+ */
+async function getVendorScopeTenantIds(req: AuthenticatedRequest): Promise<number[]> {
+  const { role, tenantId, userId } = req.user!;
+  if (role === "super_admin" || role === "admin") {
+    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable);
+    return rows.map(r => r.id);
+  }
+  if (role === "account_manager") {
+    const ids = await getAmClientTenantIds(userId);
+    return ids.length > 0 ? ids : [tenantId];
+  }
+  return [tenantId];
+}
+
+/**
+ * Resolves a vendor by ID for any role — cross-tenant for admin/SA, assigned-tenants for AM.
+ */
+async function resolveVendorForRole(vendorId: number, req: AuthenticatedRequest) {
+  const { role, tenantId, userId } = req.user!;
+  if (role === "super_admin" || role === "admin") {
+    const [v] = await db.select().from(tprmVendorsTable).where(eq(tprmVendorsTable.id, vendorId));
+    return v ?? null;
+  }
+  if (role === "account_manager") {
+    const clientIds = await getAmClientTenantIds(userId);
+    if (clientIds.length === 0) return null;
+    const [v] = await db.select().from(tprmVendorsTable).where(
+      and(eq(tprmVendorsTable.id, vendorId), inArray(tprmVendorsTable.tenantId, clientIds))
+    );
+    return v ?? null;
+  }
+  return resolveVendor(vendorId, tenantId);
+}
+
+/**
+ * Resolve a vendor by ID while enforcing tenant ownership (client-only path).
  * Returns the vendor row if the caller's tenant owns it (tenantId match) OR it is a global vendor.
  * Returns null if the vendor doesn't exist or belongs to a different tenant.
  */
@@ -60,7 +101,13 @@ async function resolveVendor(vendorId: number, tenantId: number) {
 // ── Module management ─────────────────────────────────────────────────────────
 
 router.get("/tprm/module", requireAuth, async (req: AuthenticatedRequest, res) => {
-  const tenantId = req.user!.tenantId;
+  const { tenantId, role } = req.user!;
+  // Admin, super_admin, and account_manager always have TPRM active — bypass the per-tenant flag
+  if (role === "admin" || role === "super_admin" || role === "account_manager") {
+    const [tenant] = await db.select({ plan: tenantsTable.plan }).from(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    res.json({ isEnabled: true, updatedAt: null, plan: tenant?.plan ?? null });
+    return;
+  }
   const [[row], [tenant]] = await Promise.all([
     db.select().from(tprmModuleAssignmentsTable).where(eq(tprmModuleAssignmentsTable.tenantId, tenantId)),
     db.select({ plan: tenantsTable.plan }).from(tenantsTable).where(eq(tenantsTable.id, tenantId)),
@@ -293,23 +340,47 @@ router.post("/tprm/enrich", requireAuth, requireTprm, async (req: AuthenticatedR
 // ── Vendors CRUD ──────────────────────────────────────────────────────────────
 
 router.get("/tprm/vendors", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
+  const { tenantId, role, userId } = req.user!;
   const { type, status, riskGrade, industry, search, page = "1", limit = "50" } = req.query as Record<string, string>;
   const offset = (parseInt(page) - 1) * parseInt(limit);
 
   try {
-    const conds: any[] = [
-      or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!,
-    ];
+    // Build tenant scope condition
+    let tenantCond: any;
+    let tprmStatusMap: Record<number, boolean> = {};
+
+    if (role === "super_admin" || role === "admin") {
+      // All vendors across all tenants — no tenant filter
+      tenantCond = undefined;
+    } else if (role === "account_manager") {
+      const clientIds = await getAmClientTenantIds(userId);
+      if (clientIds.length === 0) {
+        res.json({ vendors: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+        return;
+      }
+      tenantCond = inArray(tprmVendorsTable.tenantId, clientIds);
+      // Fetch per-client TPRM enabled status for AM visibility of disabled clients
+      const assignments = await db.select({ tenantId: tprmModuleAssignmentsTable.tenantId, isEnabled: tprmModuleAssignmentsTable.isEnabled })
+        .from(tprmModuleAssignmentsTable)
+        .where(inArray(tprmModuleAssignmentsTable.tenantId, clientIds));
+      for (const a of assignments) tprmStatusMap[a.tenantId] = a.isEnabled ?? false;
+    } else {
+      tenantCond = or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!;
+    }
+
+    const conds: any[] = [];
+    if (tenantCond) conds.push(tenantCond);
     if (type)      conds.push(eq(tprmVendorsTable.type, type));
     if (status)    conds.push(eq(tprmVendorsTable.status, status));
     if (riskGrade) conds.push(eq(tprmVendorsTable.riskGrade, riskGrade));
     if (industry)  conds.push(eq(tprmVendorsTable.industry, industry));
     if (search)    conds.push(or(ilike(tprmVendorsTable.companyName, `%${search}%`), ilike(tprmVendorsTable.domain, `%${search}%`))!);
 
+    const whereClause = conds.length > 0 ? and(...conds) : undefined;
+
     const [vendors, [countRow]] = await Promise.all([
-      db.select().from(tprmVendorsTable).where(and(...conds)).orderBy(desc(tprmVendorsTable.createdAt)).limit(parseInt(limit)).offset(offset),
-      db.select({ count: sql<number>`count(*)::int` }).from(tprmVendorsTable).where(and(...conds)),
+      db.select().from(tprmVendorsTable).where(whereClause).orderBy(desc(tprmVendorsTable.createdAt)).limit(parseInt(limit)).offset(offset),
+      db.select({ count: sql<number>`count(*)::int` }).from(tprmVendorsTable).where(whereClause),
     ]);
 
     const vendorIds = vendors.map(v => v.id);
@@ -322,8 +393,13 @@ router.get("/tprm/vendors", requireAuth, requireTprm, async (req: AuthenticatedR
       for (const c of counts) assetCounts[c.vendorId] = c.count;
     }
 
+    // For AM: add tprmEnabled flag per vendor's tenant so frontend can show disabled state
     res.json({
-      vendors: vendors.map(v => ({ ...v, assetCount: assetCounts[v.id] ?? 0 })),
+      vendors: vendors.map(v => ({
+        ...v,
+        assetCount: assetCounts[v.id] ?? 0,
+        tprmEnabled: role === "account_manager" ? (tprmStatusMap[v.tenantId] ?? false) : true,
+      })),
       total: countRow?.count ?? 0,
       page: parseInt(page),
       limit: parseInt(limit),
@@ -390,10 +466,12 @@ router.post("/tprm/vendors", requireAuth, requireTprm, async (req: Authenticated
 // Static sub-paths MUST come before /tprm/vendors/:id to avoid param shadowing
 
 router.get("/tprm/vendors/assets-summary", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   try {
-    const vendorIds = (await db.select({ id: tprmVendorsTable.id }).from(tprmVendorsTable)
-      .where(or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!)).map(v => v.id);
+    const scopeTenantIds = await getVendorScopeTenantIds(req);
+    const vendorCond = scopeTenantIds.length === 0
+      ? sql`false`
+      : inArray(tprmVendorsTable.tenantId, scopeTenantIds);
+    const vendorIds = (await db.select({ id: tprmVendorsTable.id }).from(tprmVendorsTable).where(vendorCond)).map(v => v.id);
 
     if (vendorIds.length === 0) { res.json({ domains: 0, subdomains: 0, ipAddresses: 0, webApps: 0, mobileApps: 0 }); return; }
 
@@ -417,10 +495,10 @@ router.get("/tprm/vendors/assets-summary", requireAuth, requireTprm, async (req:
 });
 
 router.get("/tprm/vendors/timeline", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   try {
-    const vendorIds = (await db.select({ id: tprmVendorsTable.id }).from(tprmVendorsTable)
-      .where(or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!)).map(v => v.id);
+    const scopeTenantIds = await getVendorScopeTenantIds(req);
+    const vendorCond = scopeTenantIds.length === 0 ? sql`false` : inArray(tprmVendorsTable.tenantId, scopeTenantIds);
+    const vendorIds = (await db.select({ id: tprmVendorsTable.id }).from(tprmVendorsTable).where(vendorCond)).map(v => v.id);
 
     if (vendorIds.length === 0) { res.json({ weeks: [], topAssetTypes: [] }); return; }
 
@@ -461,13 +539,11 @@ router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authentica
   const vendorId = parseInt(req.params.id as string);
 
   try {
-    const [vendor] = await db.select().from(tprmVendorsTable).where(
-      and(eq(tprmVendorsTable.id, vendorId), or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!)
-    );
+    const vendor = await resolveVendorForRole(vendorId, req);
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
 
-    // For global vendors, scan data is stored under the owner tenant — use ownerTenantId for all child queries
-    const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
+    // ownerTenantId is always the vendor's actual tenant (for cross-tenant access)
+    const ownerTenantId = vendor.tenantId;
 
     const [riskScores, assets, findings, fourthParties, supplyChain, contacts, questionnaires, complianceDocs] = await Promise.all([
       db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, ownerTenantId))).orderBy(desc(tprmVendorRiskScoresTable.calculatedAt)).limit(30),
@@ -524,12 +600,9 @@ router.delete("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authent
 });
 
 router.post("/tprm/vendors/:id/scan", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
   try {
-    const [vendor] = await db.select().from(tprmVendorsTable).where(
-      and(eq(tprmVendorsTable.id, vendorId), or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!)
-    );
+    const vendor = await resolveVendorForRole(vendorId, req);
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
     await db.update(tprmVendorsTable).set({ status: "pending", updatedAt: new Date() }).where(eq(tprmVendorsTable.id, vendorId));
     setImmediate(() => {
@@ -623,8 +696,11 @@ router.get("/tprm/vendors/:id/breach-intel", requireAuth, requireTprm, async (re
 // ── 4th Party Cross-Vendor Intelligence ───────────────────────────────────────
 
 router.get("/tprm/fourth-parties/concentration-risk", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
-  // Get all 4th party records for this tenant, joining vendor info
+  const scopeTenantIds = await getVendorScopeTenantIds(req);
+  const tenantCond = scopeTenantIds.length > 0
+    ? inArray(tprmFourthPartyVendorsTable.tenantId, scopeTenantIds)
+    : sql`false`;
+  // Get all 4th party records for accessible tenants, joining vendor info
   const rows = await db.select({
     id:              tprmFourthPartyVendorsTable.id,
     name:            tprmFourthPartyVendorsTable.name,
@@ -640,7 +716,7 @@ router.get("/tprm/fourth-parties/concentration-risk", requireAuth, requireTprm, 
   })
   .from(tprmFourthPartyVendorsTable)
   .innerJoin(tprmVendorsTable, eq(tprmFourthPartyVendorsTable.parentVendorId, tprmVendorsTable.id))
-  .where(eq(tprmFourthPartyVendorsTable.tenantId, tenantId))
+  .where(tenantCond)
   .orderBy(desc(tprmFourthPartyVendorsTable.riskContribution));
 
   // Group by 4th party domain to find shared dependencies
@@ -679,7 +755,13 @@ router.get("/tprm/fourth-parties/concentration-risk", requireAuth, requireTprm, 
 });
 
 router.get("/tprm/fourth-parties/graph", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
+  const scopeTenantIds = await getVendorScopeTenantIds(req);
+  const vendorTenantCond = scopeTenantIds.length > 0
+    ? inArray(tprmVendorsTable.tenantId, scopeTenantIds)
+    : sql`false`;
+  const fpTenantCond = scopeTenantIds.length > 0
+    ? inArray(tprmFourthPartyVendorsTable.tenantId, scopeTenantIds)
+    : sql`false`;
 
   // Get all vendors + their 4th parties
   const vendors = await db.select({
@@ -690,11 +772,11 @@ router.get("/tprm/fourth-parties/graph", requireAuth, requireTprm, async (req: A
     riskScore: tprmVendorsTable.riskScore,
     logoUrl: tprmVendorsTable.logoUrl,
   }).from(tprmVendorsTable)
-    .where(and(eq(tprmVendorsTable.tenantId, tenantId), ne(tprmVendorsTable.status, "archived" as any)))
+    .where(and(vendorTenantCond, ne(tprmVendorsTable.status, "archived" as any)))
     .limit(50);
 
   const fourthParties = await db.select().from(tprmFourthPartyVendorsTable)
-    .where(eq(tprmFourthPartyVendorsTable.tenantId, tenantId));
+    .where(fpTenantCond);
 
   // Build graph: nodes + edges
   const nodes: Array<{ id: string; label: string; type: "org" | "vendor" | "fourth_party"; riskGrade?: string; category?: string; riskLevel?: string; domain?: string }> = [];
@@ -730,24 +812,20 @@ router.get("/tprm/fourth-parties/graph", requireAuth, requireTprm, async (req: A
 // ── Risk & Findings ───────────────────────────────────────────────────────────
 
 router.get("/tprm/vendors/:id/risk-history", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
-  const vendor = await resolveVendor(vendorId, tenantId);
+  const vendor = await resolveVendorForRole(vendorId, req);
   if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
-  const rows = await db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, ownerTenantId))).orderBy(asc(tprmVendorRiskScoresTable.calculatedAt)).limit(90);
+  const rows = await db.select().from(tprmVendorRiskScoresTable).where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, vendor.tenantId))).orderBy(asc(tprmVendorRiskScoresTable.calculatedAt)).limit(90);
   res.json(rows);
 });
 
 router.get("/tprm/vendors/:id/findings", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
-  const vendor = await resolveVendor(vendorId, tenantId);
+  const vendor = await resolveVendorForRole(vendorId, req);
   if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
   const { severity, status, page = "1", limit = "50" } = req.query as Record<string, string>;
   const offset = (parseInt(page) - 1) * parseInt(limit);
-  const conds: any[] = [eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, ownerTenantId)];
+  const conds: any[] = [eq(tprmVendorFindingsTable.vendorId, vendorId), eq(tprmVendorFindingsTable.tenantId, vendor.tenantId)];
   if (severity) conds.push(eq(tprmVendorFindingsTable.severity, severity));
   if (status)   conds.push(eq(tprmVendorFindingsTable.status, status));
   const [rows, [countRow]] = await Promise.all([
@@ -767,47 +845,54 @@ router.patch("/tprm/vendors/:id/findings/:fid", requireAuth, requireTprm, async 
 });
 
 router.get("/tprm/vendors/:id/assets", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
-  const vendor = await resolveVendor(vendorId, tenantId);
+  const vendor = await resolveVendorForRole(vendorId, req);
   if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
-  const rows = await db.select().from(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, ownerTenantId))).orderBy(asc(tprmVendorAssetsTable.assetType)).limit(500);
+  const rows = await db.select().from(tprmVendorAssetsTable).where(and(eq(tprmVendorAssetsTable.vendorId, vendorId), eq(tprmVendorAssetsTable.tenantId, vendor.tenantId))).orderBy(asc(tprmVendorAssetsTable.assetType)).limit(500);
   res.json(rows);
 });
 
 // ── Supply Chain ──────────────────────────────────────────────────────────────
 
 router.get("/tprm/supply-chain", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   const { nodeType, riskLevel, vendorId, page = "1", limit = "100" } = req.query as Record<string, string>;
   const offset = (parseInt(page) - 1) * parseInt(limit);
-  const conds: any[] = [eq(tprmSupplyChainNodesTable.tenantId, tenantId)];
-  if (nodeType)  conds.push(eq(tprmSupplyChainNodesTable.nodeType, nodeType));
-  if (riskLevel) conds.push(eq(tprmSupplyChainNodesTable.riskLevel, riskLevel));
-  if (vendorId)  conds.push(eq(tprmSupplyChainNodesTable.vendorId, parseInt(vendorId)));
-  const [rows, [countRow]] = await Promise.all([
-    db.select().from(tprmSupplyChainNodesTable).where(and(...conds)).orderBy(desc(tprmSupplyChainNodesTable.discoveredAt)).limit(parseInt(limit)).offset(offset),
-    db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(and(...conds)),
-  ]);
-  res.json({ nodes: rows, total: countRow?.count ?? 0 });
+  try {
+    const scopeTenantIds = await getVendorScopeTenantIds(req);
+    const tenantCond = scopeTenantIds.length > 0 ? inArray(tprmSupplyChainNodesTable.tenantId, scopeTenantIds) : sql`false`;
+    const conds: any[] = [tenantCond];
+    if (nodeType)  conds.push(eq(tprmSupplyChainNodesTable.nodeType, nodeType));
+    if (riskLevel) conds.push(eq(tprmSupplyChainNodesTable.riskLevel, riskLevel));
+    if (vendorId)  conds.push(eq(tprmSupplyChainNodesTable.vendorId, parseInt(vendorId)));
+    const [rows, [countRow]] = await Promise.all([
+      db.select().from(tprmSupplyChainNodesTable).where(and(...conds)).orderBy(desc(tprmSupplyChainNodesTable.discoveredAt)).limit(parseInt(limit)).offset(offset),
+      db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(and(...conds)),
+    ]);
+    res.json({ nodes: rows, total: countRow?.count ?? 0 });
+  } catch (err) {
+    logger.error({ err }, "TPRM supply-chain list error");
+    res.status(500).json({ error: "Failed to list supply chain" });
+  }
 });
 
 router.get("/tprm/supply-chain/stats", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   try {
+    const scopeTenantIds = await getVendorScopeTenantIds(req);
+    const tenantCond = scopeTenantIds.length > 0 ? inArray(tprmSupplyChainNodesTable.tenantId, scopeTenantIds) : sql`false`;
+    const findingTenantCond = scopeTenantIds.length > 0 ? inArray(tprmVendorFindingsTable.tenantId, scopeTenantIds) : sql`false`;
+
     const [totalNodes, criticalNodes, highNodes] = await Promise.all([
-      db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(eq(tprmSupplyChainNodesTable.tenantId, tenantId)),
-      db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.tenantId, tenantId), eq(tprmSupplyChainNodesTable.riskLevel, "critical"))),
-      db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.tenantId, tenantId), eq(tprmSupplyChainNodesTable.riskLevel, "high"))),
+      db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(tenantCond),
+      db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(and(tenantCond, eq(tprmSupplyChainNodesTable.riskLevel, "critical"))),
+      db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(and(tenantCond, eq(tprmSupplyChainNodesTable.riskLevel, "high"))),
     ]);
 
     const byType = await db.select({ nodeType: tprmSupplyChainNodesTable.nodeType, count: sql<number>`count(*)::int` })
-      .from(tprmSupplyChainNodesTable).where(eq(tprmSupplyChainNodesTable.tenantId, tenantId)).groupBy(tprmSupplyChainNodesTable.nodeType);
+      .from(tprmSupplyChainNodesTable).where(tenantCond).groupBy(tprmSupplyChainNodesTable.nodeType);
 
     const vendorsWithCritical = await db.selectDistinct({ vendorId: tprmVendorFindingsTable.vendorId })
       .from(tprmVendorFindingsTable)
-      .where(and(eq(tprmVendorFindingsTable.tenantId, tenantId), eq(tprmVendorFindingsTable.severity, "critical"), eq(tprmVendorFindingsTable.status, "open")));
+      .where(and(findingTenantCond, eq(tprmVendorFindingsTable.severity, "critical"), eq(tprmVendorFindingsTable.status, "open")));
 
     res.json({
       totalNodes:     totalNodes[0]?.count ?? 0,
@@ -823,23 +908,20 @@ router.get("/tprm/supply-chain/stats", requireAuth, requireTprm, async (req: Aut
 });
 
 router.get("/tprm/vendors/:id/supply-chain", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   const vendorId = parseInt(req.params.id as string);
-  const vendor = await resolveVendor(vendorId, tenantId);
+  const vendor = await resolveVendorForRole(vendorId, req);
   if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-  const ownerTenantId = vendor.isGlobal ? vendor.tenantId : tenantId;
-  const rows = await db.select().from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, ownerTenantId))).limit(500);
+  const rows = await db.select().from(tprmSupplyChainNodesTable).where(and(eq(tprmSupplyChainNodesTable.vendorId, vendorId), eq(tprmSupplyChainNodesTable.tenantId, vendor.tenantId))).limit(500);
   res.json(rows);
 });
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
   try {
-    const allVendors = await db.select().from(tprmVendorsTable).where(
-      or(eq(tprmVendorsTable.tenantId, tenantId), eq(tprmVendorsTable.isGlobal, true))!
-    );
+    const scopeTenantIds = await getVendorScopeTenantIds(req);
+    const vendorWhereClause = scopeTenantIds.length > 0 ? inArray(tprmVendorsTable.tenantId, scopeTenantIds) : undefined;
+    const allVendors = await db.select().from(tprmVendorsTable).where(vendorWhereClause);
 
     const totalVendors      = allVendors.length;
     const serviceProviders  = allVendors.filter(v => v.type === "service_provider").length;

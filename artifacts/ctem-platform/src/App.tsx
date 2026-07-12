@@ -218,13 +218,18 @@ function AiMapperRoute({ component: Component }: { component: React.ComponentTyp
 }
 
 function TprmBootstrap() {
-  const { isAuthenticated, setTprmEnabled } = useAuth();
+  const { isAuthenticated, setTprmEnabled, user } = useAuth();
   useEffect(() => {
     if (!isAuthenticated) return;
+    // Admin, super_admin, and account_manager always have TPRM access — skip the API call
+    if (user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager") {
+      setTprmEnabled(true);
+      return;
+    }
     apiFetch<{ isEnabled: boolean }>("/api/tprm/module")
       .then(d => setTprmEnabled(d.isEnabled ?? false))
       .catch(() => setTprmEnabled(false));
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user?.role]);
   return null;
 }
 
@@ -232,7 +237,8 @@ function TprmRoute({ component: Component }: { component: React.ComponentType })
   const { isAuthenticated, tprmEnabled, tprmLoaded, user } = useAuth();
   if (!isAuthenticated) return <Redirect to="/login" />;
   if (!tprmLoaded) return <AppLayout><PageLoader /></AppLayout>;
-  if (!tprmEnabled && user?.role !== "admin" && user?.role !== "super_admin") {
+  const isPrivileged = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
+  if (!tprmEnabled && !isPrivileged) {
     return (
       <AppLayout>
         <Suspense fallback={<PageLoader />}>

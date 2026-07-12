@@ -182,7 +182,7 @@ export function Sidebar() {
     ? { title: "AI Mapper", items: aiMapperItems }
     : null;
 
-  const tprmVisible = tprmEnabled || role === "admin" || role === "super_admin";
+  const tprmVisible = tprmEnabled || role === "admin" || role === "super_admin" || role === "account_manager";
   const tprmItems: NavItem[] = tprmVisible ? [
     { label: "Dashboard",           href: "/tprm",                          icon: Shield },
     { label: "Vendors",             href: "/tprm/vendors",                  icon: Building2 },
