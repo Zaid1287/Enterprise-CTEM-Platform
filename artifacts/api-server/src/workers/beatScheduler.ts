@@ -1384,18 +1384,48 @@ async function dispatchTprmVendorRescans(): Promise<void> {
 
 // ── Threat Intelligence feed refresh ─────────────────────────────────────────
 
+const TI_FEED_INTERVAL_MS = 6 * 60 * 60_000; // every 6 hours
+let _tiLastFeedRunTs = 0;
+let _tiFeedRunning = false;
+
 /**
- * Placeholder hook for Threat Intelligence feed refresh.
- * Actual implementation lives in lib/threatIntel/feedEngine.ts (Task #150).
- * Called from dispatchAll() every beat — will be a no-op until Task #150 lands.
+ * Dispatches the TI feed refresh if it hasn't run in the last 6 hours.
+ * Called every beat cycle (60s); throttled internally to 6h intervals.
  */
 export async function dispatchThreatIntelFeedRefresh(): Promise<void> {
+  const now = Date.now();
+  if (_tiFeedRunning) return; // already in progress
+  if (now - _tiLastFeedRunTs < TI_FEED_INTERVAL_MS) return; // not due yet
+
+  // Check whether any tenant has TI module enabled
   try {
-    const { runThreatIntelFeedRefresh } = await import("../lib/threatIntel/feedEngine.js");
-    await runThreatIntelFeedRefresh();
+    const { threatIntelModuleAssignmentsTable } = await import("@workspace/db");
+    const { gt: _gt } = await import("drizzle-orm");
+    const enabled = await db.select({ tenantId: threatIntelModuleAssignmentsTable.tenantId })
+      .from(threatIntelModuleAssignmentsTable)
+      .where(eq(threatIntelModuleAssignmentsTable.isEnabled, true))
+      .limit(1);
+    if (enabled.length === 0) return; // no tenants enabled — skip
   } catch {
-    // Feed engine not yet implemented — will be added in Task #150 (non-fatal)
+    // Table might not exist yet during first boot
+    return;
   }
+
+  _tiFeedRunning = true;
+  _tiLastFeedRunTs = now;
+
+  setImmediate(async () => {
+    try {
+      logger.info("Beat: starting TI feed refresh");
+      const { runThreatIntelFeedRefresh } = await import("../lib/threatIntel/feedEngine.js");
+      await runThreatIntelFeedRefresh();
+      logger.info("Beat: TI feed refresh completed");
+    } catch (err) {
+      logger.warn({ err }, "Beat: TI feed refresh failed (non-fatal)");
+    } finally {
+      _tiFeedRunning = false;
+    }
+  });
 }
 
 export async function stopBeatScheduler(): Promise<void> {
