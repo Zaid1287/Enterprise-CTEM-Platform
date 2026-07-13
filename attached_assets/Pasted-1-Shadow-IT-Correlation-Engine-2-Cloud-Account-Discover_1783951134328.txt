@@ -1,0 +1,26 @@
+1. Shadow IT Correlation Engine
+2. Cloud Account Discovery
+3. SPF/DKIM as Shadow SaaS Signals
+4. Dangerous Port Services as Shadow Services
+5. Technology Detection for Unauthorized Stacks
+6. Nuclei Admin Panel Detection
+7. shadow_it_assets DB table: Dedicated storage for discovered-but-unregistered assets pending security review
+8. shadow_it_saas_apps DB table: Dedicated storage for OAuth-authorized third-party SaaS apps discovered via IdP APIs
+9. Inventory cross-reference engine: The logic that compares every discovered asset against the known assets table and flags unknowns
+10. Shadow IT classification logic: Assigns type: forgotten / rogue / development / saas / cloud_bucket / device to each discovery
+11. Shadow IT risk scoring model: Shadow-IT-specific risk factors: how long it's existed (cert age), auth present/absent, data sensitivity, forgotten vs. intentional
+12. Shadow IT beat scheduler job: Daily/weekly automated Shadow IT discovery runs with diff tracking (new vs. previously seen)
+13. Shadow IT alert trigger type: shadow_it_discovered trigger in the alert rules engine so security gets notified in real time
+
+1. Google Workspace Admin SDK integration: Lists all OAuth-authorized third-party apps, which users connected them, and what scopes (drive.readonly vs admin.directory.all)
+2. Microsoft Graph / Entra ID integration: Same for Microsoft 365 — all Enterprise App registrations and consented delegated permissions
+3. Okta Apps API integration: Lists all SAML/OIDC applications provisioned in the Okta tenant
+4. SaaS OAuth scope risk scoring: Risk model: readonly = low, files.readwrite = medium, admin.* = critical
+5. Employee-level SaaS attribution: Which employee connected which shadow app (requires IdP user data)
+6. Include All Missing API Routes
+7. Include All Missing Frontend Pages: Shadow IT Dashboard page, Shadow IT SaaS Discovery page, Shadow IT alert configuration, etc
+8. Incldue All Missing Internal Network Discovery: 
+- mDNS / Bonjour probing: Discovers devices advertising themselves on the local network (printers, IoT, NAS, development servers)
+- SNMP sweep: Network printers, managed switches, routers, IoT appliances exposing management data
+- ARP scan: All active devices on a local subnet, including BYOD devices
+- NetBIOS name resolution: Windows device discovery on the internal LAN
