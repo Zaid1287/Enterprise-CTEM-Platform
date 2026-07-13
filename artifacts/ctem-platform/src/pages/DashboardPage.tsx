@@ -133,10 +133,11 @@ function DashboardSkeleton({ cards = 8 }: { cards?: number }) {
 
 function FpStatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    submitted: { label: "Submitted",   cls: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
-    confirmed: { label: "Confirmed FP", cls: "bg-green-500/15  text-green-400  border-green-500/30"  },
-    rejected:  { label: "Rejected",    cls: "bg-red-500/15    text-red-400    border-red-500/30"    },
-    none:      { label: "None",        cls: "bg-muted         text-muted-foreground border-border"   },
+    submitted:   { label: "Pending",     cls: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
+    in_progress: { label: "In Progress", cls: "bg-blue-500/15   text-blue-400   border-blue-500/30"   },
+    confirmed:   { label: "Confirmed FP", cls: "bg-green-500/15  text-green-400  border-green-500/30"  },
+    rejected:    { label: "Rejected",    cls: "bg-red-500/15    text-red-400    border-red-500/30"    },
+    none:        { label: "None",        cls: "bg-muted         text-muted-foreground border-border"   },
   };
   const s = map[status] ?? map.none;
   return <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium border", s.cls)}>{s.label}</span>;
@@ -223,7 +224,7 @@ function SuperAdminDashboard() {
   const assetRiskRankings: any[] = d.assetRiskRankings ?? [];
   const amPortfolio: any[] = d.amPortfolio ?? [];
   const recentAlerts: any[] = d.recentAlerts ?? [];
-  const fpData = d.falsePositives ?? { submitted: 0, confirmed: 0, rejected: 0 };
+  const fpData = d.falsePositives ?? { submitted: 0, in_progress: 0, confirmed: 0, rejected: 0 };
   const fpFindings: any[] = d.falsePositiveFindings ?? [];
 
   const riskColor = d.platformRiskScore >= 70 ? "text-red-400" : d.platformRiskScore >= 40 ? "text-amber-400" : "text-green-400";
@@ -534,9 +535,11 @@ function SuperAdminDashboard() {
         <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
           <XCircle className="w-4 h-4 text-yellow-400" /> False Positive Status
         </h3>
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <StatCard label="Submitted" value={fpData.submitted} icon={Clock}
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <StatCard label="Pending" value={fpData.submitted} icon={Clock}
             color={fpData.submitted > 0 ? "text-yellow-400" : undefined} />
+          <StatCard label="In Progress" value={fpData.in_progress ?? 0} icon={Clock}
+            color={(fpData.in_progress ?? 0) > 0 ? "text-blue-400" : undefined} />
           <StatCard label="Confirmed FPs" value={fpData.confirmed} icon={CheckCircle2}
             color={fpData.confirmed > 0 ? "text-green-400" : undefined} />
           <StatCard label="Rejected" value={fpData.rejected} icon={XCircle}
@@ -817,7 +820,7 @@ function AccountManagerDashboard() {
   const riskScore  = data?.portfolioRiskScore ?? 0;
   const riskLevel  = riskScore >= 70 ? "critical" : riskScore >= 40 ? "high" : riskScore >= 20 ? "medium" : "low";
   const riskColor  = riskScore >= 70 ? "text-red-400" : riskScore >= 40 ? "text-amber-400" : "text-green-400";
-  const fpData     = data?.falsePositives ?? { submitted: 0, confirmed: 0, rejected: 0 };
+  const fpData     = data?.falsePositives ?? { submitted: 0, in_progress: 0, confirmed: 0, rejected: 0 };
   const fpFindings: any[] = data?.falsePositiveFindings ?? [];
 
   const TOOLTIP_STYLE = {
@@ -1184,9 +1187,11 @@ function AccountManagerDashboard() {
         <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
           <XCircle className="w-4 h-4 text-yellow-400" /> False Positive Status
         </h3>
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <StatCard label="Submitted" value={fpData.submitted} icon={Clock}
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <StatCard label="Pending" value={fpData.submitted} icon={Clock}
             color={fpData.submitted > 0 ? "text-yellow-400" : undefined} />
+          <StatCard label="In Progress" value={fpData.in_progress ?? 0} icon={Clock}
+            color={(fpData.in_progress ?? 0) > 0 ? "text-blue-400" : undefined} />
           <StatCard label="Confirmed FPs" value={fpData.confirmed} icon={CheckCircle2}
             color={fpData.confirmed > 0 ? "text-green-400" : undefined} />
           <StatCard label="Rejected" value={fpData.rejected} icon={XCircle}
@@ -1336,7 +1341,7 @@ function AdminDashboard() {
   const recentAlerts: any[] = d.recentAlerts ?? [];
   const clientRiskRankings: any[] = d.clientRiskRankings ?? [];
   const allClientOrganizations: any[] = d.allClientOrganizations ?? [];
-  const fpData = d.falsePositives ?? { submitted: 0, confirmed: 0, rejected: 0 };
+  const fpData = d.falsePositives ?? { submitted: 0, in_progress: 0, confirmed: 0, rejected: 0 };
   const fpFindings: any[] = d.falsePositiveFindings ?? [];
 
   const riskColor = d.riskScore >= 70 ? "text-red-400" : d.riskScore >= 40 ? "text-amber-400" : "text-green-400";
@@ -1799,9 +1804,11 @@ function AdminDashboard() {
         <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
           <XCircle className="w-4 h-4 text-yellow-400" /> False Positive Status
         </h3>
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <StatCard label="Submitted" value={fpData.submitted} icon={Clock}
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <StatCard label="Pending" value={fpData.submitted} icon={Clock}
             color={fpData.submitted > 0 ? "text-yellow-400" : undefined} />
+          <StatCard label="In Progress" value={fpData.in_progress ?? 0} icon={Clock}
+            color={(fpData.in_progress ?? 0) > 0 ? "text-blue-400" : undefined} />
           <StatCard label="Confirmed FPs" value={fpData.confirmed} icon={CheckCircle2}
             color={fpData.confirmed > 0 ? "text-green-400" : undefined} />
           <StatCard label="Rejected" value={fpData.rejected} icon={XCircle}

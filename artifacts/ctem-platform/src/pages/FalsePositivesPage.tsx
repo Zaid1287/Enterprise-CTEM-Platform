@@ -17,10 +17,12 @@ import {
 import {
   ListChecks, CheckCircle2, XCircle, Clock, Search,
   ExternalLink, Loader2, ShieldCheck, ShieldX, AlertTriangle,
-  RefreshCw, Info, SlidersHorizontal, ChevronRight,
+  RefreshCw, Info, SlidersHorizontal, Hourglass, RotateCcw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+
+type FpAction = "confirm" | "reject" | "in_progress" | "reopen" | "reconfirm";
 
 interface FpFinding {
   id: number;
@@ -76,6 +78,12 @@ function FpStatusPill({ status }: { status: string }) {
         <Clock className="w-3 h-3" /> Pending Review
       </span>
     );
+  if (status === "in_progress")
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-300 border border-blue-500/25">
+        <Hourglass className="w-3 h-3" /> In Progress
+      </span>
+    );
   if (status === "confirmed")
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/25">
@@ -101,6 +109,53 @@ function fmtDateTime(iso: string | null | undefined) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+const ACTION_CONFIG: Record<FpAction, {
+  title: string;
+  description: string;
+  notePlaceholder: string;
+  btnLabel: string;
+  btnClass: string;
+  warning?: string;
+}> = {
+  confirm: {
+    title: "Confirm False Positive",
+    description: "Confirming marks this finding as a verified false positive and closes it.",
+    notePlaceholder: "e.g. Verified — expected behaviour in our environment.",
+    btnLabel: "Confirm FP",
+    btnClass: "bg-emerald-600 hover:bg-emerald-700 text-white",
+    warning: "The finding status will be set to false_positive and removed from the active vulnerability count. Future identical findings from scans will be suppressed automatically.",
+  },
+  reconfirm: {
+    title: "Re-confirm False Positive",
+    description: "Re-confirming restores this finding to confirmed false positive after it was rejected.",
+    notePlaceholder: "e.g. Further review confirmed — still a false positive.",
+    btnLabel: "Re-confirm FP",
+    btnClass: "bg-emerald-600 hover:bg-emerald-700 text-white",
+    warning: "The finding will be restored to confirmed false positive status.",
+  },
+  reject: {
+    title: "Reject False Positive",
+    description: "Rejecting reverts this finding to open status for re-investigation.",
+    notePlaceholder: "e.g. Real vulnerability, needs immediate remediation.",
+    btnLabel: "Reject",
+    btnClass: "bg-red-600 hover:bg-red-700 text-white",
+  },
+  in_progress: {
+    title: "Mark as In Progress",
+    description: "Mark this FP submission as under active review. The finding stays in false_positive status.",
+    notePlaceholder: "e.g. Currently investigating this finding with the client.",
+    btnLabel: "Mark In Progress",
+    btnClass: "bg-blue-600 hover:bg-blue-700 text-white",
+  },
+  reopen: {
+    title: "Re-open for Review",
+    description: "Send this finding back to pending review. A reviewer can then confirm, reject, or mark as in progress.",
+    notePlaceholder: "e.g. Needs a second opinion before finalising.",
+    btnLabel: "Re-open",
+    btnClass: "bg-amber-600 hover:bg-amber-700 text-white",
+  },
+};
+
 export default function FalsePositivesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -112,7 +167,7 @@ export default function FalsePositivesPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [reviewing, setReviewing] = useState<{ finding: FpFinding; action: "confirm" | "reject" } | null>(null);
+  const [reviewing, setReviewing] = useState<{ finding: FpFinding; action: FpAction } | null>(null);
   const [reviewNote, setReviewNote] = useState("");
 
   const qParams = new URLSearchParams({ limit: "200" });
@@ -127,38 +182,47 @@ export default function FalsePositivesPage() {
   });
 
   const findings = data?.findings ?? [];
-  const submitted = findings.filter(f => f.falsePositiveStatus === "submitted").length;
-  const confirmed = findings.filter(f => f.falsePositiveStatus === "confirmed").length;
-  const rejected  = findings.filter(f => f.falsePositiveStatus === "rejected").length;
-  const total     = findings.length;
+  const submitted   = findings.filter(f => f.falsePositiveStatus === "submitted").length;
+  const inProgress  = findings.filter(f => f.falsePositiveStatus === "in_progress").length;
+  const confirmed   = findings.filter(f => f.falsePositiveStatus === "confirmed").length;
+  const rejected    = findings.filter(f => f.falsePositiveStatus === "rejected").length;
+  const total       = findings.length;
 
   const reviewMut = useMutation({
-    mutationFn: ({ id, action, note }: { id: number; action: string; note: string }) =>
+    mutationFn: ({ id, action, note }: { id: number; action: FpAction; note: string }) =>
       apiFetch<{ ok: boolean }>(`/api/findings/${id}/fp-status`, {
         method: "PATCH",
         body: JSON.stringify({ action, note: note.trim() || undefined }),
       }),
     onSuccess: (_, vars) => {
-      toast({
-        title: vars.action === "confirm" ? "False positive confirmed" : "False positive rejected",
-        description: vars.action === "confirm"
-          ? "Finding confirmed as false positive and marked resolved."
-          : "Finding rejected — status reset to open for re-investigation.",
-      });
+      const messages: Record<FpAction, { title: string; description: string }> = {
+        confirm:     { title: "Confirmed as false positive", description: "Finding confirmed and closed." },
+        reconfirm:   { title: "Re-confirmed as false positive", description: "Finding restored to confirmed FP." },
+        reject:      { title: "False positive rejected", description: "Finding reverted to open for re-investigation." },
+        in_progress: { title: "Marked as in progress", description: "Finding is now under active review." },
+        reopen:      { title: "Re-opened for review", description: "Finding sent back to pending review." },
+      };
+      const msg = messages[vars.action];
+      toast({ title: msg.title, description: msg.description });
       qc.invalidateQueries({ queryKey: ["false-positives"] });
+      qc.invalidateQueries({ queryKey: ["platform-overview"] });
+      qc.invalidateQueries({ queryKey: ["admin-overview"] });
+      qc.invalidateQueries({ queryKey: ["am-overview"] });
       setReviewing(null);
       setReviewNote("");
     },
     onError: () => toast({ title: "Review failed", description: "Could not update the finding.", variant: "destructive" }),
   });
 
-  const openReview = useCallback((finding: FpFinding, action: "confirm" | "reject") => {
+  const openReview = useCallback((finding: FpFinding, action: FpAction) => {
     setReviewNote("");
     setReviewing({ finding, action });
   }, []);
 
   const clearFilters = () => { setStatusFilter("all"); setSeverityFilter("all"); setSearch(""); };
   const hasFilters = statusFilter !== "all" || severityFilter !== "all" || search !== "";
+
+  const actionCfg = reviewing ? ACTION_CONFIG[reviewing.action] : null;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -196,7 +260,7 @@ export default function FalsePositivesPage() {
       <div className="flex-1 p-6 space-y-6">
 
         {/* ── Stats row ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           {/* Pending */}
           <button
             onClick={() => setStatusFilter(s => s === "submitted" ? "all" : "submitted")}
@@ -208,19 +272,37 @@ export default function FalsePositivesPage() {
             )}
           >
             <div className="flex items-start justify-between mb-3">
-              <div className={cn(
-                "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
-                statusFilter === "submitted" ? "bg-amber-500/20" : "bg-amber-500/10 group-hover:bg-amber-500/15"
-              )}>
+              <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                statusFilter === "submitted" ? "bg-amber-500/20" : "bg-amber-500/10 group-hover:bg-amber-500/15")}>
                 <Clock className="w-5 h-5 text-amber-400" />
               </div>
               <span className="text-xs text-amber-400/70 font-medium uppercase tracking-wider">Pending</span>
             </div>
             <div className="text-4xl font-bold tabular-nums">{submitted}</div>
             <div className="text-sm text-muted-foreground mt-1">Awaiting review</div>
-            {statusFilter === "submitted" && (
-              <div className="mt-2 text-xs text-amber-400/70">Filtered ✓</div>
+            {statusFilter === "submitted" && <div className="mt-2 text-xs text-amber-400/70">Filtered ✓</div>}
+          </button>
+
+          {/* In Progress */}
+          <button
+            onClick={() => setStatusFilter(s => s === "in_progress" ? "all" : "in_progress")}
+            className={cn(
+              "text-left rounded-xl border p-5 transition-all group",
+              statusFilter === "in_progress"
+                ? "border-blue-500/60 bg-blue-500/8 shadow-[0_0_0_1px_rgba(59,130,246,0.15)]"
+                : "border-border bg-card hover:border-blue-500/40 hover:bg-blue-500/5"
             )}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                statusFilter === "in_progress" ? "bg-blue-500/20" : "bg-blue-500/10 group-hover:bg-blue-500/15")}>
+                <Hourglass className="w-5 h-5 text-blue-400" />
+              </div>
+              <span className="text-xs text-blue-400/70 font-medium uppercase tracking-wider">In Progress</span>
+            </div>
+            <div className="text-4xl font-bold tabular-nums">{inProgress}</div>
+            <div className="text-sm text-muted-foreground mt-1">Under active review</div>
+            {statusFilter === "in_progress" && <div className="mt-2 text-xs text-blue-400/70">Filtered ✓</div>}
           </button>
 
           {/* Confirmed */}
@@ -234,19 +316,15 @@ export default function FalsePositivesPage() {
             )}
           >
             <div className="flex items-start justify-between mb-3">
-              <div className={cn(
-                "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
-                statusFilter === "confirmed" ? "bg-emerald-500/20" : "bg-emerald-500/10 group-hover:bg-emerald-500/15"
-              )}>
+              <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                statusFilter === "confirmed" ? "bg-emerald-500/20" : "bg-emerald-500/10 group-hover:bg-emerald-500/15")}>
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               </div>
               <span className="text-xs text-emerald-400/70 font-medium uppercase tracking-wider">Confirmed</span>
             </div>
             <div className="text-4xl font-bold tabular-nums">{confirmed}</div>
             <div className="text-sm text-muted-foreground mt-1">Verified false positives</div>
-            {statusFilter === "confirmed" && (
-              <div className="mt-2 text-xs text-emerald-400/70">Filtered ✓</div>
-            )}
+            {statusFilter === "confirmed" && <div className="mt-2 text-xs text-emerald-400/70">Filtered ✓</div>}
           </button>
 
           {/* Rejected */}
@@ -260,23 +338,19 @@ export default function FalsePositivesPage() {
             )}
           >
             <div className="flex items-start justify-between mb-3">
-              <div className={cn(
-                "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
-                statusFilter === "rejected" ? "bg-red-500/20" : "bg-red-500/10 group-hover:bg-red-500/15"
-              )}>
+              <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                statusFilter === "rejected" ? "bg-red-500/20" : "bg-red-500/10 group-hover:bg-red-500/15")}>
                 <XCircle className="w-5 h-5 text-red-400" />
               </div>
               <span className="text-xs text-red-400/70 font-medium uppercase tracking-wider">Rejected</span>
             </div>
             <div className="text-4xl font-bold tabular-nums">{rejected}</div>
-            <div className="text-sm text-muted-foreground mt-1">Reverted to open</div>
-            {statusFilter === "rejected" && (
-              <div className="mt-2 text-xs text-red-400/70">Filtered ✓</div>
-            )}
+            <div className="text-sm text-muted-foreground mt-1">Reverted / not FP</div>
+            {statusFilter === "rejected" && <div className="mt-2 text-xs text-red-400/70">Filtered ✓</div>}
           </button>
         </div>
 
-        {/* ── Client info banner ──────────────────────────────────────────── */}
+        {/* ── Client info banner ────────────────────────────────────────────── */}
         {role === "client" && (
           <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
             <Info className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
@@ -288,7 +362,7 @@ export default function FalsePositivesPage() {
           </div>
         )}
 
-        {/* ── Filters ────────────────────────────────────────────────────── */}
+        {/* ── Filters ─────────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[260px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
@@ -300,13 +374,14 @@ export default function FalsePositivesPage() {
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-9 w-44 gap-1.5">
+            <SelectTrigger className="h-9 w-48 gap-1.5">
               <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
               <SelectValue placeholder="FP Status" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="submitted">Pending Review</SelectItem>
+              <SelectItem value="in_progress">In Progress</SelectItem>
               <SelectItem value="confirmed">Confirmed FP</SelectItem>
               <SelectItem value="rejected">Rejected</SelectItem>
             </SelectContent>
@@ -334,7 +409,7 @@ export default function FalsePositivesPage() {
           </div>
         </div>
 
-        {/* ── Main content ───────────────────────────────────────────────── */}
+        {/* ── Main content ─────────────────────────────────────────────────── */}
         {isLoading ? (
           <div className="flex items-center justify-center h-64 gap-3 text-muted-foreground">
             <Loader2 className="w-6 h-6 animate-spin" />
@@ -363,8 +438,8 @@ export default function FalsePositivesPage() {
             <div className={cn(
               "grid gap-4 px-5 py-3 bg-muted/30 border-b border-border/50 text-xs font-medium text-muted-foreground uppercase tracking-wide",
               showTenant
-                ? "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_1fr_auto]"
-                : "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_auto]"
+                ? "grid-cols-[2fr_1.2fr_0.7fr_0.9fr_1fr_1fr_1fr_auto]"
+                : "grid-cols-[2fr_1.2fr_0.9fr_1fr_1fr_1fr_auto]"
             )}>
               <span>Finding</span>
               <span>Asset</span>
@@ -384,8 +459,8 @@ export default function FalsePositivesPage() {
                   className={cn(
                     "grid gap-4 px-5 py-4 hover:bg-muted/10 transition-colors",
                     showTenant
-                      ? "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_1fr_auto]"
-                      : "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_auto]"
+                      ? "grid-cols-[2fr_1.2fr_0.7fr_0.9fr_1fr_1fr_1fr_auto]"
+                      : "grid-cols-[2fr_1.2fr_0.9fr_1fr_1fr_1fr_auto]"
                   )}
                 >
                   {/* Finding title + CVE + note */}
@@ -459,46 +534,76 @@ export default function FalsePositivesPage() {
 
                   {/* Actions */}
                   {canReview && (
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className="flex items-center justify-end gap-1">
+                      {/* Submitted → Confirm, In Progress, Reject */}
                       {f.falsePositiveStatus === "submitted" && (
                         <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2.5 text-xs gap-1 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:border-emerald-500/50"
-                            onClick={() => openReview(f, "confirm")}
-                          >
-                            <ShieldCheck className="w-3.5 h-3.5" /> Confirm
+                          <Button size="sm" variant="outline"
+                            className="h-7 px-2 text-xs gap-1 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:border-emerald-500/50"
+                            onClick={() => openReview(f, "confirm")}>
+                            <ShieldCheck className="w-3 h-3" /> Confirm
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2.5 text-xs gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50"
-                            onClick={() => openReview(f, "reject")}
-                          >
-                            <ShieldX className="w-3.5 h-3.5" /> Reject
+                          <Button size="sm" variant="outline"
+                            className="h-7 px-2 text-xs gap-1 text-blue-400 border-blue-500/30 hover:bg-blue-500/10 hover:border-blue-500/50"
+                            onClick={() => openReview(f, "in_progress")}>
+                            <Hourglass className="w-3 h-3" /> Progress
+                          </Button>
+                          <Button size="sm" variant="outline"
+                            className="h-7 px-2 text-xs gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50"
+                            onClick={() => openReview(f, "reject")}>
+                            <ShieldX className="w-3 h-3" /> Reject
                           </Button>
                         </>
                       )}
-                      {f.falsePositiveStatus === "confirmed" && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2.5 text-xs gap-1 text-red-400/70 hover:text-red-400 hover:bg-red-500/10"
-                          onClick={() => openReview(f, "reject")}
-                        >
-                          <XCircle className="w-3 h-3" /> Reopen
-                        </Button>
+                      {/* In Progress → Confirm, Reject, Re-open */}
+                      {f.falsePositiveStatus === "in_progress" && (
+                        <>
+                          <Button size="sm" variant="outline"
+                            className="h-7 px-2 text-xs gap-1 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:border-emerald-500/50"
+                            onClick={() => openReview(f, "confirm")}>
+                            <ShieldCheck className="w-3 h-3" /> Confirm
+                          </Button>
+                          <Button size="sm" variant="outline"
+                            className="h-7 px-2 text-xs gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50"
+                            onClick={() => openReview(f, "reject")}>
+                            <ShieldX className="w-3 h-3" /> Reject
+                          </Button>
+                          <Button size="sm" variant="ghost"
+                            className="h-7 px-2 text-xs gap-1 text-amber-400/70 hover:text-amber-400 hover:bg-amber-500/10"
+                            onClick={() => openReview(f, "reopen")}>
+                            <RotateCcw className="w-3 h-3" /> Re-open
+                          </Button>
+                        </>
                       )}
+                      {/* Confirmed → Re-open, Reject */}
+                      {f.falsePositiveStatus === "confirmed" && (
+                        <>
+                          <Button size="sm" variant="ghost"
+                            className="h-7 px-2 text-xs gap-1 text-amber-400/70 hover:text-amber-400 hover:bg-amber-500/10"
+                            onClick={() => openReview(f, "reopen")}>
+                            <RotateCcw className="w-3 h-3" /> Re-open
+                          </Button>
+                          <Button size="sm" variant="ghost"
+                            className="h-7 px-2 text-xs gap-1 text-red-400/70 hover:text-red-400 hover:bg-red-500/10"
+                            onClick={() => openReview(f, "reject")}>
+                            <XCircle className="w-3 h-3" /> Reject
+                          </Button>
+                        </>
+                      )}
+                      {/* Rejected → Re-confirm, Re-open */}
                       {f.falsePositiveStatus === "rejected" && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2.5 text-xs gap-1 text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-500/10"
-                          onClick={() => openReview(f, "confirm")}
-                        >
-                          <CheckCircle2 className="w-3 h-3" /> Re-confirm
-                        </Button>
+                        <>
+                          <Button size="sm" variant="ghost"
+                            className="h-7 px-2 text-xs gap-1 text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-500/10"
+                            onClick={() => openReview(f, "reconfirm")}>
+                            <CheckCircle2 className="w-3 h-3" /> Re-confirm
+                          </Button>
+                          <Button size="sm" variant="ghost"
+                            className="h-7 px-2 text-xs gap-1 text-amber-400/70 hover:text-amber-400 hover:bg-amber-500/10"
+                            onClick={() => openReview(f, "reopen")}>
+                            <RotateCcw className="w-3 h-3" /> Re-open
+                          </Button>
+                        </>
                       )}
                       <Link href={`/findings/${f.id}`}>
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground">
@@ -508,10 +613,10 @@ export default function FalsePositivesPage() {
                     </div>
                   )}
                   {!canReview && (
-                    <div className="flex items-center">
+                    <div className="flex items-center justify-end">
                       <Link href={`/findings/${f.id}`}>
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground">
-                          <ChevronRight className="w-3.5 h-3.5" />
+                          <ExternalLink className="w-3.5 h-3.5" />
                         </Button>
                       </Link>
                     </div>
@@ -524,9 +629,7 @@ export default function FalsePositivesPage() {
             <div className="px-5 py-3 bg-muted/20 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
               <span>Showing {findings.length} false positive{findings.length !== 1 ? "s" : ""}</span>
               {canReview && submitted > 0 && (
-                <span className="text-amber-400">
-                  {submitted} pending review
-                </span>
+                <span className="text-amber-400">{submitted} pending review</span>
               )}
             </div>
           </div>
@@ -538,14 +641,14 @@ export default function FalsePositivesPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
-              {reviewing?.action === "confirm"
-                ? <><CheckCircle2 className="w-5 h-5 text-emerald-400" />Confirm False Positive</>
-                : <><XCircle className="w-5 h-5 text-red-400" />Reject False Positive</>}
+              {reviewing?.action === "confirm" && <><CheckCircle2 className="w-5 h-5 text-emerald-400" />{actionCfg?.title}</>}
+              {reviewing?.action === "reconfirm" && <><CheckCircle2 className="w-5 h-5 text-emerald-400" />{actionCfg?.title}</>}
+              {reviewing?.action === "reject" && <><XCircle className="w-5 h-5 text-red-400" />{actionCfg?.title}</>}
+              {reviewing?.action === "in_progress" && <><Hourglass className="w-5 h-5 text-blue-400" />{actionCfg?.title}</>}
+              {reviewing?.action === "reopen" && <><RotateCcw className="w-5 h-5 text-amber-400" />{actionCfg?.title}</>}
             </DialogTitle>
             <DialogDescription className="text-sm">
-              {reviewing?.action === "confirm"
-                ? "Confirming marks this finding as a verified false positive and closes it."
-                : "Rejecting reverts this finding to open status for re-investigation."}
+              {actionCfg?.description}
             </DialogDescription>
           </DialogHeader>
 
@@ -567,6 +670,10 @@ export default function FalsePositivesPage() {
                     </>
                   )}
                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Current status:</span>
+                  <FpStatusPill status={reviewing.finding.falsePositiveStatus} />
+                </div>
                 {reviewing.finding.fpSubmittedByName && (
                   <p className="text-xs text-muted-foreground">
                     Submitted by <span className="font-medium text-foreground/70">{reviewing.finding.fpSubmittedByName}</span>
@@ -583,22 +690,17 @@ export default function FalsePositivesPage() {
                 <Textarea
                   className="resize-none text-sm"
                   rows={3}
-                  placeholder={reviewing.action === "confirm"
-                    ? "e.g. Verified — expected behaviour in our environment."
-                    : "e.g. Real vulnerability, needs immediate remediation."}
+                  placeholder={actionCfg?.notePlaceholder ?? ""}
                   value={reviewNote}
                   onChange={e => setReviewNote(e.target.value)}
                 />
               </div>
 
-              {/* Warning for confirm */}
-              {reviewing.action === "confirm" && (
+              {/* Warning */}
+              {actionCfg?.warning && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>
-                    The finding status will be set to <strong>false_positive</strong> and removed from the active vulnerability count.
-                    Future identical findings from scans will be suppressed automatically.
-                  </span>
+                  <span>{actionCfg.warning}</span>
                 </div>
               )}
             </div>
@@ -610,17 +712,14 @@ export default function FalsePositivesPage() {
             </Button>
             <Button
               size="sm"
-              onClick={() => reviewing && reviewMut.mutate({ id: reviewing.finding.id, action: reviewing.action, note: reviewNote })}
               disabled={reviewMut.isPending}
-              className={cn(
-                "min-w-[140px]",
-                reviewing?.action === "confirm"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
-                  : "bg-red-600 hover:bg-red-700 text-white border-red-600"
-              )}
+              className={actionCfg?.btnClass}
+              onClick={() => {
+                if (!reviewing) return;
+                reviewMut.mutate({ id: reviewing.finding.id, action: reviewing.action, note: reviewNote });
+              }}
             >
-              {reviewMut.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-              {reviewing?.action === "confirm" ? "Confirm False Positive" : "Reject & Reopen"}
+              {reviewMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : actionCfg?.btnLabel}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -257,7 +257,7 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
   const fpCondition = or(
     eq(findingsTable.status, "false_positive"),
     eq(findingsTable.isFalsePositive, true),
-    inArray(findingsTable.falsePositiveStatus, ["submitted", "confirmed", "rejected"])
+    inArray(findingsTable.falsePositiveStatus, ["submitted", "in_progress", "confirmed", "rejected"])
   )!;
 
   const filters: any[] = [
@@ -277,11 +277,10 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
   if (status && status !== "all") {
     if (status === "submitted")
       filters.push(eq(findingsTable.falsePositiveStatus, "submitted"));
+    else if (status === "in_progress")
+      filters.push(eq(findingsTable.falsePositiveStatus, "in_progress"));
     else if (status === "confirmed")
-      filters.push(or(
-        eq(findingsTable.falsePositiveStatus, "confirmed"),
-        and(eq(findingsTable.status, "false_positive"), ne(findingsTable.falsePositiveStatus, "rejected"))!
-      )!);
+      filters.push(eq(findingsTable.falsePositiveStatus, "confirmed"));
     else if (status === "rejected")
       filters.push(eq(findingsTable.falsePositiveStatus, "rejected"));
   }
@@ -398,8 +397,9 @@ router.patch("/findings/:findingId/fp-status", requireAuth, async (req: Authenti
   if (isNaN(findingId)) { res.status(400).json({ error: "Invalid findingId" }); return; }
 
   const { action, note } = req.body as { action?: string; note?: string };
-  if (action !== "confirm" && action !== "reject") {
-    res.status(400).json({ error: "action must be 'confirm' or 'reject'" });
+  const validActions = ["confirm", "reject", "in_progress", "reopen", "reconfirm"];
+  if (!validActions.includes(action ?? "")) {
+    res.status(400).json({ error: `action must be one of: ${validActions.join(", ")}` });
     return;
   }
 
@@ -418,24 +418,53 @@ router.patch("/findings/:findingId/fp-status", requireAuth, async (req: Authenti
 
   const now = new Date();
   const updateSet: Record<string, any> = {
-    fpReviewedBy: userId,
-    fpReviewedAt: now,
-    fpNote:       note ?? null,
-    updatedAt:    now,
+    fpNote:    note ?? null,
+    updatedAt: now,
   };
 
   if (action === "confirm") {
+    // Confirm: mark as verified false positive, close the finding
     updateSet.falsePositiveStatus = "confirmed";
     updateSet.isFalsePositive     = true;
     updateSet.status              = "false_positive";
+    updateSet.fpReviewedBy        = userId;
+    updateSet.fpReviewedAt        = now;
     if (!finding.fpSubmittedAt) {
       updateSet.fpSubmittedAt = now;
       updateSet.fpSubmittedBy = userId;
     }
-  } else {
+  } else if (action === "reconfirm") {
+    // Re-confirm after rejection: restore confirmed state
+    updateSet.falsePositiveStatus = "confirmed";
+    updateSet.isFalsePositive     = true;
+    updateSet.status              = "false_positive";
+    updateSet.fpReviewedBy        = userId;
+    updateSet.fpReviewedAt        = now;
+  } else if (action === "reject") {
+    // Reject: revert to open for re-investigation, clear FP
     updateSet.falsePositiveStatus = "rejected";
     updateSet.isFalsePositive     = false;
     updateSet.status              = "open";
+    updateSet.fpReviewedBy        = userId;
+    updateSet.fpReviewedAt        = now;
+  } else if (action === "in_progress") {
+    // Mark as under review — still pending, reviewer is working on it
+    updateSet.falsePositiveStatus = "in_progress";
+    updateSet.isFalsePositive     = false;
+    updateSet.status              = "false_positive";
+    updateSet.fpReviewedBy        = userId;
+    updateSet.fpReviewedAt        = now;
+    if (!finding.fpSubmittedAt) {
+      updateSet.fpSubmittedAt = now;
+      updateSet.fpSubmittedBy = userId;
+    }
+  } else if (action === "reopen") {
+    // Re-open: send confirmed/in_progress finding back to pending review
+    updateSet.falsePositiveStatus = "submitted";
+    updateSet.isFalsePositive     = false;
+    updateSet.status              = "false_positive";
+    updateSet.fpReviewedBy        = null;
+    updateSet.fpReviewedAt        = null;
   }
 
   const [updated] = await db.update(findingsTable).set(updateSet as any)
@@ -646,24 +675,16 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
   } else {
     patchWhere = and(eq(findingsTable.id, params.data.findingId), eq(findingsTable.tenantId, req.user!.tenantId));
   }
-  // Role-aware FP tracking: clients "submit" for review; privileged roles directly confirm.
+  // ALL roles "submit" for review when marking as false_positive.
+  // Only the dedicated PATCH /fp-status endpoint can confirm/reject/progress.
   const updateData: Record<string, unknown> = { ...parsed.data };
   if (parsed.data.status === "false_positive") {
-    if (patchRole === "client") {
-      // Client submits for review — pending confirmation by admin/AM
-      updateData.falsePositiveStatus = "submitted";
-      updateData.isFalsePositive = false;
-      updateData.fpSubmittedBy = req.user!.userId;
-      updateData.fpSubmittedAt = new Date();
-    } else {
-      // SA/Admin/AM directly confirm
-      updateData.falsePositiveStatus = "confirmed";
-      updateData.isFalsePositive = true;
-      updateData.fpSubmittedBy = req.user!.userId;
-      updateData.fpSubmittedAt = new Date();
-      updateData.fpReviewedBy = req.user!.userId;
-      updateData.fpReviewedAt = new Date();
-    }
+    updateData.falsePositiveStatus = "submitted";
+    updateData.isFalsePositive = false;
+    updateData.fpSubmittedBy = req.user!.userId;
+    updateData.fpSubmittedAt = new Date();
+    updateData.fpReviewedBy = null;
+    updateData.fpReviewedAt = null;
   }
   // When status is changed away from false_positive, clear the FP tracking fields
   if (parsed.data.status && parsed.data.status !== "false_positive") {
@@ -817,17 +838,18 @@ router.post("/findings/:findingId/suppress", requireAuth, async (req, res) => {
     logger.warn({ err: suppErr?.message, findingId }, "Suppression rule INSERT failed — still marking finding as FP");
   }
 
-  // Mark finding as false positive with FULL tracking fields
-  // This is the authoritative step — suppression is advisory
+  // Mark finding as false positive — "submitted" status for review workflow
+  // Suppress route creates the suppression rule but does not auto-confirm;
+  // an admin/reviewer must confirm via PATCH /fp-status.
   const now = new Date();
   const [updated] = await db.update(findingsTable).set({
     status:              "false_positive",
-    isFalsePositive:     true,
-    falsePositiveStatus: "confirmed",
+    isFalsePositive:     false,
+    falsePositiveStatus: "submitted",
     fpSubmittedBy:       userId as any,
     fpSubmittedAt:       now,
-    fpReviewedBy:        userId as any,
-    fpReviewedAt:        now,
+    fpReviewedBy:        null,
+    fpReviewedAt:        null,
     fpNote:              note ? note.trim() : null,
     updatedAt:           now,
   }).where(eq(findingsTable.id, findingId)).returning();

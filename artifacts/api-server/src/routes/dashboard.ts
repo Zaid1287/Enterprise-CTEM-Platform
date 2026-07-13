@@ -485,6 +485,28 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     }),
   ];
 
+  // ── False Positive aggregation (platform-wide) ────────────────────────────
+  const fpSubmitted   = allFindings.filter(f => f.falsePositiveStatus === "submitted").length;
+  const fpInProgress  = allFindings.filter(f => f.falsePositiveStatus === "in_progress").length;
+  const fpConfirmed   = allFindings.filter(f =>
+    f.falsePositiveStatus === "confirmed" ||
+    (f.isFalsePositive && (!f.falsePositiveStatus || f.falsePositiveStatus === "none")) ||
+    (f.status === "false_positive" && (!f.falsePositiveStatus || f.falsePositiveStatus === "none"))
+  ).length;
+  const fpRejected    = allFindings.filter(f => f.falsePositiveStatus === "rejected").length;
+  const falsePositiveFindings = allFindings
+    .filter(f => f.status === "false_positive" || (f.falsePositiveStatus && f.falsePositiveStatus !== "none"))
+    .map(f => ({
+      id: f.id, title: f.title, severity: f.severity, status: f.status,
+      cveId: f.cve,
+      falsePositiveStatus: f.falsePositiveStatus ?? (f.status === "false_positive" ? "confirmed" : "none"),
+      assetId: f.assetId,
+      assetName: allAssets.find(a => a.id === f.assetId)?.name ?? "Unknown",
+      tenantName: tenantNameMap.get(f.tenantId) ?? "Unknown",
+      updatedAt: f.updatedAt.toISOString(),
+    }))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
   res.json({
     // "Total Clients" = non-platform client orgs only
     tenantCount: clientTenants.length,
@@ -523,6 +545,8 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       isActive: t.isActive,
     })),
     amPortfolio,
+    falsePositives: { submitted: fpSubmitted, in_progress: fpInProgress, confirmed: fpConfirmed, rejected: fpRejected },
+    falsePositiveFindings,
   });
 });
 
