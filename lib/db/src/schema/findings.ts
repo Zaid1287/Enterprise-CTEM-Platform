@@ -24,6 +24,11 @@ export const findingsTable = pgTable("findings", {
   riskScore: real("risk_score"),
   isFalsePositive: boolean("is_false_positive").notNull().default(false),
   falsePositiveStatus: text("false_positive_status").default("none"),
+  fpSubmittedBy: integer("fp_submitted_by").references(() => usersTable.id, { onDelete: "set null" }),
+  fpSubmittedAt: timestamp("fp_submitted_at", { withTimezone: true }),
+  fpReviewedBy: integer("fp_reviewed_by").references(() => usersTable.id, { onDelete: "set null" }),
+  fpReviewedAt: timestamp("fp_reviewed_at", { withTimezone: true }),
+  fpNote: text("fp_note"),
   // Re-scan delta tracking
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   consecutiveMissedScans: integer("consecutive_missed_scans").notNull().default(0),

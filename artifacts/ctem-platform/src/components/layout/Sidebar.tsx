@@ -8,6 +8,7 @@ import {
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
   ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
   Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal,
+  ListChecks,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 
@@ -70,6 +71,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "Scans", href: "/scans", icon: Radar },
       { label: "Findings", href: "/findings", icon: Bug },
+      { label: "False Positives", href: "/false-positives", icon: ListChecks },
       { label: "Risk Scoring", href: "/risk", icon: TrendingUp },
       { label: "Security Tools", href: "/tools", icon: GitBranch, onlyFor: ["admin", "super_admin", "account_manager"] },
       { label: "Scan Reports", href: "/scan-reports", icon: ScanSearch },
