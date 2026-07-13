@@ -640,9 +640,24 @@ router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authentica
 
 router.patch("/tprm/vendors/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const vendorId = parseInt(req.params.id as string);
-  const allowed = ["companyName", "type", "industry", "description", "logoUrl", "website", "employeeCount", "companySize", "founded", "location", "marketCap", "companyType", "inherentRisk", "businessImpact", "scanFrequency", "status", "source", "assessmentType", "slaUptimePercent", "slaResponseTimeHours", "slaReviewDate", "slaNotes", "slaBreachCount"];
+  const allowed = ["companyName", "domain", "type", "industry", "description", "logoUrl", "website", "employeeCount", "companySize", "founded", "location", "marketCap", "companyType", "inherentRisk", "businessImpact", "scanFrequency", "status", "source", "assessmentType", "slaUptimePercent", "slaResponseTimeHours", "slaReviewDate", "slaNotes", "slaBreachCount"];
   const updates: Record<string, any> = { updatedAt: new Date() };
   for (const k of allowed) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
+
+  // Clean domain: strip protocol, www prefix handling, trailing slashes and paths
+  if (updates.domain) {
+    let d: string = String(updates.domain).trim().toLowerCase();
+    d = d.replace(/^https?:\/\//i, "");   // strip http:// or https://
+    d = d.replace(/^www\./i, "");          // strip leading www.
+    d = d.split("/")[0];                   // strip any path after the domain
+    d = d.split("?")[0];                   // strip query strings
+    d = d.split("#")[0];                   // strip hash fragments
+    updates.domain = d;
+    // Regenerate slug from cleaned domain + company name
+    const companyName: string = updates.companyName ?? "";
+    const base = (companyName || d).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    updates.slug = `${base}-${d.replace(/[^a-z0-9]+/g, "-")}`;
+  }
 
   try {
     const existing = await resolveVendorForRole(vendorId, req);
@@ -651,7 +666,7 @@ router.patch("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authenti
       .where(eq(tprmVendorsTable.id, vendorId))
       .returning();
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-    await logAudit(req.user!, "tprm_vendor_updated", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName }), req.ip ?? "");
+    await logAudit(req.user!, "tprm_vendor_updated", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName, domain: vendor.domain }), req.ip ?? "");
     res.json(vendor);
   } catch (err) {
     logger.error({ err }, "TPRM update vendor error");

@@ -110,7 +110,7 @@ export default function TprmVendorsPage() {
   // Edit / Delete state
   const [showEdit, setShowEdit]           = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
-  const [editForm, setEditForm]           = useState({ companyName: "", type: "service_provider", industry: "", description: "", inherentRisk: "medium", scanFrequency: "weekly", status: "active", website: "" });
+  const [editForm, setEditForm]           = useState({ companyName: "", domain: "", type: "service_provider", industry: "", description: "", inherentRisk: "medium", scanFrequency: "weekly", status: "active", website: "" });
   const [editSaving, setEditSaving]       = useState(false);
   const [deletingId, setDeletingId]       = useState<number | null>(null);
 
@@ -221,6 +221,7 @@ export default function TprmVendorsPage() {
     setEditingVendor(v);
     setEditForm({
       companyName:   v.companyName,
+      domain:        v.domain ?? "",
       type:          v.type,
       industry:      v.industry ?? "",
       description:   (v as any).description ?? "",
@@ -676,17 +677,38 @@ export default function TprmVendorsPage() {
               <Input className="mt-1 h-8 text-sm" value={editForm.companyName} onChange={e => setEditForm(f => ({ ...f, companyName: e.target.value }))} />
             </div>
 
-            {/* Row 2: Website URL (the primary ask) */}
-            <div>
-              <Label className="text-xs flex items-center gap-1">
-                <Globe className="w-3 h-3" /> Website URL
-              </Label>
-              <Input
-                className="mt-1 h-8 text-sm"
-                placeholder="https://vendor.com"
-                value={editForm.website}
-                onChange={e => setEditForm(f => ({ ...f, website: e.target.value }))}
-              />
+            {/* Row 2: Domain (scan target) + Website URL */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs flex items-center gap-1">
+                  Domain <span className="text-red-400">*</span>
+                  <span className="text-muted-foreground font-normal">(scan target)</span>
+                </Label>
+                <Input
+                  className="mt-1 h-8 text-sm font-mono"
+                  placeholder="example.com"
+                  value={editForm.domain}
+                  onChange={e => {
+                    let v = e.target.value.trim();
+                    v = v.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0];
+                    setEditForm(f => ({ ...f, domain: v }));
+                  }}
+                />
+                {editForm.domain && editForm.domain !== editingVendor?.domain && (
+                  <p className="text-xs text-amber-400 mt-0.5">⚠ Scans will target the new domain</p>
+                )}
+              </div>
+              <div>
+                <Label className="text-xs flex items-center gap-1">
+                  <Globe className="w-3 h-3" /> Website URL
+                </Label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  placeholder="https://vendor.com"
+                  value={editForm.website}
+                  onChange={e => setEditForm(f => ({ ...f, website: e.target.value }))}
+                />
+              </div>
             </div>
 
             {/* Row 3: Type + Industry */}
