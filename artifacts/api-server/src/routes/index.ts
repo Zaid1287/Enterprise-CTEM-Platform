@@ -37,6 +37,7 @@ import suppressionsRouter from "./suppressions";
 import scanOrchestratorRouter from "./scanOrchestrator";
 import tprmRouter from "./tprm";
 import shadowItRouter from "./shadowIt";
+import threatIntelRouter from "./threatIntel";
 
 const router: IRouter = Router();
 
@@ -80,6 +81,7 @@ router.use(cdnWhitelistRouter);
 router.use(aiMapperRouter);
 router.use(tprmRouter);
 router.use(shadowItRouter);
+router.use(threatIntelRouter);
 router.use(customToolsRouter);
 router.use(suppressionsRouter);
 router.use(scanOrchestratorRouter);

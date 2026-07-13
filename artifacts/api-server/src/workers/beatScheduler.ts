@@ -1381,6 +1381,22 @@ async function dispatchTprmVendorRescans(): Promise<void> {
   }
 }
 
+// ── Threat Intelligence feed refresh ─────────────────────────────────────────
+
+/**
+ * Placeholder hook for Threat Intelligence feed refresh.
+ * Actual implementation lives in lib/threatIntel/feedEngine.ts (Task #150).
+ * Called from dispatchAll() every beat — will be a no-op until Task #150 lands.
+ */
+export async function dispatchThreatIntelFeedRefresh(): Promise<void> {
+  try {
+    const { runThreatIntelFeedRefresh } = await import("../lib/threatIntel/feedEngine.js");
+    await runThreatIntelFeedRefresh();
+  } catch {
+    // Feed engine not yet implemented — will be added in Task #150 (non-fatal)
+  }
+}
+
 export async function stopBeatScheduler(): Promise<void> {
   if (_intervalHandle) {
     clearInterval(_intervalHandle);

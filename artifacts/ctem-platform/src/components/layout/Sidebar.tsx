@@ -8,7 +8,7 @@ import {
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
   ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
   Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal,
-  ListChecks, EyeOff,
+  ListChecks, EyeOff, Target, AlertTriangle, Newspaper, Eye, Globe,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 
@@ -144,7 +144,7 @@ let _scrollTop = 0;
 
 export function Sidebar() {
   const [location] = useLocation();
-  const { user, aiMapperEnabled, tprmEnabled } = useAuth();
+  const { user, aiMapperEnabled, tprmEnabled, threatIntelEnabled } = useAuth();
   const role = user?.role ?? "client";
   const [collapsed, setCollapsed] = useState(_collapsed);
   const asideRef = useRef<HTMLElement>(null);
@@ -225,6 +225,30 @@ export function Sidebar() {
     const aiMapperIdx = filteredGroups.findIndex(g => g.title === "AI Mapper");
     const insertAfter = aiMapperIdx >= 0 ? aiMapperIdx : filteredGroups.findIndex(g => g.title === "Brand Monitoring");
     filteredGroups.splice(insertAfter >= 0 ? insertAfter + 1 : filteredGroups.length, 0, tprmGroup);
+  }
+
+  const threatIntelVisible = threatIntelEnabled || role === "admin" || role === "super_admin" || role === "account_manager";
+  const threatIntelItems: NavItem[] = threatIntelVisible ? [
+    { label: "Dashboard",      href: "/threat-intel",             icon: Shield       },
+    { label: "IOC Database",   href: "/threat-intel/iocs",        icon: Crosshair    },
+    { label: "Threat Actors",  href: "/threat-intel/actors",      icon: Users        },
+    { label: "Campaigns",      href: "/threat-intel/campaigns",   icon: Target       },
+    { label: "Malware",        href: "/threat-intel/malware",     icon: Bug          },
+    { label: "C2 Servers",     href: "/threat-intel/c2-servers",  icon: Radio        },
+    { label: "CVE Intel",      href: "/threat-intel/cves",        icon: AlertTriangle },
+    { label: "Threat News",    href: "/threat-intel/news",        icon: Newspaper    },
+    { label: "Dark Web",       href: "/threat-intel/dark-web",    icon: Eye          },
+    { label: "TI Reports",     href: "/threat-intel/reports",     icon: FileBarChart2 },
+  ] : [];
+
+  const threatIntelGroup: NavGroup | null = threatIntelItems.length > 0
+    ? { title: "Threat Intelligence", items: threatIntelItems }
+    : null;
+
+  if (threatIntelGroup) {
+    const tprmIdx = filteredGroups.findIndex(g => g.title === "Third Party Risk");
+    const insertAfter = tprmIdx >= 0 ? tprmIdx : filteredGroups.findIndex(g => g.title === "AI Mapper");
+    filteredGroups.splice(insertAfter >= 0 ? insertAfter + 1 : filteredGroups.length, 0, threatIntelGroup);
   }
 
   const visibleGroups = isExternalMember ? externalGroups : filteredGroups;

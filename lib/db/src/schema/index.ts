@@ -33,3 +33,4 @@ export * from "./scanSuppressions";
 export * from "./scanOrchestrator";
 export * from "./tprm";
 export * from "./shadowIt";
+export * from "./threatIntel";

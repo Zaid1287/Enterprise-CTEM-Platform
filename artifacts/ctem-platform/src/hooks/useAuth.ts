@@ -18,11 +18,14 @@ interface AuthStore {
   aiMapperLoaded: boolean;
   tprmEnabled: boolean;
   tprmLoaded: boolean;
+  threatIntelEnabled: boolean;
+  threatIntelLoaded: boolean;
   login: (token: string, refreshToken: string, user: AuthUser) => void;
   logout: () => void;
   setUser: (user: AuthUser) => void;
   setAiMapperEnabled: (enabled: boolean) => void;
   setTprmEnabled: (enabled: boolean) => void;
+  setThreatIntelEnabled: (enabled: boolean) => void;
 }
 
 function getStoredUser(): AuthUser | null {
@@ -42,6 +45,8 @@ export const useAuth = create<AuthStore>((set) => ({
   aiMapperLoaded: false,
   tprmEnabled: false,
   tprmLoaded: false,
+  threatIntelEnabled: false,
+  threatIntelLoaded: false,
 
   login: (token, refreshToken, user) => {
     persistToken(token);
@@ -54,7 +59,7 @@ export const useAuth = create<AuthStore>((set) => ({
     persistToken(null);
     sessionStorage.removeItem("ctem_user");
     sessionStorage.removeItem("ctem_refresh_token");
-    set({ user: null, token: null, isAuthenticated: false, aiMapperEnabled: false, aiMapperLoaded: false, tprmEnabled: false, tprmLoaded: false });
+    set({ user: null, token: null, isAuthenticated: false, aiMapperEnabled: false, aiMapperLoaded: false, tprmEnabled: false, tprmLoaded: false, threatIntelEnabled: false, threatIntelLoaded: false });
   },
 
   setUser: (user) => {
@@ -64,4 +69,5 @@ export const useAuth = create<AuthStore>((set) => ({
 
   setAiMapperEnabled: (enabled: boolean) => set({ aiMapperEnabled: enabled, aiMapperLoaded: true }),
   setTprmEnabled: (enabled: boolean) => set({ tprmEnabled: enabled, tprmLoaded: true }),
+  setThreatIntelEnabled: (enabled: boolean) => set({ threatIntelEnabled: enabled, threatIntelLoaded: true }),
 }));

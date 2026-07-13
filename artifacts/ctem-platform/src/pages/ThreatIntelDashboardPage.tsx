@@ -1,0 +1,13 @@
+import { Shield } from "lucide-react";
+
+export default function ThreatIntelDashboardPage() {
+  return (
+    <div className="p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <Shield className="w-6 h-6 text-primary" />
+        <h1 className="text-2xl font-bold">Threat Intelligence Dashboard</h1>
+      </div>
+      <p className="text-muted-foreground">Full dashboard coming in Task #152.</p>
+    </div>
+  );
+}

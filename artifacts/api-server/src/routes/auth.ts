@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq, and, desc } from "drizzle-orm";
-import { db, tenantsTable, usersTable, sessionsTable, accountManagerClientsTable, aiMapperModuleAssignmentsTable, accessRequestsTable } from "@workspace/db";
+import { db, tenantsTable, usersTable, sessionsTable, accountManagerClientsTable, aiMapperModuleAssignmentsTable, accessRequestsTable, threatIntelModuleAssignmentsTable } from "@workspace/db";
 import { LoginBody, RegisterBody, RefreshTokenBody, ChangePasswordBody } from "@workspace/api-zod";
 import {
   hashPassword,
@@ -341,17 +341,24 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     res.status(404).json({ error: "User not found" });
     return;
   }
-  const [moduleRow] = await db
-    .select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
-    .from(aiMapperModuleAssignmentsTable)
-    .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
-    .limit(1);
-  // Admin/SA/AM always have AI Mapper access; clients are gated by per-tenant module flag.
+  const [moduleRow, tiModuleRow] = await Promise.all([
+    db.select({ isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
+      .from(aiMapperModuleAssignmentsTable)
+      .where(eq(aiMapperModuleAssignmentsTable.tenantId, req.user!.tenantId))
+      .limit(1)
+      .then(r => r[0]),
+    db.select({ isEnabled: threatIntelModuleAssignmentsTable.isEnabled })
+      .from(threatIntelModuleAssignmentsTable)
+      .where(eq(threatIntelModuleAssignmentsTable.tenantId, req.user!.tenantId))
+      .limit(1)
+      .then(r => r[0]),
+  ]);
+  // Admin/SA/AM always have access; clients are gated by per-tenant module flag.
   const { role } = req.user!;
-  const aiMapperEnabled = (role === "admin" || role === "super_admin" || role === "account_manager")
-    ? true
-    : (moduleRow?.isEnabled ?? false);
-  res.json({ ...toUserResponse(user), aiMapperEnabled });
+  const isPrivileged = role === "admin" || role === "super_admin" || role === "account_manager";
+  const aiMapperEnabled = isPrivileged ? true : (moduleRow?.isEnabled ?? false);
+  const threatIntelEnabled = isPrivileged ? true : (tiModuleRow?.isEnabled ?? false);
+  res.json({ ...toUserResponse(user), aiMapperEnabled, threatIntelEnabled });
 });
 
 // ── My Account Manager (client role only) ─────────────────────────────────────

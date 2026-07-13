@@ -71,6 +71,20 @@ const OrchestratorConfigPage = lazy(() => import("@/pages/OrchestratorConfigPage
 const ScanTelemetryPage      = lazy(() => import("@/pages/ScanTelemetryPage"));
 const OrchestratorPage       = lazy(() => import("@/pages/OrchestratorPage"));
 
+// Threat Intelligence pages (placeholder — full pages in Task #152)
+const ThreatIntelDashboardPage         = lazy(() => import("@/pages/ThreatIntelDashboardPage"));
+const ThreatIntelIocsPage              = lazy(() => import("@/pages/ThreatIntelIocsPage"));
+const ThreatIntelActorsPage            = lazy(() => import("@/pages/ThreatIntelActorsPage"));
+const ThreatIntelActorDetailPage       = lazy(() => import("@/pages/ThreatIntelActorDetailPage"));
+const ThreatIntelCampaignsPage         = lazy(() => import("@/pages/ThreatIntelCampaignsPage"));
+const ThreatIntelMalwarePage           = lazy(() => import("@/pages/ThreatIntelMalwarePage"));
+const ThreatIntelC2Page                = lazy(() => import("@/pages/ThreatIntelC2Page"));
+const ThreatIntelCvesPage              = lazy(() => import("@/pages/ThreatIntelCvesPage"));
+const ThreatIntelNewsPage              = lazy(() => import("@/pages/ThreatIntelNewsPage"));
+const ThreatIntelDarkWebPage           = lazy(() => import("@/pages/ThreatIntelDarkWebPage"));
+const ThreatIntelReportsPage           = lazy(() => import("@/pages/ThreatIntelReportsPage"));
+const ThreatIntelUpgradePage           = lazy(() => import("@/pages/ThreatIntelUpgradePage"));
+
 // TPRM pages
 const TprmDashboardPage                = lazy(() => import("@/pages/TprmDashboardPage"));
 const TprmVendorsPage                  = lazy(() => import("@/pages/TprmVendorsPage"));
@@ -229,6 +243,45 @@ function AiMapperRoute({ component: Component }: { component: React.ComponentTyp
   );
 }
 
+function ThreatIntelBootstrap() {
+  const { isAuthenticated, user, setThreatIntelEnabled } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const role = user?.role;
+    if (role === "admin" || role === "super_admin" || role === "account_manager") {
+      setThreatIntelEnabled(true);
+      return;
+    }
+    apiFetch<{ isEnabled: boolean }>("/api/threat-intel/module")
+      .then(d => setThreatIntelEnabled(d.isEnabled ?? false))
+      .catch(() => setThreatIntelEnabled(false));
+  }, [isAuthenticated, user?.role]);
+  return null;
+}
+
+function ThreatIntelRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated, threatIntelEnabled, threatIntelLoaded, user } = useAuth();
+  if (!isAuthenticated) return <Redirect to="/login" />;
+  if (!threatIntelLoaded) return <AppLayout><PageLoader /></AppLayout>;
+  const isPrivileged = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
+  if (!threatIntelEnabled && !isPrivileged) {
+    return (
+      <AppLayout>
+        <Suspense fallback={<PageLoader />}>
+          <ThreatIntelUpgradePage />
+        </Suspense>
+      </AppLayout>
+    );
+  }
+  return (
+    <AppLayout>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </AppLayout>
+  );
+}
+
 function TprmBootstrap() {
   const { isAuthenticated, setTprmEnabled, user } = useAuth();
   useEffect(() => {
@@ -364,6 +417,20 @@ function Router() {
       <Route path="/scan-telemetry" component={() => <AdminRoute component={ScanTelemetryPage} />} />
       <Route path="/settings/orchestration" component={() => <AdminRoute component={OrchestratorPage} />} />
 
+      {/* Threat Intelligence routes */}
+      <Route path="/threat-intel" component={() => <ThreatIntelRoute component={ThreatIntelDashboardPage} />} />
+      <Route path="/threat-intel/iocs" component={() => <ThreatIntelRoute component={ThreatIntelIocsPage} />} />
+      <Route path="/threat-intel/actors" component={() => <ThreatIntelRoute component={ThreatIntelActorsPage} />} />
+      <Route path="/threat-intel/actors/:id" component={() => <ThreatIntelRoute component={ThreatIntelActorDetailPage} />} />
+      <Route path="/threat-intel/campaigns" component={() => <ThreatIntelRoute component={ThreatIntelCampaignsPage} />} />
+      <Route path="/threat-intel/malware" component={() => <ThreatIntelRoute component={ThreatIntelMalwarePage} />} />
+      <Route path="/threat-intel/c2-servers" component={() => <ThreatIntelRoute component={ThreatIntelC2Page} />} />
+      <Route path="/threat-intel/cves" component={() => <ThreatIntelRoute component={ThreatIntelCvesPage} />} />
+      <Route path="/threat-intel/news" component={() => <ThreatIntelRoute component={ThreatIntelNewsPage} />} />
+      <Route path="/threat-intel/dark-web" component={() => <ThreatIntelRoute component={ThreatIntelDarkWebPage} />} />
+      <Route path="/threat-intel/reports" component={() => <ThreatIntelRoute component={ThreatIntelReportsPage} />} />
+      <Route path="/threat-intel/upgrade" component={() => <ProtectedRoute component={ThreatIntelUpgradePage} />} />
+
       {/* TPRM — public respond route (no auth) */}
       <Route path="/tprm/respond/:token" component={() => (
         <Suspense fallback={<PageLoader />}>
@@ -396,6 +463,7 @@ function App() {
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <AiMapperBootstrap />
           <TprmBootstrap />
+          <ThreatIntelBootstrap />
           <Router />
         </WouterRouter>
         <Toaster />
