@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/apiFetch";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AppLayout } from "@/components/layout/AppLayout";
 import {
   Card, CardContent, CardHeader, CardTitle,
 } from "@/components/ui/card";
@@ -168,7 +167,7 @@ export default function ShadowItSaasPage() {
   const appDetail = appDetailQ.data ?? selectedApp;
 
   return (
-    <AppLayout>
+    <>
       <div className="p-6 space-y-6 max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -579,6 +578,6 @@ export default function ShadowItSaasPage() {
           )}
         </SheetContent>
       </Sheet>
-    </AppLayout>
+    </>
   );
 }

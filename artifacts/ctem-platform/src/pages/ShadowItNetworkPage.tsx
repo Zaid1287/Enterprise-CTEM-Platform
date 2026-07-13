@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/apiFetch";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -122,7 +121,7 @@ export default function ShadowItNetworkPage() {
     d.netbiosName ?? d.mdnsName ?? d.hostname ?? d.snmpSysName ?? d.ipAddress;
 
   return (
-    <AppLayout>
+    <>
       <div className="p-6 space-y-6 max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -424,6 +423,6 @@ export default function ShadowItNetworkPage() {
           )}
         </SheetContent>
       </Sheet>
-    </AppLayout>
+    </>
   );
 }

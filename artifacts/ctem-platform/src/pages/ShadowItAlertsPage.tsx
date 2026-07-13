@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/apiFetch";
 import { useQuery } from "@tanstack/react-query";
-import { AppLayout } from "@/components/layout/AppLayout";
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription,
 } from "@/components/ui/card";
@@ -242,7 +241,7 @@ export default function ShadowItAlertsPage() {
   );
 
   return (
-    <AppLayout>
+    <>
       <div className="p-6 space-y-6 max-w-5xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -452,6 +451,6 @@ export default function ShadowItAlertsPage() {
           </DialogContent>
         </Dialog>
       </div>
-    </AppLayout>
+    </>
   );
 }

@@ -1,0 +1,23 @@
+Okta Apps API integration:
+SaaS OAuth scope risk scoring:
+Employee-level SaaS attribution:
+Include All Missing API Routes
+Include All Missing Frontend Pages: Shadow IT Dashboard page, Shadow IT SaaS Discovery page, Shadow IT alert configuration, etc
+Incldue All Missing Internal Network Discovery:
+mDNS / Bonjour probing: Discovers devices advertising themselves on the local network (printers, IoT, NAS, development servers)
+SNMP sweep: Network printers, managed switches, routers, IoT appliances exposing management data
+ARP scan: All active devices on a local subnet, including BYOD devices
+NetBIOS name resolution: Windows device discovery on the internal LAN
+Google Workspace Admin SDK integration: Lists all OAuth-authorized third-party apps, which users connected them, and what scopes (drive.readonly vs admin.directory.all)
+Microsoft Graph / Entra ID integration: Same for Microsoft 365 — all Enterprise App registrations and consented delegated permissions
+Okta Apps API integration: Lists all SAML/OIDC applications provisioned in the Okta tenant
+SaaS OAuth scope risk scoring: Risk model: readonly = low, files.readwrite = medium, admin.* = critical
+Employee-level SaaS attribution: Which employee connected which shadow app (requires IdP user data)
+Include All Missing API Routes
+Include All Missing Frontend Pages: Shadow IT Dashboard page, Shadow IT SaaS Discovery page, Shadow IT alert configuration, etc
+Incldue All Missing Internal Network Discovery:
+mDNS / Bonjour probing: Discovers devices advertising themselves on the local network (printers, IoT, NAS, development servers)
+SNMP sweep: Network printers, managed switches, routers, IoT appliances exposing management data
+ARP scan: All active devices on a local subnet, including BYOD devices
+NetBIOS name resolution: Windows device discovery on the internal LAN
+Shadow IT Correlation / Classification, SaaS / OAuth Discovery, Shadow IT Database + API, Shadow IT Frontend & Internal Network / BYOD Scanner

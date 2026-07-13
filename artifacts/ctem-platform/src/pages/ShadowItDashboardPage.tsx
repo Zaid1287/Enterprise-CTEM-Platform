@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
 import { useQuery } from "@tanstack/react-query";
-import { AppLayout } from "@/components/layout/AppLayout";
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription,
 } from "@/components/ui/card";
@@ -90,7 +89,7 @@ export default function ShadowItDashboardPage() {
     : [];
 
   return (
-    <AppLayout>
+    <>
       <div className="p-6 space-y-6 max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -404,6 +403,6 @@ export default function ShadowItDashboardPage() {
           </CardContent>
         </Card>
       </div>
-    </AppLayout>
+    </>
   );
 }

@@ -1,0 +1,41 @@
+Check For All 30 Items From The List & Confirm If These Are Fixed & Implemented And Working 100%.
+Shadow IT Correlation Engine
+Cloud Account Discovery
+SPF/DKIM as Shadow SaaS Signals
+Dangerous Port Services as Shadow Services
+Technology Detection for Unauthorized Stacks
+Nuclei Admin Panel Detection
+shadow_it_assets DB table
+shadow_it_saas_apps DB table:
+Inventory cross-reference engine:
+Shadow IT classification logic:
+Shadow IT risk scoring model: Shadow-IT-specific risk factors:
+Shadow IT beat scheduler job:
+Shadow IT alert trigger type:
+Google Workspace Admin SDK integration:
+Microsoft Graph / Entra ID integration:
+Okta Apps API integration:
+SaaS OAuth scope risk scoring:
+Employee-level SaaS attribution:
+Include All Missing API Routes
+Include All Missing Frontend Pages: Shadow IT Dashboard page, Shadow IT SaaS Discovery page, Shadow IT alert configuration, etc
+Incldue All Missing Internal Network Discovery:
+mDNS / Bonjour probing: Discovers devices advertising themselves on the local network (printers, IoT, NAS, development servers)
+SNMP sweep: Network printers, managed switches, routers, IoT appliances exposing management data
+ARP scan: All active devices on a local subnet, including BYOD devices
+NetBIOS name resolution: Windows device discovery on the internal LAN
+Google Workspace Admin SDK integration: Lists all OAuth-authorized third-party apps, which users connected them, and what scopes (drive.readonly vs admin.directory.all)
+Microsoft Graph / Entra ID integration: Same for Microsoft 365 — all Enterprise App registrations and consented delegated permissions
+Okta Apps API integration: Lists all SAML/OIDC applications provisioned in the Okta tenant
+SaaS OAuth scope risk scoring: Risk model: readonly = low, files.readwrite = medium, admin.* = critical
+Employee-level SaaS attribution: Which employee connected which shadow app (requires IdP user data)
+Include All Missing API Routes
+Include All Missing Frontend Pages: Shadow IT Dashboard page, Shadow IT SaaS Discovery page, Shadow IT alert configuration, etc
+Incldue All Missing Internal Network Discovery:
+mDNS / Bonjour probing: Discovers devices advertising themselves on the local network (printers, IoT, NAS, development servers)
+SNMP sweep: Network printers, managed switches, routers, IoT appliances exposing management data
+ARP scan: All active devices on a local subnet, including BYOD devices
+NetBIOS name resolution: Windows device discovery on the internal LAN
+Shadow IT Correlation / Classification, SaaS / OAuth Discovery, Shadow IT Database + API, Shadow IT Frontend & Internal Network / BYOD Scanner
+Check For All 30 Items From The List & Confirm If These Are Fixed & Implemented And Working 100%.
+Tell Me What Is Implemented & What Is Not & Why?

@@ -1056,7 +1056,7 @@ function SchedulesSection() {
     dayOfMonth: 1,
   });
 
-  const { data: assetsData } = useListAssets({ query: { queryKey: ["assets", "brand-schedule-assets"], staleTime: 60_000 } });
+  const { data: assetsData } = useListAssets({}, { query: { queryKey: ["assets", "brand-schedule-assets"], staleTime: 60_000 } });
   const verifiedDomainAssets = (assetsData ?? []).filter(
     (a: any) => a.verificationStatus === "verified" && (a.type === "domain" || a.type === "subdomain"),
   );
