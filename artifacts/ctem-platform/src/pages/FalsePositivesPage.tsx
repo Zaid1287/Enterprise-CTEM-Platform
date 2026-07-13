@@ -29,7 +29,7 @@ interface FpFinding {
   status: string;
   assetId: number;
   assetName: string | null;
-  assetDomain: string | null;
+  assetValue: string | null;
   tenantId: number;
   tenantName: string | null;
   cve: string | null;
@@ -414,11 +414,11 @@ export default function FalsePositivesPage() {
                   <div className="min-w-0 flex flex-col justify-center">
                     <Link href={`/assets/${f.assetId}`}>
                       <span className="text-sm hover:text-primary transition-colors cursor-pointer truncate block">
-                        {f.assetName ?? f.assetDomain ?? `Asset #${f.assetId}`}
+                        {f.assetName ?? f.assetValue ?? `Asset #${f.assetId}`}
                       </span>
                     </Link>
-                    {f.assetDomain && f.assetName && (
-                      <span className="text-xs text-muted-foreground/60 truncate">{f.assetDomain}</span>
+                    {f.assetValue && f.assetName && (
+                      <span className="text-xs text-muted-foreground/60 truncate">{f.assetValue}</span>
                     )}
                   </div>
 
@@ -558,7 +558,7 @@ export default function FalsePositivesPage() {
                   <SevBadge severity={reviewing.finding.severity} />
                   <span className="text-xs text-muted-foreground">·</span>
                   <span className="text-xs text-muted-foreground">
-                    {reviewing.finding.assetName ?? reviewing.finding.assetDomain ?? `Asset #${reviewing.finding.assetId}`}
+                    {reviewing.finding.assetName ?? reviewing.finding.assetValue ?? `Asset #${reviewing.finding.assetId}`}
                   </span>
                   {reviewing.finding.tenantName && (
                     <>

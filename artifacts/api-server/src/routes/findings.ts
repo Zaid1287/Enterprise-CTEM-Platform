@@ -234,10 +234,17 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
   const { role, tenantId, userId } = req.user!;
   const { status, severity, search, page = "1", limit = "50" } = req.query as Record<string, string>;
 
+  // ── 1. Determine which tenant IDs to include ─────────────────────────────
+  // For this platform: findings live in the platform tenant (tenant_id=1) but
+  // their assets may be assigned to client users. We fetch ALL tenant findings
+  // for SA/admin so nothing is missed, then enrich with client-tenant context.
   let tenantIds: number[];
   if (role === "super_admin" || role === "admin") {
+    // All tenants (platform + clients)
     const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable);
     tenantIds = rows.map(r => r.id);
+    // Also always include the caller's own tenant (covers platform findings)
+    if (!tenantIds.includes(tenantId)) tenantIds.push(tenantId);
   } else if (role === "account_manager") {
     const clientIds = await getAmClientTenantIds(userId);
     tenantIds = [...new Set([tenantId, ...clientIds])];
@@ -245,7 +252,8 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
     tenantIds = [tenantId];
   }
 
-  // Broad filter: any finding that is/was marked as a false positive
+  // ── 2. Build broad FP condition ───────────────────────────────────────────
+  // Catches: directly marked via status change, via suppress, or via fp-status review
   const fpCondition = or(
     eq(findingsTable.status, "false_positive"),
     eq(findingsTable.isFalsePositive, true),
@@ -257,6 +265,7 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
     fpCondition,
   ];
 
+  // ── 3. Client scope: restrict to assigned assets ─────────────────────────
   if (role === "client") {
     const myAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
       .where(eq(assetsTable.assignedClientId, userId));
@@ -264,22 +273,31 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
     filters.push(inArray(findingsTable.assetId, myAssets.map(a => a.id)));
   }
 
+  // ── 4. Optional filters ───────────────────────────────────────────────────
   if (status && status !== "all") {
-    if (status === "submitted")  filters.push(eq(findingsTable.falsePositiveStatus, "submitted"));
-    else if (status === "confirmed") filters.push(or(eq(findingsTable.falsePositiveStatus, "confirmed"), eq(findingsTable.status, "false_positive"))!);
-    else if (status === "rejected")  filters.push(eq(findingsTable.falsePositiveStatus, "rejected"));
+    if (status === "submitted")
+      filters.push(eq(findingsTable.falsePositiveStatus, "submitted"));
+    else if (status === "confirmed")
+      filters.push(or(
+        eq(findingsTable.falsePositiveStatus, "confirmed"),
+        and(eq(findingsTable.status, "false_positive"), ne(findingsTable.falsePositiveStatus, "rejected"))!
+      )!);
+    else if (status === "rejected")
+      filters.push(eq(findingsTable.falsePositiveStatus, "rejected"));
   }
-  if (severity) filters.push(eq(findingsTable.severity, severity));
+  if (severity && severity !== "all") filters.push(eq(findingsTable.severity, severity));
   if (search)   filters.push(ilike(findingsTable.title, `%${search}%`));
 
   const offsetN = (Math.max(1, parseInt(page, 10)) - 1) * Math.min(200, parseInt(limit, 10));
   const limitN  = Math.min(200, parseInt(limit, 10));
 
+  // ── 5. Main query — include assignedClientId from assets ──────────────────
   const rows = await db.select({
-    f:           findingsTable,
-    assetName:   assetsTable.name,
-    assetDomain: assetsTable.domain,
-    tenantName:  tenantsTable.name,
+    f:                findingsTable,
+    assetName:        assetsTable.name,
+    assetValue:       assetsTable.value,
+    assignedClientId: assetsTable.assignedClientId,
+    tenantName:       tenantsTable.name,
   }).from(findingsTable)
     .leftJoin(assetsTable,  eq(findingsTable.assetId,  assetsTable.id))
     .leftJoin(tenantsTable, eq(findingsTable.tenantId, tenantsTable.id))
@@ -288,47 +306,79 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
     .limit(limitN)
     .offset(offsetN);
 
-  const userIds = new Set<number>();
+  // ── 6. Resolve user names + client tenant names ───────────────────────────
+  const userIdSet = new Set<number>();
   rows.forEach(r => {
-    if (r.f.fpSubmittedBy) userIds.add(r.f.fpSubmittedBy);
-    if (r.f.fpReviewedBy)  userIds.add(r.f.fpReviewedBy);
+    if (r.f.fpSubmittedBy) userIdSet.add(r.f.fpSubmittedBy);
+    if (r.f.fpReviewedBy)  userIdSet.add(r.f.fpReviewedBy);
+    if (r.assignedClientId) userIdSet.add(r.assignedClientId);
   });
-  const userMap: Record<number, string> = {};
-  if (userIds.size > 0) {
-    const uRows = await db.select({ id: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName })
-      .from(usersTable).where(inArray(usersTable.id, [...userIds]));
-    uRows.forEach(u => { userMap[u.id] = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || "User"; });
+
+  const userMap: Record<number, { name: string; tenantId: number | null }> = {};
+  if (userIdSet.size > 0) {
+    const uRows = await db.select({
+      id: usersTable.id,
+      firstName: usersTable.firstName,
+      lastName:  usersTable.lastName,
+      tenantId:  usersTable.tenantId,
+    }).from(usersTable).where(inArray(usersTable.id, [...userIdSet]));
+    uRows.forEach(u => {
+      userMap[u.id] = {
+        name: (`${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.email) ?? "User",
+        tenantId: u.tenantId,
+      };
+    });
   }
 
-  const findings = rows.map(({ f, assetName, assetDomain, tenantName }) => {
-    // Derive the display status — handle legacy FPs that predate fp_submitted_at column
+  // Resolve client tenant names from gathered tenantIds
+  const clientTenantIdSet = new Set<number>();
+  Object.values(userMap).forEach(u => { if (u.tenantId) clientTenantIdSet.add(u.tenantId); });
+  const clientTenantMap: Record<number, string> = {};
+  if (clientTenantIdSet.size > 0) {
+    const tRows = await db.select({ id: tenantsTable.id, name: tenantsTable.name })
+      .from(tenantsTable).where(inArray(tenantsTable.id, [...clientTenantIdSet]));
+    tRows.forEach(t => { clientTenantMap[t.id] = t.name; });
+  }
+
+  // ── 7. Map to response ────────────────────────────────────────────────────
+  const findings = rows.map(({ f, assetName, assetValue, assignedClientId, tenantName }) => {
+    // Normalise FP status — handle legacy FPs that predate fp tracking columns
     let fpStatus = f.falsePositiveStatus ?? "none";
     if (fpStatus === "none" && (f.status === "false_positive" || f.isFalsePositive)) {
       fpStatus = "confirmed";
     }
+
+    // Resolve client tenant (asset's assigned client tenant > direct finding tenant)
+    const clientUser    = assignedClientId ? userMap[assignedClientId] : null;
+    const clientTenId   = clientUser?.tenantId ?? null;
+    const clientTenName = clientTenId ? (clientTenantMap[clientTenId] ?? null) : null;
+    // Show the client tenant when it differs from the platform (platform manages on behalf of clients)
+    const displayTenantId   = clientTenId ?? f.tenantId;
+    const displayTenantName = clientTenName ?? tenantName ?? null;
+
     return {
-      id: f.id,
-      title: f.title,
-      severity: f.severity,
-      status: f.status,
-      assetId: f.assetId,
-      assetName: assetName ?? null,
-      assetDomain: assetDomain ?? null,
-      tenantId: f.tenantId,
-      tenantName: tenantName ?? null,
-      cve: f.cve,
-      cvss: f.cvss,
-      isFalsePositive: f.isFalsePositive,
+      id:           f.id,
+      title:        f.title,
+      severity:     f.severity,
+      status:       f.status,
+      assetId:      f.assetId,
+      assetName:    assetName ?? null,
+      assetValue:   assetValue ?? null,
+      tenantId:     displayTenantId,
+      tenantName:   displayTenantName,
+      cve:          f.cve,
+      cvss:         f.cvss,
+      isFalsePositive:     f.isFalsePositive,
       falsePositiveStatus: fpStatus,
-      fpNote: f.fpNote ?? null,
-      fpSubmittedBy: f.fpSubmittedBy ?? null,
-      fpSubmittedByName: f.fpSubmittedBy ? (userMap[f.fpSubmittedBy] ?? "Unknown") : null,
+      fpNote:       f.fpNote ?? null,
+      fpSubmittedBy:     f.fpSubmittedBy ?? null,
+      fpSubmittedByName: f.fpSubmittedBy ? (userMap[f.fpSubmittedBy]?.name ?? "Unknown") : null,
       fpSubmittedAt: f.fpSubmittedAt ? f.fpSubmittedAt.toISOString() : f.updatedAt.toISOString(),
-      fpReviewedBy: f.fpReviewedBy ?? null,
-      fpReviewedByName: f.fpReviewedBy ? (userMap[f.fpReviewedBy] ?? "Unknown") : null,
-      fpReviewedAt: f.fpReviewedAt ? f.fpReviewedAt.toISOString() : null,
-      updatedAt: f.updatedAt.toISOString(),
-      createdAt: f.createdAt.toISOString(),
+      fpReviewedBy:     f.fpReviewedBy ?? null,
+      fpReviewedByName: f.fpReviewedBy ? (userMap[f.fpReviewedBy]?.name ?? "Unknown") : null,
+      fpReviewedAt:  f.fpReviewedAt ? f.fpReviewedAt.toISOString() : null,
+      updatedAt:    f.updatedAt.toISOString(),
+      createdAt:    f.createdAt.toISOString(),
     };
   });
 
@@ -715,59 +765,89 @@ router.post("/findings/:findingId/comments", requireAuth, async (req: Authentica
 // ── Confirm false positive + add to suppression list ─────────────────────────
 // POST /findings/:findingId/suppress
 // Body: { matchType: "cve_id"|"title_contains"|"url_exact"|"url_pattern", note?: string, applyToAsset?: boolean }
-// Effect: marks finding as false_positive + creates a suppression rule so future
-// scans skip matching findings automatically.
+// Effect: marks finding as false_positive with full FP tracking + creates a suppression rule.
+// SA/Admin can suppress findings across all accessible tenants (cross-tenant).
 router.post("/findings/:findingId/suppress", requireAuth, async (req, res) => {
-  const { tenantId, userId } = (req as AuthenticatedRequest).user;
+  const { tenantId, userId, role } = (req as AuthenticatedRequest).user;
   const findingId = parseInt(req.params.findingId, 10);
   if (isNaN(findingId)) { res.status(400).json({ error: "Invalid findingId" }); return; }
 
-  const [finding] = await db.select()
-    .from(findingsTable)
-    .where(and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, tenantId)));
+  // Cross-tenant: SA/admin can suppress findings in any accessible tenant
+  let findingWhere;
+  if (role === "super_admin" || role === "admin") {
+    const privIds = await getPrivilegedTenantIds((req as AuthenticatedRequest).user!);
+    findingWhere = buildRecordFilter(eq(findingsTable.id, findingId), findingsTable.tenantId, privIds);
+  } else {
+    findingWhere = and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, tenantId));
+  }
+
+  const [finding] = await db.select().from(findingsTable).where(findingWhere);
   if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
 
-  const { matchType = "cve_id", note, applyToAsset = true } = req.body as {
+  const { matchType = "title_contains", note, applyToAsset = true } = req.body as {
     matchType?: string; note?: string; applyToAsset?: boolean;
   };
 
-  // Derive the suppression pattern from the finding
+  // Derive the suppression pattern — always falls back to title so pattern is never empty
   let pattern: string;
   if (matchType === "cve_id" && finding.cve) {
     pattern = finding.cve;
-  } else if (matchType === "title_contains") {
-    pattern = finding.title.slice(0, 200);
   } else if (matchType === "url_exact" || matchType === "url_pattern") {
-    // Try to parse a URL from the evidence blob
     let url = "";
     try { const ev = JSON.parse(finding.evidence ?? "{}"); url = ev.url ?? ev.matched_at ?? ""; } catch {}
-    pattern = url || finding.cve || finding.title.slice(0, 200);
+    pattern = url || finding.title.slice(0, 200);
   } else {
-    pattern = finding.cve ?? finding.title.slice(0, 200);
+    // title_contains (default) or fallback
+    pattern = finding.title.slice(0, 200);
   }
 
-  // Create suppression rule
-  const [suppression] = await db.insert(scanSuppressionsTable).values({
-    tenantId,
-    assetId: applyToAsset ? finding.assetId : null,
-    matchType,
-    pattern,
-    note: note ?? `Suppressed from finding #${findingId}`,
-    createdByUserId: userId as any,
-  }).returning();
+  // Create suppression rule — BEST-EFFORT: failure must not prevent FP marking
+  let suppressionId: number | undefined;
+  try {
+    const [suppression] = await db.insert(scanSuppressionsTable).values({
+      tenantId: finding.tenantId,
+      assetId: applyToAsset ? finding.assetId : null,
+      matchType,
+      pattern,
+      note: note ? note.trim() : `Suppressed from finding #${findingId}`,
+      createdByUserId: userId as any,
+    }).returning();
+    suppressionId = suppression?.id;
+  } catch (suppErr: any) {
+    logger.warn({ err: suppErr?.message, findingId }, "Suppression rule INSERT failed — still marking finding as FP");
+  }
 
-  // Mark finding as false positive
-  await db.update(findingsTable).set({ status: "false_positive" })
-    .where(eq(findingsTable.id, findingId));
+  // Mark finding as false positive with FULL tracking fields
+  // This is the authoritative step — suppression is advisory
+  const now = new Date();
+  const [updated] = await db.update(findingsTable).set({
+    status:              "false_positive",
+    isFalsePositive:     true,
+    falsePositiveStatus: "confirmed",
+    fpSubmittedBy:       userId as any,
+    fpSubmittedAt:       now,
+    fpReviewedBy:        userId as any,
+    fpReviewedAt:        now,
+    fpNote:              note ? note.trim() : null,
+    updatedAt:           now,
+  }).where(eq(findingsTable.id, findingId)).returning();
 
   await logAudit(db, {
-    tenantId, userId: userId as any, action: "finding.suppress",
-    resourceType: "finding", resourceId: String(findingId),
-    metadata: { suppressionId: suppression.id, matchType, pattern, applyToAsset },
+    tenantId: finding.tenantId,
+    userId: userId as any,
+    action: "finding.suppress",
+    resourceType: "finding",
+    resourceId: String(findingId),
+    metadata: { suppressionId, matchType, pattern, applyToAsset },
     ip: req.ip ?? "",
   });
 
-  res.status(201).json({ success: true, suppressionId: suppression.id, matchType, pattern, applyToAsset });
+  // Recalculate risk score for the asset (non-blocking)
+  if (updated?.assetId) {
+    finalizeScannedAssets([updated.assetId], { updateLastScannedAt: false }).catch(() => {});
+  }
+
+  res.status(201).json({ success: true, suppressionId, matchType, pattern, applyToAsset });
 });
 
 export default router;
