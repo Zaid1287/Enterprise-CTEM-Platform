@@ -62,22 +62,24 @@ async function safeFetch(url: string, init: RequestInit = {}): Promise<Response 
 
 // ── Feed run tracking ─────────────────────────────────────────────────────────
 
-async function startFeedRun(source: string): Promise<number> {
+async function startFeedRun(source: string): Promise<{ id: number; startMs: number }> {
   const [row] = await db.insert(tiFeedRunsTable)
     .values({ source, status: "running", startedAt: new Date() })
     .returning({ id: tiFeedRunsTable.id });
-  return row.id;
+  return { id: row.id, startMs: Date.now() };
 }
 
-async function completeFeedRun(id: number, added: number, updated: number): Promise<void> {
+async function completeFeedRun(id: number, added: number, updated: number, startMs: number): Promise<void> {
+  const durationMs = Date.now() - startMs;
   await db.update(tiFeedRunsTable)
-    .set({ status: "completed", recordsAdded: added, recordsUpdated: updated, completedAt: new Date() })
+    .set({ status: "completed", recordsAdded: added, recordsUpdated: updated, durationMs, completedAt: new Date() })
     .where(eq(tiFeedRunsTable.id, id));
 }
 
-async function failFeedRun(id: number, error: string): Promise<void> {
+async function failFeedRun(id: number, error: string, startMs: number): Promise<void> {
+  const durationMs = Date.now() - startMs;
   await db.update(tiFeedRunsTable)
-    .set({ status: "failed", error: error.slice(0, 500), completedAt: new Date() })
+    .set({ status: "failed", error: error.slice(0, 500), durationMs, completedAt: new Date() })
     .where(eq(tiFeedRunsTable.id, id));
 }
 
@@ -85,16 +87,16 @@ async function withFeedRun<T extends { added: number; updated: number }>(
   source: string,
   fn: () => Promise<T>,
 ): Promise<T | null> {
-  const runId = await startFeedRun(source);
+  const { id: runId, startMs } = await startFeedRun(source);
   try {
     const result = await fn();
-    await completeFeedRun(runId, result.added, result.updated);
-    logger.info({ source, added: result.added, updated: result.updated }, "TI feed run completed");
+    await completeFeedRun(runId, result.added, result.updated, startMs);
+    logger.info({ source, added: result.added, updated: result.updated, durationMs: Date.now() - startMs }, "TI feed run completed");
     return result;
   } catch (err: any) {
     const msg = err?.message ?? String(err);
-    await failFeedRun(runId, msg);
-    logger.warn({ source, err: msg }, "TI feed run failed");
+    await failFeedRun(runId, msg, startMs);
+    logger.warn({ source, err: msg, durationMs: Date.now() - startMs }, "TI feed run failed");
     return null;
   }
 }
@@ -571,8 +573,16 @@ async function runSingleFeed(source: KnownSource, keys: Record<string, string | 
   }
 }
 
-export async function runThreatIntelFeedRefresh(specificSource?: string): Promise<void> {
-  logger.info({ specificSource: specificSource ?? "all" }, "TI feed refresh started");
+/**
+ * Main entry point for TI feed refresh.
+ * @param tenantId - The tenant context triggering this refresh (for audit/logging).
+ *                   Feed data is stored in global tables shared across all tenants.
+ *                   The scheduler iterates TI-enabled tenants and calls this per tenant,
+ *                   but a global dedup in beatScheduler prevents redundant concurrent runs.
+ * @param specificSource - Optionally limit to one feed source.
+ */
+export async function runThreatIntelFeedRefresh(tenantId?: number, specificSource?: string): Promise<void> {
+  logger.info({ tenantId, specificSource: specificSource ?? "all" }, "TI feed refresh started");
 
   const keys: Record<string, string | null> = {};
   const keyNames = ["ti_alienvault_key", "ti_abuseipdb_key", "ti_greynoise_key", "ti_virustotal_key", "ti_threatfox_key"];

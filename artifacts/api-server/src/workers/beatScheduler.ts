@@ -1416,12 +1416,35 @@ export async function dispatchThreatIntelFeedRefresh(): Promise<void> {
 
   setImmediate(async () => {
     try {
-      logger.info("Beat: starting TI feed refresh");
+      // Load all TI-enabled tenants and call runThreatIntelFeedRefresh per tenant.
+      // Feed data is written to global tables (shared across tenants), so the actual
+      // network calls run once — not duplicated per tenant. tenantId is passed for
+      // audit context. The _tiFeedRunning guard above ensures only one execution at a time.
+      const { threatIntelModuleAssignmentsTable: assignTable } = await import("@workspace/db");
+      const { eq: eqFn } = await import("drizzle-orm");
+      const enabledTenants = await db
+        .select({ tenantId: assignTable.tenantId })
+        .from(assignTable)
+        .where(eqFn(assignTable.isEnabled, true));
+
+      if (enabledTenants.length === 0) {
+        logger.info("Beat: no TI-enabled tenants — skipping refresh");
+        return;
+      }
+
+      logger.info({ tenantCount: enabledTenants.length }, "Beat: starting TI feed refresh");
       const { runThreatIntelFeedRefresh } = await import("../lib/threatIntel/feedEngine.js");
-      await runThreatIntelFeedRefresh();
-      logger.info("Beat: TI feed refresh completed");
+
+      // Iterate through each enabled tenant; global dedup inside feedEngine
+      // ensures the heavy feeds (MITRE, NVD) are not redundantly re-fetched.
+      for (const { tenantId } of enabledTenants) {
+        await runThreatIntelFeedRefresh(tenantId).catch(err =>
+          logger.warn({ err, tenantId }, "Beat: TI feed refresh failed for tenant (non-fatal)")
+        );
+      }
+      logger.info({ tenantCount: enabledTenants.length }, "Beat: TI feed refresh completed");
     } catch (err) {
-      logger.warn({ err }, "Beat: TI feed refresh failed (non-fatal)");
+      logger.warn({ err }, "Beat: TI feed refresh orchestration failed (non-fatal)");
     } finally {
       _tiFeedRunning = false;
     }

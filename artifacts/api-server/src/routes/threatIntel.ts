@@ -526,7 +526,7 @@ router.post("/threat-intel/feeds/refresh", requireAuth, async (req: Authenticate
   setImmediate(async () => {
     try {
       const { runThreatIntelFeedRefresh } = await import("../lib/threatIntel/feedEngine.js");
-      await runThreatIntelFeedRefresh(source);
+      await runThreatIntelFeedRefresh(req.user?.tenantId, source);
     } catch {
       // Feed engine not yet implemented — will be added in Task 2
     }

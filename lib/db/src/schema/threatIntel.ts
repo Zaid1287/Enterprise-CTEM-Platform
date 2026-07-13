@@ -153,14 +153,15 @@ export const tiC2ServersTable = pgTable("ti_c2_servers", {
 
 // ── Feed Runs ─────────────────────────────────────────────────────────────────
 export const tiFeedRunsTable = pgTable("ti_feed_runs", {
-  id:           serial("id").primaryKey(),
-  source:       text("source").notNull(),
-  status:       text("status").notNull().default("running"),
-  recordsAdded: integer("records_added").notNull().default(0),
+  id:             serial("id").primaryKey(),
+  source:         text("source").notNull(),
+  status:         text("status").notNull().default("running"),
+  recordsAdded:   integer("records_added").notNull().default(0),
   recordsUpdated: integer("records_updated").notNull().default(0),
-  error:        text("error"),
-  startedAt:    timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
-  completedAt:  timestamp("completed_at", { withTimezone: true }),
+  durationMs:     integer("duration_ms"),
+  error:          text("error"),
+  startedAt:      timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt:    timestamp("completed_at", { withTimezone: true }),
 });
 
 // ── Asset ↔ TI Correlations ───────────────────────────────────────────────────

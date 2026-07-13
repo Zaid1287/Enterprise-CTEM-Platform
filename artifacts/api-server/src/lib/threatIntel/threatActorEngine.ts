@@ -281,6 +281,21 @@ export async function runMitreAttackIngest(): Promise<MitreAttackResult> {
   }
 
   // ── 3. Upsert malware / tools ─────────────────────────────────────────────
+  // Build a name→dbId reverse map for resolving actorIds on malware rows
+
+  const actorNameToDbId = new Map<string, number>();
+  for (const dbRow of stixIdToDbRow.values()) {
+    actorNameToDbId.set(dbRow.name.toLowerCase(), dbRow.id);
+  }
+  // Also query any pre-existing actors not in this STIX bundle batch
+  try {
+    const existing = await db.select({ id: tiThreatActorsTable.id, name: tiThreatActorsTable.name }).from(tiThreatActorsTable);
+    for (const row of existing) {
+      if (!actorNameToDbId.has(row.name.toLowerCase())) {
+        actorNameToDbId.set(row.name.toLowerCase(), row.id);
+      }
+    }
+  } catch { /* non-fatal */ }
 
   let malwareInserted = 0;
   const MAL_BATCH = 100;
@@ -289,11 +304,16 @@ export async function runMitreAttackIngest(): Promise<MitreAttackResult> {
     const batch = malwareObjs.slice(i, i + MAL_BATCH);
     const rows = batch.map(obj => {
       const actorNames: string[] = [];
+      const actorIds: number[] = [];
       for (const [srcId, rels] of relBySrc.entries()) {
         for (const rel of rels) {
           if (rel.type === "uses" && rel.target === obj.id) {
             const src = byId.get(srcId);
-            if (src?.type === "intrusion-set") actorNames.push(src.name as string);
+            if (src?.type === "intrusion-set") {
+              actorNames.push(src.name as string);
+              const dbId = actorNameToDbId.get((src.name as string).toLowerCase());
+              if (dbId !== undefined && !actorIds.includes(dbId)) actorIds.push(dbId);
+            }
           }
         }
       }
@@ -305,10 +325,11 @@ export async function runMitreAttackIngest(): Promise<MitreAttackResult> {
         platforms:        stixArr(obj, "x_mitre_platforms"),
         targetIndustries: stixArr(obj, "x_mitre_sectors"),
         actorNames:       actorNames.slice(0, 10),
+        actorIds:         actorIds.slice(0, 10).map(String), // stored as text[] in schema
         capabilities:     stixArr(obj, "capabilities"),
         mitreId:          extractMitreId(obj),
         mitreUrl:         extractMitreUrl(obj),
-        riskScore:        actorNames.length > 0 ? 70 : 50,
+        riskScore:        actorIds.length > 0 ? 70 : 50,
         source:           "mitre_attack",
         rawData:          { id: obj.id, type: obj.type },
         updatedAt:        new Date(),
@@ -323,7 +344,8 @@ export async function runMitreAttackIngest(): Promise<MitreAttackResult> {
           set: {
             description: sql`excluded.description`,
             platforms:   sql`excluded.platforms`,
-            actorNames:  sql`excluded.actor_names`,
+            actorNames:  sql`(SELECT array(SELECT DISTINCT UNNEST(ti_malware.actor_names || excluded.actor_names)))`,
+            actorIds:    sql`(SELECT array(SELECT DISTINCT UNNEST(ti_malware.actor_ids || excluded.actor_ids)))`,
             mitreId:     sql`excluded.mitre_id`,
             mitreUrl:    sql`excluded.mitre_url`,
             riskScore:   sql`GREATEST(ti_malware.risk_score, excluded.risk_score)`,
