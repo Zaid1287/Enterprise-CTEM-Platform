@@ -14,6 +14,7 @@ import {
   platformSettingsTable,
   accountManagerClientsTable,
   tenantsTable,
+  usersTable,
   findingsTable,
   alertsTable,
   assetsTable,
@@ -141,6 +142,7 @@ router.get("/ai-mapper/assets", requireAuth, requireAiMapper, async (req: Authen
       verificationStatus: assetsTable.verificationStatus,
       value: assetsTable.value,
       ipAddress: assetsTable.ipAddress,
+      assignedClientId: assetsTable.assignedClientId,
     })
     .from(assetsTable)
     .where(assetsCond)
@@ -149,41 +151,63 @@ router.get("/ai-mapper/assets", requireAuth, requireAiMapper, async (req: Authen
 
   if (allAssets.length === 0) { res.json([]); return; }
 
-  // Collect unique tenant IDs to resolve names + module status
-  const uniqueTenantIds = [...new Set(
-    allAssets.map(a => a.tenantId).filter((id): id is number => id != null)
+  // Step 1: resolve assigned client user IDs → their tenant IDs
+  const assignedClientUserIds = [...new Set(
+    allAssets.map(a => a.assignedClientId).filter((id): id is number => id != null)
   )];
+  const assignedUserRows = assignedClientUserIds.length > 0
+    ? await db.select({ id: usersTable.id, tenantId: usersTable.tenantId })
+        .from(usersTable)
+        .where(inArray(usersTable.id, assignedClientUserIds))
+    : [];
+  // Map: userId → tenantId of the assigned client
+  const assignedUserTenantMap = new Map(assignedUserRows.map(u => [u.id, u.tenantId]));
 
+  // Step 2: collect ALL unique tenant IDs (owning + assigned client tenants)
+  const owningTenantIds = allAssets.map(a => a.tenantId).filter((id): id is number => id != null);
+  const assignedTenantIds = assignedUserRows.map(u => u.tenantId).filter((id): id is number => id != null);
+  const allUniqueTenantIds = [...new Set([...owningTenantIds, ...assignedTenantIds])];
+
+  // Step 3: fetch tenant names + AI Mapper module status for ALL relevant tenants
   const [tenantRows, moduleRows] = await Promise.all([
-    uniqueTenantIds.length > 0
+    allUniqueTenantIds.length > 0
       ? db.select({ id: tenantsTable.id, name: tenantsTable.name })
           .from(tenantsTable)
-          .where(inArray(tenantsTable.id, uniqueTenantIds))
+          .where(inArray(tenantsTable.id, allUniqueTenantIds))
       : Promise.resolve([]),
-    uniqueTenantIds.length > 0
+    allUniqueTenantIds.length > 0
       ? db.select({ tenantId: aiMapperModuleAssignmentsTable.tenantId, isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
           .from(aiMapperModuleAssignmentsTable)
-          .where(inArray(aiMapperModuleAssignmentsTable.tenantId, uniqueTenantIds))
+          .where(inArray(aiMapperModuleAssignmentsTable.tenantId, allUniqueTenantIds))
       : Promise.resolve([]),
   ]);
 
   const tenantNameMap = new Map(tenantRows.map(t => [t.id, t.name]));
-  // moduleMap reflects the ACTUAL database state for every tenant.
-  // SA/Admin can access AI Mapper routes, but asset scan eligibility requires
-  // the asset's tenant to have AI Mapper explicitly enabled — no override here.
+  // Reflects ACTUAL DB state — no hardcoded overrides.
   const moduleMap = new Map(moduleRows.map(r => [r.tenantId, r.isEnabled ?? false]));
 
-  res.json(allAssets.map(a => ({
-    id: a.id,
-    name: a.name,
-    type: a.type,
-    tenantId: a.tenantId,
-    tenantName: a.tenantId != null ? (tenantNameMap.get(a.tenantId) ?? null) : null,
-    verificationStatus: a.verificationStatus ?? "unverified",
-    value: a.value ?? null,
-    ipAddress: a.ipAddress ?? null,
-    aiModuleActive: a.tenantId != null ? (moduleMap.get(a.tenantId) ?? false) : false,
-  })));
+  // Step 4: build response — aiModuleActive is true if EITHER the owning tenant
+  // OR the assigned client's tenant has AI Mapper enabled.
+  res.json(allAssets.map(a => {
+    const assignedClientTenantId = a.assignedClientId != null
+      ? (assignedUserTenantMap.get(a.assignedClientId) ?? null)
+      : null;
+    const ownerActive   = a.tenantId != null ? (moduleMap.get(a.tenantId) ?? false) : false;
+    const assignedActive = assignedClientTenantId != null ? (moduleMap.get(assignedClientTenantId) ?? false) : false;
+    return {
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      tenantId: a.tenantId,
+      tenantName: a.tenantId != null ? (tenantNameMap.get(a.tenantId) ?? null) : null,
+      assignedClientTenantId,
+      assignedTenantName: assignedClientTenantId != null ? (tenantNameMap.get(assignedClientTenantId) ?? null) : null,
+      verificationStatus: a.verificationStatus ?? "unverified",
+      value: a.value ?? null,
+      ipAddress: a.ipAddress ?? null,
+      aiModuleActive: ownerActive || assignedActive,
+    };
+  }));
 });
 
 // ── Stats ─────────────────────────────────────────────────────────────────────

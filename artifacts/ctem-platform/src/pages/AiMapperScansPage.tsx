@@ -76,6 +76,7 @@ interface ShodanPreset {
 interface Asset {
   id: number; name: string; type: string; tenantId?: number;
   verificationStatus?: string; tenantName?: string | null;
+  assignedClientTenantId?: number | null; assignedTenantName?: string | null;
   value?: string | null; ipAddress?: string | null;
   aiModuleActive?: boolean;
 }
@@ -500,9 +501,13 @@ export default function AiMapperScansPage() {
                               <div className="text-[11px] text-muted-foreground font-mono truncate mt-0.5">
                                 {hasTarget ? target : <span className="text-muted-foreground/50 italic">No IP or domain — cannot scan</span>}
                               </div>
-                              {(isAdminOrSA || isAM) && a.tenantName && (
+                              {(isAdminOrSA || isAM) && (a.assignedTenantName ?? a.tenantName) && (
                                 <div className="text-[10px] text-muted-foreground/50 mt-0.5 flex items-center gap-1">
-                                  <Building2 className="w-2.5 h-2.5" />{a.tenantName}
+                                  <Building2 className="w-2.5 h-2.5" />
+                                  {a.assignedTenantName
+                                    ? <>{a.assignedTenantName}<span className="opacity-40 ml-0.5">(via {a.tenantName})</span></>
+                                    : a.tenantName
+                                  }
                                 </div>
                               )}
                             </div>
