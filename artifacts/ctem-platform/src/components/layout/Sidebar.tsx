@@ -89,7 +89,10 @@ const navGroups: NavGroup[] = [
     title: "Brand Monitoring",
     items: [
       { label: "Brand Threat Monitor", href: "/brand-threats", icon: ShieldAlert },
-      { label: "Shadow IT Discovery",  href: "/shadow-it",     icon: EyeOff },
+      { label: "Shadow IT Dashboard",   href: "/shadow-it",         icon: EyeOff },
+      { label: "Shadow Assets",          href: "/shadow-it/assets",  icon: EyeOff },
+      { label: "SaaS & OAuth Apps",      href: "/shadow-it/saas",    icon: EyeOff },
+      { label: "Network Discovery",      href: "/shadow-it/network", icon: Network },
     ],
   },
   {

@@ -1241,6 +1241,31 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     runShadowItDailyDiscovery().catch(() => {});
     setInterval(runShadowItDailyDiscovery, 24 * 60 * 60_000);
   }, 10 * 60_000);
+
+  // ── IdP Sync (every 6 hours — syncs all active IdP connections per tenant) ─
+  const runIdpSync = async () => {
+    try {
+      const { syncAllIdpConnections } = await import("../lib/idpConnectors/idpSync.js");
+      const { db } = await import("@workspace/db");
+      const { tenantsTable } = await import("@workspace/db");
+      const tenants = await db.select({ id: tenantsTable.id })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.isPlatform, false));
+      for (const t of tenants) {
+        await syncAllIdpConnections(t.id).catch(err =>
+          logger.warn({ err, tenantId: t.id }, "Beat: IdP sync failed for tenant (non-fatal)")
+        );
+      }
+      logger.info({ tenantCount: tenants.length }, "Beat: IdP sync dispatched");
+    } catch (err) {
+      logger.warn({ err }, "Beat: IdP sync dispatch failed (non-fatal)");
+    }
+  };
+  // Start 15 minutes after boot, then every 6 hours
+  setTimeout(() => {
+    runIdpSync().catch(() => {});
+    setInterval(runIdpSync, 6 * 60 * 60_000);
+  }, 15 * 60_000);
 }
 
 // ── TPRM compliance expiry reminders ─────────────────────────────────────────
