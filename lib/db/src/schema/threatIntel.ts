@@ -23,7 +23,8 @@ export const tiIocsTable = pgTable("ti_iocs", {
   id:             serial("id").primaryKey(),
   type:           text("type").notNull(),
   value:          text("value").notNull(),
-  source:         text("source").notNull(),
+  source:         text("source").notNull(),   // canonical / first-reporter source
+  sources:        text("sources").array().notNull().default([]), // all sources that reported this IOC
   sourceUrl:      text("source_url"),
   tlp:            text("tlp").notNull().default("white"),
   confidence:     integer("confidence").notNull().default(50),
@@ -37,13 +38,14 @@ export const tiIocsTable = pgTable("ti_iocs", {
   description:    text("description"),
   threatScore:    real("threat_score").notNull().default(0),
   seenCount:      integer("seen_count").notNull().default(1),
+  exploitationStatus: text("exploitation_status").notNull().default("unknown"),
   isActive:       boolean("is_active").notNull().default(true),
   firstSeen:      timestamp("first_seen", { withTimezone: true }).notNull().defaultNow(),
   lastSeen:       timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
   expiresAt:      timestamp("expires_at", { withTimezone: true }),
   rawData:        jsonb("raw_data"),
   createdAt:      timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("ti_iocs_type_value_source_idx").on(t.type, t.value, t.source)]);
+}, (t) => [uniqueIndex("ti_iocs_type_value_idx").on(t.type, t.value)]);
 
 // ── Threat Actors ─────────────────────────────────────────────────────────────
 export const tiThreatActorsTable = pgTable("ti_threat_actors", {

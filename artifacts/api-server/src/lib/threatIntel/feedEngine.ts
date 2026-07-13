@@ -3,14 +3,19 @@
  * Orchestrates all TI feed fetchers, records runs in ti_feed_runs, and
  * exports runThreatIntelFeedRefresh() for both scheduled and manual invocation.
  *
+ * Feed data is GLOBAL (not tenant-scoped). The same MITRE ATT&CK actors,
+ * IOCs, CVEs etc. are shared across all tenants. Only ti_asset_correlations
+ * and ti_reports are tenant-scoped. The beat scheduler skips the refresh
+ * when no tenant has the TI module enabled.
+ *
  * Sources:
- *  - AlienVault OTX     (free pulses API; optional key for higher rate limits)
+ *  - AlienVault OTX     (free pulses API; optional key for higher limits)
  *  - ThreatFox          (free, no key)
  *  - MalwareBazaar      (free, no key)
  *  - URLHaus            (free, no key)
  *  - PhishTank          (free public JSON feed)
- *  - CISA KEV           (free, no key — reuses epssKev.ts)
- *  - MITRE ATT&CK       (free, no key)
+ *  - CISA KEV           (free, no key — CVE-type IOCs)
+ *  - MITRE ATT&CK       (free, no key — actors/campaigns/malware/TTPs)
  *  - NVD CVE            (free; optional nvd_api_key in platform settings)
  *  - AbuseIPDB          (requires ti_abuseipdb_key)
  *  - GreyNoise          (requires ti_greynoise_key)
@@ -96,12 +101,21 @@ async function withFeedRun<T extends { added: number; updated: number }>(
 
 // ── AlienVault OTX ────────────────────────────────────────────────────────────
 
+function mapOtxType(otxType: string): string | null {
+  const map: Record<string, string> = {
+    "IPv4": "ip", "IPv6": "ip", "domain": "domain", "hostname": "domain",
+    "URL": "url", "URI": "url", "email": "email",
+    "FileHash-MD5": "hash_md5", "FileHash-SHA1": "hash_sha1",
+    "FileHash-SHA256": "hash_sha256", "CIDR": "cidr",
+  };
+  return map[otxType] ?? null;
+}
+
 async function fetchAlienVaultOtx(apiKey?: string | null): Promise<NormalizedIoc[]> {
   const iocs: NormalizedIoc[] = [];
   const headers: Record<string, string> = {};
   if (apiKey) headers["X-OTX-API-KEY"] = apiKey;
 
-  // Without a key: use the public recent pulses endpoint
   const url = apiKey
     ? "https://otx.alienvault.com/api/v1/pulses/subscribed?limit=50"
     : "https://otx.alienvault.com/api/v1/pulses/activity?limit=20";
@@ -116,12 +130,14 @@ async function fetchAlienVaultOtx(apiKey?: string | null): Promise<NormalizedIoc
     const tags: string[] = (pulse.tags ?? []).slice(0, 10);
     const malwareFamilies: string[] = (pulse.malware_families ?? []).map((m: any) => String(m.display_name ?? m)).filter(Boolean);
     const adversary: string = pulse.adversary ?? "";
+    const pulseModified = pulse.modified ? new Date(pulse.modified) : undefined;
 
     for (const indicator of (pulse.indicators ?? []).slice(0, 200)) {
       const type = mapOtxType(indicator.type as string);
       if (!type) continue;
       const value = String(indicator.indicator ?? "").toLowerCase().trim();
       if (!value) continue;
+      const indicatorCreated = indicator.created ? new Date(indicator.created) : pulseModified;
 
       iocs.push({
         type,
@@ -135,6 +151,7 @@ async function fetchAlienVaultOtx(apiKey?: string | null): Promise<NormalizedIoc
         malwareFamilies,
         threatActors: adversary ? [adversary] : [],
         description: pulseName,
+        firstSeen: indicatorCreated,
         rawData: { pulseId: pulse.id, pulseName, modified: pulse.modified },
       });
     }
@@ -142,17 +159,25 @@ async function fetchAlienVaultOtx(apiKey?: string | null): Promise<NormalizedIoc
   return iocs;
 }
 
-function mapOtxType(otxType: string): string | null {
-  const map: Record<string, string> = {
-    "IPv4": "ip", "IPv6": "ip", "domain": "domain", "hostname": "domain",
-    "URL": "url", "URI": "url", "email": "email",
-    "FileHash-MD5": "hash_md5", "FileHash-SHA1": "hash_sha1",
-    "FileHash-SHA256": "hash_sha256", "CIDR": "cidr",
-  };
-  return map[otxType] ?? null;
+// ── ThreatFox ────────────────────────────────────────────────────────────────
+
+function mapThreatFoxType(t: string): string | null {
+  if (t === "ip:port")    return "ip";
+  if (t === "domain")     return "domain";
+  if (t === "url")        return "url";
+  if (t === "md5_hash")   return "hash_md5";
+  if (t === "sha256_hash") return "hash_sha256";
+  return null;
 }
 
-// ── ThreatFox IOCs ────────────────────────────────────────────────────────────
+function malwareSeverity(malware: string): string {
+  const m = malware.toLowerCase();
+  const critical = ["ransomware", "ryuk", "conti", "lockbit", "blackcat", "revil", "darkside"];
+  const high = ["rat", "backdoor", "rootkit", "banker", "stealer", "cobalt strike", "metasploit"];
+  if (critical.some(c => m.includes(c))) return "critical";
+  if (high.some(h => m.includes(h))) return "high";
+  return "medium";
+}
 
 async function fetchThreatFox(): Promise<NormalizedIoc[]> {
   const iocs: NormalizedIoc[] = [];
@@ -169,13 +194,12 @@ async function fetchThreatFox(): Promise<NormalizedIoc[]> {
     const type = mapThreatFoxType(item.ioc_type as string);
     if (!type) continue;
     let value = String(item.ioc ?? "").toLowerCase().trim();
-    // For ip:port, extract just the IP as the value (port is metadata)
-    if (item.ioc_type === "ip:port") {
-      value = value.split(":")[0] ?? value;
-    }
+    if (item.ioc_type === "ip:port") value = value.split(":")[0] ?? value;
     if (!value) continue;
 
     const severity = malwareSeverity(item.malware ?? "");
+    const firstSeen = item.first_seen ? new Date(item.first_seen) : undefined;
+
     iocs.push({
       type,
       value,
@@ -187,6 +211,7 @@ async function fetchThreatFox(): Promise<NormalizedIoc[]> {
       tags: ["threatfox", ...(item.tags ?? []).filter(Boolean)],
       malwareFamilies: item.malware ? [item.malware_printable ?? item.malware] : [],
       description: item.malware_printable ?? item.malware ?? "",
+      firstSeen,
       rawData: {
         id: item.id,
         threat_type: item.threat_type,
@@ -198,24 +223,6 @@ async function fetchThreatFox(): Promise<NormalizedIoc[]> {
     });
   }
   return iocs;
-}
-
-function mapThreatFoxType(t: string): string | null {
-  if (t === "ip:port")   return "ip";
-  if (t === "domain")    return "domain";
-  if (t === "url")       return "url";
-  if (t === "md5_hash")  return "hash_md5";
-  if (t === "sha256_hash") return "hash_sha256";
-  return null;
-}
-
-function malwareSeverity(malware: string): string {
-  const m = malware.toLowerCase();
-  const critical = ["ransomware", "ryuk", "conti", "lockbit", "blackcat", "revil", "darkside"];
-  const high = ["rat", "backdoor", "rootkit", "banker", "stealer", "cobalt strike", "metasploit"];
-  if (critical.some(c => m.includes(c))) return "critical";
-  if (high.some(h => m.includes(h))) return "high";
-  return "medium";
 }
 
 // ── MalwareBazaar ─────────────────────────────────────────────────────────────
@@ -234,11 +241,10 @@ async function fetchMalwareBazaar(): Promise<NormalizedIoc[]> {
   for (const sample of data.data.slice(0, 100)) {
     const sha256: string = sample.sha256_hash ?? "";
     if (!sha256) continue;
-
     const malwareFamily: string = sample.signature ?? sample.tags?.[0] ?? "unknown";
     const severity = malwareSeverity(malwareFamily);
+    const firstSeen = sample.first_seen ? new Date(sample.first_seen) : undefined;
 
-    // SHA256 IOC
     iocs.push({
       type: "hash_sha256",
       value: sha256.toLowerCase(),
@@ -250,6 +256,7 @@ async function fetchMalwareBazaar(): Promise<NormalizedIoc[]> {
       tags: ["malwarebazaar", ...(sample.tags ?? []).filter(Boolean).slice(0, 5)],
       malwareFamilies: malwareFamily !== "unknown" ? [malwareFamily] : [],
       description: `${sample.file_type ?? "unknown"} malware sample`,
+      firstSeen,
       rawData: {
         md5: sample.md5_hash,
         sha1: sample.sha1_hash,
@@ -257,11 +264,9 @@ async function fetchMalwareBazaar(): Promise<NormalizedIoc[]> {
         file_size: sample.file_size,
         reporter: sample.reporter,
         first_seen: sample.first_seen,
-        last_seen: sample.last_seen,
       },
     });
 
-    // Also add MD5 if available
     if (sample.md5_hash) {
       iocs.push({
         type: "hash_md5",
@@ -273,6 +278,7 @@ async function fetchMalwareBazaar(): Promise<NormalizedIoc[]> {
         tags: ["malwarebazaar"],
         malwareFamilies: malwareFamily !== "unknown" ? [malwareFamily] : [],
         description: `${sample.file_type ?? "unknown"} malware sample`,
+        firstSeen,
       });
     }
   }
@@ -283,7 +289,6 @@ async function fetchMalwareBazaar(): Promise<NormalizedIoc[]> {
 
 async function fetchURLHaus(): Promise<NormalizedIoc[]> {
   const iocs: NormalizedIoc[] = [];
-  // CSV download of recent malicious URLs (last 30 days, online only)
   const res = await safeFetch("https://urlhaus.abuse.ch/downloads/csv_recent/");
   if (!res?.ok) return [];
   const text = await res.text().catch(() => "");
@@ -296,6 +301,7 @@ async function fetchURLHaus(): Promise<NormalizedIoc[]> {
     const urlStatus = (parts[3] ?? "").replace(/^"|"$/g, "").toLowerCase();
     const tags = (parts[5] ?? "").replace(/^"|"$/g, "").split(" ").filter(Boolean);
     const malwareFamily = (parts[4] ?? "").replace(/^"|"$/g, "");
+    const addedAt = (parts[1] ?? "").replace(/^"|"$/g, "").trim();
 
     if (!url || !url.startsWith("http")) continue;
     if (urlStatus !== "online") continue;
@@ -304,6 +310,8 @@ async function fetchURLHaus(): Promise<NormalizedIoc[]> {
     try { domain = new URL(url).hostname; } catch { continue; }
 
     const severity = malwareSeverity(malwareFamily || tags.join(" "));
+    const firstSeen = addedAt ? new Date(addedAt) : undefined;
+
     iocs.push({
       type: "url",
       value: url.toLowerCase(),
@@ -315,7 +323,8 @@ async function fetchURLHaus(): Promise<NormalizedIoc[]> {
       tags: ["urlhaus", ...tags.slice(0, 5)],
       malwareFamilies: malwareFamily ? [malwareFamily] : [],
       description: `Active malware distribution URL (${malwareFamily || "unknown"})`,
-      rawData: { domain, urlStatus, addedAt: parts[1] },
+      firstSeen,
+      rawData: { domain, urlStatus, addedAt },
     });
   }
   return iocs;
@@ -325,30 +334,23 @@ async function fetchURLHaus(): Promise<NormalizedIoc[]> {
 
 async function fetchPhishTank(): Promise<NormalizedIoc[]> {
   const iocs: NormalizedIoc[] = [];
-  // Compressed JSON API — limit to verified phishes
   const res = await safeFetch("https://data.phishtank.com/data/online-valid.json", {
     headers: { "Accept": "application/json" },
   });
   if (!res?.ok) return [];
-
-  // Stream parse to avoid OOM on large responses
   const text = await res.text().catch(() => "");
   if (!text || text.length < 10) return [];
 
   let entries: any[];
-  try {
-    entries = JSON.parse(text);
-  } catch {
-    return [];
-  }
+  try { entries = JSON.parse(text); } catch { return []; }
   if (!Array.isArray(entries)) return [];
 
   for (const entry of entries.slice(0, 300)) {
     const url: string = entry.url ?? "";
     if (!url || !url.startsWith("http")) continue;
-
     let domain = "";
     try { domain = new URL(url).hostname; } catch { continue; }
+    const firstSeen = entry.submission_time ? new Date(entry.submission_time) : undefined;
 
     iocs.push({
       type: "url",
@@ -360,6 +362,7 @@ async function fetchPhishTank(): Promise<NormalizedIoc[]> {
       severity: "high",
       tags: ["phishtank", "phishing"],
       description: `Verified phishing URL targeting ${entry.target ?? "unknown"} (PhishTank #${entry.phish_id})`,
+      firstSeen,
       rawData: {
         phish_id: entry.phish_id,
         target: entry.target,
@@ -373,7 +376,7 @@ async function fetchPhishTank(): Promise<NormalizedIoc[]> {
   return iocs;
 }
 
-// ── AbuseIPDB bad IPs ─────────────────────────────────────────────────────────
+// ── AbuseIPDB ─────────────────────────────────────────────────────────────────
 
 async function fetchAbuseIPDB(apiKey: string): Promise<NormalizedIoc[]> {
   const iocs: NormalizedIoc[] = [];
@@ -387,6 +390,7 @@ async function fetchAbuseIPDB(apiKey: string): Promise<NormalizedIoc[]> {
   for (const item of data.data.slice(0, 500)) {
     const ip: string = item.ipAddress ?? "";
     if (!ip) continue;
+    const lastReported = item.lastReportedAt ? new Date(item.lastReportedAt) : undefined;
     iocs.push({
       type: "ip",
       value: ip,
@@ -398,6 +402,7 @@ async function fetchAbuseIPDB(apiKey: string): Promise<NormalizedIoc[]> {
       country: item.countryCode ?? null,
       tags: ["abuseipdb", "malicious-ip"],
       description: `IP with ${item.totalReports} abuse reports (AbuseIPDB confidence: ${item.abuseConfidenceScore}%)`,
+      firstSeen: lastReported,
       rawData: {
         totalReports: item.totalReports,
         lastReportedAt: item.lastReportedAt,
@@ -409,11 +414,10 @@ async function fetchAbuseIPDB(apiKey: string): Promise<NormalizedIoc[]> {
   return iocs;
 }
 
-// ── GreyNoise noise/RIOT feed ────────────────────────────────────────────────
+// ── GreyNoise ─────────────────────────────────────────────────────────────────
 
 async function fetchGreyNoise(apiKey: string): Promise<NormalizedIoc[]> {
   const iocs: NormalizedIoc[] = [];
-  // GreyNoise GNQL quick-query for recent malicious IPs
   const res = await safeFetch("https://api.greynoise.io/v2/experimental/gnql?query=classification%3Amalicious&size=500&scroll=false", {
     headers: { key: apiKey, Accept: "application/json" },
   });
@@ -424,6 +428,7 @@ async function fetchGreyNoise(apiKey: string): Promise<NormalizedIoc[]> {
   for (const item of data.data.slice(0, 500)) {
     const ip: string = item.ip ?? "";
     if (!ip) continue;
+    const lastSeen = item.last_seen ? new Date(item.last_seen) : undefined;
     iocs.push({
       type: "ip",
       value: ip,
@@ -436,6 +441,7 @@ async function fetchGreyNoise(apiKey: string): Promise<NormalizedIoc[]> {
       asn: item.metadata?.asn ?? null,
       tags: ["greynoise", ...(item.tags ?? []).slice(0, 5)],
       description: item.raw_data?.scan?.[0]?.flag ?? item.actor ?? "GreyNoise malicious scanner",
+      firstSeen: lastSeen,
       rawData: {
         noise: item.noise,
         riot: item.riot,
@@ -465,6 +471,7 @@ async function fetchCisaKevAsIocs(): Promise<NormalizedIoc[]> {
     for (const vuln of (data?.vulnerabilities ?? []).slice(0, 500)) {
       const cveId: string = vuln.cveID ?? "";
       if (!cveId) continue;
+      const firstSeen = vuln.dateAdded ? new Date(vuln.dateAdded) : undefined;
       iocs.push({
         type: "cve",
         value: cveId.toUpperCase(),
@@ -473,9 +480,11 @@ async function fetchCisaKevAsIocs(): Promise<NormalizedIoc[]> {
         tlp: "white",
         confidence: 100,
         severity: "critical",
+        exploitationStatus: "active",
         tags: ["cisa", "kev", "actively-exploited"],
         malwareFamilies: vuln.knownRansomwareCampaignUse === "Known" ? ["ransomware"] : [],
         description: `${vuln.vulnerabilityName} — ${vuln.shortDescription}`,
+        firstSeen,
         rawData: {
           vendorProject: vuln.vendorProject,
           product: vuln.product,
@@ -505,33 +514,27 @@ async function runSingleFeed(source: KnownSource, keys: Record<string, string | 
   switch (source) {
     case "alienvault_otx": {
       const iocs = await fetchAlienVaultOtx(keys.ti_alienvault_key);
-      if (iocs.length === 0) return { added: 0, updated: 0 };
       const result = await upsertIocs(iocs);
       return { added: result.added, updated: result.updated };
     }
     case "threatfox": {
-      const iocs = await fetchThreatFox();
-      const result = await upsertIocs(iocs);
+      const result = await upsertIocs(await fetchThreatFox());
       return { added: result.added, updated: result.updated };
     }
     case "malwarebazaar": {
-      const iocs = await fetchMalwareBazaar();
-      const result = await upsertIocs(iocs);
+      const result = await upsertIocs(await fetchMalwareBazaar());
       return { added: result.added, updated: result.updated };
     }
     case "urlhaus": {
-      const iocs = await fetchURLHaus();
-      const result = await upsertIocs(iocs);
+      const result = await upsertIocs(await fetchURLHaus());
       return { added: result.added, updated: result.updated };
     }
     case "phishtank": {
-      const iocs = await fetchPhishTank();
-      const result = await upsertIocs(iocs);
+      const result = await upsertIocs(await fetchPhishTank());
       return { added: result.added, updated: result.updated };
     }
     case "cisa_kev": {
-      const iocs = await fetchCisaKevAsIocs();
-      const result = await upsertIocs(iocs);
+      const result = await upsertIocs(await fetchCisaKevAsIocs());
       return { added: result.added, updated: result.updated };
     }
     case "abuseipdb": {
@@ -539,8 +542,7 @@ async function runSingleFeed(source: KnownSource, keys: Record<string, string | 
         logger.info("AbuseIPDB skipped (ti_abuseipdb_key not configured)");
         return { added: 0, updated: 0 };
       }
-      const iocs = await fetchAbuseIPDB(keys.ti_abuseipdb_key);
-      const result = await upsertIocs(iocs);
+      const result = await upsertIocs(await fetchAbuseIPDB(keys.ti_abuseipdb_key));
       return { added: result.added, updated: result.updated };
     }
     case "greynoise": {
@@ -548,15 +550,17 @@ async function runSingleFeed(source: KnownSource, keys: Record<string, string | 
         logger.info("GreyNoise skipped (ti_greynoise_key not configured)");
         return { added: 0, updated: 0 };
       }
-      const iocs = await fetchGreyNoise(keys.ti_greynoise_key);
-      const result = await upsertIocs(iocs);
+      const result = await upsertIocs(await fetchGreyNoise(keys.ti_greynoise_key));
       return { added: result.added, updated: result.updated };
     }
     case "mitre_attack": {
       const mitreResult = await runMitreAttackIngest();
-      // Also run C2 ingest with AbuseIPDB key if available
+      // Also run C2 ingest alongside MITRE (ThreatFox C2 + AbuseIPDB C2)
       await runC2ServerIngest(keys.ti_abuseipdb_key);
-      return { added: mitreResult.actors + mitreResult.campaigns + mitreResult.malware + mitreResult.ttps, updated: 0 };
+      return {
+        added: mitreResult.actors + mitreResult.campaigns + mitreResult.malware + mitreResult.ttps,
+        updated: 0,
+      };
     }
     case "nvd_cve": {
       const cveResult = await runCveIntelIngest();
@@ -567,11 +571,9 @@ async function runSingleFeed(source: KnownSource, keys: Record<string, string | 
   }
 }
 
-// Exported main entry point — called by beat scheduler and manual API endpoint
 export async function runThreatIntelFeedRefresh(specificSource?: string): Promise<void> {
   logger.info({ specificSource: specificSource ?? "all" }, "TI feed refresh started");
 
-  // Read all optional API keys once
   const keys: Record<string, string | null> = {};
   const keyNames = ["ti_alienvault_key", "ti_abuseipdb_key", "ti_greynoise_key", "ti_virustotal_key", "ti_threatfox_key"];
   await Promise.all(keyNames.map(async k => { keys[k] = await getPlatformSetting(k); }));
@@ -581,16 +583,15 @@ export async function runThreatIntelFeedRefresh(specificSource?: string): Promis
     : [...KNOWN_SOURCES];
 
   if (sourcesToRun.length === 0) {
-    logger.warn({ specificSource }, "No valid sources to run");
+    logger.warn({ specificSource }, "No valid TI sources to run");
     return;
   }
 
-  // Run feeds that don't need special keys in parallel; run MITRE/NVD sequentially
-  // to avoid overwhelming external APIs.
+  // IOC-type sources run in parallel (fast external APIs)
   const parallelSources: KnownSource[] = ["alienvault_otx", "threatfox", "malwarebazaar", "urlhaus", "phishtank", "cisa_kev", "abuseipdb", "greynoise"];
+  // Heavy sources run sequentially to avoid large memory spikes and API throttling
   const sequentialSources: KnownSource[] = ["mitre_attack", "nvd_cve"];
 
-  // Run parallel feeds
   const parallelToRun = parallelSources.filter(s => sourcesToRun.includes(s));
   if (parallelToRun.length > 0) {
     await Promise.all(parallelToRun.map(source =>
@@ -600,7 +601,6 @@ export async function runThreatIntelFeedRefresh(specificSource?: string): Promis
     ));
   }
 
-  // Run heavy feeds sequentially
   const sequentialToRun = sequentialSources.filter(s => sourcesToRun.includes(s));
   for (const source of sequentialToRun) {
     await withFeedRun(source, () => runSingleFeed(source, keys)).catch(err =>

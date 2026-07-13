@@ -37,7 +37,7 @@ interface GeoInfo {
 
 async function geoLookup(ip: string): Promise<GeoInfo> {
   try {
-    const res = await safeFetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode,city,org,isp,as,lat,lon`);
+    const res = await safeFetch(`https://ip-api.com/json/${ip}?fields=status,country,countryCode,city,org,isp,as,lat,lon`);
     if (!res?.ok) return {};
     const d: any = await res.json();
     if (d.status !== "success") return {};
