@@ -101,6 +101,93 @@ router.patch("/ai-mapper/module", requireAuth, async (req: AuthenticatedRequest,
   res.json({ isEnabled });
 });
 
+// ── Cross-tenant asset list for New Scan dialog ────────────────────────────
+// Returns assets from ALL visible tenants with per-asset aiModuleActive flag.
+// SA/Admin → all tenants platform-wide
+// AM        → own tenant + all assigned client tenants
+// others    → own tenant only
+router.get("/ai-mapper/assets", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {
+  const { role, tenantId: callerTenantId, userId } = req.user!;
+  const isPrivileged = role === "super_admin" || role === "admin";
+  const isAM = role === "account_manager";
+
+  // Build the list of tenant IDs in scope (null = all tenants)
+  let scopeTenantIds: number[] | null = null;
+  if (isPrivileged) {
+    scopeTenantIds = null; // SA/Admin: all tenants
+  } else if (isAM) {
+    const assignments = await db
+      .select({ clientTenantId: accountManagerClientsTable.clientTenantId })
+      .from(accountManagerClientsTable)
+      .where(eq(accountManagerClientsTable.accountManagerUserId, userId));
+    scopeTenantIds = [...new Set([callerTenantId, ...assignments.map(a => a.clientTenantId)])];
+  } else {
+    scopeTenantIds = [callerTenantId];
+  }
+
+  // Fetch assets with the appropriate tenant scope
+  const assetsCond = scopeTenantIds === null
+    ? undefined
+    : scopeTenantIds.length > 0
+      ? inArray(assetsTable.tenantId, scopeTenantIds)
+      : sql`false`;
+
+  const allAssets = await db
+    .select({
+      id: assetsTable.id,
+      name: assetsTable.name,
+      type: assetsTable.type,
+      tenantId: assetsTable.tenantId,
+      verificationStatus: assetsTable.verificationStatus,
+      value: assetsTable.value,
+      ipAddress: assetsTable.ipAddress,
+    })
+    .from(assetsTable)
+    .where(assetsCond)
+    .orderBy(assetsTable.name)
+    .limit(500);
+
+  if (allAssets.length === 0) { res.json([]); return; }
+
+  // Collect unique tenant IDs to resolve names + module status
+  const uniqueTenantIds = [...new Set(
+    allAssets.map(a => a.tenantId).filter((id): id is number => id != null)
+  )];
+
+  const [tenantRows, moduleRows] = await Promise.all([
+    uniqueTenantIds.length > 0
+      ? db.select({ id: tenantsTable.id, name: tenantsTable.name })
+          .from(tenantsTable)
+          .where(inArray(tenantsTable.id, uniqueTenantIds))
+      : Promise.resolve([]),
+    uniqueTenantIds.length > 0
+      ? db.select({ tenantId: aiMapperModuleAssignmentsTable.tenantId, isEnabled: aiMapperModuleAssignmentsTable.isEnabled })
+          .from(aiMapperModuleAssignmentsTable)
+          .where(inArray(aiMapperModuleAssignmentsTable.tenantId, uniqueTenantIds))
+      : Promise.resolve([]),
+  ]);
+
+  const tenantNameMap = new Map(tenantRows.map(t => [t.id, t.name]));
+  const moduleMap = new Map(moduleRows.map(r => [r.tenantId, r.isEnabled ?? false]));
+
+  // SA/Admin/AM always have AI Mapper active for their own (platform) tenant
+  if (isPrivileged || isAM) {
+    moduleMap.set(callerTenantId, true);
+  }
+
+  res.json(allAssets.map(a => ({
+    id: a.id,
+    name: a.name,
+    type: a.type,
+    tenantId: a.tenantId,
+    tenantName: a.tenantId != null ? (tenantNameMap.get(a.tenantId) ?? null) : null,
+    verificationStatus: a.verificationStatus ?? "unverified",
+    value: a.value ?? null,
+    ipAddress: a.ipAddress ?? null,
+    aiModuleActive: a.tenantId != null ? (moduleMap.get(a.tenantId) ?? false) : false,
+  })));
+});
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 router.get("/ai-mapper/stats", requireAuth, requireAiMapper, async (req: AuthenticatedRequest, res) => {

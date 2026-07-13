@@ -74,9 +74,10 @@ interface ShodanPreset {
 }
 
 interface Asset {
-  id: number; name: string; type: string; domain?: string;
-  ip?: string; url?: string; status: string; tenantId?: number;
+  id: number; name: string; type: string; tenantId?: number;
   verificationStatus?: string; tenantName?: string | null;
+  value?: string | null; ipAddress?: string | null;
+  aiModuleActive?: boolean;
 }
 
 export default function AiMapperScansPage() {
@@ -86,19 +87,6 @@ export default function AiMapperScansPage() {
   const isAdminOrSA = user?.role === "admin" || user?.role === "super_admin";
   const isAM = user?.role === "account_manager";
   const qc = useQueryClient();
-
-  // Per-tenant AI Mapper module status (admin, super_admin, account_manager all need this)
-  const [moduleMap, setModuleMap] = useState<Record<number, boolean>>({});
-  const [moduleMapLoaded, setModuleMapLoaded] = useState(false);
-  useEffect(() => {
-    if (isAdminOrSA || isAM) {
-      apiFetch<Record<number, boolean>>("/api/ai-mapper/module/all")
-        .then(m => { setModuleMap(m); setModuleMapLoaded(true); })
-        .catch(() => setModuleMapLoaded(true));
-    } else {
-      setModuleMapLoaded(true);
-    }
-  }, [isAdminOrSA, isAM]);
 
   const [wsConnectedSet, setWsConnectedSet] = useState<Set<number>>(new Set());
   const handleConnectedChange = useCallback((id: number, conn: boolean) => {
@@ -134,8 +122,8 @@ export default function AiMapperScansPage() {
   });
 
   const { data: assetsResp } = useQuery<Asset[]>({
-    queryKey: ["assets-brief"],
-    queryFn: () => apiFetch("/api/assets?limit=200"),
+    queryKey: ["ai-mapper-assets"],
+    queryFn: () => apiFetch("/api/ai-mapper/assets"),
   });
   const assets: Asset[] = assetsResp ?? [];
 
@@ -148,7 +136,7 @@ export default function AiMapperScansPage() {
       for (const id of selectedAssets) {
         const a = assets.find(x => x.id === id);
         if (!a) continue;
-        const target = (a as any).value || (a as any).ipAddress;
+        const target = a.value ?? a.ipAddress ?? null;
         if (target && !lines.includes(target)) lines.push(target);
       }
     }
@@ -206,8 +194,8 @@ export default function AiMapperScansPage() {
   const filteredAssets = assets.filter(a =>
     !assetSearch ||
     a.name.toLowerCase().includes(assetSearch.toLowerCase()) ||
-    ((a as any).value ?? "").toLowerCase().includes(assetSearch.toLowerCase()) ||
-    ((a as any).ipAddress ?? "").includes(assetSearch)
+    (a.value ?? "").toLowerCase().includes(assetSearch.toLowerCase()) ||
+    (a.ipAddress ?? "").includes(assetSearch)
   );
 
   const scopePreview = buildCidrScope();
@@ -475,17 +463,14 @@ export default function AiMapperScansPage() {
                 ) : (
                   <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
                     {filteredAssets.map(a => {
-                      const target = a.ip || a.domain || (a as any).url || (a as any).value || (a as any).ipAddress;
+                      const target = a.value ?? a.ipAddress ?? null;
                       const isVerified = a.verificationStatus === "verified";
                       const isPending = a.verificationStatus === "pending";
 
-                      // Per-tenant AI module check
-                      // admin/SA/AM: look up each asset's tenant in the moduleMap fetched from the API
-                      // client: use their auth store aiMapperEnabled flag (single-tenant)
-                      const assetTenantId = a.tenantId ?? user?.tenantId;
-                      const aiModuleActive = (isAdminOrSA || isAM)
-                        ? (moduleMap[assetTenantId!] ?? false)
-                        : (aiMapperEnabled ?? false);
+                      // aiModuleActive comes directly from the /api/ai-mapper/assets response
+                      // which correctly handles cross-tenant module status server-side.
+                      // Fallback to aiMapperEnabled (Zustand) for client-role users.
+                      const aiModuleActive = a.aiModuleActive ?? (aiMapperEnabled ?? false);
 
                       const hasTarget = !!target;
                       const canSelect = hasTarget && isVerified && aiModuleActive;
@@ -581,13 +566,11 @@ export default function AiMapperScansPage() {
                       </button>
                     )}
                     <span className="text-[10px] text-muted-foreground/60 ml-auto">
-                      {assets.filter(a => {
-                        const t = a.ip || a.domain || (a as any).url || (a as any).value;
-                        const ver = a.verificationStatus === "verified";
-                        const tid = a.tenantId ?? user?.tenantId;
-                        const ai = (isAdminOrSA || isAM) ? (moduleMap[tid!] ?? false) : (aiMapperEnabled ?? false);
-                        return t && ver && ai;
-                      }).length} of {assets.length} eligible to scan
+                      {assets.filter(a =>
+                        !!(a.value ?? a.ipAddress) &&
+                        a.verificationStatus === "verified" &&
+                        (a.aiModuleActive ?? (aiMapperEnabled ?? false))
+                      ).length} of {assets.length} eligible to scan
                     </span>
                   </div>
                 )}
