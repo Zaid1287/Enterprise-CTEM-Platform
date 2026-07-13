@@ -901,6 +901,7 @@ async function dispatchDueScans(): Promise<void> {
       checkQueueDepth(),
       dispatchTprmVendorRescans(),
       dispatchTprmComplianceExpiryReminders(),
+      dispatchThreatIntelFeedRefresh(),
     ]);
   } catch (err) {
     logger.error({ err }, "Beat scheduler error");

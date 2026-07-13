@@ -28,13 +28,6 @@ const router = Router();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function requireThreatIntelAccess(req: AuthenticatedRequest, res: any): boolean {
-  const { role } = req.user!;
-  if (role === "admin" || role === "super_admin" || role === "account_manager") return true;
-  // For client roles: check the module assignment (loaded inline per-request)
-  return true; // gate enforced via isEnabled check in individual routes
-}
-
 function requireAdminOrSA(req: AuthenticatedRequest, res: any): boolean {
   const { role } = req.user!;
   if (role !== "admin" && role !== "super_admin") {
@@ -323,6 +316,29 @@ router.get("/threat-intel/campaigns/:id", requireAuth, async (req: Authenticated
   res.json(row);
 });
 
+router.post("/threat-intel/campaigns", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const { name, aliases, description, actorId, actorName, status, targetIndustries, targetCountries, startDate, endDate, mitreId, objectives } = req.body;
+  if (!name) { res.status(400).json({ error: "name required" }); return; }
+  const [row] = await db.insert(tiCampaignsTable).values({ name, aliases: aliases ?? [], description, actorId: actorId ?? null, actorName, status: status ?? "active", targetIndustries: targetIndustries ?? [], targetCountries: targetCountries ?? [], startDate, endDate, mitreId, objectives, source: "manual" }).returning();
+  res.status(201).json(row);
+});
+
+router.patch("/threat-intel/campaigns/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const update = { ...req.body, updatedAt: new Date() };
+  delete update.id;
+  const [row] = await db.update(tiCampaignsTable).set(update).where(eq(tiCampaignsTable.id, Number(req.params.id))).returning();
+  if (!row) { res.status(404).json({ error: "Campaign not found" }); return; }
+  res.json(row);
+});
+
+router.delete("/threat-intel/campaigns/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  await db.delete(tiCampaignsTable).where(eq(tiCampaignsTable.id, Number(req.params.id)));
+  res.sendStatus(204);
+});
+
 // ── Malware ───────────────────────────────────────────────────────────────────
 
 router.get("/threat-intel/malware", requireAuth, async (req: AuthenticatedRequest, res) => {
@@ -349,6 +365,29 @@ router.get("/threat-intel/malware/:id", requireAuth, async (req: AuthenticatedRe
   const [row] = await db.select().from(tiMalwareTable).where(eq(tiMalwareTable.id, Number(req.params.id)));
   if (!row) { res.status(404).json({ error: "Malware not found" }); return; }
   res.json(row);
+});
+
+router.post("/threat-intel/malware", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const { name, aliases, malwareType, description, platforms, targetIndustries, capabilities, mitreId } = req.body;
+  if (!name) { res.status(400).json({ error: "name required" }); return; }
+  const [row] = await db.insert(tiMalwareTable).values({ name, aliases: aliases ?? [], malwareType: malwareType ?? "malware", description, platforms: platforms ?? [], targetIndustries: targetIndustries ?? [], capabilities: capabilities ?? [], mitreId, source: "manual" }).returning();
+  res.status(201).json(row);
+});
+
+router.patch("/threat-intel/malware/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const update = { ...req.body, updatedAt: new Date() };
+  delete update.id;
+  const [row] = await db.update(tiMalwareTable).set(update).where(eq(tiMalwareTable.id, Number(req.params.id))).returning();
+  if (!row) { res.status(404).json({ error: "Malware not found" }); return; }
+  res.json(row);
+});
+
+router.delete("/threat-intel/malware/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  await db.delete(tiMalwareTable).where(eq(tiMalwareTable.id, Number(req.params.id)));
+  res.sendStatus(204);
 });
 
 // ── C2 Servers ────────────────────────────────────────────────────────────────
