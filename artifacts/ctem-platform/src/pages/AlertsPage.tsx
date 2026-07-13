@@ -602,6 +602,7 @@ export default function AlertsPage() {
                   <SelectItem value="phishing_detected">🎣 Phishing Detected</SelectItem>
                   <SelectItem value="data_leak_found">💧 Data Leak Found</SelectItem>
                   <SelectItem value="brand_abuse_found">🎯 Brand Abuse Found</SelectItem>
+                  <SelectItem value="shadow_it_discovered">🕵️ Shadow IT Discovery</SelectItem>
                   <SelectItem value="queue_full">Queue Full (≥80% capacity)</SelectItem>
                 </SelectContent>
               </Select>

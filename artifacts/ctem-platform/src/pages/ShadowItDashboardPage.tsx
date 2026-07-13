@@ -9,9 +9,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  EyeOff, Globe, Wifi, Shield, RefreshCw, AlertTriangle,
+  EyeOff, Globe, Network, Shield, RefreshCw, AlertTriangle,
   CheckCircle2, XCircle, Clock, ArrowRight, Users, Building2,
-  ChevronRight,
+  ChevronRight, Bell,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -47,6 +47,11 @@ const DEVICE_TYPE_LABELS: Record<string, string> = {
   iot: "IoT Devices", unknown: "Unknown",
 };
 
+interface AlertRule {
+  id: number; name: string; triggerType: string;
+  channel: string; isActive: boolean;
+}
+
 export default function ShadowItDashboardPage() {
   const [syncing, setSyncing] = useState<number | null>(null);
 
@@ -54,6 +59,12 @@ export default function ShadowItDashboardPage() {
     queryKey: ["shadow-it-dashboard"],
     queryFn: () => apiFetch("/api/shadow-it/dashboard"),
     refetchInterval: 30_000,
+  });
+
+  const { data: alertRules } = useQuery<AlertRule[]>({
+    queryKey: ["shadow-it-alert-rules-count"],
+    queryFn: () => apiFetch<AlertRule[]>("/api/alerts/rules"),
+    select: (rows) => rows.filter((r) => r.triggerType === "shadow_it_discovered"),
   });
 
   const syncConnection = async (id: number) => {
@@ -129,7 +140,7 @@ export default function ShadowItDashboardPage() {
               label: "Network Devices",
               value: data?.networkDevices.total ?? 0,
               sub: `${data?.networkDevices.new ?? 0} new`,
-              icon: <Wifi className="h-5 w-5 text-blue-500" />,
+              icon: <Network className="h-5 w-5 text-blue-500" />,
               href: "/shadow-it/network",
               color: "border-blue-200",
             },
@@ -279,6 +290,67 @@ export default function ShadowItDashboardPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Alert Rules Summary */}
+        <Card className="border-purple-200">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Bell className="h-4 w-4 text-purple-500" />
+                Shadow IT Alert Rules
+              </CardTitle>
+              <CardDescription className="text-xs mt-1">
+                Notifications for new shadow assets, OAuth apps, and network devices
+              </CardDescription>
+            </div>
+            <Link href="/shadow-it/alerts">
+              <Button variant="outline" size="sm">
+                Configure <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </Link>
+          </CardHeader>
+          <CardContent>
+            {!alertRules || alertRules.length === 0 ? (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200">
+                <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
+                <div className="text-sm">
+                  <span className="font-medium">No alert rules configured.</span>
+                  {" "}Shadow IT discoveries are being logged but you won't receive any notifications.{" "}
+                  <Link href="/shadow-it/alerts">
+                    <span className="text-primary underline cursor-pointer">Create a rule →</span>
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="h-8 w-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                    <Bell className="h-4 w-4 text-green-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">
+                      {alertRules.filter((r) => r.isActive).length} active rule{alertRules.filter((r) => r.isActive).length !== 1 ? "s" : ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {alertRules.map((r) => r.channel).filter((v, i, a) => a.indexOf(v) === i).join(", ")}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 ml-2">
+                  {alertRules.map((r) => (
+                    <Badge
+                      key={r.id}
+                      variant={r.isActive ? "default" : "outline"}
+                      className="text-xs"
+                    >
+                      {r.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Top Risky OAuth Apps */}
         <Card>

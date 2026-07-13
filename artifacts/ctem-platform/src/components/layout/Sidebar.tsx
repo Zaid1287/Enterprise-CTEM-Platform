@@ -93,6 +93,7 @@ const navGroups: NavGroup[] = [
       { label: "Shadow Assets",          href: "/shadow-it/assets",  icon: EyeOff },
       { label: "SaaS & OAuth Apps",      href: "/shadow-it/saas",    icon: EyeOff },
       { label: "Network Discovery",      href: "/shadow-it/network", icon: Network },
+      { label: "Shadow IT Alerts",       href: "/shadow-it/alerts",  icon: Bell },
     ],
   },
   {

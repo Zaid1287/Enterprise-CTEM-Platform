@@ -46,6 +46,7 @@ const ShadowItPage = lazy(() => import("@/pages/ShadowItPage"));
 const ShadowItDashboardPage = lazy(() => import("@/pages/ShadowItDashboardPage"));
 const ShadowItSaasPage = lazy(() => import("@/pages/ShadowItSaasPage"));
 const ShadowItNetworkPage = lazy(() => import("@/pages/ShadowItNetworkPage"));
+const ShadowItAlertsPage = lazy(() => import("@/pages/ShadowItAlertsPage"));
 const AssetGroupDetailPage = lazy(() => import("@/pages/AssetGroupDetailPage"));
 const AssetTopologyPage = lazy(() => import("@/pages/AssetTopologyPage"));
 const QueueMonitorPage = lazy(() => import("@/pages/QueueMonitorPage"));
@@ -351,6 +352,7 @@ function Router() {
       <Route path="/shadow-it/assets" component={() => <ProtectedRoute component={ShadowItPage} />} />
       <Route path="/shadow-it/saas" component={() => <ProtectedRoute component={ShadowItSaasPage} />} />
       <Route path="/shadow-it/network" component={() => <ProtectedRoute component={ShadowItNetworkPage} />} />
+      <Route path="/shadow-it/alerts" component={() => <ProtectedRoute component={ShadowItAlertsPage} />} />
       <Route path="/queue-monitor" component={() => <ProtectedRoute component={QueueMonitorPage} />} />
       <Route path="/settings/cdn-whitelist" component={() => <ProtectedRoute component={CdnWhitelistPage} />} />
       <Route path="/discovery" component={() => <ProtectedRoute component={DiscoveryPage} />} />
