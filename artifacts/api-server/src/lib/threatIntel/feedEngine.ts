@@ -31,6 +31,22 @@ import { runCveIntelIngest } from "./cveIntelEngine";
 const UA = "Sentinelware-CTEM-TI/1.0";
 const FETCH_TIMEOUT = 30_000;
 
+// ── Per-source run dedup ──────────────────────────────────────────────────────
+// Prevents re-running a source more than once per 5-minute window even if
+// runThreatIntelFeedRefresh() is called multiple times (e.g. once per TI-enabled
+// tenant by the beat scheduler). Global data feeds should not be duplicated.
+const SOURCE_DEDUP_WINDOW_MS = 5 * 60 * 1_000; // 5 minutes
+const _sourceLastRunMs = new Map<string, number>();
+
+function isSourceDue(source: string): boolean {
+  const last = _sourceLastRunMs.get(source) ?? 0;
+  return Date.now() - last >= SOURCE_DEDUP_WINDOW_MS;
+}
+
+function markSourceRan(source: string): void {
+  _sourceLastRunMs.set(source, Date.now());
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function getPlatformSetting(key: string): Promise<string | null> {
@@ -87,6 +103,15 @@ async function withFeedRun<T extends { added: number; updated: number }>(
   source: string,
   fn: () => Promise<T>,
 ): Promise<T | null> {
+  // Per-source dedup: skip if this source ran within the last 5 minutes.
+  // Ensures that N-tenant scheduler calls don't re-execute the same global source N times.
+  if (!isSourceDue(source)) {
+    logger.debug({ source }, "TI feed source skipped — ran recently (dedup window active)");
+    return null;
+  }
+  // Mark ran *before* executing so concurrent calls from other tenants skip it
+  markSourceRan(source);
+
   const { id: runId, startMs } = await startFeedRun(source);
   try {
     const result = await fn();
@@ -97,6 +122,8 @@ async function withFeedRun<T extends { added: number; updated: number }>(
     const msg = err?.message ?? String(err);
     await failFeedRun(runId, msg, startMs);
     logger.warn({ source, err: msg, durationMs: Date.now() - startMs }, "TI feed run failed");
+    // Reset dedup so a failed source can be retried after the window
+    _sourceLastRunMs.delete(source);
     return null;
   }
 }

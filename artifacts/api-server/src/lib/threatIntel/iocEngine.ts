@@ -97,6 +97,7 @@ export async function upsertIocs(iocs: NormalizedIoc[]): Promise<UpsertResult> {
   if (iocs.length === 0) return { added: 0, updated: 0, skipped: 0 };
 
   let added = 0;
+  let updated = 0;
 
   for (let i = 0; i < iocs.length; i += BATCH_SIZE) {
     const batch = iocs.slice(i, i + BATCH_SIZE);
@@ -125,6 +126,9 @@ export async function upsertIocs(iocs: NormalizedIoc[]): Promise<UpsertResult> {
     }));
 
     try {
+      // Use xmax system column: xmax = 0 means the row was freshly INSERTed;
+      // xmax != 0 means it was UPDATEd (existing row). This gives accurate
+      // insert vs update counts from a single upsert statement.
       const result = await db.insert(tiIocsTable)
         .values(rows)
         .onConflictDoUpdate({
@@ -154,15 +158,21 @@ export async function upsertIocs(iocs: NormalizedIoc[]): Promise<UpsertResult> {
             rawData:            sql`excluded.raw_data`,
           },
         })
-        .returning({ id: tiIocsTable.id });
+        .returning({
+          id:   tiIocsTable.id,
+          xmax: sql<string>`xmax::text`,
+        });
 
-      added += result.length;
+      for (const row of result) {
+        if (row.xmax === "0") added++;
+        else updated++;
+      }
     } catch (err) {
       logger.warn({ err, batchSize: batch.length }, "IOC batch upsert error");
     }
   }
 
-  return { added, updated: 0, skipped: 0 };
+  return { added, updated, skipped: 0 };
 }
 
 // ── On-demand IOC lookup ──────────────────────────────────────────────────────

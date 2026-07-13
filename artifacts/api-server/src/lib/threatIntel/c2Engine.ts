@@ -146,7 +146,8 @@ async function fetchAbuseIpdbC2(apiKey: string): Promise<ThreatFoxC2Row[]> {
   const results: ThreatFoxC2Row[] = [];
   try {
     // Fetch top abusive IPs — many are C2 or botnet nodes
-    const res = await safeFetch("https://api.abuseipdb.com/api/v2/blacklist?confidenceMinimum=90&limit=500", {
+    // verbose=true returns abuseCategories[] per IP — required for C2/botnet classification
+    const res = await safeFetch("https://api.abuseipdb.com/api/v2/blacklist?confidenceMinimum=90&limit=500&verbose", {
       headers: { Key: apiKey, Accept: "application/json" },
     });
     if (!res?.ok) return [];
@@ -156,10 +157,16 @@ async function fetchAbuseIpdbC2(apiKey: string): Promise<ThreatFoxC2Row[]> {
     for (const item of data.data) {
       const ip: string = item.ipAddress ?? "";
       if (!ip) continue;
-      // Only include IPs that have been reported for botnet/C2 activity
+      // With verbose mode abuseCategories[] is populated.
+      // Category 19 = Web App Attack, 18 = Brute-Force, 15 = Hacking, 17 = DDoS,
+      // 14 = Port Scan, 20 = Exploited Host, 23 = IoT Targeted, 2 = Ping Flood.
+      // High-confidence IPs without specific category are still C2 candidates.
       const categories: number[] = item.abuseCategories ?? [];
-      // Category 18 = Exploited Host, 14 = DDoS Attack, 17 = IoT Targeted, 20 = Brute-Force
-      if (!categories.includes(18) && !categories.includes(14) && !categories.includes(19)) continue;
+      const isC2Category = categories.includes(20) || categories.includes(18) ||
+                           categories.includes(15) || categories.includes(14) ||
+                           categories.includes(19) || categories.includes(17);
+      // Accept if it has a C2-indicative category OR extremely high confidence (≥95%)
+      if (!isC2Category && (item.abuseConfidenceScore ?? 0) < 95) continue;
 
       results.push({
         ip,
