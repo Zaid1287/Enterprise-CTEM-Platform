@@ -168,12 +168,10 @@ router.get("/ai-mapper/assets", requireAuth, requireAiMapper, async (req: Authen
   ]);
 
   const tenantNameMap = new Map(tenantRows.map(t => [t.id, t.name]));
+  // moduleMap reflects the ACTUAL database state for every tenant.
+  // SA/Admin can access AI Mapper routes, but asset scan eligibility requires
+  // the asset's tenant to have AI Mapper explicitly enabled — no override here.
   const moduleMap = new Map(moduleRows.map(r => [r.tenantId, r.isEnabled ?? false]));
-
-  // SA/Admin/AM always have AI Mapper active for their own (platform) tenant
-  if (isPrivileged || isAM) {
-    moduleMap.set(callerTenantId, true);
-  }
 
   res.json(allAssets.map(a => ({
     id: a.id,
