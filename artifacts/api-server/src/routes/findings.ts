@@ -228,6 +228,179 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
 });
 
+// ── False Positive: list (role-scoped) ───────────────────────────────────────
+// GET /findings/false-positives  ← MUST be before /:findingId to avoid param shadowing
+router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { role, tenantId, userId } = req.user!;
+  const { status, severity, search, page = "1", limit = "50" } = req.query as Record<string, string>;
+
+  let tenantIds: number[];
+  if (role === "super_admin" || role === "admin") {
+    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable);
+    tenantIds = rows.map(r => r.id);
+  } else if (role === "account_manager") {
+    const clientIds = await getAmClientTenantIds(userId);
+    tenantIds = [...new Set([tenantId, ...clientIds])];
+  } else {
+    tenantIds = [tenantId];
+  }
+
+  // Broad filter: any finding that is/was marked as a false positive
+  const fpCondition = or(
+    eq(findingsTable.status, "false_positive"),
+    eq(findingsTable.isFalsePositive, true),
+    inArray(findingsTable.falsePositiveStatus, ["submitted", "confirmed", "rejected"])
+  )!;
+
+  const filters: any[] = [
+    inArray(findingsTable.tenantId, tenantIds),
+    fpCondition,
+  ];
+
+  if (role === "client") {
+    const myAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
+      .where(eq(assetsTable.assignedClientId, userId));
+    if (myAssets.length === 0) { res.json({ findings: [], total: 0 }); return; }
+    filters.push(inArray(findingsTable.assetId, myAssets.map(a => a.id)));
+  }
+
+  if (status && status !== "all") {
+    if (status === "submitted")  filters.push(eq(findingsTable.falsePositiveStatus, "submitted"));
+    else if (status === "confirmed") filters.push(or(eq(findingsTable.falsePositiveStatus, "confirmed"), eq(findingsTable.status, "false_positive"))!);
+    else if (status === "rejected")  filters.push(eq(findingsTable.falsePositiveStatus, "rejected"));
+  }
+  if (severity) filters.push(eq(findingsTable.severity, severity));
+  if (search)   filters.push(ilike(findingsTable.title, `%${search}%`));
+
+  const offsetN = (Math.max(1, parseInt(page, 10)) - 1) * Math.min(200, parseInt(limit, 10));
+  const limitN  = Math.min(200, parseInt(limit, 10));
+
+  const rows = await db.select({
+    f:           findingsTable,
+    assetName:   assetsTable.name,
+    assetDomain: assetsTable.domain,
+    tenantName:  tenantsTable.name,
+  }).from(findingsTable)
+    .leftJoin(assetsTable,  eq(findingsTable.assetId,  assetsTable.id))
+    .leftJoin(tenantsTable, eq(findingsTable.tenantId, tenantsTable.id))
+    .where(and(...filters))
+    .orderBy(desc(findingsTable.updatedAt))
+    .limit(limitN)
+    .offset(offsetN);
+
+  const userIds = new Set<number>();
+  rows.forEach(r => {
+    if (r.f.fpSubmittedBy) userIds.add(r.f.fpSubmittedBy);
+    if (r.f.fpReviewedBy)  userIds.add(r.f.fpReviewedBy);
+  });
+  const userMap: Record<number, string> = {};
+  if (userIds.size > 0) {
+    const uRows = await db.select({ id: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName })
+      .from(usersTable).where(inArray(usersTable.id, [...userIds]));
+    uRows.forEach(u => { userMap[u.id] = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || "User"; });
+  }
+
+  const findings = rows.map(({ f, assetName, assetDomain, tenantName }) => {
+    // Derive the display status — handle legacy FPs that predate fp_submitted_at column
+    let fpStatus = f.falsePositiveStatus ?? "none";
+    if (fpStatus === "none" && (f.status === "false_positive" || f.isFalsePositive)) {
+      fpStatus = "confirmed";
+    }
+    return {
+      id: f.id,
+      title: f.title,
+      severity: f.severity,
+      status: f.status,
+      assetId: f.assetId,
+      assetName: assetName ?? null,
+      assetDomain: assetDomain ?? null,
+      tenantId: f.tenantId,
+      tenantName: tenantName ?? null,
+      cve: f.cve,
+      cvss: f.cvss,
+      isFalsePositive: f.isFalsePositive,
+      falsePositiveStatus: fpStatus,
+      fpNote: f.fpNote ?? null,
+      fpSubmittedBy: f.fpSubmittedBy ?? null,
+      fpSubmittedByName: f.fpSubmittedBy ? (userMap[f.fpSubmittedBy] ?? "Unknown") : null,
+      fpSubmittedAt: f.fpSubmittedAt ? f.fpSubmittedAt.toISOString() : f.updatedAt.toISOString(),
+      fpReviewedBy: f.fpReviewedBy ?? null,
+      fpReviewedByName: f.fpReviewedBy ? (userMap[f.fpReviewedBy] ?? "Unknown") : null,
+      fpReviewedAt: f.fpReviewedAt ? f.fpReviewedAt.toISOString() : null,
+      updatedAt: f.updatedAt.toISOString(),
+      createdAt: f.createdAt.toISOString(),
+    };
+  });
+
+  res.json({ findings, total: findings.length });
+});
+
+// ── False Positive: confirm or reject ────────────────────────────────────────
+// PATCH /findings/:findingId/fp-status  ← keep BEFORE bare /:findingId patch
+router.patch("/findings/:findingId/fp-status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { role, userId } = req.user!;
+  if (role !== "super_admin" && role !== "admin" && role !== "account_manager") {
+    res.status(403).json({ error: "Only admin, super_admin, or account_manager can review false positives" });
+    return;
+  }
+
+  const findingId = parseInt(req.params.findingId as string, 10);
+  if (isNaN(findingId)) { res.status(400).json({ error: "Invalid findingId" }); return; }
+
+  const { action, note } = req.body as { action?: string; note?: string };
+  if (action !== "confirm" && action !== "reject") {
+    res.status(400).json({ error: "action must be 'confirm' or 'reject'" });
+    return;
+  }
+
+  let finding: typeof findingsTable.$inferSelect | undefined;
+  if (role === "super_admin" || role === "admin") {
+    const [row] = await db.select().from(findingsTable).where(eq(findingsTable.id, findingId));
+    finding = row;
+  } else {
+    const clientIds = await getAmClientTenantIds(userId);
+    const allIds = [...new Set([req.user!.tenantId, ...clientIds])];
+    const [row] = await db.select().from(findingsTable)
+      .where(and(eq(findingsTable.id, findingId), inArray(findingsTable.tenantId, allIds)));
+    finding = row;
+  }
+  if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
+
+  const now = new Date();
+  const updateSet: Record<string, any> = {
+    fpReviewedBy: userId,
+    fpReviewedAt: now,
+    fpNote:       note ?? null,
+    updatedAt:    now,
+  };
+
+  if (action === "confirm") {
+    updateSet.falsePositiveStatus = "confirmed";
+    updateSet.isFalsePositive     = true;
+    updateSet.status              = "false_positive";
+    if (!finding.fpSubmittedAt) {
+      updateSet.fpSubmittedAt = now;
+      updateSet.fpSubmittedBy = userId;
+    }
+  } else {
+    updateSet.falsePositiveStatus = "rejected";
+    updateSet.isFalsePositive     = false;
+    updateSet.status              = "open";
+  }
+
+  const [updated] = await db.update(findingsTable).set(updateSet as any)
+    .where(eq(findingsTable.id, findingId))
+    .returning();
+
+  await logAudit(req.user!, `finding.fp_${action}`, "finding", findingId, JSON.stringify({ action, note }), req.ip ?? "");
+
+  if (updated?.assetId) {
+    finalizeScannedAssets([updated.assetId], { updateLastScannedAt: false }).catch(() => {});
+  }
+
+  res.json({ ok: true, id: updated?.id, falsePositiveStatus: updateSet.falsePositiveStatus, status: updateSet.status });
+});
+
 router.get("/findings/:findingId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetFindingParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
@@ -537,182 +710,6 @@ router.post("/findings/:findingId/comments", requireAuth, async (req: Authentica
     authorName: user ? `${user.firstName} ${user.lastName}` : "Unknown",
     content: comment.content, createdAt: comment.createdAt.toISOString(),
   });
-});
-
-// ── False Positive: list (role-scoped) ───────────────────────────────────────
-// GET /findings/false-positives
-// SA/Admin: all tenants | AM: assigned clients + own | Client: own assigned assets
-router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { role, tenantId, userId } = req.user!;
-  const { status, severity, search, page = "1", limit = "50" } = req.query as Record<string, string>;
-
-  // 1. Determine visible tenant IDs
-  let tenantIds: number[];
-  if (role === "super_admin" || role === "admin") {
-    const rows = await db.select({ id: tenantsTable.id }).from(tenantsTable);
-    tenantIds = rows.map(r => r.id);
-  } else if (role === "account_manager") {
-    const clientIds = await getAmClientTenantIds(userId);
-    tenantIds = [...new Set([tenantId, ...clientIds])];
-  } else {
-    tenantIds = [tenantId];
-  }
-
-  // 2. Base filters: only FP-related findings
-  const filters: any[] = [
-    inArray(findingsTable.tenantId, tenantIds),
-    or(
-      eq(findingsTable.status, "false_positive"),
-      and(isNotNull(findingsTable.falsePositiveStatus), ne(findingsTable.falsePositiveStatus, "none"))!
-    )!,
-  ];
-
-  // 3. Client role: restrict to assets assigned to this user
-  if (role === "client") {
-    const myAssets = await db.select({ id: assetsTable.id }).from(assetsTable)
-      .where(eq(assetsTable.assignedClientId, userId));
-    if (myAssets.length === 0) { res.json({ findings: [], total: 0 }); return; }
-    filters.push(inArray(findingsTable.assetId, myAssets.map(a => a.id)));
-  }
-
-  // 4. Optional filters
-  if (status && status !== "all") {
-    if (status === "submitted")  filters.push(eq(findingsTable.falsePositiveStatus, "submitted"));
-    else if (status === "confirmed") filters.push(or(eq(findingsTable.falsePositiveStatus, "confirmed"), eq(findingsTable.status, "false_positive"))!);
-    else if (status === "rejected")  filters.push(eq(findingsTable.falsePositiveStatus, "rejected"));
-  }
-  if (severity) filters.push(eq(findingsTable.severity, severity));
-  if (search)   filters.push(ilike(findingsTable.title, `%${search}%`));
-
-  const offsetN = (Math.max(1, parseInt(page, 10)) - 1) * Math.min(200, parseInt(limit, 10));
-  const limitN  = Math.min(200, parseInt(limit, 10));
-
-  const rows = await db.select({
-    f:          findingsTable,
-    assetName:  assetsTable.name,
-    assetDomain: assetsTable.domain,
-    tenantName: tenantsTable.name,
-  }).from(findingsTable)
-    .leftJoin(assetsTable,  eq(findingsTable.assetId,  assetsTable.id))
-    .leftJoin(tenantsTable, eq(findingsTable.tenantId, tenantsTable.id))
-    .where(and(...filters))
-    .orderBy(desc(findingsTable.updatedAt))
-    .limit(limitN)
-    .offset(offsetN);
-
-  // Resolve user names for submitter + reviewer
-  const userIds = new Set<number>();
-  rows.forEach(r => {
-    if (r.f.fpSubmittedBy) userIds.add(r.f.fpSubmittedBy);
-    if (r.f.fpReviewedBy)  userIds.add(r.f.fpReviewedBy);
-  });
-  const userMap: Record<number, string> = {};
-  if (userIds.size > 0) {
-    const uRows = await db.select({ id: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName })
-      .from(usersTable).where(inArray(usersTable.id, [...userIds]));
-    uRows.forEach(u => { userMap[u.id] = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || "User"; });
-  }
-
-  const findings = rows.map(({ f, assetName, assetDomain, tenantName }) => ({
-    id: f.id,
-    title: f.title,
-    severity: f.severity,
-    status: f.status,
-    assetId: f.assetId,
-    assetName: assetName ?? null,
-    assetDomain: assetDomain ?? null,
-    tenantId: f.tenantId,
-    tenantName: tenantName ?? null,
-    cve: f.cve,
-    cvss: f.cvss,
-    isFalsePositive: f.isFalsePositive,
-    falsePositiveStatus: f.fpSubmittedAt
-      ? (f.falsePositiveStatus ?? "submitted")
-      : (f.status === "false_positive" ? "confirmed" : (f.falsePositiveStatus ?? "none")),
-    fpNote: f.fpNote ?? null,
-    fpSubmittedBy: f.fpSubmittedBy ?? null,
-    fpSubmittedByName: f.fpSubmittedBy ? (userMap[f.fpSubmittedBy] ?? "Unknown") : null,
-    fpSubmittedAt: f.fpSubmittedAt ? f.fpSubmittedAt.toISOString() : f.updatedAt.toISOString(),
-    fpReviewedBy: f.fpReviewedBy ?? null,
-    fpReviewedByName: f.fpReviewedBy ? (userMap[f.fpReviewedBy] ?? "Unknown") : null,
-    fpReviewedAt: f.fpReviewedAt ? f.fpReviewedAt.toISOString() : null,
-    updatedAt: f.updatedAt.toISOString(),
-    createdAt: f.createdAt.toISOString(),
-  }));
-
-  res.json({ findings, total: findings.length });
-});
-
-// ── False Positive: confirm or reject ────────────────────────────────────────
-// PATCH /findings/:findingId/fp-status
-// Body: { action: "confirm" | "reject", note?: string }
-// Roles: admin, super_admin, account_manager only
-router.patch("/findings/:findingId/fp-status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { role, userId } = req.user!;
-  if (role !== "super_admin" && role !== "admin" && role !== "account_manager") {
-    res.status(403).json({ error: "Only admin, super_admin, or account_manager can review false positives" });
-    return;
-  }
-
-  const findingId = parseInt(req.params.findingId as string, 10);
-  if (isNaN(findingId)) { res.status(400).json({ error: "Invalid findingId" }); return; }
-
-  const { action, note } = req.body as { action?: string; note?: string };
-  if (action !== "confirm" && action !== "reject") {
-    res.status(400).json({ error: "action must be 'confirm' or 'reject'" });
-    return;
-  }
-
-  // Resolve finding with scope enforcement
-  let finding: typeof findingsTable.$inferSelect | undefined;
-  if (role === "super_admin" || role === "admin") {
-    const [row] = await db.select().from(findingsTable).where(eq(findingsTable.id, findingId));
-    finding = row;
-  } else {
-    // AM: assigned client tenants + own
-    const clientIds = await getAmClientTenantIds(userId);
-    const allIds = [...new Set([req.user!.tenantId, ...clientIds])];
-    const [row] = await db.select().from(findingsTable)
-      .where(and(eq(findingsTable.id, findingId), inArray(findingsTable.tenantId, allIds)));
-    finding = row;
-  }
-  if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
-
-  const now = new Date();
-  const updateSet: Record<string, any> = {
-    fpReviewedBy: userId,
-    fpReviewedAt: now,
-    fpNote:       note ?? null,
-    updatedAt:    now,
-  };
-
-  if (action === "confirm") {
-    updateSet.falsePositiveStatus = "confirmed";
-    updateSet.isFalsePositive     = true;
-    updateSet.status              = "false_positive";
-    if (!finding.fpSubmittedAt) {
-      updateSet.fpSubmittedAt = now;
-      updateSet.fpSubmittedBy = userId;
-    }
-  } else {
-    // reject: revert to open so it can be re-investigated
-    updateSet.falsePositiveStatus = "rejected";
-    updateSet.isFalsePositive     = false;
-    updateSet.status              = "open";
-  }
-
-  const [updated] = await db.update(findingsTable).set(updateSet as any)
-    .where(eq(findingsTable.id, findingId))
-    .returning();
-
-  await logAudit(req.user!, `finding.fp_${action}`, "finding", findingId, JSON.stringify({ action, note }), req.ip ?? "");
-
-  // Recalculate risk score (non-blocking)
-  if (updated?.assetId) {
-    finalizeScannedAssets([updated.assetId], { updateLastScannedAt: false }).catch(() => {});
-  }
-
-  res.json({ ok: true, id: updated?.id, falsePositiveStatus: updateSet.falsePositiveStatus, status: updateSet.status });
 });
 
 // ── Confirm false positive + add to suppression list ─────────────────────────

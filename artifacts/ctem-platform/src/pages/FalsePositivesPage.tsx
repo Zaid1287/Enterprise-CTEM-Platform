@@ -15,12 +15,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
-  ListChecks, CheckCircle2, XCircle, Clock, Search, Filter,
+  ListChecks, CheckCircle2, XCircle, Clock, Search,
   ExternalLink, Loader2, ShieldCheck, ShieldX, AlertTriangle,
-  ChevronDown, RefreshCw, Info,
+  RefreshCw, Info, SlidersHorizontal, ChevronRight,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -54,26 +51,44 @@ interface FpListResponse {
   total: number;
 }
 
-// ── Severity badge ────────────────────────────────────────────────────────────
+const SEV_CONFIG: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+  critical: { bg: "bg-red-500/10",    text: "text-red-400",    border: "border-red-500/30",    dot: "bg-red-500" },
+  high:     { bg: "bg-orange-500/10", text: "text-orange-400", border: "border-orange-500/30", dot: "bg-orange-500" },
+  medium:   { bg: "bg-yellow-500/10", text: "text-yellow-400", border: "border-yellow-500/30", dot: "bg-yellow-400" },
+  low:      { bg: "bg-blue-500/10",   text: "text-blue-400",   border: "border-blue-500/30",   dot: "bg-blue-400" },
+  info:     { bg: "bg-slate-500/10",  text: "text-slate-400",  border: "border-slate-500/30",  dot: "bg-slate-400" },
+};
+
 function SevBadge({ severity }: { severity: string }) {
-  const cls =
-    severity === "critical" ? "bg-red-500/20 text-red-400 border-red-500/30" :
-    severity === "high"     ? "bg-orange-500/20 text-orange-400 border-orange-500/30" :
-    severity === "medium"   ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" :
-    severity === "low"      ? "bg-blue-500/20 text-blue-400 border-blue-500/30" :
-                              "bg-slate-500/20 text-slate-400 border-slate-500/30";
-  return <Badge variant="outline" className={cn("capitalize text-xs", cls)}>{severity}</Badge>;
+  const c = SEV_CONFIG[severity] ?? SEV_CONFIG.info;
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border", c.bg, c.text, c.border)}>
+      <span className={cn("w-1.5 h-1.5 rounded-full", c.dot)} />
+      {severity.charAt(0).toUpperCase() + severity.slice(1)}
+    </span>
+  );
 }
 
-// ── FP Status badge ───────────────────────────────────────────────────────────
-function FpStatusBadge({ status }: { status: string }) {
+function FpStatusPill({ status }: { status: string }) {
   if (status === "submitted")
-    return <Badge variant="outline" className="bg-amber-500/15 text-amber-400 border-amber-500/30 gap-1 text-xs"><Clock className="w-3 h-3" />Pending Review</Badge>;
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/25">
+        <Clock className="w-3 h-3" /> Pending Review
+      </span>
+    );
   if (status === "confirmed")
-    return <Badge variant="outline" className="bg-green-500/15 text-green-400 border-green-500/30 gap-1 text-xs"><CheckCircle2 className="w-3 h-3" />Confirmed FP</Badge>;
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/25">
+        <CheckCircle2 className="w-3 h-3" /> Confirmed FP
+      </span>
+    );
   if (status === "rejected")
-    return <Badge variant="outline" className="bg-red-500/15 text-red-400 border-red-500/30 gap-1 text-xs"><XCircle className="w-3 h-3" />Rejected</Badge>;
-  return <Badge variant="outline" className="text-xs text-muted-foreground">Unknown</Badge>;
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-300 border border-red-500/25">
+        <XCircle className="w-3 h-3" /> Rejected
+      </span>
+    );
+  return <span className="text-xs text-muted-foreground/50">—</span>;
 }
 
 function fmtDate(iso: string | null | undefined) {
@@ -81,43 +96,42 @@ function fmtDate(iso: string | null | undefined) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-// ── Main page ────────────────────────────────────────────────────────────────
+function fmtDateTime(iso: string | null | undefined) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function FalsePositivesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const role = user?.role ?? "client";
   const canReview = role === "super_admin" || role === "admin" || role === "account_manager";
+  const showTenant = role === "super_admin" || role === "admin";
 
-  // Filters
   const [statusFilter, setStatusFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [search, setSearch] = useState("");
-
-  // Review dialog state
   const [reviewing, setReviewing] = useState<{ finding: FpFinding; action: "confirm" | "reject" } | null>(null);
   const [reviewNote, setReviewNote] = useState("");
 
-  const qParams = new URLSearchParams();
+  const qParams = new URLSearchParams({ limit: "200" });
   if (statusFilter !== "all") qParams.set("status", statusFilter);
   if (severityFilter !== "all") qParams.set("severity", severityFilter);
   if (search.trim()) qParams.set("search", search.trim());
-  qParams.set("limit", "200");
 
-  const { data, isLoading, refetch } = useQuery<FpListResponse>({
+  const { data, isLoading, refetch, isFetching } = useQuery<FpListResponse>({
     queryKey: ["false-positives", statusFilter, severityFilter, search],
     queryFn: () => apiFetch<FpListResponse>(`/api/findings/false-positives?${qParams}`),
-    staleTime: 30_000,
+    staleTime: 20_000,
   });
 
   const findings = data?.findings ?? [];
-
-  // ── Stats ─────────────────────────────────────────────────────────────────
   const submitted = findings.filter(f => f.falsePositiveStatus === "submitted").length;
   const confirmed = findings.filter(f => f.falsePositiveStatus === "confirmed").length;
   const rejected  = findings.filter(f => f.falsePositiveStatus === "rejected").length;
+  const total     = findings.length;
 
-  // ── Review mutation ───────────────────────────────────────────────────────
   const reviewMut = useMutation({
     mutationFn: ({ id, action, note }: { id: number; action: string; note: string }) =>
       apiFetch<{ ok: boolean }>(`/api/findings/${id}/fp-status`, {
@@ -135,7 +149,7 @@ export default function FalsePositivesPage() {
       setReviewing(null);
       setReviewNote("");
     },
-    onError: () => toast({ title: "Review failed", description: "Could not update the finding. Please try again.", variant: "destructive" }),
+    onError: () => toast({ title: "Review failed", description: "Could not update the finding.", variant: "destructive" }),
   });
 
   const openReview = useCallback((finding: FpFinding, action: "confirm" | "reject") => {
@@ -143,333 +157,469 @@ export default function FalsePositivesPage() {
     setReviewing({ finding, action });
   }, []);
 
-  const submitReview = () => {
-    if (!reviewing) return;
-    reviewMut.mutate({ id: reviewing.finding.id, action: reviewing.action, note: reviewNote });
-  };
+  const clearFilters = () => { setStatusFilter("all"); setSeverityFilter("all"); setSearch(""); };
+  const hasFilters = statusFilter !== "all" || severityFilter !== "all" || search !== "";
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="p-6 space-y-6 max-w-screen-xl mx-auto">
+    <div className="min-h-screen flex flex-col">
 
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <ListChecks className="w-6 h-6 text-primary" />
-            False Positives
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {canReview
-              ? "Review, confirm, or reject false positive submissions from all clients."
-              : "View and submit false positive requests for your assigned findings."}
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
-          <RefreshCw className="w-3.5 h-3.5" /> Refresh
-        </Button>
-      </div>
-
-      {/* Stats cards */}
-      <div className="grid grid-cols-3 gap-4">
-        <div
-          className={cn("rounded-xl border p-4 cursor-pointer transition-colors", statusFilter === "submitted"
-            ? "border-amber-500/50 bg-amber-500/10" : "border-border bg-card hover:border-amber-500/30")}
-          onClick={() => setStatusFilter(s => s === "submitted" ? "all" : "submitted")}
-        >
-          <div className="flex items-center gap-2 text-amber-400 mb-1">
-            <Clock className="w-4 h-4" />
-            <span className="text-xs font-medium uppercase tracking-wide">Pending Review</span>
+      {/* ── Top header bar ─────────────────────────────────────────────────── */}
+      <div className="border-b border-border/60 bg-card/30 backdrop-blur-sm sticky top-0 z-10">
+        <div className="px-6 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <ListChecks className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight">False Positives</h1>
+              <p className="text-xs text-muted-foreground">
+                {canReview ? "Review & manage FP submissions across all clients" : "Track your false positive submissions"}
+              </p>
+            </div>
           </div>
-          <div className="text-3xl font-bold">{submitted}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">Awaiting confirmation</div>
-        </div>
-
-        <div
-          className={cn("rounded-xl border p-4 cursor-pointer transition-colors", statusFilter === "confirmed"
-            ? "border-green-500/50 bg-green-500/10" : "border-border bg-card hover:border-green-500/30")}
-          onClick={() => setStatusFilter(s => s === "confirmed" ? "all" : "confirmed")}
-        >
-          <div className="flex items-center gap-2 text-green-400 mb-1">
-            <CheckCircle2 className="w-4 h-4" />
-            <span className="text-xs font-medium uppercase tracking-wide">Confirmed</span>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-xs font-mono">{total} total</Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="gap-1.5 h-8"
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
+              Refresh
+            </Button>
           </div>
-          <div className="text-3xl font-bold">{confirmed}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">Verified false positives</div>
-        </div>
-
-        <div
-          className={cn("rounded-xl border p-4 cursor-pointer transition-colors", statusFilter === "rejected"
-            ? "border-red-500/50 bg-red-500/10" : "border-border bg-card hover:border-red-500/30")}
-          onClick={() => setStatusFilter(s => s === "rejected" ? "all" : "rejected")}
-        >
-          <div className="flex items-center gap-2 text-red-400 mb-1">
-            <XCircle className="w-4 h-4" />
-            <span className="text-xs font-medium uppercase tracking-wide">Rejected</span>
-          </div>
-          <div className="text-3xl font-bold">{rejected}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">Reverted to open</div>
         </div>
       </div>
 
-      {/* Role hint for clients */}
-      {role === "client" && (
-        <div className="flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-blue-300">
-          <Info className="w-4 h-4 mt-0.5 shrink-0" />
-          <span>You can mark findings as false positives from the <Link href="/findings" className="underline underline-offset-2">Findings page</Link>. An admin or account manager will review and confirm or reject each submission.</span>
-        </div>
-      )}
+      <div className="flex-1 p-6 space-y-6">
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            className="pl-8 h-8 text-sm"
-            placeholder="Search findings…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+        {/* ── Stats row ─────────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-3 gap-4">
+          {/* Pending */}
+          <button
+            onClick={() => setStatusFilter(s => s === "submitted" ? "all" : "submitted")}
+            className={cn(
+              "text-left rounded-xl border p-5 transition-all group",
+              statusFilter === "submitted"
+                ? "border-amber-500/60 bg-amber-500/8 shadow-[0_0_0_1px_rgba(245,158,11,0.15)]"
+                : "border-border bg-card hover:border-amber-500/40 hover:bg-amber-500/5"
+            )}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className={cn(
+                "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                statusFilter === "submitted" ? "bg-amber-500/20" : "bg-amber-500/10 group-hover:bg-amber-500/15"
+              )}>
+                <Clock className="w-5 h-5 text-amber-400" />
+              </div>
+              <span className="text-xs text-amber-400/70 font-medium uppercase tracking-wider">Pending</span>
+            </div>
+            <div className="text-4xl font-bold tabular-nums">{submitted}</div>
+            <div className="text-sm text-muted-foreground mt-1">Awaiting review</div>
+            {statusFilter === "submitted" && (
+              <div className="mt-2 text-xs text-amber-400/70">Filtered ✓</div>
+            )}
+          </button>
+
+          {/* Confirmed */}
+          <button
+            onClick={() => setStatusFilter(s => s === "confirmed" ? "all" : "confirmed")}
+            className={cn(
+              "text-left rounded-xl border p-5 transition-all group",
+              statusFilter === "confirmed"
+                ? "border-emerald-500/60 bg-emerald-500/8 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]"
+                : "border-border bg-card hover:border-emerald-500/40 hover:bg-emerald-500/5"
+            )}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className={cn(
+                "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                statusFilter === "confirmed" ? "bg-emerald-500/20" : "bg-emerald-500/10 group-hover:bg-emerald-500/15"
+              )}>
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              </div>
+              <span className="text-xs text-emerald-400/70 font-medium uppercase tracking-wider">Confirmed</span>
+            </div>
+            <div className="text-4xl font-bold tabular-nums">{confirmed}</div>
+            <div className="text-sm text-muted-foreground mt-1">Verified false positives</div>
+            {statusFilter === "confirmed" && (
+              <div className="mt-2 text-xs text-emerald-400/70">Filtered ✓</div>
+            )}
+          </button>
+
+          {/* Rejected */}
+          <button
+            onClick={() => setStatusFilter(s => s === "rejected" ? "all" : "rejected")}
+            className={cn(
+              "text-left rounded-xl border p-5 transition-all group",
+              statusFilter === "rejected"
+                ? "border-red-500/60 bg-red-500/8 shadow-[0_0_0_1px_rgba(239,68,68,0.15)]"
+                : "border-border bg-card hover:border-red-500/40 hover:bg-red-500/5"
+            )}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className={cn(
+                "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                statusFilter === "rejected" ? "bg-red-500/20" : "bg-red-500/10 group-hover:bg-red-500/15"
+              )}>
+                <XCircle className="w-5 h-5 text-red-400" />
+              </div>
+              <span className="text-xs text-red-400/70 font-medium uppercase tracking-wider">Rejected</span>
+            </div>
+            <div className="text-4xl font-bold tabular-nums">{rejected}</div>
+            <div className="text-sm text-muted-foreground mt-1">Reverted to open</div>
+            {statusFilter === "rejected" && (
+              <div className="mt-2 text-xs text-red-400/70">Filtered ✓</div>
+            )}
+          </button>
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-8 w-40 text-sm">
-            <Filter className="w-3.5 h-3.5 mr-1.5" /><SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="submitted">Pending Review</SelectItem>
-            <SelectItem value="confirmed">Confirmed FP</SelectItem>
-            <SelectItem value="rejected">Rejected</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={severityFilter} onValueChange={setSeverityFilter}>
-          <SelectTrigger className="h-8 w-36 text-sm">
-            <SelectValue placeholder="Severity" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Severities</SelectItem>
-            <SelectItem value="critical">Critical</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="info">Info</SelectItem>
-          </SelectContent>
-        </Select>
-        {(statusFilter !== "all" || severityFilter !== "all" || search) && (
-          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setStatusFilter("all"); setSeverityFilter("all"); setSearch(""); }}>
-            Clear filters
-          </Button>
+
+        {/* ── Client info banner ──────────────────────────────────────────── */}
+        {role === "client" && (
+          <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+            <Info className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
+            <div className="text-sm text-blue-300/90">
+              Mark findings as false positives from the{" "}
+              <Link href="/findings" className="underline underline-offset-2 hover:text-blue-200">Findings page</Link>.
+              An admin or account manager will review and confirm or reject each submission.
+            </div>
+          </div>
         )}
-        <span className="text-xs text-muted-foreground ml-auto">{findings.length} result{findings.length !== 1 ? "s" : ""}</span>
-      </div>
 
-      {/* Table */}
-      <div className="rounded-xl border border-border overflow-hidden">
+        {/* ── Filters ────────────────────────────────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[260px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <Input
+              className="pl-9 h-9"
+              placeholder="Search finding title or CVE…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-9 w-44 gap-1.5">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+              <SelectValue placeholder="FP Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="submitted">Pending Review</SelectItem>
+              <SelectItem value="confirmed">Confirmed FP</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={severityFilter} onValueChange={setSeverityFilter}>
+            <SelectTrigger className="h-9 w-36">
+              <SelectValue placeholder="Severity" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Severities</SelectItem>
+              <SelectItem value="critical">Critical</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="info">Info</SelectItem>
+            </SelectContent>
+          </Select>
+          {hasFilters && (
+            <Button variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground hover:text-foreground" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          )}
+          <div className="ml-auto text-sm text-muted-foreground">
+            {findings.length} result{findings.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+
+        {/* ── Main content ───────────────────────────────────────────────── */}
         {isLoading ? (
-          <div className="flex items-center justify-center h-40 gap-2 text-muted-foreground">
-            <Loader2 className="w-5 h-5 animate-spin" /> Loading false positives…
+          <div className="flex items-center justify-center h-64 gap-3 text-muted-foreground">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span>Loading false positives…</span>
           </div>
         ) : findings.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-center gap-2">
-            <ShieldCheck className="w-10 h-10 text-muted-foreground/30" />
-            <p className="text-muted-foreground text-sm">No false positive submissions found</p>
-            <p className="text-xs text-muted-foreground/60">
-              {statusFilter !== "all" ? "Try clearing your filters" : "Mark findings as false positives from the Findings page"}
-            </p>
+          <div className="rounded-xl border border-dashed border-border bg-card/30 flex flex-col items-center justify-center py-20 text-center gap-3">
+            <div className="w-14 h-14 rounded-full bg-muted/20 flex items-center justify-center">
+              <ShieldCheck className="w-7 h-7 text-muted-foreground/30" />
+            </div>
+            <div>
+              <p className="text-base font-medium text-muted-foreground">No false positive submissions found</p>
+              <p className="text-sm text-muted-foreground/60 mt-1">
+                {hasFilters
+                  ? "Try clearing your filters to see all results"
+                  : "Mark findings as false positives from the Findings page"}
+              </p>
+            </div>
+            {hasFilters && (
+              <Button variant="outline" size="sm" onClick={clearFilters} className="mt-2">Clear filters</Button>
+            )}
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b border-border/50">
-                <TableHead className="text-xs font-medium py-2.5">Finding</TableHead>
-                <TableHead className="text-xs font-medium py-2.5">Asset</TableHead>
-                {(role === "super_admin" || role === "admin") && (
-                  <TableHead className="text-xs font-medium py-2.5">Tenant</TableHead>
-                )}
-                <TableHead className="text-xs font-medium py-2.5">Severity</TableHead>
-                <TableHead className="text-xs font-medium py-2.5">FP Status</TableHead>
-                <TableHead className="text-xs font-medium py-2.5">Submitted By</TableHead>
-                <TableHead className="text-xs font-medium py-2.5">Submitted</TableHead>
-                <TableHead className="text-xs font-medium py-2.5">Reviewed By</TableHead>
-                {canReview && <TableHead className="text-xs font-medium py-2.5 text-right">Actions</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <div className="rounded-xl border border-border overflow-hidden">
+            {/* Table header */}
+            <div className={cn(
+              "grid gap-4 px-5 py-3 bg-muted/30 border-b border-border/50 text-xs font-medium text-muted-foreground uppercase tracking-wide",
+              showTenant
+                ? "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_1fr_auto]"
+                : "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_auto]"
+            )}>
+              <span>Finding</span>
+              <span>Asset</span>
+              {showTenant && <span>Tenant</span>}
+              <span>Severity</span>
+              <span>FP Status</span>
+              <span>Submitted By</span>
+              <span>Reviewed By</span>
+              {canReview && <span className="text-right">Actions</span>}
+            </div>
+
+            {/* Rows */}
+            <div className="divide-y divide-border/30">
               {findings.map(f => (
-                <TableRow key={f.id} className="border-b border-border/30 hover:bg-muted/20">
-                  <TableCell className="py-2.5 max-w-xs">
-                    <div className="flex items-start gap-1.5">
-                      <div>
-                        <Link href={`/findings/${f.id}`} className="text-sm font-medium hover:text-primary transition-colors line-clamp-1">
-                          {f.title}
-                        </Link>
-                        {f.cve && (
-                          <span className="text-xs text-muted-foreground font-mono">{f.cve}</span>
-                        )}
-                        {f.fpNote && (
-                          <p className="text-xs text-muted-foreground mt-0.5 italic line-clamp-1">Note: {f.fpNote}</p>
-                        )}
-                      </div>
+                <div
+                  key={f.id}
+                  className={cn(
+                    "grid gap-4 px-5 py-4 hover:bg-muted/10 transition-colors",
+                    showTenant
+                      ? "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_1fr_auto]"
+                      : "grid-cols-[2fr_1.2fr_0.8fr_1fr_1fr_1fr_auto]"
+                  )}
+                >
+                  {/* Finding title + CVE + note */}
+                  <div className="min-w-0">
+                    <Link href={`/findings/${f.id}`}>
+                      <span className="font-medium text-sm hover:text-primary transition-colors cursor-pointer line-clamp-2 leading-snug">
+                        {f.title}
+                      </span>
+                    </Link>
+                    <div className="flex items-center gap-2 mt-1">
+                      {f.cve && (
+                        <span className="text-xs font-mono text-muted-foreground/70 bg-muted/30 px-1.5 py-0.5 rounded">
+                          {f.cve}
+                        </span>
+                      )}
+                      {f.cvss != null && (
+                        <span className="text-xs text-muted-foreground/60">CVSS {f.cvss.toFixed(1)}</span>
+                      )}
                     </div>
-                  </TableCell>
-                  <TableCell className="py-2.5">
-                    <Link href={`/assets/${f.assetId}`} className="text-sm hover:text-primary transition-colors">
-                      {f.assetName ?? f.assetDomain ?? `Asset #${f.assetId}`}
+                    {f.fpNote && (
+                      <p className="text-xs text-muted-foreground/60 mt-1 italic line-clamp-1">"{f.fpNote}"</p>
+                    )}
+                  </div>
+
+                  {/* Asset */}
+                  <div className="min-w-0 flex flex-col justify-center">
+                    <Link href={`/assets/${f.assetId}`}>
+                      <span className="text-sm hover:text-primary transition-colors cursor-pointer truncate block">
+                        {f.assetName ?? f.assetDomain ?? `Asset #${f.assetId}`}
+                      </span>
                     </Link>
                     {f.assetDomain && f.assetName && (
-                      <div className="text-xs text-muted-foreground">{f.assetDomain}</div>
+                      <span className="text-xs text-muted-foreground/60 truncate">{f.assetDomain}</span>
                     )}
-                  </TableCell>
-                  {(role === "super_admin" || role === "admin") && (
-                    <TableCell className="py-2.5">
-                      <span className="text-xs text-muted-foreground">{f.tenantName ?? `Tenant #${f.tenantId}`}</span>
-                    </TableCell>
+                  </div>
+
+                  {/* Tenant (SA/Admin only) */}
+                  {showTenant && (
+                    <div className="flex items-center min-w-0">
+                      <span className="text-xs text-muted-foreground truncate">{f.tenantName ?? `#${f.tenantId}`}</span>
+                    </div>
                   )}
-                  <TableCell className="py-2.5">
+
+                  {/* Severity */}
+                  <div className="flex items-center">
                     <SevBadge severity={f.severity} />
-                  </TableCell>
-                  <TableCell className="py-2.5">
-                    <FpStatusBadge status={f.falsePositiveStatus} />
-                  </TableCell>
-                  <TableCell className="py-2.5">
-                    <span className="text-sm text-muted-foreground">
-                      {f.fpSubmittedByName ?? "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell className="py-2.5">
-                    <span className="text-xs text-muted-foreground">{fmtDate(f.fpSubmittedAt)}</span>
-                  </TableCell>
-                  <TableCell className="py-2.5">
+                  </div>
+
+                  {/* FP Status */}
+                  <div className="flex items-center">
+                    <FpStatusPill status={f.falsePositiveStatus} />
+                  </div>
+
+                  {/* Submitted by */}
+                  <div className="flex flex-col justify-center min-w-0">
+                    <span className="text-sm truncate">{f.fpSubmittedByName ?? <span className="text-muted-foreground/40 text-xs">—</span>}</span>
+                    <span className="text-xs text-muted-foreground/60">{fmtDate(f.fpSubmittedAt)}</span>
+                  </div>
+
+                  {/* Reviewed by */}
+                  <div className="flex flex-col justify-center min-w-0">
                     {f.fpReviewedByName ? (
-                      <div>
-                        <span className="text-sm text-muted-foreground">{f.fpReviewedByName}</span>
-                        <div className="text-xs text-muted-foreground/60">{fmtDate(f.fpReviewedAt)}</div>
-                      </div>
+                      <>
+                        <span className="text-sm truncate">{f.fpReviewedByName}</span>
+                        <span className="text-xs text-muted-foreground/60">{fmtDate(f.fpReviewedAt)}</span>
+                      </>
                     ) : (
-                      <span className="text-xs text-muted-foreground/40">Not reviewed</span>
+                      <span className="text-xs text-muted-foreground/35">Not reviewed</span>
                     )}
-                  </TableCell>
+                  </div>
+
+                  {/* Actions */}
                   {canReview && (
-                    <TableCell className="py-2.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {f.falsePositiveStatus === "submitted" && (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2.5 text-xs gap-1 text-green-400 border-green-500/30 hover:bg-green-500/10"
-                              onClick={() => openReview(f, "confirm")}
-                            >
-                              <ShieldCheck className="w-3.5 h-3.5" /> Confirm
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2.5 text-xs gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10"
-                              onClick={() => openReview(f, "reject")}
-                            >
-                              <ShieldX className="w-3.5 h-3.5" /> Reject
-                            </Button>
-                          </>
-                        )}
-                        {f.falsePositiveStatus === "confirmed" && (
+                    <div className="flex items-center justify-end gap-1.5">
+                      {f.falsePositiveStatus === "submitted" && (
+                        <>
                           <Button
                             size="sm"
-                            variant="ghost"
-                            className="h-7 px-2.5 text-xs gap-1 text-red-400 hover:bg-red-500/10"
-                            onClick={() => openReview(f, "reject")}
-                          >
-                            <XCircle className="w-3 h-3" /> Reopen
-                          </Button>
-                        )}
-                        {f.falsePositiveStatus === "rejected" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 px-2.5 text-xs gap-1 text-green-400 hover:bg-green-500/10"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs gap-1 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:border-emerald-500/50"
                             onClick={() => openReview(f, "confirm")}
                           >
-                            <CheckCircle2 className="w-3 h-3" /> Re-confirm
+                            <ShieldCheck className="w-3.5 h-3.5" /> Confirm
                           </Button>
-                        )}
-                        <Link href={`/findings/${f.id}`}>
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
-                            <ExternalLink className="w-3.5 h-3.5" />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50"
+                            onClick={() => openReview(f, "reject")}
+                          >
+                            <ShieldX className="w-3.5 h-3.5" /> Reject
                           </Button>
-                        </Link>
-                      </div>
-                    </TableCell>
+                        </>
+                      )}
+                      {f.falsePositiveStatus === "confirmed" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2.5 text-xs gap-1 text-red-400/70 hover:text-red-400 hover:bg-red-500/10"
+                          onClick={() => openReview(f, "reject")}
+                        >
+                          <XCircle className="w-3 h-3" /> Reopen
+                        </Button>
+                      )}
+                      {f.falsePositiveStatus === "rejected" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2.5 text-xs gap-1 text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-500/10"
+                          onClick={() => openReview(f, "confirm")}
+                        >
+                          <CheckCircle2 className="w-3 h-3" /> Re-confirm
+                        </Button>
+                      )}
+                      <Link href={`/findings/${f.id}`}>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground">
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </Button>
+                      </Link>
+                    </div>
                   )}
-                </TableRow>
+                  {!canReview && (
+                    <div className="flex items-center">
+                      <Link href={`/findings/${f.id}`}>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground">
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </Button>
+                      </Link>
+                    </div>
+                  )}
+                </div>
               ))}
-            </TableBody>
-          </Table>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 bg-muted/20 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Showing {findings.length} false positive{findings.length !== 1 ? "s" : ""}</span>
+              {canReview && submitted > 0 && (
+                <span className="text-amber-400">
+                  {submitted} pending review
+                </span>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Review dialog */}
+      {/* ── Review dialog ─────────────────────────────────────────────────── */}
       <Dialog open={!!reviewing} onOpenChange={o => { if (!o) { setReviewing(null); setReviewNote(""); } }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 text-base">
               {reviewing?.action === "confirm"
-                ? <><CheckCircle2 className="w-5 h-5 text-green-400" /> Confirm False Positive</>
-                : <><XCircle className="w-5 h-5 text-red-400" /> Reject False Positive</>}
+                ? <><CheckCircle2 className="w-5 h-5 text-emerald-400" />Confirm False Positive</>
+                : <><XCircle className="w-5 h-5 text-red-400" />Reject False Positive</>}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-sm">
               {reviewing?.action === "confirm"
-                ? "Confirming marks this finding as a verified false positive and resolves it. Future identical findings will be suppressed."
+                ? "Confirming marks this finding as a verified false positive and closes it."
                 : "Rejecting reverts this finding to open status for re-investigation."}
             </DialogDescription>
           </DialogHeader>
 
           {reviewing && (
-            <div className="space-y-3 py-1">
-              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1">
-                <p className="text-sm font-medium line-clamp-2">{reviewing.finding.title}</p>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="space-y-4 py-1">
+              {/* Finding summary card */}
+              <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-2">
+                <p className="text-sm font-medium leading-snug">{reviewing.finding.title}</p>
+                <div className="flex items-center gap-2 flex-wrap">
                   <SevBadge severity={reviewing.finding.severity} />
-                  <span>·</span>
-                  <span>{reviewing.finding.assetName ?? reviewing.finding.assetDomain ?? `Asset #${reviewing.finding.assetId}`}</span>
-                  {reviewing.finding.tenantName && <><span>·</span><span>{reviewing.finding.tenantName}</span></>}
+                  <span className="text-xs text-muted-foreground">·</span>
+                  <span className="text-xs text-muted-foreground">
+                    {reviewing.finding.assetName ?? reviewing.finding.assetDomain ?? `Asset #${reviewing.finding.assetId}`}
+                  </span>
+                  {reviewing.finding.tenantName && (
+                    <>
+                      <span className="text-xs text-muted-foreground">·</span>
+                      <span className="text-xs text-muted-foreground">{reviewing.finding.tenantName}</span>
+                    </>
+                  )}
                 </div>
                 {reviewing.finding.fpSubmittedByName && (
                   <p className="text-xs text-muted-foreground">
-                    Submitted by <span className="font-medium">{reviewing.finding.fpSubmittedByName}</span> on {fmtDate(reviewing.finding.fpSubmittedAt)}
+                    Submitted by <span className="font-medium text-foreground/70">{reviewing.finding.fpSubmittedByName}</span>
+                    {" "}on {fmtDateTime(reviewing.finding.fpSubmittedAt)}
                   </p>
                 )}
               </div>
-              <div>
-                <Label className="text-xs">Review Note <span className="text-muted-foreground">(optional)</span></Label>
+
+              {/* Note */}
+              <div className="space-y-1.5">
+                <Label className="text-sm">
+                  Review Note <span className="text-muted-foreground font-normal">(optional)</span>
+                </Label>
                 <Textarea
-                  className="mt-1 text-sm resize-none"
+                  className="resize-none text-sm"
                   rows={3}
                   placeholder={reviewing.action === "confirm"
-                    ? "e.g. Verified — this is expected behaviour in our environment."
-                    : "e.g. This is a real vulnerability, needs remediation."}
+                    ? "e.g. Verified — expected behaviour in our environment."
+                    : "e.g. Real vulnerability, needs immediate remediation."}
                   value={reviewNote}
                   onChange={e => setReviewNote(e.target.value)}
                 />
               </div>
+
+              {/* Warning for confirm */}
               {reviewing.action === "confirm" && (
-                <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-2.5 text-xs text-amber-300">
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>The finding status will be set to <strong>false_positive</strong> and removed from the active vulnerability count.</span>
+                  <span>
+                    The finding status will be set to <strong>false_positive</strong> and removed from the active vulnerability count.
+                    Future identical findings from scans will be suppressed automatically.
+                  </span>
                 </div>
               )}
             </div>
           )}
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setReviewing(null); setReviewNote(""); }}>Cancel</Button>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setReviewing(null); setReviewNote(""); }}>
+              Cancel
+            </Button>
             <Button
-              onClick={submitReview}
+              size="sm"
+              onClick={() => reviewing && reviewMut.mutate({ id: reviewing.finding.id, action: reviewing.action, note: reviewNote })}
               disabled={reviewMut.isPending}
-              className={cn(reviewing?.action === "confirm"
-                ? "bg-green-600 hover:bg-green-700 text-white"
-                : "bg-red-600 hover:bg-red-700 text-white")}
+              className={cn(
+                "min-w-[140px]",
+                reviewing?.action === "confirm"
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                  : "bg-red-600 hover:bg-red-700 text-white border-red-600"
+              )}
             >
-              {reviewMut.isPending && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+              {reviewMut.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
               {reviewing?.action === "confirm" ? "Confirm False Positive" : "Reject & Reopen"}
             </Button>
           </DialogFooter>
