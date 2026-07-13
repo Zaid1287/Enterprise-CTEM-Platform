@@ -39,6 +39,7 @@ import { BUILTIN_TOOL_DEFS, getPlatformTenantId } from "../lib/seedPlatform";
 import { logger } from "../lib/logger";
 import { triggerBrandThreatScan } from "../lib/brandThreatRunner";
 import { finalizeScannedAssets } from "../lib/scanScheduler";
+import { runShadowItPostScanCorrelation } from "../lib/shadowItCorrelation";
 import { enrichFindingsWithEpssKev, forceRefreshKevCache } from "../lib/epssKev";
 import { getPlatformSetting } from "./platformSettings";
 import { setNvdApiKey } from "../lib/nvdLookup";
@@ -338,6 +339,13 @@ export async function enqueueAndRun(entry: Omit<QueueEntry, "resolve">): Promise
       } catch (err) {
         logger.warn({ err, scanId: entry.scanId }, "finalizeScannedAssets failed (non-fatal)");
       }
+
+      // ── Shadow IT post-scan correlation ───────────────────────────────────────
+      setImmediate(() => {
+        runShadowItPostScanCorrelation(entry.tenantId, entry.scanId, pipelineAssetIds).catch(err =>
+          logger.warn({ err, scanId: entry.scanId }, "Shadow IT post-scan correlation failed (non-fatal)")
+        );
+      });
 
       // ── Dispatch Slack / Discord / email notifications ────────────────────────
       setImmediate(async () => {

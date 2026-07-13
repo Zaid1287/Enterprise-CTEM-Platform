@@ -7,7 +7,7 @@ import { pushSseEvent } from "./sseManager";
 
 export interface NotificationEvent {
   tenantId: number;
-  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat" | "phishing_detected" | "data_leak_found" | "brand_abuse_found" | "queue_full" | "orchestrator_event" | "tprm_questionnaire_completed" | "tprm_compliance_expiry";
+  eventType: "scan_complete" | "critical_finding" | "high_finding" | "new_finding" | "brand_threat" | "phishing_detected" | "data_leak_found" | "brand_abuse_found" | "queue_full" | "orchestrator_event" | "tprm_questionnaire_completed" | "tprm_compliance_expiry" | "shadow_it_discovered";
   title: string;
   message: string;
   severity: string;
@@ -38,6 +38,7 @@ function shouldRuleFire(triggerType: string, event: NotificationEvent): boolean 
     case "orchestrator_event":            return event.eventType === "orchestrator_event";
     case "tprm_questionnaire_completed":  return event.eventType === "tprm_questionnaire_completed";
     case "tprm_compliance_expiry":        return event.eventType === "tprm_compliance_expiry";
+    case "shadow_it_discovered":          return event.eventType === "shadow_it_discovered";
     case "any":                           return true;
     default:                              return event.eventType === "scan_complete";
   }

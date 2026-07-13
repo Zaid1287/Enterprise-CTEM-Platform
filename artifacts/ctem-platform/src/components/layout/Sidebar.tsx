@@ -8,7 +8,7 @@ import {
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
   ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
   Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal,
-  ListChecks,
+  ListChecks, EyeOff,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 
@@ -89,6 +89,7 @@ const navGroups: NavGroup[] = [
     title: "Brand Monitoring",
     items: [
       { label: "Brand Threat Monitor", href: "/brand-threats", icon: ShieldAlert },
+      { label: "Shadow IT Discovery",  href: "/shadow-it",     icon: EyeOff },
     ],
   },
   {

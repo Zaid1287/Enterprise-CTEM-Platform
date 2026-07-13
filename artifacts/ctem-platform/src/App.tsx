@@ -42,6 +42,7 @@ const AlertDetailPage = lazy(() => import("@/pages/AlertDetailPage"));
 const PlatformSettingsPage = lazy(() => import("@/pages/PlatformSettingsPage"));
 const BrandThreatPage = lazy(() => import("@/pages/BrandThreatPage"));
 const BrandThreatDetailPage = lazy(() => import("@/pages/BrandThreatDetailPage"));
+const ShadowItPage = lazy(() => import("@/pages/ShadowItPage"));
 const AssetGroupDetailPage = lazy(() => import("@/pages/AssetGroupDetailPage"));
 const AssetTopologyPage = lazy(() => import("@/pages/AssetTopologyPage"));
 const QueueMonitorPage = lazy(() => import("@/pages/QueueMonitorPage"));
@@ -343,6 +344,7 @@ function Router() {
       <Route path="/settings/platform" component={() => <ProtectedRoute component={PlatformSettingsPage} />} />
       <Route path="/brand-threats" component={() => <ProtectedRoute component={BrandThreatPage} />} />
       <Route path="/brand-threats/:id" component={() => <ProtectedRoute component={BrandThreatDetailPage} />} />
+      <Route path="/shadow-it" component={() => <ProtectedRoute component={ShadowItPage} />} />
       <Route path="/queue-monitor" component={() => <ProtectedRoute component={QueueMonitorPage} />} />
       <Route path="/settings/cdn-whitelist" component={() => <ProtectedRoute component={CdnWhitelistPage} />} />
       <Route path="/discovery" component={() => <ProtectedRoute component={DiscoveryPage} />} />

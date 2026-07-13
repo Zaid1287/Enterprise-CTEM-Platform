@@ -9,6 +9,7 @@
 import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
 import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, toolPipelineStepsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable, aiMapperScanSchedulesTable, aiMapperScansTable, assetGroupMembersTable } from "@workspace/db";
+import { runShadowItDiscovery } from "../lib/shadowItCorrelation";
 import { and, eq, sql, lt, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
@@ -1211,6 +1212,35 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
     runAutoTuner().catch(() => {});
     setInterval(runAutoTuner, 10 * 60_000);
   }, 3 * 60_000);
+
+  // ── Shadow IT daily discovery (runs once per day per tenant) ─────────────────
+  const runShadowItDailyDiscovery = async () => {
+    try {
+      const domainRows = await db
+        .selectDistinct({ tenantId: assetsTable.tenantId })
+        .from(assetsTable)
+        .where(sql`${assetsTable.type} IN ('domain', 'subdomain', 'url')`);
+
+      for (const { tenantId } of domainRows) {
+        if (!tenantId) continue;
+        setImmediate(() => {
+          runShadowItDiscovery(tenantId as number).catch(err =>
+            logger.warn({ err, tenantId }, "Beat: Shadow IT daily discovery failed (non-fatal)")
+          );
+        });
+      }
+      if (domainRows.length > 0) {
+        logger.info({ tenantCount: domainRows.length }, "Beat: Shadow IT daily discovery dispatched");
+      }
+    } catch (err) {
+      logger.warn({ err }, "Beat: Shadow IT daily discovery dispatch failed (non-fatal)");
+    }
+  };
+  // Start 10 minutes after boot (let scans settle first), then every 24 hours
+  setTimeout(() => {
+    runShadowItDailyDiscovery().catch(() => {});
+    setInterval(runShadowItDailyDiscovery, 24 * 60 * 60_000);
+  }, 10 * 60_000);
 }
 
 // ── TPRM compliance expiry reminders ─────────────────────────────────────────

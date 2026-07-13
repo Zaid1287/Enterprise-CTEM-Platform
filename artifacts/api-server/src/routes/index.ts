@@ -36,6 +36,7 @@ import customToolsRouter from "./customTools";
 import suppressionsRouter from "./suppressions";
 import scanOrchestratorRouter from "./scanOrchestrator";
 import tprmRouter from "./tprm";
+import shadowItRouter from "./shadowIt";
 
 const router: IRouter = Router();
 
@@ -78,6 +79,7 @@ router.use(graphRouter);
 router.use(cdnWhitelistRouter);
 router.use(aiMapperRouter);
 router.use(tprmRouter);
+router.use(shadowItRouter);
 router.use(customToolsRouter);
 router.use(suppressionsRouter);
 router.use(scanOrchestratorRouter);
