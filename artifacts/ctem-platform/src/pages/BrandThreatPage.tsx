@@ -10,7 +10,7 @@ import {
   CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap, Shield,
   TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
   BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link, CalendarClock,
-  RotateCw, Edit2, Check, X, LockKeyhole,
+  RotateCw, Edit2, Check, X, LockKeyhole, Megaphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -302,7 +302,7 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
 
         {/* Stats row — only when done */}
         {scan.status === "done" && (
-          <div className="grid grid-cols-4 gap-2 mb-3">
+          <div className={cn("grid gap-2 mb-3", (scan.adMonitoringCount ?? 0) > 0 ? "grid-cols-5" : "grid-cols-4")}>
             <div className="bg-background rounded-xl p-2.5 text-center">
               <p className="text-[10px] text-muted-foreground mb-0.5">Live</p>
               <p className={cn("text-base font-bold tabular-nums", liveCount > 0 ? "text-red-400" : "text-green-400")}>
@@ -360,6 +360,17 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
                 {scan.brandAbuseCount ?? 0}
               </p>
             </div>
+            {/* Malicious ads badge — only shown when > 0 */}
+            {(scan.adMonitoringCount ?? 0) > 0 && (
+              <div className="rounded-xl p-2.5 text-center border bg-purple-500/10 border-purple-500/25">
+                <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
+                  <Megaphone className="w-2.5 h-2.5" /> Mal. Ads
+                </p>
+                <p className="text-base font-bold tabular-nums text-purple-400">
+                  {scan.adMonitoringCount}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

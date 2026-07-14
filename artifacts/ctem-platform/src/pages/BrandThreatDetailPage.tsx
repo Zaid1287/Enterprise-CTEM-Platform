@@ -1548,10 +1548,11 @@ function WatchlistDetailTab({ items, scanDomain }: { items: any[]; scanDomain: s
                         </span>
                       )}
                       {[
-                        { key: "liveCount",       label: "live" },
-                        { key: "phishingCount",   label: "phishing" },
-                        { key: "dataLeakCount",   label: "data leaks" },
-                        { key: "brandAbuseCount", label: "brand abuse" },
+                        { key: "liveCount",          label: "live" },
+                        { key: "phishingCount",      label: "phishing" },
+                        { key: "dataLeakCount",      label: "data leaks" },
+                        { key: "brandAbuseCount",    label: "brand abuse" },
+                        { key: "adMonitoringCount",  label: "mal. ads" },
                       ].map(({ key, label }) => {
                         const current = prev[key] as number | undefined;
                         if (current === undefined || current === 0) return null;
@@ -1975,12 +1976,13 @@ export default function BrandThreatDetailPage() {
       {/* ── Watchlist delta banner — shown after a scheduled re-scan ─────────── */}
       {watchlistItem?.prevScanSummary && s.status === "done" && (() => {
         const prev = watchlistItem.prevScanSummary as Record<string, number>;
-        const deltaLive    = (s.liveCount ?? 0)         - (prev.liveCount ?? 0);
-        const deltaPhish   = (s.phishingCount ?? 0)     - (prev.phishingCount ?? 0);
-        const deltaLeaks   = (s.dataLeakCount ?? 0)     - (prev.dataLeakCount ?? 0);
-        const deltaAbuse   = (s.brandAbuseCount ?? 0)   - (prev.brandAbuseCount ?? 0);
-        const totalNew     = Math.max(0, deltaLive) + Math.max(0, deltaPhish) + Math.max(0, deltaLeaks) + Math.max(0, deltaAbuse);
-        const hasChanges   = deltaLive !== 0 || deltaPhish !== 0 || deltaLeaks !== 0 || deltaAbuse !== 0;
+        const deltaLive    = (s.liveCount ?? 0)            - (prev.liveCount ?? 0);
+        const deltaPhish   = (s.phishingCount ?? 0)        - (prev.phishingCount ?? 0);
+        const deltaLeaks   = (s.dataLeakCount ?? 0)        - (prev.dataLeakCount ?? 0);
+        const deltaAbuse   = (s.brandAbuseCount ?? 0)      - (prev.brandAbuseCount ?? 0);
+        const deltaAds     = (s.adMonitoringCount ?? 0)    - (prev.adMonitoringCount ?? 0);
+        const totalNew     = Math.max(0, deltaLive) + Math.max(0, deltaPhish) + Math.max(0, deltaLeaks) + Math.max(0, deltaAbuse) + Math.max(0, deltaAds);
+        const hasChanges   = deltaLive !== 0 || deltaPhish !== 0 || deltaLeaks !== 0 || deltaAbuse !== 0 || deltaAds !== 0;
         if (!hasChanges) return null;
         return (
           <div className={cn(
@@ -2003,6 +2005,7 @@ export default function BrandThreatDetailPage() {
                 { label: "Phishing",      delta: deltaPhish, warn: deltaPhish > 0 },
                 { label: "Data leaks",    delta: deltaLeaks, warn: deltaLeaks > 0 },
                 { label: "Brand abuse",   delta: deltaAbuse, warn: deltaAbuse > 0 },
+                { label: "Mal. ads",      delta: deltaAds,   warn: deltaAds > 0 },
               ].filter(d => d.delta !== 0).map(d => (
                 <span key={d.label} className={cn(
                   "text-[11px] font-semibold px-2 py-1 rounded-lg border",

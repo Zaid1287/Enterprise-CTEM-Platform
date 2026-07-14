@@ -467,6 +467,7 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
           phishingCount:     existing.phishingCount ?? 0,
           dataLeakCount:     existing.dataLeakCount ?? 0,
           brandAbuseCount:   existing.brandAbuseCount ?? 0,
+          adMonitoringCount: existing.adMonitoringCount ?? 0,
         };
 
         // Snapshot permutations from the previous scan BEFORE archiving, so the
@@ -498,6 +499,7 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
             dataLeakCount: 0,
             phishingCount: 0,
             brandAbuseCount: 0,
+            adMonitoringCount: 0,
             darkWebCount: 0,
           })
           .where(eq(brandThreatScansTable.id, existing.id));

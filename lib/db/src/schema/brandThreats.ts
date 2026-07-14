@@ -30,6 +30,7 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   phishingCount:     integer("phishing_count").notNull().default(0),
   brandAbuseCount:   integer("brand_abuse_count").notNull().default(0),
   darkWebCount:      integer("dark_web_count").notNull().default(0),
+  adMonitoringCount: integer("ad_monitoring_count").notNull().default(0),
   progress:          integer("progress").notNull().default(0),
 
   checkpoint:        text("checkpoint"),
