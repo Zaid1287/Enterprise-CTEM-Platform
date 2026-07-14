@@ -6,15 +6,16 @@ import {
   useGetAsset, useListFindings, useGetAssetRiskScore, useCheckAssetVerification,
   useListAssetTechnologies, useRunTechScan, useListAssetScreenshots, useRunScreenshotScan,
   useUpdateAsset, useListBrandThreats, useListUsers, useListScans, useCancelScan,
+  useListAssetPorts,
   getGetAssetQueryKey, getListFindingsQueryKey, getGetAssetRiskScoreQueryKey,
   getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey, getListBrandThreatsQueryKey,
-  getListScansQueryKey,
+  getListScansQueryKey, getListAssetPortsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw, Camera, AlertTriangle, X,
   ChevronLeft, ChevronRight, Download, ShieldAlert, Fish, DatabaseZap, Siren, UserCheck,
-  Brain, Sparkles, ChevronDown, ChevronUp,
+  Brain, Sparkles, ChevronDown, ChevronUp, Network,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -154,6 +155,10 @@ export default function AssetDetailPage() {
   });
   const { data: brandThreats } = useListBrandThreats({
     query: { enabled: !!id, queryKey: getListBrandThreatsQueryKey() },
+  });
+
+  const { data: portsData } = useListAssetPorts(id, {
+    query: { enabled: !!id, queryKey: getListAssetPortsQueryKey(id) },
   });
 
   const { data: scansData } = useListScans(
@@ -785,6 +790,101 @@ export default function AssetDetailPage() {
           </div>
         )}
       </div>
+
+      {/* ── Open Ports (Network Exposure) ───────────────────────────────────── */}
+      {(() => {
+        const pd = portsData as any;
+        const ports: any[] = pd?.ports ?? [];
+        const portSource: string = pd?.source ?? "";
+        const portScannedAt: string | null = pd?.scannedAt ?? null;
+        const dangerousPorts = new Set([21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 27017]);
+        return (
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Network className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-medium">Open Ports</h3>
+                {ports.length > 0 && (
+                  <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium">
+                    {ports.length} discovered
+                  </span>
+                )}
+                {portSource && portSource !== "none" && (
+                  <span className="text-[10px] text-muted-foreground font-mono bg-muted/40 px-1.5 py-0.5 rounded">
+                    via {portSource}
+                  </span>
+                )}
+              </div>
+              {portScannedAt && (
+                <span className="text-[10px] text-muted-foreground">{formatDate(portScannedAt)}</span>
+              )}
+            </div>
+
+            {ports.length === 0 ? (
+              <div className="py-6 text-center">
+                <Network className="w-7 h-7 text-muted-foreground/25 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">No port scan data yet.</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">
+                  Run a full pipeline scan to discover open ports via nmap and Shodan.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pb-2 pr-4">Port</th>
+                      <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pb-2 pr-4">Protocol</th>
+                      <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pb-2 pr-4">State</th>
+                      <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pb-2 pr-4">Service</th>
+                      <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pb-2 pr-4">Version</th>
+                      <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pb-2">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {ports.map((p: any) => {
+                      const isDangerous = dangerousPorts.has(p.port) && ![80, 443].includes(p.port);
+                      return (
+                        <tr key={p.port} className="hover:bg-muted/20 transition-colors">
+                          <td className="py-2 pr-4 font-mono font-semibold">
+                            <span className={cn(
+                              "inline-flex items-center gap-1",
+                              isDangerous ? "text-orange-400" : p.port === 443 ? "text-emerald-400" : "text-foreground"
+                            )}>
+                              {p.port}
+                              {isDangerous && (
+                                <span className="text-[9px] bg-orange-500/15 text-orange-400 border border-orange-500/25 px-1 py-0.5 rounded font-semibold">RISK</span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-4 text-muted-foreground font-mono uppercase text-[11px]">{p.protocol ?? "tcp"}</td>
+                          <td className="py-2 pr-4">
+                            <span className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                              p.state === "open" ? "bg-emerald-500/15 text-emerald-400" :
+                              p.state === "filtered" ? "bg-yellow-500/15 text-yellow-400" :
+                              "bg-muted text-muted-foreground"
+                            )}>
+                              {p.state ?? "open"}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-4 text-muted-foreground">{p.service ?? "—"}</td>
+                          <td className="py-2 pr-4 text-muted-foreground font-mono text-[10px]">{p.version || "—"}</td>
+                          <td className="py-2">
+                            <span className="text-[10px] bg-muted/40 text-muted-foreground px-1.5 py-0.5 rounded font-mono">
+                              {p.source ?? "—"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Screenshot Gallery ──────────────────────────────────────────────── */}
       {canScan && (

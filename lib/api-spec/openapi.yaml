@@ -2863,6 +2863,36 @@ paths:
         "201":
           description: Template created
 
+  /assets/{assetId}/ports:
+    get:
+      operationId: listAssetPorts
+      tags: [assets]
+      summary: List discovered open ports for an asset from scan results
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Discovered ports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ports, source, scannedAt]
+                properties:
+                  ports:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DiscoveredPort"
+                  source:
+                    type: string
+                  scannedAt:
+                    type: string
+                    nullable: true
+
 components:
   schemas:
     AiMapperSummary:
@@ -3160,6 +3190,28 @@ components:
             $ref: "#/components/schemas/ScreenshotFinding"
         capturedAt:
           type: string
+
+    DiscoveredPort:
+      type: object
+      required: [port, protocol, state, source]
+      properties:
+        port:
+          type: integer
+        protocol:
+          type: string
+        state:
+          type: string
+        service:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        source:
+          type: string
+        banner:
+          type: string
+          nullable: true
 
     TechnologyDetection:
       type: object

@@ -2877,3 +2877,25 @@ export const CreateTprmQuestionnaireTemplateBody = zod.object({
 })
 
 
+/**
+ * @summary List discovered open ports for an asset from scan results
+ */
+export const ListAssetPortsParams = zod.object({
+  "assetId": zod.coerce.number()
+})
+
+export const ListAssetPortsResponse = zod.object({
+  "ports": zod.array(zod.object({
+  "port": zod.number(),
+  "protocol": zod.string(),
+  "state": zod.string(),
+  "service": zod.string().nullish(),
+  "version": zod.string().nullish(),
+  "source": zod.string(),
+  "banner": zod.string().nullish()
+})),
+  "source": zod.string(),
+  "scannedAt": zod.string().nullable()
+})
+
+

@@ -170,6 +170,16 @@ export interface Screenshot {
   capturedAt: string;
 }
 
+export interface DiscoveredPort {
+  port: number;
+  protocol: string;
+  state: string;
+  service?: string | null;
+  version?: string | null;
+  source: string;
+  banner?: string | null;
+}
+
 export interface TechnologyDetection {
   id: number;
   assetId: number;
@@ -1492,5 +1502,11 @@ limit?: number;
 search?: string;
 riskGrade?: string;
 status?: string;
+};
+
+export type ListAssetPorts200 = {
+  ports: DiscoveredPort[];
+  source: string;
+  scannedAt: string | null;
 };
 

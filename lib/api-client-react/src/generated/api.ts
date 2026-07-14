@@ -74,6 +74,7 @@ import type {
   GetTopRiskyAssetsParams,
   HealthStatus,
   ListAlertsParams,
+  ListAssetPorts200,
   ListAssetsParams,
   ListAuditLogs200,
   ListAuditLogsParams,
@@ -10753,4 +10754,81 @@ export const useCreateTprmQuestionnaireTemplate = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCreateTprmQuestionnaireTemplateMutationOptions(options));
     }
+
+export const getListAssetPortsUrl = (assetId: number,) => {
+
+
+
+
+  return `/api/assets/${assetId}/ports`
+}
+
+/**
+ * @summary List discovered open ports for an asset from scan results
+ */
+export const listAssetPorts = async (assetId: number, options?: RequestInit): Promise<ListAssetPorts200> => {
+
+  return customFetch<ListAssetPorts200>(getListAssetPortsUrl(assetId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAssetPortsQueryKey = (assetId: number,) => {
+    return [
+    `/api/assets/${assetId}/ports`
+    ] as const;
+    }
+
+
+export const getListAssetPortsQueryOptions = <TData = Awaited<ReturnType<typeof listAssetPorts>>, TError = ErrorType<unknown>>(assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAssetPorts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAssetPortsQueryKey(assetId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAssetPorts>>> = ({ signal }) => listAssetPorts(assetId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(assetId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAssetPorts>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAssetPortsQueryResult = NonNullable<Awaited<ReturnType<typeof listAssetPorts>>>
+export type ListAssetPortsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List discovered open ports for an asset from scan results
+ */
+
+export function useListAssetPorts<TData = Awaited<ReturnType<typeof listAssetPorts>>, TError = ErrorType<unknown>>(
+ assetId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAssetPorts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAssetPortsQueryOptions(assetId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 

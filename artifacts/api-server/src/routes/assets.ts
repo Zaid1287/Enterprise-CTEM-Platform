@@ -832,6 +832,78 @@ router.post("/assets/:assetId/tech-scan", requireAuth, async (req: Authenticated
   });
 });
 
+// GET /assets/:assetId/ports — return discovered open ports from latest scan_asset_results row with port data
+router.get("/assets/:assetId/ports", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const assetId = parseInt(req.params.assetId as string, 10);
+  if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
+
+  const amTids = req.user!.role === "account_manager" ? await getAmClientTenantIds(req.user!.userId) : undefined;
+  const [foundAsset] = await db
+    .select({ id: assetsTable.id })
+    .from(assetsTable)
+    .where(assetAccessFilter(assetId, req.user!, amTids))
+    .limit(1);
+  if (!foundAsset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  const rows = await db
+    .select({
+      id: scanAssetResultsTable.id,
+      ports: scanAssetResultsTable.ports,
+      toolName: scanAssetResultsTable.toolName,
+      createdAt: scanAssetResultsTable.createdAt,
+    })
+    .from(scanAssetResultsTable)
+    .where(
+      and(
+        eq(scanAssetResultsTable.assetId, assetId),
+        sql`jsonb_typeof(${scanAssetResultsTable.ports}) = 'array' AND jsonb_array_length(${scanAssetResultsTable.ports}) > 0`,
+      )
+    )
+    .orderBy(desc(scanAssetResultsTable.createdAt))
+    .limit(20);
+
+  if (rows.length === 0) {
+    res.json({ ports: [], source: "none", scannedAt: null });
+    return;
+  }
+
+  // Merge and deduplicate ports across all rows, prefer most-recent per port number
+  const portMap = new Map<number, any>();
+  for (const row of [...rows].reverse()) {
+    const arr = (row.ports as any[]) ?? [];
+    for (const p of arr) {
+      if (typeof p.port === "number") {
+        const svc = (p.service && p.service !== "unknown") ? p.service : null;
+        const PORT_SERVICES: Record<number, string> = {
+          21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp", 53: "dns",
+          80: "http", 110: "pop3", 143: "imap", 443: "https", 445: "smb",
+          3306: "mysql", 3389: "rdp", 5432: "postgresql", 5900: "vnc",
+          6379: "redis", 8080: "http-alt", 8443: "https-alt", 27017: "mongodb",
+        };
+        portMap.set(p.port, {
+          port: p.port,
+          protocol: p.protocol ?? "tcp",
+          state: p.state ?? "open",
+          service: svc ?? PORT_SERVICES[p.port as number] ?? null,
+          version: p.version && p.version !== "" ? p.version : null,
+          source: p.source ?? row.toolName,
+          cpes: p.cpes ?? [],
+          banner: p.banner ?? null,
+        });
+      }
+    }
+  }
+
+  const ports = Array.from(portMap.values()).sort((a, b) => a.port - b.port);
+  const sources = [...new Set(rows.map(r => (r.ports as any[])?.[0]?.source ?? r.toolName))];
+
+  res.json({
+    ports,
+    source: sources.join(", "),
+    scannedAt: rows[0]?.createdAt?.toISOString() ?? null,
+  });
+});
+
 // Upload evidence files for an asset
 router.post("/assets/:assetId/evidence", requireAuth, upload.array("files", 10), async (req: AuthenticatedRequest, res): Promise<void> => {
   const assetId = parseInt(req.params.assetId as string, 10);
