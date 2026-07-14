@@ -275,14 +275,14 @@ router.post("/tools/seed-defaults", requireAuth, async (req: AuthenticatedReques
   const toInsert = DEFAULT_TOOLS.filter(t => !existingNames.has(t.name.toLowerCase()));
   if (toInsert.length === 0) { res.json({ added: 0, message: "All default tools already present" }); return; }
   await db.insert(securityToolsTable).values(
-    toInsert.map(t => ({ ...t, tenantId: platformId, isActive: true, createdBy: req.user!.id }))
+    toInsert.map(t => ({ ...t, tenantId: platformId, isActive: true, createdBy: req.user!.userId }))
   );
   res.json({ added: toInsert.length, message: `Added ${toInsert.length} default tool(s)` });
 });
 
 // Tool catalog is global — all reads/writes go to the platform tenant.
 router.get("/tools", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  await seedDefaultTools(req.user!.id);
+  await seedDefaultTools(req.user!.userId);
   const platformId = await getPlatformTenantId();
   const tools = await db.select().from(securityToolsTable)
     .where(eq(securityToolsTable.tenantId, platformId))
@@ -297,7 +297,7 @@ router.post("/tools", requireAuth, requireRole("admin", "super_admin"), async (r
   const [tool] = await db.insert(securityToolsTable).values({
     ...parsed.data,
     tenantId: platformId,
-    createdBy: req.user!.id,
+    createdBy: req.user!.userId,
   }).returning();
   await logAudit(req.user!, "create_tool", "security_tool", tool.id);
 
@@ -384,7 +384,7 @@ router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest,
       toolId: tool.id,
       status: "completed",
       output,
-      triggeredBy: req.user!.id,
+      triggeredBy: req.user!.userId,
       startedAt,
       completedAt: new Date(),
     }).returning();
@@ -403,7 +403,7 @@ router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest,
         assetId,
         status: "completed",
         output,
-        triggeredBy: req.user!.id,
+        triggeredBy: req.user!.userId,
         startedAt,
         completedAt: new Date(),
       }).returning();
@@ -462,7 +462,7 @@ router.post("/assets/:assetId/run-pipeline", requireAuth, async (req: Authentica
       assetId: asset.id,
       status: "completed",
       output,
-      triggeredBy: req.user!.id,
+      triggeredBy: req.user!.userId,
       startedAt,
       completedAt: new Date(),
     }).returning();

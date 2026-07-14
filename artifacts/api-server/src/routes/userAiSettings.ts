@@ -28,7 +28,7 @@ router.get("/me/ai-settings", requireAuth, async (req: AuthenticatedRequest, res
 });
 
 router.put("/me/ai-settings/:provider", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { provider } = req.params;
+  const provider = req.params.provider as string;
   if (!ALLOWED_PROVIDERS.includes(provider as any)) {
     res.status(400).json({ error: "Invalid provider" });
     return;
@@ -63,7 +63,7 @@ router.put("/me/ai-settings/:provider", requireAuth, async (req: AuthenticatedRe
 });
 
 router.delete("/me/ai-settings/:provider", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { provider } = req.params;
+  const provider = req.params.provider as string;
   await db
     .delete(userAiSettingsTable)
     .where(and(eq(userAiSettingsTable.userId, req.user!.userId), eq(userAiSettingsTable.provider, provider)));
