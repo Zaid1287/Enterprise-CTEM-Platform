@@ -266,7 +266,11 @@ router.get("/threat-intel/actors/:id", requireAuth, async (req: AuthenticatedReq
     db.select().from(tiMalwareTable).where(sql`${actorId}::text = ANY(actor_ids)`),
   ]);
   if (!actor) { res.status(404).json({ error: "Actor not found" }); return; }
-  res.json({ ...actor, ttps, campaigns, malware });
+  // Infrastructure IOCs: IOCs that reference this actor by name in their threat_actors array
+  const iocs = actor.name
+    ? await db.select().from(tiIocsTable).where(sql`${actor.name} = ANY(${tiIocsTable.threatActors})`).limit(100)
+    : [];
+  res.json({ ...actor, ttps, campaigns, malware, iocs });
 });
 
 router.post("/threat-intel/actors", requireAuth, async (req: AuthenticatedRequest, res) => {

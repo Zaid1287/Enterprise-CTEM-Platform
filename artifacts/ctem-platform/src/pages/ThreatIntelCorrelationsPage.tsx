@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity, RefreshCw, Loader2, Link2, ChevronDown, ChevronUp,
@@ -38,24 +38,35 @@ function AiExplanation({ correlation }: { correlation: any }) {
 
   const getExplanation = useCallback(async () => {
     setLoading(true); setError(null);
+    const token = sessionStorage.getItem("ctem_token") ?? "";
+    let accumulated = "";
     try {
-      const res = await apiFetch<{ explanation?: string; error?: string }>(
-        `${BASE}/api/ai/explain-finding`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            findingId: correlation.findingId,
-            context: {
-              correlatedActors: (correlation.matchedActors as any[])?.map((a: any) => a.name),
-              exploitationStatus: correlation.exploitationStatus,
-              threatScore: correlation.threatScore,
-              correlationBasis: correlation.correlationBasis,
-            },
-          }),
+      const resp = await fetch(`${BASE}/api/ai/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "explain-ti-correlation", findingId: correlation.findingId }),
+      });
+      if (!resp.ok) throw new Error("AI service error");
+      if (!resp.body) throw new Error("No stream");
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n"); buf = parts.pop() ?? "";
+        for (const line of parts) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.noKey) { setExplanation("AI service unavailable — configure OPENAI_API_KEY to enable."); return; }
+            if (d.text) { accumulated += d.text; setExplanation(accumulated); }
+            if (d.done) break;
+          } catch { /* ignore malformed SSE frames */ }
         }
-      );
-      setExplanation(res.explanation ?? res.error ?? "No explanation available.");
+      }
+      if (!accumulated) setExplanation("No explanation available.");
     } catch {
       setError("AI service unavailable — configure OPENAI_API_KEY to enable.");
     } finally {
@@ -324,9 +335,8 @@ export default function ThreatIntelCorrelationsPage() {
                   </tr>
                 ))
               : filtered.map((c: any) => (
-                  <>
+                  <React.Fragment key={c.id}>
                     <tr
-                      key={c.id}
                       className={cn(
                         "border-b border-border/30 transition-colors",
                         expandedId === c.id && "bg-muted/10",
@@ -384,7 +394,7 @@ export default function ThreatIntelCorrelationsPage() {
                       </td>
                     </tr>
                     {expandedId === c.id && <ExpandedRow key={`exp-${c.id}`} c={c} />}
-                  </>
+                  </React.Fragment>
                 ))
             }
           </tbody>
