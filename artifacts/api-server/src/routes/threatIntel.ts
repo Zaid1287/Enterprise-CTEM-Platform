@@ -267,10 +267,22 @@ router.get("/threat-intel/actors/:id", requireAuth, async (req: AuthenticatedReq
 
 router.post("/threat-intel/actors", requireAuth, async (req: AuthenticatedRequest, res) => {
   if (!requireAdminOrSA(req, res)) return;
-  const { name, aliases, country, motivation, description, targetIndustries, targetCountries } = req.body;
+  const { name, aliases, country, motivation, description, targetIndustries, targetCountries, source } = req.body;
   if (!name) { res.status(400).json({ error: "name required" }); return; }
-  const [row] = await db.insert(tiThreatActorsTable).values({ name, aliases: aliases ?? [], country, motivation, description, targetIndustries: targetIndustries ?? [], targetCountries: targetCountries ?? [], source: "manual" }).returning();
-  res.status(201).json(row);
+  try {
+    const [row] = await db.insert(tiThreatActorsTable).values({
+      name, aliases: aliases ?? [], country, motivation, description,
+      targetIndustries: targetIndustries ?? [], targetCountries: targetCountries ?? [],
+      source: source ?? "manual",
+    }).returning();
+    res.status(201).json({ actor: row });
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      res.status(409).json({ error: `An actor named "${name}" already exists` });
+    } else {
+      throw err;
+    }
+  }
 });
 
 router.patch("/threat-intel/actors/:id", requireAuth, async (req: AuthenticatedRequest, res) => {

@@ -129,7 +129,7 @@ function IocDetailSheet({ ioc, onClose }: { ioc: any; onClose: () => void }) {
           </div>
         )}
 
-        {(ioc.tags as string[] | undefined)?.length > 0 && (
+        {((ioc.tags as string[] | undefined) ?? []).length > 0 && (
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-1.5">Tags</p>
             <div className="flex flex-wrap gap-1">
@@ -140,7 +140,7 @@ function IocDetailSheet({ ioc, onClose }: { ioc: any; onClose: () => void }) {
           </div>
         )}
 
-        {(ioc.relatedActors as any[] | undefined)?.length > 0 && (
+        {((ioc.relatedActors as any[] | undefined) ?? []).length > 0 && (
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-1.5">Related Threat Actors</p>
             <div className="flex flex-wrap gap-1.5">

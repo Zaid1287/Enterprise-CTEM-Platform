@@ -72,7 +72,7 @@ export default function ThreatIntelActorDetailPage() {
         </div>
         <div>
           <h1 className="text-xl font-bold">{a.name}</h1>
-          {(a.aliases as string[] | undefined)?.length > 0 && (
+          {((a.aliases as string[] | undefined) ?? []).length > 0 && (
             <p className="text-xs text-muted-foreground">aka {(a.aliases as string[]).join(", ")}</p>
           )}
         </div>
@@ -151,7 +151,7 @@ export default function ThreatIntelActorDetailPage() {
             {/* Targeting */}
             <div className="bg-card border border-border rounded-xl p-4 space-y-3 lg:col-span-2">
               <h2 className="text-sm font-semibold flex items-center gap-2"><Target className="w-4 h-4 text-orange-400" />Targeting</h2>
-              {(a.targetIndustries as string[] | undefined)?.length > 0 && (
+              {((a.targetIndustries as string[] | undefined) ?? []).length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1.5">Industries</p>
                   <div className="flex flex-wrap gap-1.5">
@@ -161,7 +161,7 @@ export default function ThreatIntelActorDetailPage() {
                   </div>
                 </div>
               )}
-              {(a.targetCountries as string[] | undefined)?.length > 0 && (
+              {((a.targetCountries as string[] | undefined) ?? []).length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1.5">Countries</p>
                   <div className="flex flex-wrap gap-1.5">
@@ -261,7 +261,7 @@ export default function ThreatIntelActorDetailPage() {
                     </span>
                   </div>
                   {m.description && <p className="text-[11px] text-muted-foreground line-clamp-3">{m.description}</p>}
-                  {(m.aliases as string[] | undefined)?.length > 0 && (
+                  {((m.aliases as string[] | undefined) ?? []).length > 0 && (
                     <p className="text-[10px] text-muted-foreground">aka: {(m.aliases as string[]).join(", ")}</p>
                   )}
                   <div className="flex items-center justify-between text-[10px]">

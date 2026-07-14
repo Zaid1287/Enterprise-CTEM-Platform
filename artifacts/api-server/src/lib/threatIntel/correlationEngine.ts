@@ -422,20 +422,21 @@ export async function runThreatIntelCorrelation(
       });
     }
 
-    // Delete stale rows for ALL processed findings (even those that lost matches)
-    // so re-runs produce a clean, accurate result set.
-    const allProcessedIds = findings.map((f) => f.id);
-    for (let i = 0; i < allProcessedIds.length; i += 500) {
-      await db.delete(tiAssetCorrelationsTable).where(
-        and(
-          eq(tiAssetCorrelationsTable.tenantId, tenantId),
-          inArray(tiAssetCorrelationsTable.findingId, allProcessedIds.slice(i, i + 500)),
-        ),
-      );
-    }
-    // Insert only findings that have genuine TI matches
-    for (let i = 0; i < toUpsert.length; i += 100) {
-      await db.insert(tiAssetCorrelationsTable).values(toUpsert.slice(i, i + 100));
+    // Delete + re-insert only for findings that have fresh TI matches this run.
+    // This preserves manually-added correlation rows for findings the engine did not match.
+    const upsertIds = toUpsert.map((r) => r.findingId);
+    if (upsertIds.length > 0) {
+      for (let i = 0; i < upsertIds.length; i += 500) {
+        await db.delete(tiAssetCorrelationsTable).where(
+          and(
+            eq(tiAssetCorrelationsTable.tenantId, tenantId),
+            inArray(tiAssetCorrelationsTable.findingId, upsertIds.slice(i, i + 500)),
+          ),
+        );
+      }
+      for (let i = 0; i < toUpsert.length; i += 100) {
+        await db.insert(tiAssetCorrelationsTable).values(toUpsert.slice(i, i + 100));
+      }
     }
 
     const durationMs = Date.now() - startTs;

@@ -263,9 +263,14 @@ function ThreatIntelBootstrap() {
 
 function ThreatIntelRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, threatIntelEnabled, threatIntelLoaded, user } = useAuth();
+  const [location] = useLocation();
   if (!isAuthenticated) return <Redirect to="/login" />;
   if (!threatIntelLoaded) return <AppLayout><PageLoader /></AppLayout>;
   const isPrivileged = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
+  // Client role: only /threat-intel/correlations is accessible — redirect everything else
+  if (user?.role === "client" && !location.startsWith("/threat-intel/correlations")) {
+    return <Redirect to="/threat-intel/correlations" />;
+  }
   if (!threatIntelEnabled && !isPrivileged) {
     return (
       <AppLayout>
