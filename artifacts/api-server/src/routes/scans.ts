@@ -141,7 +141,7 @@ router.get("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promis
     if (allClientAssetIds.size === 0) { res.json([]); return; }
 
     // Only search tenant IDs that the client's assets actually belong to — no full-table scan
-    const relevantTenantIds = [...new Set(allClientAssets.map(a => a.tenantId))];
+    const relevantTenantIds = [...new Set(allClientAssets.map(a => a.tenantId).filter((t): t is number => t !== null))];
     const filters: any[] = [inArray(scansTable.tenantId, relevantTenantIds)];
     if (q.success && q.data.status) filters.push(eq(scansTable.status, q.data.status) as any);
     const allScans = await db.select().from(scansTable).where(and(...filters))

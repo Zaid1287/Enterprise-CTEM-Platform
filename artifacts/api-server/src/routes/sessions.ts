@@ -36,7 +36,7 @@ router.get("/auth/sessions", requireAuth, async (req: AuthenticatedRequest, res)
 
 router.delete("/auth/sessions/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const userId = req.user!.userId;
-  const sessionId = parseInt(req.params.id, 10);
+  const sessionId = parseInt(req.params.id as string, 10);
 
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid session id" });

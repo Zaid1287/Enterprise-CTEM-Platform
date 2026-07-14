@@ -1790,8 +1790,8 @@ router.post("/tprm/vendors/:id/compliance/:docId/ai-parse", requireAuth, require
     const rawText = Buffer.from(doc.fileData, "base64").toString("utf-8", 0, 16000).slice(0, 8000);
     const prompt = `You are a compliance analyst. Extract key information from this document text and return ONLY a JSON object with these fields: { "documentType": string, "auditor": string|null, "auditPeriodStart": "YYYY-MM-DD"|null, "auditPeriodEnd": "YYYY-MM-DD"|null, "expiresAt": "YYYY-MM-DD"|null, "coverageScope": string|null, "summary": string }. Document text:\n\n${rawText}`;
 
-    const result = await llmComplete([{ role: "user", content: prompt }], { temperature: 0, maxTokens: 500 });
-    const jsonMatch = result?.match(/\{[\s\S]+\}/);
+    const result = await llmComplete([{ role: "user", content: prompt }], { maxTokens: 500 });
+    const jsonMatch = result?.text?.match(/\{[\s\S]+\}/);
     if (!jsonMatch) { res.status(500).json({ error: "AI could not parse document" }); return; }
     const parsed = JSON.parse(jsonMatch[0]);
 

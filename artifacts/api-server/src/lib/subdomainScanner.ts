@@ -209,7 +209,7 @@ async function queryCrtSh(domain: string): Promise<string[]> {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
     }, { intensity: "passive" });
     if (!res.ok) return [];
-    const data: any[] = await res.json().catch(() => []);
+    const data: any[] = await res.json().catch(() => []) as any[];
     const seen = new Set<string>();
     for (const entry of data) {
       for (const name of (entry.name_value ?? "").split("\n")) {
@@ -229,7 +229,7 @@ async function queryAlienVault(domain: string): Promise<string[]> {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
     }, { intensity: "passive" });
     if (!res.ok) return [];
-    const data = await res.json().catch(() => ({}));
+    const data: any = await res.json().catch(() => ({}));
     const subs = new Set<string>();
     for (const entry of data?.passive_dns ?? []) {
       const h = (entry.hostname ?? "").toLowerCase();
@@ -240,7 +240,7 @@ async function queryAlienVault(domain: string): Promise<string[]> {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
     }, { intensity: "passive" }).catch(() => null);
     if (res2?.ok) {
-      const data2 = await res2.json().catch(() => ({}));
+      const data2: any = await res2.json().catch(() => ({}));
       for (const entry of data2?.url_list ?? []) {
         const url = entry?.url ?? "";
         try {
@@ -262,7 +262,7 @@ async function queryWayback(domain: string): Promise<string[]> {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
     }, { intensity: "passive" });
     if (!res.ok) return [];
-    const rows: any[] = await res.json().catch(() => []);
+    const rows: any[] = await res.json().catch(() => []) as any[];
     // rows[0] is header ["original"], skip it
     const urls = rows.slice(1).map(r => r[0] ?? "").filter(Boolean);
     return extractSubdomainsFromUrls(urls, domain);
@@ -277,7 +277,7 @@ async function queryUrlScan(domain: string): Promise<string[]> {
       headers: { "User-Agent": "Mozilla/5.0 CTEM-Scanner/1.0" },
     }, { intensity: "passive" });
     if (!res.ok) return [];
-    const data = await res.json().catch(() => ({}));
+    const data: any = await res.json().catch(() => ({}));
     const subs = new Set<string>();
     for (const result of data?.results ?? []) {
       const h = (result?.page?.domain ?? "").toLowerCase();
@@ -317,7 +317,7 @@ async function queryCommonCrawl(domain: string): Promise<string[]> {
     // Get the latest CC index
     const infoRes = await orchestratedFetch("https://index.commoncrawl.org/collinfo.json", {}, { intensity: "passive" });
     if (!infoRes.ok) return [];
-    const indices: any[] = await infoRes.json().catch(() => []);
+    const indices: any[] = await infoRes.json().catch(() => []) as any[];
     const latest = indices[0]?.id ?? "CC-MAIN-2024-51";
 
     const ccUrl = `https://index.commoncrawl.org/${latest}/cdx/search?url=*.${domain}&output=json&fl=url&limit=2000`;

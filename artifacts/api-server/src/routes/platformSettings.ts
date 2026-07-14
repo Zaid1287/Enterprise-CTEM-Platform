@@ -158,7 +158,7 @@ router.get("/platform/social-source-status", requireAuth, async (req: Authentica
 
 router.get("/platform/settings/raw/:key", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (!isSuperAdmin(req)) { res.status(403).json({ error: "Super admin only" }); return; }
-  const [row] = await db.select().from(platformSettingsTable).where(eq(platformSettingsTable.key, req.params.key));
+  const [row] = await db.select().from(platformSettingsTable).where(eq(platformSettingsTable.key, req.params.key as string));
   res.json({ value: row?.value ?? "" });
 });
 

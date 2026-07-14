@@ -8,7 +8,7 @@ const router = Router();
 
 // ── List suppressions ────────────────────────────────────────────────────────
 router.get("/suppressions", requireAuth, async (req, res) => {
-  const { tenantId } = (req as AuthenticatedRequest).user;
+  const { tenantId } = (req as AuthenticatedRequest).user!;
   try {
     const rows = await db
       .select({
@@ -36,8 +36,8 @@ router.get("/suppressions", requireAuth, async (req, res) => {
 
 // ── Delete a suppression ─────────────────────────────────────────────────────
 router.delete("/suppressions/:id", requireAuth, async (req, res) => {
-  const { tenantId, userId } = (req as AuthenticatedRequest).user;
-  const id = parseInt(req.params.id, 10);
+  const { tenantId, userId } = (req as AuthenticatedRequest).user!;
+  const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const existing = await db
@@ -49,7 +49,7 @@ router.delete("/suppressions/:id", requireAuth, async (req, res) => {
   if (!existing) { res.status(404).json({ error: "Not found" }); return; }
 
   await db.delete(scanSuppressionsTable).where(eq(scanSuppressionsTable.id, id));
-  await logAudit(db, { tenantId, userId: userId as any, action: "suppression.delete", resourceType: "scan_suppression", resourceId: String(id), ip: req.ip ?? "" });
+  await logAudit((req as AuthenticatedRequest).user!, "suppression.delete", "scan_suppression", id, undefined, req.ip ?? "");
   res.json({ success: true });
 });
 

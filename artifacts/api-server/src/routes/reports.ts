@@ -150,7 +150,7 @@ router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: Authenti
   if (req.user!.role === "vendor" || req.user!.role === "employee" || req.user!.role === "third_party") {
     res.status(403).json({ error: "Forbidden" }); return;
   }
-  const assetId  = parseInt(req.params.assetId, 10);
+  const assetId  = parseInt(req.params.assetId as string, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
   const pdfAssetRole = req.user!.role;
   let pdfAssetWhere;
@@ -169,14 +169,12 @@ router.get("/reports/pdf-data/asset/:assetId", requireAuth, async (req: Authenti
     res.status(404).json({ error: "Asset not found" }); return;
   }
 
-  const tenantId = asset.tenantId; // use asset's actual tenantId for data queries
+  const tenantId = asset.tenantId!; // use asset's actual tenantId for data queries
 
   const [findings, technologies, riskRows] = await Promise.all([
     db.select().from(findingsTable)
       .where(and(eq(findingsTable.assetId, assetId), eq(findingsTable.tenantId, tenantId)))
-      .orderBy(
-        desc(findingsTable.severity === "critical" ? findingsTable.id : findingsTable.id),
-      ),
+      .orderBy(desc(findingsTable.id)),
     db.select().from(technologyDetectionsTable)
       .where(eq(technologyDetectionsTable.assetId, assetId)),
     db.select().from(riskScoresTable)
@@ -244,7 +242,7 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
   if (req.user!.role === "vendor" || req.user!.role === "employee" || req.user!.role === "third_party") {
     res.status(403).json({ error: "Forbidden" }); return;
   }
-  const scanId   = parseInt(req.params.scanId, 10);
+  const scanId   = parseInt(req.params.scanId as string, 10);
   if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scanId" }); return; }
   const btPdfRole = req.user!.role;
   let btPdfWhere;
@@ -419,7 +417,7 @@ router.get("/reports/pdf-data/report/:reportId", requireAuth, async (req: Authen
   if (req.user!.role === "vendor" || req.user!.role === "employee" || req.user!.role === "third_party") {
     res.status(403).json({ error: "Forbidden" }); return;
   }
-  const reportId = parseInt(req.params.reportId, 10);
+  const reportId = parseInt(req.params.reportId as string, 10);
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
   const pdfReportRole = req.user!.role;
   let pdfReportWhere;
@@ -675,7 +673,7 @@ router.get("/reports/pdf-data/assets", requireAuth, async (req: AuthenticatedReq
 });
 
 router.get("/reports/:reportId/download", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const reportId = parseInt(req.params.reportId, 10);
+  const reportId = parseInt(req.params.reportId as string, 10);
   if (isNaN(reportId)) { res.status(400).json({ error: "Invalid reportId" }); return; }
 
   const dlRole = req.user!.role;

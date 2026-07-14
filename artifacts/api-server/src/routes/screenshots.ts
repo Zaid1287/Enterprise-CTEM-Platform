@@ -9,7 +9,7 @@ router.use(denyExternalMembers);
 
 // GET /assets/:assetId/screenshots
 router.get("/assets/:assetId/screenshots", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const assetId  = parseInt(req.params.assetId, 10);
+  const assetId  = parseInt(req.params.assetId as string, 10);
   const tenantId = req.user!.tenantId;
 
   const asset = await db.select({ id: assetsTable.id })
@@ -25,7 +25,7 @@ router.get("/assets/:assetId/screenshots", requireAuth, async (req: Authenticate
 
 // POST /assets/:assetId/screenshot-scan
 router.post("/assets/:assetId/screenshot-scan", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const assetId  = parseInt(req.params.assetId, 10);
+  const assetId  = parseInt(req.params.assetId as string, 10);
   const tenantId = req.user!.tenantId;
 
   const asset = await db.select().from(assetsTable)

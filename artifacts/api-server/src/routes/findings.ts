@@ -334,6 +334,7 @@ router.get("/findings/false-positives", requireAuth, async (req: AuthenticatedRe
       id: usersTable.id,
       firstName: usersTable.firstName,
       lastName:  usersTable.lastName,
+      email:     usersTable.email,
       tenantId:  usersTable.tenantId,
     }).from(usersTable).where(inArray(usersTable.id, [...userIdSet]));
     uRows.forEach(u => {
@@ -804,8 +805,8 @@ router.post("/findings/:findingId/comments", requireAuth, async (req: Authentica
 // Effect: marks finding as false_positive with full FP tracking + creates a suppression rule.
 // SA/Admin can suppress findings across all accessible tenants (cross-tenant).
 router.post("/findings/:findingId/suppress", requireAuth, async (req, res) => {
-  const { tenantId, userId, role } = (req as AuthenticatedRequest).user;
-  const findingId = parseInt(req.params.findingId, 10);
+  const { tenantId, userId, role } = (req as AuthenticatedRequest).user!;
+  const findingId = parseInt(req.params.findingId as string, 10);
   if (isNaN(findingId)) { res.status(400).json({ error: "Invalid findingId" }); return; }
 
   // Cross-tenant: SA/admin can suppress findings in any accessible tenant
@@ -869,15 +870,7 @@ router.post("/findings/:findingId/suppress", requireAuth, async (req, res) => {
     updatedAt:           now,
   }).where(eq(findingsTable.id, findingId)).returning();
 
-  await logAudit(db, {
-    tenantId: finding.tenantId,
-    userId: userId as any,
-    action: "finding.suppress",
-    resourceType: "finding",
-    resourceId: String(findingId),
-    metadata: { suppressionId, matchType, pattern, applyToAsset },
-    ip: req.ip ?? "",
-  });
+  await logAudit((req as AuthenticatedRequest).user!, "finding.suppress", "finding", findingId, `suppressionId=${suppressionId} matchType=${matchType}`, req.ip ?? "");
 
   // Recalculate risk score for the asset (non-blocking)
   if (updated?.assetId) {

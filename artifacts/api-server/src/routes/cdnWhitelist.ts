@@ -55,7 +55,7 @@ router.post("/cdn-whitelist", requireAuth, requireRole("super_admin"), async (re
 
 // ── PATCH /cdn-whitelist/:id ──────────────────────────────────────────────────
 router.patch("/cdn-whitelist/:id", requireAuth, requireRole("super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const existing = await db.select().from(cdnWhitelistTable).where(eq(cdnWhitelistTable.id, id));
@@ -90,7 +90,7 @@ router.patch("/cdn-whitelist/:id", requireAuth, requireRole("super_admin"), asyn
 
 // ── DELETE /cdn-whitelist/:id ─────────────────────────────────────────────────
 router.delete("/cdn-whitelist/:id", requireAuth, requireRole("super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const existing = await db.select().from(cdnWhitelistTable).where(eq(cdnWhitelistTable.id, id));

@@ -148,7 +148,7 @@ router.post("/invitations", requireAuth, async (req: AuthenticatedRequest, res):
 });
 
 router.patch("/invitations/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   const { status } = req.body;
 
   if (!["pending", "accepted", "rejected"].includes(status)) {
@@ -166,7 +166,7 @@ router.patch("/invitations/:id", requireAuth, async (req: AuthenticatedRequest, 
 });
 
 router.delete("/invitations/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   const [deleted] = await db.delete(invitationsTable)
     .where(and(eq(invitationsTable.id, id), eq(invitationsTable.tenantId, req.user!.tenantId)))
     .returning();

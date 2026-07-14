@@ -275,8 +275,8 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   );
   const openAlertsCount = _dedupedAlerts.filter(a => !a.isRead).length;
 
-  const platformRiskScore = allRiskScores.length > 0
-    ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
+  const platformRiskScore = (allRiskScores as any[]).length > 0
+    ? Math.round((allRiskScores as any[]).reduce((s: number, r: any) => s + r.score, 0) / (allRiskScores as any[]).length)
     : 0;
 
   const CLOSED_STATUSES = ["mitigated", "accepted_risk", "false_positive"];
@@ -346,7 +346,7 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
       id: a.id,
       name: a.name,
       type: a.type,
-      tenantName: tenantNameMap.get(a.tenantId) ?? "Unknown",
+      tenantName: tenantNameMap.get(a.tenantId ?? 0) ?? "Unknown",
       riskScore: riskScoreMap.get(a.id) ?? 0,
       riskLevel: a.riskLevel ?? "low",
       criticalCount: allFindings.filter(f => f.assetId === a.id && f.severity === "critical").length,
@@ -672,7 +672,7 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
 
   // ── Takedown requests ────────────────────────────────────────────────────────
   const takedownRequests = allTakedowns.map(t => ({
-    id: t.id, domain: t.domain, status: t.status,
+    id: t.id, domain: (t as any).domain, status: t.status,
     reason: (t as any).reason ?? null,
     createdAt: t.createdAt?.toISOString() ?? new Date().toISOString(),
     clientName: clients.find(c => c.id === t.tenantId)?.name ?? "Unknown",
@@ -720,7 +720,7 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
     .filter(f => f.status === "false_positive" || (f.falsePositiveStatus && f.falsePositiveStatus !== "none"))
     .map(f => ({
       id: f.id, title: f.title, severity: f.severity, status: f.status,
-      cveId: f.cveId, falsePositiveStatus: f.falsePositiveStatus ?? (f.status === "false_positive" ? "confirmed" : "none"),
+      cveId: f.cve, falsePositiveStatus: f.falsePositiveStatus ?? (f.status === "false_positive" ? "confirmed" : "none"),
       assetId: f.assetId, assetName: rawAssets.find(a => a.id === f.assetId)?.name ?? "Unknown",
       updatedAt: f.updatedAt.toISOString(),
     }));
@@ -780,15 +780,15 @@ router.get("/dashboard/client-overview", requireAuth, async (req: AuthenticatedR
   const alertsWhereFinal = isClient && assignedAssetIds.length > 0
     ? or(
         inArray(alertsTable.relatedAssetId, assignedAssetIds),
-        and(inArray(alertsTable.tenantId, clientScanTenantIds!), isNull(alertsTable.relatedAssetId), isNull(alertsTable.relatedFindingId)),
+        and(inArray(alertsTable.tenantId, clientScanTenantIds!.filter((t): t is number => t !== null)), isNull(alertsTable.relatedAssetId), isNull(alertsTable.relatedFindingId)),
       )
     : alertsWhere ?? undefined;
 
   const [findings, alerts, allScans, takedowns] = await Promise.all([
-    findingsWhere ? db.select().from(findingsTable).where(findingsWhere) : Promise.resolve([]),
-    alertsWhereFinal ? db.select().from(alertsTable).where(alertsWhereFinal as any) : Promise.resolve([]),
+    findingsWhere ? db.select().from(findingsTable).where(findingsWhere) : Promise.resolve([] as typeof findingsTable.$inferSelect[]),
+    alertsWhereFinal ? db.select().from(alertsTable).where(alertsWhereFinal as any) : Promise.resolve([] as typeof alertsTable.$inferSelect[]),
     clientScanTenantIds
-      ? db.select().from(scansTable).where(inArray(scansTable.tenantId, clientScanTenantIds)).orderBy(desc(scansTable.createdAt))
+      ? db.select().from(scansTable).where(inArray(scansTable.tenantId, clientScanTenantIds.filter((t): t is number => t !== null))).orderBy(desc(scansTable.createdAt))
       : db.select().from(scansTable).where(eq(scansTable.tenantId, tid)),
     db.select().from(takedownRequestsTable).where(eq(takedownRequestsTable.tenantId, tid)),
   ]);
@@ -1044,7 +1044,7 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   const [allRiskScores, tenantAmAssignments, allTenantUsers] = await Promise.all([
     assetIds.length > 0
       ? db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
-      : Promise.resolve([]),
+      : Promise.resolve([] as typeof riskScoresTable.$inferSelect[]),
     db.select().from(accountManagerClientsTable)
       .where(eq(accountManagerClientsTable.clientTenantId, tid)),
     db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.tenantId, tid)),
@@ -1067,22 +1067,22 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   const [allAmAssignmentsAdmin, ] = await Promise.all([
     allAmUserIds.length > 0
       ? db.select().from(accountManagerClientsTable).where(inArray(accountManagerClientsTable.accountManagerUserId, allAmUserIds))
-      : Promise.resolve([]),
+      : Promise.resolve([] as typeof accountManagerClientsTable.$inferSelect[]),
   ]);
 
   const assignedClientTenantIds = [...new Set(allAmAssignmentsAdmin.map(a => a.clientTenantId))];
   const [assignedClientTenants, assignedClientAssets, assignedClientFindings] = await Promise.all([
     assignedClientTenantIds.length > 0
       ? db.select().from(tenantsTable).where(inArray(tenantsTable.id, assignedClientTenantIds))
-      : Promise.resolve([]),
+      : Promise.resolve([] as typeof tenantsTable.$inferSelect[]),
     assignedClientTenantIds.length > 0
       ? db.select({ id: assetsTable.id, name: assetsTable.name, type: assetsTable.type, riskLevel: assetsTable.riskLevel, tenantId: assetsTable.tenantId })
           .from(assetsTable).where(inArray(assetsTable.tenantId, assignedClientTenantIds))
-      : Promise.resolve([]),
+      : Promise.resolve([] as Array<{ id: number; name: string; type: string; riskLevel: string | null; tenantId: number | null }>),
     assignedClientTenantIds.length > 0
       ? db.select({ tenantId: findingsTable.tenantId, severity: findingsTable.severity, status: findingsTable.status })
           .from(findingsTable).where(inArray(findingsTable.tenantId, assignedClientTenantIds))
-      : Promise.resolve([]),
+      : Promise.resolve([] as Array<{ tenantId: number | null; severity: string; status: string }>),
   ]);
 
   const assignedClientAssetIdList = assignedClientAssets.map(a => a.id);
@@ -1118,8 +1118,8 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  const riskScore = allRiskScores.length > 0
-    ? Math.round(allRiskScores.reduce((s, r) => s + r.score, 0) / allRiskScores.length)
+  const riskScore = (allRiskScores as any[]).length > 0
+    ? Math.round((allRiskScores as any[]).reduce((s: number, r: any) => s + r.score, 0) / (allRiskScores as any[]).length)
     : 0;
 
   const clientRiskRankings = assignedClientTenants.map(t => {
@@ -1196,7 +1196,7 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
       };
     });
 
-  const recentAlerts = allAlerts.filter(a => !a.isRead).slice(0, 8).map(a => ({
+  const recentAlerts = (allAlerts as any[]).filter((a: any) => !a.isRead).slice(0, 8).map((a: any) => ({
     id: a.id, title: a.title, severity: a.severity, isRead: a.isRead,
     type: a.type, status: a.status,
     createdAt: a.createdAt.toISOString(),

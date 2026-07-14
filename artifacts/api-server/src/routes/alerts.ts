@@ -91,7 +91,7 @@ router.post("/alerts/rules", requireAuth, async (req: AuthenticatedRequest, res)
 
 // ── Test a specific alert rule ────────────────────────────────────────────────
 router.post("/alerts/rules/:ruleId/test", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const ruleId = parseInt(req.params.ruleId, 10);
+  const ruleId = parseInt(req.params.ruleId as string, 10);
   if (isNaN(ruleId)) { res.status(400).json({ error: "Invalid ruleId" }); return; }
 
   const [rule] = await db.select().from(alertRulesTable)
@@ -232,7 +232,7 @@ router.put("/notification-channels", requireAuth, async (req: AuthenticatedReque
 
 // ── Test a specific notification channel from org settings ────────────────────
 router.post("/notification-channels/:channel/test", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { channel } = req.params;
+  const channel = req.params.channel as string;
   const { destination } = req.body as { destination?: string };
   const allowed = ["email", "slack", "discord", "telegram", "webhook"];
   if (!allowed.includes(channel)) {
@@ -305,7 +305,7 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
     //  3. Scan-completion / global alerts (no asset/finding) in the same tenant scope
     const conditions: any[] = [
       inArray(alertsTable.relatedAssetId, assignedIds),
-      and(inArray(alertsTable.tenantId, assetTenantIds), isNull(alertsTable.relatedAssetId), isNull(alertsTable.relatedFindingId)),
+      and(inArray(alertsTable.tenantId, assetTenantIds.filter((t): t is number => t !== null)), isNull(alertsTable.relatedAssetId), isNull(alertsTable.relatedFindingId)),
     ];
     if (assignedFindingIds.length > 0) {
       conditions.push(inArray(alertsTable.relatedFindingId, assignedFindingIds));
@@ -363,7 +363,7 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
     result = rows.map(r => ({ ...r, tenantCount: 1 }));
   }
 
-  res.json(result.map(toAlertResponse));
+  res.json(result.map((a: any) => toAlertResponse(a)));
 });
 
 router.get("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -402,7 +402,7 @@ router.patch("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedRequ
 });
 
 router.delete("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const ruleId = parseInt(req.params.ruleId, 10);
+  const ruleId = parseInt(req.params.ruleId as string, 10);
   if (isNaN(ruleId)) { res.status(400).json({ error: "Invalid ruleId" }); return; }
   const [deleted] = await db.delete(alertRulesTable)
     .where(and(eq(alertRulesTable.id, ruleId), eq(alertRulesTable.tenantId, req.user!.tenantId)))
@@ -412,7 +412,7 @@ router.delete("/alerts/rules/:ruleId", requireAuth, async (req: AuthenticatedReq
 });
 
 router.delete("/alerts/:alertId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const alertId = parseInt(req.params.alertId, 10);
+  const alertId = parseInt(req.params.alertId as string, 10);
   if (isNaN(alertId)) { res.status(400).json({ error: "Invalid alertId" }); return; }
   const delRole = req.user!.role;
 

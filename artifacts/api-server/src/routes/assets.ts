@@ -715,7 +715,7 @@ router.post("/assets/:assetId/verify/manual", requireAuth, async (req: Authentic
     res.status(403).json({ error: "Only administrators can manually verify assets." });
     return;
   }
-  const assetId = parseInt(req.params.assetId, 10);
+  const assetId = parseInt(req.params.assetId as string, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid asset ID" }); return; }
 
   const [asset] = await db.select().from(assetsTable)
@@ -752,7 +752,7 @@ router.post("/assets/:assetId/verify/manual", requireAuth, async (req: Authentic
 
 // List stored technology detections for an asset
 router.get("/assets/:assetId/technologies", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const assetId = parseInt(req.params.assetId, 10);
+  const assetId = parseInt(req.params.assetId as string, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
   const rows = await db.select().from(technologyDetectionsTable)
@@ -773,7 +773,7 @@ router.get("/assets/:assetId/technologies", requireAuth, async (req: Authenticat
 
 // Run real HTTP technology fingerprinting and store results
 router.post("/assets/:assetId/tech-scan", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const assetId = parseInt(req.params.assetId, 10);
+  const assetId = parseInt(req.params.assetId as string, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
   const [asset] = await db.select().from(assetsTable)
@@ -834,7 +834,7 @@ router.post("/assets/:assetId/tech-scan", requireAuth, async (req: Authenticated
 
 // Upload evidence files for an asset
 router.post("/assets/:assetId/evidence", requireAuth, upload.array("files", 10), async (req: AuthenticatedRequest, res): Promise<void> => {
-  const assetId = parseInt(req.params.assetId, 10);
+  const assetId = parseInt(req.params.assetId as string, 10);
   if (!req.files || (req.files as Express.Multer.File[]).length === 0) {
     res.status(400).json({ error: "No files uploaded" }); return;
   }
@@ -850,7 +850,7 @@ router.post("/assets/:assetId/evidence", requireAuth, upload.array("files", 10),
 
 // Serve evidence files
 router.get("/assets/:assetId/evidence/:filename", requireAuth, (req: AuthenticatedRequest, res): void => {
-  const filename = path.basename(req.params.filename);
+  const filename = path.basename(req.params.filename as string);
   const filePath = path.join(EVIDENCE_DIR, filename);
   if (!fs.existsSync(filePath)) { res.status(404).json({ error: "File not found" }); return; }
   res.sendFile(filePath);

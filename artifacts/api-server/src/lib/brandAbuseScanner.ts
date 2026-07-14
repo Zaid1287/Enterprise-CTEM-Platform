@@ -826,7 +826,7 @@ async function checkJailbreakRepos(
     ).catch(() => null);
 
     if (searchRes?.ok) {
-      const searchData = await searchRes.json().catch(() => null);
+      const searchData: any = await searchRes.json().catch(() => null);
       // Response: { packages: [...] } or top-level array
       charizPkgs = searchData?.packages ?? (Array.isArray(searchData) ? searchData : []);
     }

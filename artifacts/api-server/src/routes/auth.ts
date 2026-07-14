@@ -858,7 +858,7 @@ router.get("/auth/access-requests", requireAuth, async (req: AuthenticatedReques
 router.patch("/auth/access-requests/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;
   if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const { status, reviewNotes } = req.body ?? {};
   if (!["pending", "approved", "rejected"].includes(status)) {
@@ -884,7 +884,7 @@ router.post("/auth/plan-upgrade-request", requireAuth, async (req: Authenticated
 
   await db.insert(accessRequestsTable).values({
     requestType: "plan_upgrade",
-    fullName: userRow.fullName ?? userRow.email,
+    fullName: `${userRow.firstName ?? ""} ${userRow.lastName ?? ""}`.trim() || userRow.email,
     companyName: tenantRow?.name ?? "Unknown",
     email: userRow.email,
     planName,
@@ -893,15 +893,7 @@ router.post("/auth/plan-upgrade-request", requireAuth, async (req: Authenticated
     status: "pending",
   });
 
-  await logAudit(db, {
-    tenantId: user.tenantId,
-    userId: user.userId as any,
-    action: "plan_upgrade_requested",
-    resourceType: "tenant",
-    resourceId: String(user.tenantId),
-    metadata: { planName },
-    ip: getClientIp(req),
-  });
+  await logAudit(user, "plan_upgrade_requested", "tenant", user.tenantId, planName, getClientIp(req));
 
   res.status(201).json({ ok: true, message: "Plan upgrade request submitted. An admin will review it shortly." });
 });

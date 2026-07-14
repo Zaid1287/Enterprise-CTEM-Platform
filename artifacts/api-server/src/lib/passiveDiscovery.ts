@@ -46,7 +46,7 @@ export async function runCtLogs(target: string): Promise<DiscoveryModuleResult> 
   try {
     const res = await safeFetch(`https://crt.sh/?q=%.${domain}&output=json`, { timeoutMs: 15000 });
     if (!res || !res.ok) return { source, status: "error", data: null, summary: "crt.sh unreachable" };
-    const raw: Array<{ name_value: string; issuer_name: string; not_before: string; not_after: string; id: number }> = await res.json().catch(() => []);
+    const raw: Array<{ name_value: string; issuer_name: string; not_before: string; not_after: string; id: number }> = await res.json().catch(() => []) as any;
 
     const seen = new Set<string>();
     const certs: Array<{ name: string; issuer: string; notBefore: string; notAfter: string }> = [];
@@ -137,7 +137,7 @@ export async function runAsnLookup(target: string): Promise<DiscoveryModuleResul
 
     // Step 2: BGPView search for ASN by domain/org
     const bgpRes = await safeFetch(`https://api.bgpview.io/search?query_term=${encodeURIComponent(domain)}`, { timeoutMs: 10000 });
-    const bgpData = bgpRes?.ok ? await bgpRes.json().catch(() => null) : null;
+    const bgpData: any = bgpRes?.ok ? await bgpRes.json().catch(() => null) : null;
 
     const asnRecords: AsnRecord[] = [];
     if (bgpData?.data?.asns) {
@@ -154,7 +154,7 @@ export async function runAsnLookup(target: string): Promise<DiscoveryModuleResul
     await Promise.allSettled(ips.map(async ip => {
       const r = await safeFetch(`http://ip-api.com/json/${ip}?fields=status,countryCode,city,org,isp,as`, { timeoutMs: 6000 });
       if (r?.ok) {
-        const d = await r.json().catch(() => null);
+        const d: any = await r.json().catch(() => null);
         if (d?.status === "success") ipAsnMap[ip] = { asn: d.as ?? "", org: d.org ?? "", isp: d.isp ?? "", country: d.countryCode ?? "", city: d.city ?? "" };
       }
     }));
@@ -281,21 +281,21 @@ export async function runGithubExposure(target: string, githubToken?: string | n
     ]);
 
     const codeItems: Array<{ name: string; path: string; url: string; repo: string }> = [];
-    if (codeSearch.status === "fulfilled" && codeSearch.value?.items) {
-      for (const item of codeSearch.value.items.slice(0, 10)) {
+    if (codeSearch.status === "fulfilled" && (codeSearch.value as any)?.items) {
+      for (const item of (codeSearch.value as any).items.slice(0, 10)) {
         codeItems.push({ name: item.name, path: item.path, url: item.html_url, repo: item.repository?.full_name ?? "" });
       }
     }
 
     const repos: Array<{ name: string; stars: number; url: string; description: string; language: string }> = [];
-    if (repoSearch.status === "fulfilled" && repoSearch.value?.items) {
-      for (const item of repoSearch.value.items.slice(0, 10)) {
+    if (repoSearch.status === "fulfilled" && (repoSearch.value as any)?.items) {
+      for (const item of (repoSearch.value as any).items.slice(0, 10)) {
         repos.push({ name: item.full_name, stars: item.stargazers_count, url: item.html_url, description: item.description ?? "", language: item.language ?? "" });
       }
     }
 
     // Try to find org/user with company name
-    const orgData = await ghFetch(`/orgs/${company}`).catch(() => null) ?? await ghFetch(`/users/${company}`).catch(() => null);
+    const orgData: any = await ghFetch(`/orgs/${company}`).catch(() => null) ?? await ghFetch(`/users/${company}`).catch(() => null);
     const orgInfo = orgData ? { login: orgData.login, name: orgData.name, url: orgData.html_url, publicRepos: orgData.public_repos, type: orgData.type } : null;
 
     const totalExposures = codeItems.length + repos.length;
@@ -334,14 +334,14 @@ export async function runShodanSearch(target: string, apiKey: string | null): Pr
     for (const ip of ips.slice(0, 3)) {
       const res = await safeFetch(`https://api.shodan.io/shodan/host/${ip}?key=${apiKey}`, { timeoutMs: 10000 });
       if (res?.ok) {
-        const d = await res.json().catch(() => null);
+        const d: any = await res.json().catch(() => null);
         if (d) hostResults.push({ ip, ports: d.ports ?? [], vulns: Object.keys(d.vulns ?? {}), os: d.os, org: d.org, tags: d.tags ?? [], hostnames: d.hostnames ?? [], country: d.country_name });
       }
     }
 
     // Domain search
     const domainRes = await safeFetch(`https://api.shodan.io/dns/domain/${domain}?key=${apiKey}`, { timeoutMs: 10000 });
-    const domainData = domainRes?.ok ? await domainRes.json().catch(() => null) : null;
+    const domainData: any = domainRes?.ok ? await domainRes.json().catch(() => null) : null;
 
     return {
       source,
@@ -369,7 +369,7 @@ export async function runFofaSearch(target: string, email: string | null, apiKey
   try {
     const res = await safeFetch(url, { timeoutMs: 15000 });
     if (!res?.ok) return { source, status: "error", data: null, summary: `Fofa API returned ${res?.status ?? "no response"}` };
-    const data = await res.json().catch(() => null);
+    const data: any = await res.json().catch(() => null);
     if (data?.error) return { source, status: "error", data: null, summary: `Fofa: ${data.errmsg ?? data.error}` };
 
     const results: Array<Record<string, string>> = [];
@@ -410,10 +410,10 @@ export async function runCensysSearch(target: string, apiId: string | null, apiS
       headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
     });
     if (!res?.ok) {
-      const errText = await res?.text().catch(() => "");
+      const errText = (await res?.text().catch(() => "")) ?? "";
       return { source, status: "error", data: null, summary: `Censys API ${res?.status}: ${errText.slice(0, 200)}` };
     }
-    const data = await res.json().catch(() => null);
+    const data: any = await res.json().catch(() => null);
 
     const hits: Array<{ ip: string; services: unknown[]; location?: unknown; autonomous_system?: unknown }> = data?.result?.hits ?? [];
     const results = hits.slice(0, 50).map(h => ({
@@ -452,7 +452,7 @@ export async function runIntelxSearch(target: string, apiKey: string | null): Pr
       body: JSON.stringify({ term: domain, buckets: [], lookuplevel: 0, maxresults: 50, timeout: 0, datefrom: "", dateto: "", sort: 4, media: 0, terminate: [] }),
     });
     if (!searchRes?.ok) return { source, status: "error", data: null, summary: `IntelX search failed: ${searchRes?.status}` };
-    const searchData = await searchRes.json().catch(() => null);
+    const searchData: any = await searchRes.json().catch(() => null);
     const searchId = searchData?.id;
     if (!searchId) return { source, status: "error", data: null, summary: "IntelX: no search ID returned" };
 
@@ -463,7 +463,7 @@ export async function runIntelxSearch(target: string, apiKey: string | null): Pr
       headers: { "x-key": apiKey },
     });
     if (!resultsRes?.ok) return { source, status: "error", data: null, summary: `IntelX results failed: ${resultsRes?.status}` };
-    const resultsData = await resultsRes.json().catch(() => null);
+    const resultsData: any = await resultsRes.json().catch(() => null);
 
     const records = (resultsData?.records ?? []).slice(0, 50).map((r: any) => ({
       name: r.name ?? "",
@@ -507,11 +507,11 @@ export async function runCriminalIpSearch(target: string, apiKey: string | null)
       }),
     ]);
 
-    const domainData = domainRes.status === "fulfilled" && domainRes.value?.ok
+    const domainData: any = domainRes.status === "fulfilled" && domainRes.value?.ok
       ? await domainRes.value.json().catch(() => null)
       : null;
 
-    const scanData = scanRes.status === "fulfilled" && scanRes.value?.ok
+    const scanData: any = scanRes.status === "fulfilled" && scanRes.value?.ok
       ? await scanRes.value.json().catch(() => null)
       : null;
 

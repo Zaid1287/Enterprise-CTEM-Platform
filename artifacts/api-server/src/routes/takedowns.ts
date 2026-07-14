@@ -100,8 +100,7 @@ router.post("/takedowns", requireAuth, upload.array("evidenceFiles", 10), async 
     status: "submitted",
   }).returning();
 
-  await logAudit(req.user!.userId as any, tid, "takedown_request.create",
-    `Created takedown request: ${title}`, req);
+  await logAudit(req.user!, "takedown_request.create", "takedown_request", undefined, `Created takedown request: ${title}`, req.ip ?? "");
 
   res.status(201).json(row);
 });
@@ -109,7 +108,7 @@ router.post("/takedowns", requireAuth, upload.array("evidenceFiles", 10), async 
 // PATCH /api/takedowns/:id
 router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   const patchRole = req.user!.role;
 
   // Clients cannot mutate takedown requests
@@ -140,8 +139,7 @@ router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, re
 
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
 
-  await logAudit(req.user!.userId as any, tid, "takedown_request.update",
-    `Updated takedown #${id} status: ${status}`, req);
+  await logAudit(req.user!, "takedown_request.update", "takedown_request", id, `Updated takedown #${id} status: ${status}`, req.ip ?? "");
 
   res.json(row);
 });
@@ -149,7 +147,7 @@ router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, re
 // DELETE /api/takedowns/:id
 router.delete("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tid = req.user!.tenantId;
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   const delRole = req.user!.role;
 
   // Clients cannot delete takedown requests
@@ -175,7 +173,7 @@ router.delete("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, r
 
 // Serve uploaded evidence files
 router.get("/takedowns/evidence/:filename", requireAuth, (req: AuthenticatedRequest, res): void => {
-  const filename = path.basename(req.params.filename);
+  const filename = path.basename(req.params.filename as string);
   const filePath = path.join(EVIDENCE_DIR, filename);
   if (!fs.existsSync(filePath)) { res.status(404).json({ error: "File not found" }); return; }
   res.sendFile(filePath);

@@ -271,17 +271,20 @@ async function crawlJsAware(target: string): Promise<string[]> {
         await page.goto(url, { waitUntil: "networkidle2", timeout: 20000 });
 
         // Extract all links from rendered DOM
-        const links = await page.evaluate(() => {
+        const links: string[] = await (page as any).evaluate(() => {
+          // @ts-ignore — runs in browser context
           const els = document.querySelectorAll("a[href], form[action], [data-href]");
-          return Array.from(els).map(el => {
+          return Array.from(els as ArrayLike<any>).map((el: any) => {
             const href = el.getAttribute("href") ?? el.getAttribute("action") ?? el.getAttribute("data-href") ?? "";
+            // @ts-ignore — runs in browser context
             try { return new URL(href, window.location.href).href; } catch { return ""; }
           }).filter(Boolean);
         });
 
         // Extract inline JS content for URL mining
-        const inlineScripts = await page.evaluate(() =>
-          Array.from(document.querySelectorAll("script:not([src])")).map(s => s.textContent ?? "")
+        const inlineScripts: string[] = await (page as any).evaluate(() =>
+          // @ts-ignore — runs in browser context
+          Array.from(document.querySelectorAll("script:not([src])")).map((s: any) => s.textContent ?? "")
         );
         for (const s of inlineScripts) discovered.push(...extractUrlsFromJs(s, url));
 

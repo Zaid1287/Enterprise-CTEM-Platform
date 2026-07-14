@@ -16,7 +16,7 @@ router.use(denyExternalMembers);
 router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const discoveryRole = req.user!.role;
   const callerTenantId = req.user!.tenantId;
-  const assetId = parseInt(req.params.assetId, 10);
+  const assetId = parseInt(req.params.assetId as string, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
   let assetWhere;
@@ -60,7 +60,7 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
   const savedIds: number[] = [];
   for (const result of results) {
     const [row] = await db.insert(discoveryResultsTable).values({
-      tenantId: asset.tenantId,
+      tenantId: asset.tenantId!,
       assetId,
       scanId: req.body?.scanId ?? null,
       source: result.source,
@@ -82,7 +82,7 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
       .split("/")[0]!.split("?")[0]!;
     if (rawDomain && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/.test(rawDomain)) {
       setImmediate(() => {
-        void triggerBrandThreatScan(asset.tenantId, rawDomain).catch((err: unknown) => {
+        void triggerBrandThreatScan(asset.tenantId!, rawDomain).catch((err: unknown) => {
           logger.warn({ err, domain: rawDomain }, "Auto brand-threat trigger from discovery failed");
         });
       });
@@ -95,7 +95,7 @@ router.post("/discovery/run/:assetId", requireAuth, async (req: AuthenticatedReq
 router.get("/discovery/results/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = req.user!.tenantId;
   const resultsRole = req.user!.role;
-  const assetId = parseInt(req.params.assetId, 10);
+  const assetId = parseInt(req.params.assetId as string, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
   let resultsAssetWhere;
@@ -115,7 +115,7 @@ router.get("/discovery/results/:assetId", requireAuth, async (req: Authenticated
 
   let query = db.select().from(discoveryResultsTable)
     .where(and(
-      eq(discoveryResultsTable.tenantId, asset.tenantId),
+      eq(discoveryResultsTable.tenantId, asset.tenantId!),
       eq(discoveryResultsTable.assetId, assetId),
       ...(source ? [eq(discoveryResultsTable.source, source)] : []),
     ))
@@ -145,7 +145,7 @@ router.get("/discovery/results/:assetId", requireAuth, async (req: Authenticated
 router.get("/discovery/latest/:assetId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const tenantId = req.user!.tenantId;
   const latestRole = req.user!.role;
-  const assetId = parseInt(req.params.assetId, 10);
+  const assetId = parseInt(req.params.assetId as string, 10);
   if (isNaN(assetId)) { res.status(400).json({ error: "Invalid assetId" }); return; }
 
   let latestAssetWhere;
@@ -161,7 +161,7 @@ router.get("/discovery/latest/:assetId", requireAuth, async (req: AuthenticatedR
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
 
   const rows = await db.select().from(discoveryResultsTable)
-    .where(and(eq(discoveryResultsTable.tenantId, asset.tenantId), eq(discoveryResultsTable.assetId, assetId)))
+    .where(and(eq(discoveryResultsTable.tenantId, asset.tenantId!), eq(discoveryResultsTable.assetId, assetId)))
     .orderBy(desc(discoveryResultsTable.createdAt))
     .limit(200);
 

@@ -14,7 +14,7 @@ router.use(denyExternalMembers);
 function toAssetResponse(a: typeof assetsTable.$inferSelect) {
   return {
     id: a.id, tenantId: a.tenantId, name: a.name, type: a.type, value: a.value,
-    status: a.status, riskScore: a.riskScore, ipAddress: a.ipAddress,
+    status: (a as any).status, riskScore: (a as any).riskScore, ipAddress: a.ipAddress,
     verificationStatus: a.verificationStatus,
     createdAt: a.createdAt.toISOString(),
     lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
@@ -95,7 +95,7 @@ router.post("/asset-groups", requireAuth, async (req: AuthenticatedRequest, res)
 });
 
 router.get("/asset-groups/:groupId/members", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const groupId = parseInt(req.params.groupId, 10);
+  const groupId = parseInt(req.params.groupId as string, 10);
   if (isNaN(groupId)) { res.status(400).json({ error: "Invalid groupId" }); return; }
   const [group] = await db.select().from(assetGroupsTable)
     .where(and(eq(assetGroupsTable.id, groupId), eq(assetGroupsTable.tenantId, req.user!.tenantId)));
@@ -113,7 +113,7 @@ router.get("/asset-groups/:groupId/members", requireAuth, async (req: Authentica
 });
 
 router.put("/asset-groups/:groupId/members", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const groupId = parseInt(req.params.groupId, 10);
+  const groupId = parseInt(req.params.groupId as string, 10);
   if (isNaN(groupId)) { res.status(400).json({ error: "Invalid groupId" }); return; }
   const [group] = await db.select().from(assetGroupsTable)
     .where(and(eq(assetGroupsTable.id, groupId), eq(assetGroupsTable.tenantId, req.user!.tenantId)));
