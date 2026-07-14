@@ -1955,13 +1955,14 @@ export default function BrandThreatDetailPage() {
         })()}
 
         {s.status === "done" && (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 mt-5">
             {[
               { label: "Permutations", value: (s.totalPermutations ?? 0).toLocaleString(), color: "", sub: "total" },
               { label: "Live Domains", value: liveResults.length, color: liveResults.length > 0 ? "text-red-400" : "text-green-400", sub: "DNS A resolves" },
               { label: "Phishing Ready", value: mxResults.length, color: mxResults.length > 0 ? "text-orange-400" : "text-green-400", sub: "Has MX records" },
               { label: "Confirmed Phishing", value: phishingDetections.length, color: phishingDetections.length > 0 ? "text-red-400" : "text-green-400", sub: "feed verified" },
               { label: "Data Breaches", value: dataLeaks.length, color: dataLeaks.length > 0 ? "text-yellow-400" : "text-green-400", sub: "HIBP matches" },
+              { label: "Malicious Ads", value: s.adMonitoringCount ?? 0, color: (s.adMonitoringCount ?? 0) > 0 ? "text-violet-400" : "text-green-400", sub: "ad monitoring" },
             ].map(stat => (
               <div key={stat.label} className="bg-background/60 border border-border rounded-xl px-4 py-3">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">{stat.label}</p>
