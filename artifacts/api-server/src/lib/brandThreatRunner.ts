@@ -498,7 +498,15 @@ async function captureHighRiskScreenshots(
   logger.info({ scanId, count: targets.length }, "brand threat screenshots captured");
 }
 
-export async function runBrandThreatScan(scanId: number, domain: string, resumeFromPhase1Cache?: PermResult[], prevPermutations?: Set<string>): Promise<void> {
+export interface PrevScanSnapshot {
+  permutations?: Set<string>;
+  phishingUrls?: Set<string>;
+  dataLeakKeys?: Set<string>;
+  brandAbuseKeys?: Set<string>;
+  adKeys?: Set<string>;
+}
+
+export async function runBrandThreatScan(scanId: number, domain: string, resumeFromPhase1Cache?: PermResult[], prevPermutations?: Set<string>, prevSnapshot?: PrevScanSnapshot): Promise<void> {
   try {
     const [vtApiKey, gsbKey, hibpKey, phishTankKey, shodanKey, cdnRanges] = await Promise.all([
       getPlatformSetting("virustotal_api_key"),
@@ -852,6 +860,12 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
     }
 
     if (phishingInserts.length > 0) {
+      // Mark newly-discovered phishing URLs (not seen in previous scan)
+      if (prevSnapshot?.phishingUrls) {
+        for (const p of phishingInserts) {
+          (p as any).isNew = !prevSnapshot.phishingUrls.has(p.url as string);
+        }
+      }
       for (let i = 0; i < phishingInserts.length; i += 50) {
         await db.insert(phishingDetectionsTable).values(phishingInserts.slice(i, i + 50));
       }
@@ -997,6 +1011,13 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
     }
 
     if (leakInserts.length > 0) {
+      // Mark newly-discovered leaks (keyed by title+source — not seen in previous scan)
+      if (prevSnapshot?.dataLeakKeys) {
+        for (const l of leakInserts) {
+          const key = `${l.title}::${l.source}`;
+          (l as any).isNew = !prevSnapshot.dataLeakKeys.has(key);
+        }
+      }
       for (let i = 0; i < leakInserts.length; i += 50) {
         await db.insert(dataLeakResultsTable).values(leakInserts.slice(i, i + 50));
       }
@@ -1102,6 +1123,13 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
       }
 
       if (abuseInserts.length > 0) {
+        // Mark newly-discovered brand abuse items (keyed by title+type — not seen in previous scan)
+        if (prevSnapshot?.brandAbuseKeys) {
+          for (const a of abuseInserts) {
+            const key = `${a.title ?? ""}::${a.type}`;
+            (a as any).isNew = !prevSnapshot.brandAbuseKeys.has(key);
+          }
+        }
         for (let i = 0; i < abuseInserts.length; i += 50) {
           await db.insert(brandAbuseResultsTable).values(abuseInserts.slice(i, i + 50));
         }
@@ -1144,6 +1172,10 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
         deliveryCountries: ad.deliveryCountries?.length ? ad.deliveryCountries : undefined,
         snapshotUrl: ad.snapshotUrl ?? undefined,
         risk: ad.risk,
+        // Mark as new if the adId or title+platform key wasn't in the previous scan
+        isNew: prevSnapshot?.adKeys
+          ? !prevSnapshot.adKeys.has(ad.adId ?? `${ad.title ?? ""}::Meta Ads`)
+          : false,
       }));
       for (let i = 0; i < adInserts.length; i += 50) {
         await db.insert(adMonitoringResultsTable).values(adInserts.slice(i, i + 50));

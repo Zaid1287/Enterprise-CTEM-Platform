@@ -258,6 +258,11 @@ function PhishingTab({ phishing }: { phishing: any[] }) {
             <div className="flex items-center gap-2 min-w-0">
               <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
               <span className="font-mono text-sm text-red-300 truncate">{p.url}</span>
+              {p.isNew && (
+                <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
+                  New
+                </span>
+              )}
             </div>
             <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold shrink-0">
               {p.source}
@@ -317,12 +322,17 @@ function DataLeaksTab({ leaks }: { leaks: any[] }) {
           <div key={leak.id} className={cn("bg-card border rounded-xl p-4 space-y-3", sev.border)}>
             <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Database className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                   <span className="font-semibold text-sm">{leak.title}</span>
                   <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", sev.color, sev.bg, sev.border)}>
                     {leak.severity}
                   </span>
+                  {leak.isNew && (
+                    <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                      New
+                    </span>
+                  )}
                 </div>
                 {leak.domainMatch && (
                   <p className="text-[11px] text-muted-foreground mt-0.5 ml-5">Domain: {leak.domainMatch}</p>
@@ -975,9 +985,16 @@ function BrandAbuseTab({ abuse, warnings, scanDomain }: { abuse: any[]; warnings
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-2 mb-1">
-                            <span className="text-sm font-medium leading-snug">
-                              {item.title ?? item.url ?? item.platform}
-                            </span>
+                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                              <span className="text-sm font-medium leading-snug">
+                                {item.title ?? item.url ?? item.platform}
+                              </span>
+                              {item.isNew && (
+                                <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">
+                                  New
+                                </span>
+                              )}
+                            </div>
                             <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize shrink-0", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>
                               {item.risk}
                             </span>
@@ -1027,9 +1044,14 @@ function BrandAbuseTab({ abuse, warnings, scanDomain }: { abuse: any[]; warnings
             {(items as any[]).map((item: any) => (
               <div key={item.id} className="bg-card border border-border rounded-xl p-4">
                 <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     {TYPE_ICON[item.type] ?? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
                     <span className="text-sm font-medium truncate">{item.title ?? item.url ?? item.platform}</span>
+                    {item.isNew && (
+                      <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">
+                        New
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {item.platform && <PlatformBadge platform={item.platform} />}
@@ -1132,6 +1154,11 @@ function MaliciousAdsTab({ ads, hasMetaToken }: { ads: any[]; hasMetaToken?: boo
                     {ad.adType && (
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted/50 text-muted-foreground border border-border capitalize">
                         {ad.adType}
+                      </span>
+                    )}
+                    {ad.isNew && (
+                      <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                        New
                       </span>
                     )}
                   </div>

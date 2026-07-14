@@ -127,6 +127,7 @@ export const dataLeakResultsTable = pgTable("data_leak_results", {
   emailMatch:   text("email_match"),
   severity:     text("severity").notNull().default("medium"),
   url:          text("url"),
+  isNew:        boolean("is_new").notNull().default(false),
   createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -140,6 +141,7 @@ export const phishingDetectionsTable = pgTable("phishing_detections", {
   targetBrand:  text("target_brand"),
   submittedAt:  text("submitted_at"),
   threatType:   text("threat_type"),
+  isNew:        boolean("is_new").notNull().default(false),
   createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -156,6 +158,7 @@ export const brandAbuseResultsTable = pgTable("brand_abuse_results", {
   installCount:    text("install_count"),
   iconUrl:         text("icon_url"),
   risk:            text("risk").notNull().default("medium"),
+  isNew:           boolean("is_new").notNull().default(false),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -214,6 +217,7 @@ export const adMonitoringResultsTable = pgTable("ad_monitoring_results", {
   sourceUrl:       text("source_url"),
   snapshotUrl:     text("snapshot_url"),
   risk:            text("risk").notNull().default("medium"),
+  isNew:           boolean("is_new").notNull().default(false),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

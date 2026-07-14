@@ -438,6 +438,7 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
       let scanId: number;
       let prevScanSummary: Record<string, number> | null = null;
       let prevPermutations: Set<string> | undefined;
+      let prevSnapshot: import("../lib/brandThreatRunner").PrevScanSnapshot | undefined;
 
       if (existing) {
         // Concurrency guard: skip if a scan for this domain is already in progress
@@ -470,13 +471,31 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
           adMonitoringCount: existing.adMonitoringCount ?? 0,
         };
 
-        // Snapshot permutations from the previous scan BEFORE archiving, so the
-        // new scan can mark truly-new results with isNew=true for delta highlighting.
-        const prevResultRows = await db
-          .select({ permutation: brandThreatResultsTable.permutation })
-          .from(brandThreatResultsTable)
-          .where(and(eq(brandThreatResultsTable.scanId, existing.id), isNull(brandThreatResultsTable.archivedAt)));
+        // Snapshot all previous scan results BEFORE clearing, so the new scan can
+        // mark truly-new entries with isNew=true for delta highlighting in the UI.
+        const [prevResultRows, prevPhishRows, prevLeakRows, prevAbuseRows, prevAdRows] = await Promise.all([
+          db.select({ permutation: brandThreatResultsTable.permutation })
+            .from(brandThreatResultsTable)
+            .where(and(eq(brandThreatResultsTable.scanId, existing.id), isNull(brandThreatResultsTable.archivedAt))),
+          db.select({ url: phishingDetectionsTable.url })
+            .from(phishingDetectionsTable)
+            .where(eq(phishingDetectionsTable.scanId, existing.id)),
+          db.select({ title: dataLeakResultsTable.title, source: dataLeakResultsTable.source })
+            .from(dataLeakResultsTable)
+            .where(eq(dataLeakResultsTable.scanId, existing.id)),
+          db.select({ title: brandAbuseResultsTable.title, type: brandAbuseResultsTable.type })
+            .from(brandAbuseResultsTable)
+            .where(eq(brandAbuseResultsTable.scanId, existing.id)),
+          db.select({ adId: adMonitoringResultsTable.adId, title: adMonitoringResultsTable.title })
+            .from(adMonitoringResultsTable)
+            .where(eq(adMonitoringResultsTable.scanId, existing.id)),
+        ]);
         prevPermutations = new Set(prevResultRows.map(r => r.permutation));
+        const prevPhishingUrls   = new Set(prevPhishRows.map(r => r.url));
+        const prevDataLeakKeys   = new Set(prevLeakRows.map(r => `${r.title}::${r.source}`));
+        const prevBrandAbuseKeys = new Set(prevAbuseRows.map(r => `${r.title ?? ""}::${r.type}`));
+        const prevAdKeys         = new Set(prevAdRows.map(r => r.adId ?? `${r.title ?? ""}::Meta Ads`));
+        prevSnapshot = { permutations: prevPermutations, phishingUrls: prevPhishingUrls, dataLeakKeys: prevDataLeakKeys, brandAbuseKeys: prevBrandAbuseKeys, adKeys: prevAdKeys };
 
         // Delete prior child rows so new scan results are clean
         await Promise.all([
@@ -531,11 +550,12 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
         .where(eq(brandWatchlistItemsTable.id, item.id));
 
       const capturedPrevPermutations = prevPermutations;
+      const capturedPrevSnapshot = prevSnapshot;
       const capturedItemId = item.id;
       const capturedPrevScanSummary = prevScanSummary;
       setImmediate(async () => {
         try {
-          await runBrandThreatScan(scanId, domain, undefined, capturedPrevPermutations);
+          await runBrandThreatScan(scanId, domain, undefined, capturedPrevPermutations, capturedPrevSnapshot);
 
           // After scan completes, count newly-discovered permutations and persist
           // the count back into prevScanSummary so the frontend can display it.
