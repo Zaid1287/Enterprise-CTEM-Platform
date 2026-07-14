@@ -170,18 +170,24 @@ export default function ThreatIntelIocsPage() {
   const [q, setQ] = useState("");
   const [type, setType] = useState("");
   const [sev, setSev] = useState("");
+  const [tlp, setTlp] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(0);
   const [showAdd, setShowAdd] = useState(false);
   const [selectedIoc, setSelectedIoc] = useState<any | null>(null);
   const L = 50;
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["ti-iocs", q, type, sev, page],
+    queryKey: ["ti-iocs", q, type, sev, tlp, dateFrom, dateTo, page],
     queryFn: () => {
       const p = new URLSearchParams({ limit: String(L), offset: String(page * L) });
-      if (q)   p.set("q", q);
-      if (type) p.set("type", type);
-      if (sev)  p.set("severity", sev);
+      if (q)        p.set("q", q);
+      if (type)     p.set("type", type);
+      if (sev)      p.set("severity", sev);
+      if (tlp)      p.set("tlp", tlp);
+      if (dateFrom) p.set("dateFrom", dateFrom);
+      if (dateTo)   p.set("dateTo", dateTo);
       return apiFetch<any>(`${BASE}/api/threat-intel/iocs?${p}`);
     },
     staleTime: 30_000,
@@ -266,6 +272,21 @@ export default function ThreatIntelIocsPage() {
             {["critical","high","medium","low"].map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={tlp || "all"} onValueChange={v => { setTlp(v === "all" ? "" : v); setPage(0); }}>
+          <SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="TLP" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All TLP</SelectItem>
+            {["white","green","amber","red"].map(t => <SelectItem key={t} value={t} className="uppercase">TLP:{t.toUpperCase()}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-1">
+          <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }} className="h-8 w-36 text-xs" placeholder="From" title="First seen from" />
+          <span className="text-xs text-muted-foreground">–</span>
+          <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(0); }} className="h-8 w-36 text-xs" placeholder="To" title="First seen to" />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(0); }} className="text-muted-foreground hover:text-foreground ml-0.5"><X className="w-3.5 h-3.5" /></button>
+          )}
+        </div>
       </div>
 
       <div className="border border-border rounded-xl overflow-hidden">

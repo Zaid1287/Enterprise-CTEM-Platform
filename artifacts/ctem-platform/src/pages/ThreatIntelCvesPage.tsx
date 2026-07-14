@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Search, RefreshCw, ExternalLink } from "lucide-react";
+import { AlertTriangle, Search, RefreshCw, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -28,15 +28,21 @@ export default function ThreatIntelCvesPage() {
   const [severity, setSeverity] = useState("");
   const [kev, setKev] = useState("");
   const [exploited, setExploited] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(0);
   const L = 50;
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["ti-cves", q, severity, kev, exploited, page],
+    queryKey: ["ti-cves", q, severity, kev, exploited, dateFrom, dateTo, page],
     queryFn: () => {
       const p = new URLSearchParams({ limit: String(L), offset: String(page * L) });
-      if (q) p.set("q", q); if (severity) p.set("severity", severity);
-      if (kev) p.set("kev", kev); if (exploited) p.set("exploited", exploited);
+      if (q)        p.set("q", q);
+      if (severity) p.set("severity", severity);
+      if (kev)      p.set("kev", kev);
+      if (exploited) p.set("exploited", exploited);
+      if (dateFrom) p.set("dateFrom", dateFrom);
+      if (dateTo)   p.set("dateTo", dateTo);
       return apiFetch<any>(`${BASE}/api/threat-intel/cves?${p}`);
     },
     staleTime: 30_000,
@@ -59,6 +65,14 @@ export default function ThreatIntelCvesPage() {
         <Select value={severity || "all"} onValueChange={v => { setSeverity(v === "all" ? "" : v); setPage(0); }}><SelectTrigger className="h-8 w-32 text-xs"><SelectValue placeholder="Severity" /></SelectTrigger><SelectContent><SelectItem value="all">All severities</SelectItem>{["critical","high","medium","low"].map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}</SelectContent></Select>
         <Select value={kev || "all"} onValueChange={v => { setKev(v === "all" ? "" : v); setPage(0); }}><SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="KEV" /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="true">KEV only</SelectItem></SelectContent></Select>
         <Select value={exploited || "all"} onValueChange={v => { setExploited(v === "all" ? "" : v); setPage(0); }}><SelectTrigger className="h-8 w-36 text-xs"><SelectValue placeholder="Exploitation" /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="true">Actively exploited</SelectItem></SelectContent></Select>
+        <div className="flex items-center gap-1">
+          <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }} className="h-8 w-36 text-xs" title="Updated from" />
+          <span className="text-xs text-muted-foreground">–</span>
+          <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(0); }} className="h-8 w-36 text-xs" title="Updated to" />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(0); }} className="text-muted-foreground hover:text-foreground ml-0.5 shrink-0"><X className="w-3.5 h-3.5" /></button>
+          )}
+        </div>
       </div>
       <div className="border border-border rounded-xl overflow-hidden">
         <table className="w-full text-xs">

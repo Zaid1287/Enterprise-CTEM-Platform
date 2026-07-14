@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, desc, and, ilike, inArray, or, sql } from "drizzle-orm";
+import { eq, desc, and, ilike, inArray, or, sql, gte, lte } from "drizzle-orm";
 import {
   db,
   tenantsTable,
@@ -180,7 +180,7 @@ router.get("/threat-intel/iocs", requireAuth, async (req: AuthenticatedRequest, 
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
-  const { type, severity, tlp, source, q, limit = "50", offset = "0", active } = req.query as Record<string, string>;
+  const { type, severity, tlp, source, q, limit = "50", offset = "0", active, dateFrom, dateTo } = req.query as Record<string, string>;
   const conditions = [];
   if (type) conditions.push(eq(tiIocsTable.type, type));
   if (severity) conditions.push(eq(tiIocsTable.severity, severity));
@@ -188,6 +188,8 @@ router.get("/threat-intel/iocs", requireAuth, async (req: AuthenticatedRequest, 
   if (source) conditions.push(eq(tiIocsTable.source, source));
   if (active === "true") conditions.push(eq(tiIocsTable.isActive, true));
   if (q) conditions.push(or(ilike(tiIocsTable.value, `%${q}%`), ilike(tiIocsTable.description, `%${q}%`))!);
+  if (dateFrom) conditions.push(gte(tiIocsTable.firstSeen, new Date(dateFrom)));
+  if (dateTo)   conditions.push(lte(tiIocsTable.firstSeen, new Date(dateTo + "T23:59:59Z")));
 
   const [rows, total] = await Promise.all([
     db.select().from(tiIocsTable).where(conditions.length ? and(...conditions) : undefined).orderBy(desc(tiIocsTable.threatScore)).limit(Math.min(Number(limit), 200)).offset(Number(offset)),
@@ -429,12 +431,14 @@ router.get("/threat-intel/cves", requireAuth, async (req: AuthenticatedRequest, 
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
-  const { q, severity, kev, exploited, limit = "50", offset = "0" } = req.query as Record<string, string>;
+  const { q, severity, kev, exploited, limit = "50", offset = "0", dateFrom, dateTo } = req.query as Record<string, string>;
   const conditions = [];
   if (q) conditions.push(or(ilike(tiCveIntelTable.cveId, `%${q}%`), ilike(tiCveIntelTable.description, `%${q}%`))!);
   if (severity) conditions.push(eq(tiCveIntelTable.severity, severity));
   if (kev === "true") conditions.push(eq(tiCveIntelTable.isKev, true));
   if (exploited === "true") conditions.push(eq(tiCveIntelTable.exploitationStatus, "active"));
+  if (dateFrom) conditions.push(gte(tiCveIntelTable.updatedAt, new Date(dateFrom)));
+  if (dateTo)   conditions.push(lte(tiCveIntelTable.updatedAt, new Date(dateTo + "T23:59:59Z")));
 
   const [rows, total] = await Promise.all([
     db.select().from(tiCveIntelTable).where(conditions.length ? and(...conditions) : undefined).orderBy(desc(tiCveIntelTable.updatedAt)).limit(Math.min(Number(limit), 200)).offset(Number(offset)),
@@ -551,6 +555,7 @@ router.get("/threat-intel/correlations/finding/:findingId", requireAuth, async (
 });
 
 router.post("/threat-intel/correlate", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
   const { tenantId, role } = req.user!;
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
@@ -588,15 +593,32 @@ router.get("/threat-intel/feeds/status", requireAuth, async (req: AuthenticatedR
     "urlhaus", "phishtank", "cisa_kev", "mitre_attack", "nvd_cve",
   ];
 
-  const status = KNOWN_SOURCES.map(src => ({
-    source: src,
-    displayName: src.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-    lastRun: latest[src] ?? null,
-    status: latest[src]?.status ?? "never",
-    recordsAdded: latest[src]?.recordsAdded ?? 0,
-    completedAt: latest[src]?.completedAt ?? null,
-    error: latest[src]?.error ?? null,
-  }));
+  // Check which API-key-required feeds have keys configured
+  const API_KEY_SETTINGS: Record<string, string> = {
+    abuseipdb: "ti_abuseipdb_key",
+    greynoise: "ti_greynoise_key",
+    alienvault_otx: "ti_otx_key",
+    nvd_cve: "nvd_api_key",
+  };
+  const { platformSettingsTable } = await import("@workspace/db");
+  const settingKeys = Object.values(API_KEY_SETTINGS);
+  const settingRows = await db.select().from(platformSettingsTable).where(inArray(platformSettingsTable.key, settingKeys));
+  const configuredKeys = new Set(settingRows.filter(r => r.value && r.value.trim() !== "").map(r => r.key));
+
+  const status = KNOWN_SOURCES.map(src => {
+    const settingKey = API_KEY_SETTINGS[src];
+    return {
+      source: src,
+      displayName: src.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+      lastRun: latest[src] ?? null,
+      status: latest[src]?.status ?? "never",
+      recordsAdded: latest[src]?.recordsAdded ?? 0,
+      completedAt: latest[src]?.completedAt ?? null,
+      error: latest[src]?.error ?? null,
+      apiKeyRequired: !!settingKey,
+      apiKeyConfigured: settingKey ? configuredKeys.has(settingKey) : null,
+    };
+  });
 
   res.json({ feeds: status });
 });

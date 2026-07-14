@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, PlayCircle } from "lucide-react";
+import { Database, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, PlayCircle, Key, AlertCircle, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -128,6 +128,23 @@ export default function ThreatIntelFeedsPage() {
                   {f.completedAt && <span>Last: {new Date(f.completedAt).toLocaleDateString()}</span>}
                   {f.error && <span className="text-red-400 truncate max-w-[200px]">{f.error}</span>}
                 </div>
+                {f.apiKeyRequired && (
+                  <div className={cn(
+                    "flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-md border w-fit",
+                    f.apiKeyConfigured
+                      ? "text-green-400 bg-green-500/10 border-green-500/20"
+                      : "text-amber-400 bg-amber-500/10 border-amber-500/20",
+                  )}>
+                    {f.apiKeyConfigured
+                      ? <><Key className="w-3 h-3" />API key configured</>
+                      : <><AlertCircle className="w-3 h-3" />API key missing —{" "}
+                          <a href="/settings/platform" className="underline hover:text-amber-300 inline-flex items-center gap-0.5">
+                            Platform Settings<ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        </>
+                    }
+                  </div>
+                )}
               </div>
             );
           })
