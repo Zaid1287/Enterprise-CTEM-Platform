@@ -109,7 +109,19 @@ router.get("/asset-groups/:groupId/members", requireAuth, async (req: Authentica
   const assetIds = members.map(m => m.assetId);
   const assets = await db.select().from(assetsTable)
     .where(and(inArray(assetsTable.id, assetIds), eq(assetsTable.tenantId, req.user!.tenantId)));
-  res.json(assets.map(toAssetResponse));
+
+  // Fetch risk scores for these assets from the risk_scores table
+  const riskRows = assetIds.length > 0
+    ? await db.select({ assetId: riskScoresTable.assetId, score: riskScoresTable.score, level: riskScoresTable.level })
+        .from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+    : [];
+  const riskByAsset = new Map(riskRows.map(r => [r.assetId, r]));
+
+  res.json(assets.map(a => ({
+    ...toAssetResponse(a),
+    riskScore: riskByAsset.get(a.id)?.score ?? null,
+    riskLevel: riskByAsset.get(a.id)?.level ?? null,
+  })));
 });
 
 router.put("/asset-groups/:groupId/members", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {

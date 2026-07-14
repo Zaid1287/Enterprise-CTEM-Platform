@@ -567,16 +567,18 @@ export default function AssetGroupDetailPage() {
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">
-                            {f.cveId ? (
+                            {f.cve && /^CVE-\d{4}-\d+$/i.test(f.cve) ? (
                               <a
-                                href={`https://nvd.nist.gov/vuln/detail/${f.cveId}`}
+                                href={`https://nvd.nist.gov/vuln/detail/${f.cve}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-primary hover:underline"
                                 onClick={e => e.stopPropagation()}
                               >
-                                {f.cveId}
+                                {f.cve}
                               </a>
+                            ) : f.cve && !f.cve.startsWith("EXPOSED-") && !f.cve.startsWith("EXP-") && !f.cve.startsWith("CLOUD-") && !f.cve.startsWith("VT-") ? (
+                              <span className="text-muted-foreground/80">{f.cve}</span>
                             ) : "—"}
                           </td>
                           <td className="px-4 py-2.5 text-xs text-muted-foreground">
