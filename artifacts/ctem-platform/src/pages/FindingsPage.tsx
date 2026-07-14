@@ -967,9 +967,9 @@ function FindingDrawer({
                 <div className="space-y-4">
                   {(drawerScreenshots as any[]).map((s: any) => (
                     <div key={s.id} className="rounded-lg border border-border overflow-hidden bg-muted/10">
-                      {s.data ? (
+                      {s.screenshotData ? (
                         <img
-                          src={`data:image/png;base64,${s.data}`}
+                          src={`data:image/png;base64,${s.screenshotData}`}
                           alt={s.title ?? s.url ?? "Screenshot"}
                           className="w-full object-cover max-h-72"
                         />
@@ -988,7 +988,7 @@ function FindingDrawer({
                         )}
                         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                           {s.statusCode && <span className={cn("font-mono", s.statusCode < 400 ? "text-green-400" : "text-red-400")}>HTTP {s.statusCode}</span>}
-                          {s.createdAt && <span>{formatDate(s.createdAt)}</span>}
+                          {s.capturedAt && <span>{formatDate(s.capturedAt)}</span>}
                         </div>
                       </div>
                     </div>
@@ -1553,12 +1553,19 @@ export default function FindingsPage() {
                     <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <button
+                          onClick={(e) => { e.stopPropagation(); navigate(`/findings/${f.id}`); }}
+                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-primary/15 text-primary hover:bg-primary/30 transition-colors font-semibold border border-primary/20"
+                          title="Open full finding detail page"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Open</span>
+                        </button>
+                        <button
                           onClick={(e) => { e.stopPropagation(); openDrawer(f, "metadata"); }}
-                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
-                          title="View Details"
+                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-accent/60 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors font-medium"
+                          title="Quick preview in sidebar"
                         >
                           <FileText className="w-3 h-3" />
-                          <span className="hidden xl:inline">Details</span>
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); openDrawer(f, "comments"); }}
