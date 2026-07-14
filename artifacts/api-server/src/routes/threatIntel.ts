@@ -37,7 +37,9 @@ function requireAdminOrSA(req: AuthenticatedRequest, res: any): boolean {
   return true;
 }
 
-async function getThreatIntelEnabled(tenantId: number, role: string): Promise<boolean> {
+async function getThreatIntelEnabled(tenantId: number, role: string, opts?: { allowClient?: boolean }): Promise<boolean> {
+  // Client role is restricted to correlations only — deny all other TI endpoints
+  if (role === "client" && !opts?.allowClient) return false;
   if (role === "admin" || role === "super_admin" || role === "account_manager") return true;
   const [row] = await db
     .select({ isEnabled: threatIntelModuleAssignmentsTable.isEnabled })
@@ -456,11 +458,38 @@ router.get("/threat-intel/cves/:cveId", requireAuth, async (req: AuthenticatedRe
   res.json(row);
 });
 
+// ── TTPs ──────────────────────────────────────────────────────────────────────
+
+router.get("/threat-intel/ttps", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, role } = req.user!;
+  const enabled = await getThreatIntelEnabled(tenantId, role);
+  if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
+
+  const { limit = "50", tactic } = req.query as Record<string, string>;
+  const conditions = tactic ? [eq(tiActorTtpsTable.tacticName, tactic)] : [];
+
+  const rows = await db
+    .select({
+      mitreId:  tiActorTtpsTable.techniqueId,
+      name:     tiActorTtpsTable.techniqueName,
+      tactic:   tiActorTtpsTable.tacticName,
+      tacticId: tiActorTtpsTable.tacticId,
+      count:    sql<number>`cast(count(*) as int)`,
+    })
+    .from(tiActorTtpsTable)
+    .where(conditions.length ? and(...conditions) : undefined)
+    .groupBy(tiActorTtpsTable.techniqueId, tiActorTtpsTable.techniqueName, tiActorTtpsTable.tacticName, tiActorTtpsTable.tacticId)
+    .orderBy(desc(sql`count(*)`))
+    .limit(Math.min(Number(limit), 200));
+
+  res.json({ ttps: rows, total: rows.length });
+});
+
 // ── Correlations ──────────────────────────────────────────────────────────────
 
 router.get("/threat-intel/correlations", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { tenantId, role, userId } = req.user!;
-  const enabled = await getThreatIntelEnabled(tenantId, role);
+  const enabled = await getThreatIntelEnabled(tenantId, role, { allowClient: true });
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
   const { limit = "50", offset = "0" } = req.query as Record<string, string>;
@@ -521,7 +550,7 @@ router.get("/threat-intel/correlations", requireAuth, async (req: AuthenticatedR
 
 router.get("/threat-intel/correlations/finding/:findingId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { tenantId, role, userId } = req.user!;
-  const enabled = await getThreatIntelEnabled(tenantId, role);
+  const enabled = await getThreatIntelEnabled(tenantId, role, { allowClient: true });
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
   const findingId = Number(req.params.findingId);
