@@ -3,8 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Shield, Crosshair, Users, Layers, Bug, Radio, AlertTriangle,
   RefreshCw, Loader2, CheckCircle2, XCircle, Clock, Activity,
-  Globe, TrendingUp, Zap,
+  Globe, Zap,
 } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from "recharts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -26,7 +30,13 @@ const FEED_META: Record<string, string> = {
   nvd_cve: "NVD CVE",
 };
 
-function StatCard({ icon: Icon, label, value, sub, color = "text-primary" }: { icon: any; label: string; value: number | string; sub?: string; color?: string }) {
+const SEV_COLORS: Record<string, string> = {
+  critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e", unknown: "#6b7280",
+};
+
+function StatCard({ icon: Icon, label, value, sub, color = "text-primary" }: {
+  icon: any; label: string; value: number | string; sub?: string; color?: string;
+}) {
   return (
     <div className="bg-card border border-border rounded-xl p-4 flex items-start gap-3">
       <div className={cn("p-2 rounded-lg bg-muted/50 shrink-0", color)}>
@@ -57,6 +67,13 @@ export default function ThreatIntelDashboardPage() {
     queryKey: ["ti-feeds"],
     queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/feeds/status`),
     staleTime: 60_000,
+    enabled: isAdmin,
+  });
+
+  const { data: malwareData } = useQuery({
+    queryKey: ["ti-malware-top"],
+    queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/malware?limit=8`),
+    staleTime: 120_000,
   });
 
   const triggerCorrelate = useCallback(async () => {
@@ -70,8 +87,8 @@ export default function ThreatIntelDashboardPage() {
   const triggerRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await apiFetch(`${BASE}/api/threat-intel/feeds/refresh`, { method: "POST" });
-      setTimeout(() => { setRefreshing(false); refetchFeeds(); refetch(); }, 3000);
+      await apiFetch(`${BASE}/api/threat-intel/feeds/refresh`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      setTimeout(() => { setRefreshing(false); refetchFeeds?.(); refetch(); }, 3000);
     } catch { setRefreshing(false); }
   }, [refetch, refetchFeeds]);
 
@@ -79,11 +96,17 @@ export default function ThreatIntelDashboardPage() {
   const topActors = data?.topActors ?? [];
   const feeds: any[] = feedData?.feeds ?? [];
   const severityDist: { severity: string; count: number }[] = data?.severityDistribution ?? [];
+  const monthlyC2: { month: string; count: number }[] = data?.monthlyC2 ?? [];
+  const topMalware: any[] = (malwareData?.malware ?? []).slice(0, 8);
+
+  const pieData = ["critical", "high", "medium", "low"]
+    .map(s => ({ name: s, value: Number(severityDist.find(r => r.severity === s)?.count ?? 0) }))
+    .filter(d => d.value > 0);
 
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-primary/10 border border-primary/20">
             <Shield className="w-5 h-5 text-primary" />
@@ -114,17 +137,18 @@ export default function ThreatIntelDashboardPage() {
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard icon={Crosshair}     label="IOCs"              value={t.iocs       ?? 0} color="text-orange-400" />
-          <StatCard icon={Users}         label="Threat Actors"     value={t.actors     ?? 0} color="text-purple-400" />
-          <StatCard icon={Layers}        label="Campaigns"         value={t.campaigns  ?? 0} color="text-blue-400" />
-          <StatCard icon={Bug}           label="Malware Families"  value={t.malware    ?? 0} color="text-yellow-400" />
-          <StatCard icon={Radio}         label="C2 Servers"        value={t.c2         ?? 0} sub={`${t.c2Active ?? 0} active`} color="text-red-400" />
-          <StatCard icon={AlertTriangle} label="KEV CVEs"          value={t.kevCves    ?? 0} color="text-red-400" />
+          <StatCard icon={Crosshair}     label="IOCs"               value={t.iocs        ?? 0} color="text-orange-400" />
+          <StatCard icon={Users}         label="Threat Actors"      value={t.actors      ?? 0} color="text-purple-400" />
+          <StatCard icon={Layers}        label="Campaigns"          value={t.campaigns   ?? 0} color="text-blue-400" />
+          <StatCard icon={Bug}           label="Malware Families"   value={t.malware     ?? 0} color="text-yellow-400" />
+          <StatCard icon={Radio}         label="C2 Servers"         value={t.c2          ?? 0} sub={`${t.c2Active ?? 0} active`} color="text-red-400" />
+          <StatCard icon={AlertTriangle} label="KEV CVEs"           value={t.kevCves     ?? 0} color="text-red-400" />
           <StatCard icon={Activity}      label="Asset Correlations" value={t.correlations ?? 0} sub={`${t.criticalCorrelations ?? 0} active exploitation`} color="text-green-400" />
-          <StatCard icon={Zap}           label="Active Threats"    value={t.criticalCorrelations ?? 0} sub="correlated to assets" color="text-red-500" />
+          <StatCard icon={Zap}           label="Active Threats"     value={t.criticalCorrelations ?? 0} sub="correlated to assets" color="text-red-500" />
         </div>
       )}
 
+      {/* Row: Top threat actors + IOC severity pie */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top threat actors */}
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
@@ -139,7 +163,8 @@ export default function ThreatIntelDashboardPage() {
           ) : (
             <div className="space-y-1.5">
               {topActors.slice(0, 8).map((a: any) => (
-                <a key={a.id} href={`/threat-intel/actors/${a.id}`} className="flex items-center justify-between p-2.5 rounded-lg hover:bg-muted/40 transition-colors group">
+                <a key={a.id} href={`/threat-intel/actors/${a.id}`}
+                  className="flex items-center justify-between p-2.5 rounded-lg hover:bg-muted/40 transition-colors group">
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">{a.name}</p>
                     <p className="text-[11px] text-muted-foreground">{a.country ?? "Unknown"} · {a.motivation ?? "Unknown motivation"}</p>
@@ -156,65 +181,140 @@ export default function ThreatIntelDashboardPage() {
           )}
         </div>
 
-        {/* IOC severity distribution */}
+        {/* IOC severity donut */}
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Crosshair className="w-4 h-4 text-orange-400" />
             <h2 className="text-sm font-semibold">IOC Severity Distribution</h2>
           </div>
           {isLoading ? (
-            <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
-          ) : severityDist.length === 0 ? (
+            <div className="flex justify-center py-4"><Skeleton className="w-40 h-40 rounded-full" /></div>
+          ) : pieData.length === 0 ? (
             <p className="text-xs text-muted-foreground py-4 text-center">No IOC data — feed refresh required</p>
-          ) : (() => {
-            const total = severityDist.reduce((s, r) => s + Number(r.count), 0);
-            const SEV_COLOR: Record<string, string> = { critical: "bg-red-500", high: "bg-orange-500", medium: "bg-yellow-500", low: "bg-green-500", unknown: "bg-muted" };
-            const ordered = ["critical", "high", "medium", "low", "unknown"].map(s => severityDist.find(r => r.severity === s)).filter(Boolean) as any[];
-            return (
-              <div className="space-y-2.5">
-                {ordered.map((r: any) => (
-                  <div key={r.severity} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="capitalize font-medium">{r.severity}</span>
-                      <span className="text-muted-foreground tabular-nums">{Number(r.count).toLocaleString()} ({total > 0 ? Math.round(Number(r.count) / total * 100) : 0}%)</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-muted">
-                      <div className={cn("h-1.5 rounded-full", SEV_COLOR[r.severity] ?? "bg-muted-foreground")} style={{ width: `${total > 0 ? Math.round(Number(r.count) / total * 100) : 0}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
+          ) : (
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" nameKey="name">
+                    {pieData.map((entry) => (
+                      <Cell key={entry.name} fill={SEV_COLORS[entry.name] ?? "#6b7280"} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
+                    formatter={(v: any, name: string) => [Number(v).toLocaleString(), name]}
+                  />
+                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Feed status */}
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <Globe className="w-4 h-4 text-blue-400" />
-          <h2 className="text-sm font-semibold">Feed Status</h2>
+      {/* Row: Monthly C2 trend + Top malware families */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Monthly C2 trend */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Radio className="w-4 h-4 text-red-400" />
+            <h2 className="text-sm font-semibold">C2 Servers — Monthly Trend</h2>
+          </div>
+          {isLoading ? (
+            <Skeleton className="h-36 w-full" />
+          ) : monthlyC2.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No C2 history yet</p>
+          ) : (
+            <div className="h-36">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyC2} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+                  <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
+                    cursor={{ fill: "hsl(var(--muted)/0.4)" }}
+                  />
+                  <Bar dataKey="count" fill="#ef4444" radius={[3, 3, 0, 0]} name="C2 servers" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-          {feeds.map((f: any) => {
-            const ok = f.status === "completed";
-            const running = f.status === "running";
-            const never = f.status === "never";
-            return (
-              <div key={f.source} className={cn("rounded-lg border p-2.5 space-y-1", ok ? "border-green-500/20 bg-green-500/5" : running ? "border-blue-500/20 bg-blue-500/5" : never ? "border-border bg-muted/20" : "border-red-500/20 bg-red-500/5")}>
-                <div className="flex items-center gap-1.5">
-                  {ok ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" /> : running ? <Loader2 className="w-3 h-3 text-blue-400 shrink-0 animate-spin" /> : never ? <Clock className="w-3 h-3 text-muted-foreground shrink-0" /> : <XCircle className="w-3 h-3 text-red-400 shrink-0" />}
-                  <p className="text-[11px] font-semibold truncate">{FEED_META[f.source] ?? f.source}</p>
+
+        {/* Top malware families */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Bug className="w-4 h-4 text-yellow-400" />
+            <h2 className="text-sm font-semibold">Top Malware Families</h2>
+          </div>
+          {isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+          ) : topMalware.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No malware data — run a feed refresh</p>
+          ) : (
+            <div className="space-y-2">
+              {topMalware.map((m: any) => (
+                <div key={m.id} className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded border font-semibold capitalize shrink-0",
+                      m.malwareType === "ransomware" ? "text-red-400 bg-red-500/10 border-red-500/20" :
+                      m.malwareType === "trojan" ? "text-orange-400 bg-orange-500/10 border-orange-500/20" :
+                      "text-muted-foreground bg-muted border-border",
+                    )}>
+                      {m.malwareType ?? "malware"}
+                    </span>
+                    <span className="font-medium truncate">{m.name}</span>
+                  </div>
+                  <span className={cn("font-bold tabular-nums shrink-0 ml-2",
+                    Number(m.riskScore) >= 70 ? "text-red-400" : Number(m.riskScore) >= 40 ? "text-orange-400" : "text-yellow-400",
+                  )}>
+                    {Math.round(Number(m.riskScore ?? 0))}
+                  </span>
                 </div>
-                {f.recordsAdded > 0 && <p className="text-[10px] text-muted-foreground">+{Number(f.recordsAdded).toLocaleString()} records</p>}
-                {never && <p className="text-[10px] text-muted-foreground">Never run</p>}
-                {f.completedAt && <p className="text-[10px] text-muted-foreground/60">{new Date(f.completedAt).toLocaleDateString()}</p>}
-                {f.error && <p className="text-[10px] text-red-400/70 truncate">{f.error}</p>}
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Feed status (admin only — feeds/status is now admin-gated) */}
+      {isAdmin && (
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-blue-400" />
+            <h2 className="text-sm font-semibold">Feed Status</h2>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {feeds.length === 0
+              ? Array.from({ length: 10 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)
+              : feeds.map((f: any) => {
+                const ok = f.status === "completed";
+                const running = f.status === "running";
+                const never = f.status === "never";
+                return (
+                  <div key={f.source} className={cn(
+                    "rounded-lg border p-2.5 space-y-1",
+                    ok ? "border-green-500/20 bg-green-500/5" : running ? "border-blue-500/20 bg-blue-500/5" : never ? "border-border bg-muted/20" : "border-red-500/20 bg-red-500/5",
+                  )}>
+                    <div className="flex items-center gap-1.5">
+                      {ok ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" />
+                          : running ? <Loader2 className="w-3 h-3 text-blue-400 shrink-0 animate-spin" />
+                          : never ? <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
+                          : <XCircle className="w-3 h-3 text-red-400 shrink-0" />}
+                      <p className="text-[11px] font-semibold truncate">{FEED_META[f.source] ?? f.source}</p>
+                    </div>
+                    {f.recordsAdded > 0 && <p className="text-[10px] text-muted-foreground">+{Number(f.recordsAdded).toLocaleString()} records</p>}
+                    {never && <p className="text-[10px] text-muted-foreground">Never run</p>}
+                    {f.completedAt && <p className="text-[10px] text-muted-foreground/60">{new Date(f.completedAt).toLocaleDateString()}</p>}
+                    {f.error && <p className="text-[10px] text-red-400/70 truncate">{f.error}</p>}
+                  </div>
+                );
+              })
+            }
+          </div>
+        </div>
+      )}
 
       {/* Recent C2 */}
       {(data?.recentC2 ?? []).length > 0 && (

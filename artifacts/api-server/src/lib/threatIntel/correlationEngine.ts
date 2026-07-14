@@ -422,19 +422,20 @@ export async function runThreatIntelCorrelation(
       });
     }
 
-    if (toUpsert.length > 0) {
-      const findingIds = toUpsert.map((r) => r.findingId);
-      // Delete stale entries then re-insert
+    // Delete stale rows for ALL processed findings (even those that lost matches)
+    // so re-runs produce a clean, accurate result set.
+    const allProcessedIds = findings.map((f) => f.id);
+    for (let i = 0; i < allProcessedIds.length; i += 500) {
       await db.delete(tiAssetCorrelationsTable).where(
         and(
           eq(tiAssetCorrelationsTable.tenantId, tenantId),
-          inArray(tiAssetCorrelationsTable.findingId, findingIds),
+          inArray(tiAssetCorrelationsTable.findingId, allProcessedIds.slice(i, i + 500)),
         ),
       );
-      // Batch insert (100 rows per call)
-      for (let i = 0; i < toUpsert.length; i += 100) {
-        await db.insert(tiAssetCorrelationsTable).values(toUpsert.slice(i, i + 100));
-      }
+    }
+    // Insert only findings that have genuine TI matches
+    for (let i = 0; i < toUpsert.length; i += 100) {
+      await db.insert(tiAssetCorrelationsTable).values(toUpsert.slice(i, i + 100));
     }
 
     const durationMs = Date.now() - startTs;

@@ -432,7 +432,7 @@ function Router() {
       <Route path="/threat-intel/dark-web" component={() => <ThreatIntelRoute component={ThreatIntelDarkWebPage} />} />
       <Route path="/threat-intel/reports" component={() => <ThreatIntelRoute component={ThreatIntelReportsPage} />} />
       <Route path="/threat-intel/correlations" component={() => <ThreatIntelRoute component={ThreatIntelCorrelationsPage} />} />
-      <Route path="/threat-intel/feeds" component={() => <ThreatIntelRoute component={ThreatIntelFeedsPage} />} />
+      <Route path="/threat-intel/feeds" component={() => <AdminRoute component={ThreatIntelFeedsPage} />} />
       <Route path="/threat-intel/upgrade" component={() => <ProtectedRoute component={ThreatIntelUpgradePage} />} />
 
       {/* TPRM — public respond route (no auth) */}

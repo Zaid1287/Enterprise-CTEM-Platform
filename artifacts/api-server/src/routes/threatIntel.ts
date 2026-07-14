@@ -443,16 +443,57 @@ router.get("/threat-intel/cves/:cveId", requireAuth, async (req: AuthenticatedRe
 // ── Correlations ──────────────────────────────────────────────────────────────
 
 router.get("/threat-intel/correlations", requireAuth, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
+  const { tenantId, role, userId } = req.user!;
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
   const { limit = "50", offset = "0" } = req.query as Record<string, string>;
 
-  // Scope: admins see all tenant correlations; clients scope to their assets
+  // Scope: client role sees only correlations for assets in their own tenant (tenant boundary)
+  // admin/super_admin/manager/account_manager see all tenant correlations
+  let scopeCond = eq(tiAssetCorrelationsTable.tenantId, tenantId);
+  if (role === "client") {
+    // Explicitly scope to the tenant's assets (belt-and-suspenders over the tenantId filter)
+    const assetIds = await db
+      .select({ id: assetsTable.id })
+      .from(assetsTable)
+      .where(eq(assetsTable.tenantId, tenantId))
+      .then(rows => rows.map(r => r.id));
+    if (assetIds.length === 0) { res.json({ correlations: [], total: 0 }); return; }
+    scopeCond = and(
+      eq(tiAssetCorrelationsTable.tenantId, tenantId),
+      inArray(tiAssetCorrelationsTable.assetId, assetIds),
+    ) as any;
+  }
+
   const [rows, total] = await Promise.all([
-    db.select().from(tiAssetCorrelationsTable).where(eq(tiAssetCorrelationsTable.tenantId, tenantId)).orderBy(desc(tiAssetCorrelationsTable.correlatedAt)).limit(Math.min(Number(limit), 200)).offset(Number(offset)),
-    db.select({ count: sql<number>`count(*)` }).from(tiAssetCorrelationsTable).where(eq(tiAssetCorrelationsTable.tenantId, tenantId)).then(r => Number(r[0]?.count ?? 0)),
+    db.select({
+      id: tiAssetCorrelationsTable.id,
+      tenantId: tiAssetCorrelationsTable.tenantId,
+      findingId: tiAssetCorrelationsTable.findingId,
+      assetId: tiAssetCorrelationsTable.assetId,
+      matchedActors: tiAssetCorrelationsTable.matchedActors,
+      matchedCampaigns: tiAssetCorrelationsTable.matchedCampaigns,
+      matchedMalware: tiAssetCorrelationsTable.matchedMalware,
+      matchedIocs: tiAssetCorrelationsTable.matchedIocs,
+      matchedCves: tiAssetCorrelationsTable.matchedCves,
+      exploitationStatus: tiAssetCorrelationsTable.exploitationStatus,
+      threatScore: tiAssetCorrelationsTable.threatScore,
+      riskBoost: tiAssetCorrelationsTable.riskBoost,
+      correlationBasis: tiAssetCorrelationsTable.correlationBasis,
+      correlatedAt: tiAssetCorrelationsTable.correlatedAt,
+      findingTitle: findingsTable.title,
+      findingSeverity: findingsTable.severity,
+      assetName: assetsTable.name,
+    })
+      .from(tiAssetCorrelationsTable)
+      .leftJoin(findingsTable, eq(tiAssetCorrelationsTable.findingId, findingsTable.id))
+      .leftJoin(assetsTable, eq(tiAssetCorrelationsTable.assetId, assetsTable.id))
+      .where(scopeCond)
+      .orderBy(desc(tiAssetCorrelationsTable.correlatedAt))
+      .limit(Math.min(Number(limit), 200))
+      .offset(Number(offset)),
+    db.select({ count: sql<number>`count(*)` }).from(tiAssetCorrelationsTable).where(scopeCond).then(r => Number(r[0]?.count ?? 0)),
   ]);
   res.json({ correlations: rows, total });
 });
@@ -489,6 +530,7 @@ router.post("/threat-intel/correlate", requireAuth, async (req: AuthenticatedReq
 // ── Feed status & manual refresh ──────────────────────────────────────────────
 
 router.get("/threat-intel/feeds/status", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
   const { tenantId, role } = req.user!;
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
