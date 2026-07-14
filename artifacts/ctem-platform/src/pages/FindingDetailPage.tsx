@@ -60,12 +60,21 @@ const SEVERITIES = ["critical", "high", "medium", "low", "info"];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/**
+ * Importance score 0–100.
+ * Weighted: CVSS (0–50 pts) + EPSS (0–30 pts) + KEV bonus (20 pts) = max 100.
+ * Falls back to severity label only when no CVSS, EPSS, or KEV data exists.
+ * SINGLE SOURCE OF TRUTH — keep in sync with FindingsPage.tsx.
+ */
 function importanceScore(f: any): number | null {
-  const cvss = f.cvss ?? 0;
-  const epss = f.epss ?? 0;
-  const kev  = f.isKev ? 30 : 0;
-  if (!cvss && !epss && !kev) return null;
-  return Math.min(100, Math.round(kev + (cvss / 10) * 40 + epss * 30));
+  const SEV: Record<string, number> = { critical: 85, high: 65, medium: 40, low: 20, info: 10 };
+  const cvssRaw = typeof f.cvss === "number" ? f.cvss : parseFloat(String(f.cvss ?? ""));
+  const epssRaw = typeof f.epss === "number" ? f.epss : parseFloat(String(f.epss ?? ""));
+  const cvssVal = isNaN(cvssRaw) ? 0 : cvssRaw;
+  const epssVal = isNaN(epssRaw) ? 0 : epssRaw;
+  const kevPts  = f.isKev ? 20 : 0;
+  if (cvssVal === 0 && epssVal === 0 && !f.isKev) return SEV[f.severity ?? ""] ?? null;
+  return Math.min(100, Math.round(cvssVal * 5 + epssVal * 30 + kevPts));
 }
 
 function scoreColor(s: number) {
