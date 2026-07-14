@@ -200,10 +200,13 @@ async function buildRichTenantList(tenantIds: number[]) {
   // platform-owned assets (e.g. SA-scanned assets) are correctly attributed to their client tenant.
   const userTenantMap = new Map(allUsers.map(u => [u.id, u.tenantId]));
   return allTenants.map(t => {
-    const tenantAssets = allAssets.filter(a =>
-      a.tenantId === t.id ||
-      (a.assignedClientId != null && userTenantMap.get(a.assignedClientId) === t.id)
-    );
+    const tenantAssets = allAssets.filter(a => {
+      // If assigned to a client, count it ONLY under that client — never also under the platform tenant
+      if (a.assignedClientId != null) {
+        return userTenantMap.get(a.assignedClientId) === t.id;
+      }
+      return a.tenantId === t.id;
+    });
     const tenantAssetIdSet = new Set(tenantAssets.map(a => a.id));
     const tenantFindings = allFindings.filter(f => f.assetId != null && tenantAssetIdSet.has(f.assetId));
     return {
