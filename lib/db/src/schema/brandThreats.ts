@@ -74,6 +74,7 @@ export const brandThreatResultsTable = pgTable("brand_threat_results", {
   registrationStatus: text("registration_status"),
   riskScore:       integer("risk_score").notNull().default(0),
   isSuspicious:    boolean("is_suspicious").notNull().default(false),
+  isNew:           boolean("is_new").notNull().default(false),
   screenshot:      text("screenshot"),
   archivedAt:      timestamp("archived_at", { withTimezone: true }),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -498,7 +498,7 @@ async function captureHighRiskScreenshots(
   logger.info({ scanId, count: targets.length }, "brand threat screenshots captured");
 }
 
-export async function runBrandThreatScan(scanId: number, domain: string, resumeFromPhase1Cache?: PermResult[]): Promise<void> {
+export async function runBrandThreatScan(scanId: number, domain: string, resumeFromPhase1Cache?: PermResult[], prevPermutations?: Set<string>): Promise<void> {
   try {
     const [vtApiKey, gsbKey, hibpKey, phishTankKey, shodanKey, cdnRanges] = await Promise.all([
       getPlatformSetting("virustotal_api_key"),
@@ -726,6 +726,7 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
         registrationStatus,
         riskScore,
         isSuspicious,
+        isNew: prevPermutations ? !prevPermutations.has(r.permutation) : false,
       });
 
       if (pendingInserts.length >= 50) await flushBatch();

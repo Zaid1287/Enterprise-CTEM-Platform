@@ -1535,24 +1535,35 @@ function WatchlistDetailTab({ items, scanDomain }: { items: any[]; scanDomain: s
                     )}
                   </div>
 
-                  {/* Previous scan delta */}
-                  {hasPrevDelta && (
-                    <div className="mt-2 flex items-center gap-3 flex-wrap">
-                      <span className="text-[10px] text-muted-foreground font-medium">Changes vs. prev scan:</span>
-                      {Object.entries(prev!).map(([k, v]) => {
-                        if (v === 0) return null;
-                        const isPos = (v as number) > 0;
+                  {/* Previous scan delta — new threat count from isNew-flagged results */}
+                  {prev && typeof prev.newThreatCount === "number" && (
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      {prev.newThreatCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-blue-500/10 border-blue-500/20 text-blue-400">
+                          +{prev.newThreatCount} new {prev.newThreatCount === 1 ? "domain" : "domains"} since last scan
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-green-500/10 border-green-500/20 text-green-400">
+                          No new domains since last scan
+                        </span>
+                      )}
+                      {[
+                        { key: "liveCount",       label: "live" },
+                        { key: "phishingCount",   label: "phishing" },
+                        { key: "dataLeakCount",   label: "data leaks" },
+                        { key: "brandAbuseCount", label: "brand abuse" },
+                      ].map(({ key, label }) => {
+                        const current = prev[key] as number | undefined;
+                        if (current === undefined || current === 0) return null;
+                        const isIncrease = current > 0;
                         return (
-                          <span
-                            key={k}
-                            className={cn(
-                              "inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border",
-                              isPos
-                                ? "bg-red-500/10 border-red-500/20 text-red-400"
-                                : "bg-green-500/10 border-green-500/20 text-green-400",
-                            )}
-                          >
-                            {isPos ? "+" : ""}{v as number} {k.replace(/_/g, " ")}
+                          <span key={key} className={cn(
+                            "inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border",
+                            isIncrease
+                              ? "bg-red-500/10 border-red-500/20 text-red-400"
+                              : "bg-green-500/10 border-green-500/20 text-green-400",
+                          )}>
+                            {isIncrease ? "+" : ""}{current} {label}
                           </span>
                         );
                       })}
@@ -2465,6 +2476,11 @@ export default function BrandThreatDetailPage() {
                           </div>
                           <div className="flex items-center gap-2 min-w-0 pr-2">
                             <span className="text-sm font-mono truncate">{r.permutation}</span>
+                            {r.isNew && (
+                              <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/25 text-blue-400 uppercase tracking-wide">
+                                New
+                              </span>
+                            )}
                             {isExpanded ? <ChevronUp className="w-3 h-3 text-muted-foreground/40 shrink-0" /> : <ChevronDown className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
                           </div>
                           <div className="flex justify-center">
@@ -2716,7 +2732,14 @@ export default function BrandThreatDetailPage() {
                                 return (
                                   <div key={r.id} className="grid grid-cols-[28px_1fr_110px_80px_60px_60px] items-center px-5 py-2 hover:bg-muted/10 transition-colors">
                                     <span />
-                                    <span className="text-sm font-mono text-muted-foreground truncate">{r.permutation}</span>
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-sm font-mono text-muted-foreground truncate">{r.permutation}</span>
+                                      {r.isNew && (
+                                        <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/25 text-blue-400 uppercase tracking-wide">
+                                          New
+                                        </span>
+                                      )}
+                                    </div>
                                     <div className="flex justify-center">
                                       <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", fm ? `${fm.color} ${fm.bg}` : "text-muted-foreground bg-muted opacity-60")}>
                                         {fm?.label ?? r.fuzzer}

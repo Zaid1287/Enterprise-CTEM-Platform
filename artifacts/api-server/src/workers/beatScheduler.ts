@@ -10,7 +10,7 @@ import { makeBullConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
 import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWatchlistItemsTable, brandThreatScansTable, securityToolsTable, toolPipelineStepsTable, alertsTable, platformSettingsTable, brandThreatSchedulesTable, aiMapperScanSchedulesTable, aiMapperScansTable, assetGroupMembersTable } from "@workspace/db";
 import { runShadowItDiscovery } from "../lib/shadowItCorrelation";
-import { and, eq, sql, lt, lte, isNotNull, ne, desc, inArray } from "drizzle-orm";
+import { and, eq, sql, lt, lte, isNotNull, isNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
 import { fetchLatestVersion } from "../lib/githubVersionChecker";
 import { pushSseEvent } from "../lib/sseManager";
@@ -437,6 +437,7 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
 
       let scanId: number;
       let prevScanSummary: Record<string, number> | null = null;
+      let prevPermutations: Set<string> | undefined;
 
       if (existing) {
         // Concurrency guard: skip if a scan for this domain is already in progress
@@ -467,6 +468,14 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
           dataLeakCount:     existing.dataLeakCount ?? 0,
           brandAbuseCount:   existing.brandAbuseCount ?? 0,
         };
+
+        // Snapshot permutations from the previous scan BEFORE archiving, so the
+        // new scan can mark truly-new results with isNew=true for delta highlighting.
+        const prevResultRows = await db
+          .select({ permutation: brandThreatResultsTable.permutation })
+          .from(brandThreatResultsTable)
+          .where(and(eq(brandThreatResultsTable.scanId, existing.id), isNull(brandThreatResultsTable.archivedAt)));
+        prevPermutations = new Set(prevResultRows.map(r => r.permutation));
 
         // Delete prior child rows so new scan results are clean
         await Promise.all([
@@ -519,10 +528,32 @@ export async function dispatchDueWatchlistDomains(): Promise<void> {
         })
         .where(eq(brandWatchlistItemsTable.id, item.id));
 
+      const capturedPrevPermutations = prevPermutations;
+      const capturedItemId = item.id;
+      const capturedPrevScanSummary = prevScanSummary;
       setImmediate(async () => {
         try {
-          await runBrandThreatScan(scanId, domain);
-          logger.info({ scanId, domain, itemId: item.id }, "Beat: watchlist brand scan completed");
+          await runBrandThreatScan(scanId, domain, undefined, capturedPrevPermutations);
+
+          // After scan completes, count newly-discovered permutations and persist
+          // the count back into prevScanSummary so the frontend can display it.
+          if (capturedPrevPermutations !== undefined) {
+            const [newCountRow] = await db
+              .select({ count: sql<string>`count(*)::text` })
+              .from(brandThreatResultsTable)
+              .where(and(
+                eq(brandThreatResultsTable.scanId, scanId),
+                eq(brandThreatResultsTable.isNew, true),
+                isNull(brandThreatResultsTable.archivedAt),
+              ));
+            const newThreatCount = parseInt(newCountRow?.count ?? "0", 10);
+            await db.update(brandWatchlistItemsTable)
+              .set({ prevScanSummary: { ...(capturedPrevScanSummary ?? {}), newThreatCount } })
+              .where(eq(brandWatchlistItemsTable.id, capturedItemId));
+            logger.info({ scanId, domain, itemId: capturedItemId, newThreatCount }, "Beat: watchlist brand scan completed — delta stored");
+          } else {
+            logger.info({ scanId, domain, itemId: capturedItemId }, "Beat: watchlist brand scan completed");
+          }
         } catch (err) {
           logger.error({ err, scanId, domain }, "Beat: watchlist brand scan failed");
         }
