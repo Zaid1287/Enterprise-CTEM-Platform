@@ -504,11 +504,34 @@ router.get("/threat-intel/correlations", requireAuth, async (req: AuthenticatedR
 });
 
 router.get("/threat-intel/correlations/finding/:findingId", requireAuth, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
+  const { tenantId, role, userId } = req.user!;
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
   const findingId = Number(req.params.findingId);
+
+  // For client role: verify the finding belongs to an asset assigned to this user
+  if (role === "client") {
+    const assignedAssetIds = await db
+      .select({ id: assetsTable.id })
+      .from(assetsTable)
+      .where(and(
+        eq(assetsTable.tenantId, tenantId),
+        eq(assetsTable.assignedClientId, userId),
+      ))
+      .then(rows => rows.map(r => r.id));
+    if (assignedAssetIds.length === 0) { res.json({ correlations: [] }); return; }
+    // Confirm this finding is attached to one of the client's assigned assets
+    const finding = await db
+      .select({ assetId: findingsTable.assetId })
+      .from(findingsTable)
+      .where(and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, tenantId)))
+      .limit(1);
+    if (!finding[0] || !assignedAssetIds.includes(finding[0].assetId!)) {
+      res.status(403).json({ error: "Access denied" }); return;
+    }
+  }
+
   const rows = await db.select().from(tiAssetCorrelationsTable).where(
     and(eq(tiAssetCorrelationsTable.tenantId, tenantId), eq(tiAssetCorrelationsTable.findingId, findingId))
   ).orderBy(desc(tiAssetCorrelationsTable.correlatedAt));

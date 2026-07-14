@@ -396,10 +396,22 @@ router.post("/ai/stream", requireAuth, async (req: AuthenticatedRequest, res): P
       }
       case "explain-ti-correlation": {
         if (!findingId) { send({ error: "findingId required", done: true }); if (!closed) res.end(); return; }
-        const [f] = await db.select().from(findingsTable).where(and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
+        const { tenantId: tId, role: tRole, userId: tUserId } = req.user!;
+        const [f] = await db.select().from(findingsTable).where(and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, tId)));
         if (!f) { send({ error: "Finding not found", done: true }); if (!closed) res.end(); return; }
+        // Client role: enforce asset-assignment scoping — same gate as /threat-intel/correlations/finding/:id
+        if (tRole === "client") {
+          const assignedIds = await db
+            .select({ id: assetsTable.id })
+            .from(assetsTable)
+            .where(and(eq(assetsTable.tenantId, tId), eq(assetsTable.assignedClientId, tUserId)))
+            .then(rows => rows.map(r => r.id));
+          if (!f.assetId || !assignedIds.includes(f.assetId)) {
+            send({ error: "Access denied", done: true }); if (!closed) res.end(); return;
+          }
+        }
         const [corr] = await db.select().from(tiAssetCorrelationsTable).where(
-          and(eq(tiAssetCorrelationsTable.findingId, findingId), eq(tiAssetCorrelationsTable.tenantId, req.user!.tenantId))
+          and(eq(tiAssetCorrelationsTable.findingId, findingId), eq(tiAssetCorrelationsTable.tenantId, tId))
         ).orderBy(desc(tiAssetCorrelationsTable.correlatedAt)).limit(1);
         messages = buildTiCorrelationMessages(f, corr ?? null);
         templateFallback = () => templateTiCorrelation(f, corr ?? null);
