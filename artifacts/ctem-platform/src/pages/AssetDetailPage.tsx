@@ -471,17 +471,39 @@ export default function AssetDetailPage() {
         )}
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-          {[
-            { label: "IP Address",   value: a.ipAddress ?? "—" },
-            { label: "Port",         value: a.port ?? "—" },
-            { label: "Last Scanned", value: formatDate(a.lastScannedAt) },
-            { label: "Added",        value: formatDate(a.createdAt) },
-          ].map(m => (
-            <div key={m.label} className="bg-accent/40 rounded-lg p-3">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{m.label}</p>
-              <p className="text-xs font-medium font-mono mt-0.5">{m.value}</p>
-            </div>
-          ))}
+          <div className="bg-accent/40 rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">IP Address</p>
+            <p className="text-xs font-medium font-mono mt-0.5">{a.ipAddress ?? "—"}</p>
+          </div>
+          {/* Port card — shows scanned open ports count, or configured port, or "—" */}
+          <div className="bg-accent/40 rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Open Ports</p>
+            {(() => {
+              const pd = portsData as any;
+              const scannedPorts: any[] = pd?.ports ?? [];
+              if (scannedPorts.length > 0) {
+                const portNums = scannedPorts.map((p: any) => p.port).join(", ");
+                return (
+                  <p className="text-xs font-medium font-mono mt-0.5 text-emerald-400">
+                    {scannedPorts.length} open
+                    <span className="text-[10px] text-muted-foreground ml-1">({portNums})</span>
+                  </p>
+                );
+              }
+              if (a.port != null) {
+                return <p className="text-xs font-medium font-mono mt-0.5">{a.port}</p>;
+              }
+              return <p className="text-xs font-medium font-mono mt-0.5 text-muted-foreground/50">—</p>;
+            })()}
+          </div>
+          <div className="bg-accent/40 rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Last Scanned</p>
+            <p className="text-xs font-medium font-mono mt-0.5">{formatDate(a.lastScannedAt)}</p>
+          </div>
+          <div className="bg-accent/40 rounded-lg p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Added</p>
+            <p className="text-xs font-medium font-mono mt-0.5">{formatDate(a.createdAt)}</p>
+          </div>
         </div>
 
         {/* Business Impact */}
