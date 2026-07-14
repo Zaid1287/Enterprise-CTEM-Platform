@@ -56,6 +56,7 @@ const ASSET_TYPE_ICON: Record<string, React.ElementType> = {
 };
 
 const STATUSES = ["open", "in_progress", "accepted_risk", "false_positive", "mitigated"];
+const SEVERITIES = ["critical", "high", "medium", "low", "info"];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -370,6 +371,14 @@ export default function FindingDetailPage() {
   async function handleStatusChange(status: string) {
     await updateFinding.mutateAsync({ findingId, data: { status } });
     qc.invalidateQueries({ queryKey: getGetFindingQueryKey(findingId) });
+    qc.invalidateQueries({ queryKey: getListFindingsQueryKey() });
+  }
+
+  async function handleSeverityChange(severity: string) {
+    await updateFinding.mutateAsync({ findingId, data: { severity } as any });
+    qc.invalidateQueries({ queryKey: getGetFindingQueryKey(findingId) });
+    qc.invalidateQueries({ queryKey: getListFindingsQueryKey() });
+    toast({ title: "Severity updated", description: `Finding severity changed to ${severity}. Risk score recalculated.` });
   }
 
   async function handleTechScan() {
@@ -476,14 +485,24 @@ export default function FindingDetailPage() {
           <span className="opacity-40">/</span>
           <span className="truncate max-w-sm text-foreground/70">{f.title}</span>
         </div>
-        <Select value={f.status} onValueChange={handleStatusChange}>
-          <SelectTrigger className="h-7 w-36 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{capitalize(s.replace(/_/g, " "))}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select value={f.severity} onValueChange={handleSeverityChange}>
+            <SelectTrigger className="h-7 w-28 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SEVERITIES.map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{capitalize(s)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={f.status} onValueChange={handleStatusChange}>
+            <SelectTrigger className="h-7 w-36 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{capitalize(s.replace(/_/g, " "))}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}

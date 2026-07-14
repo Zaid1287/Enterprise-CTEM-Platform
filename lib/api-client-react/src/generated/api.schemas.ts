@@ -564,8 +564,20 @@ export interface FindingScanData {
   vulnerabilities?: FindingScanDataVulnerabilitiesItem[];
 }
 
+export type FindingUpdateSeverity = typeof FindingUpdateSeverity[keyof typeof FindingUpdateSeverity];
+
+
+export const FindingUpdateSeverity = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+  info: 'info',
+} as const;
+
 export interface FindingUpdate {
   status?: string;
+  severity?: FindingUpdateSeverity;
   remediation?: string;
   evidence?: string;
 }

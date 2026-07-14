@@ -86,6 +86,7 @@ export * from './findingScanDataPortsItem';
 export * from './findingScanDataSubdomainsItem';
 export * from './findingScanDataVulnerabilitiesItem';
 export * from './findingUpdate';
+export * from './findingUpdateSeverity';
 export * from './fingerprintProfile';
 export * from './fingerprintProfileHeaders';
 export * from './fingerprintProfileInput';

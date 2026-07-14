@@ -3796,6 +3796,9 @@ components:
       properties:
         status:
           type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
         remediation:
           type: string
         evidence:

@@ -698,6 +698,25 @@ function FindingDrawer({
   onClose: () => void;
   onSuppress: (f: any) => void;
 }) {
+  const [, navigate] = useLocation();
+  const qcDrawer = useQueryClient();
+  const updateDrawerFinding = useUpdateFinding();
+  const [localSeverity, setLocalSeverity] = useState<string>(finding.severity ?? "medium");
+  const [sevSaving, setSevSaving] = useState(false);
+
+  useEffect(() => { setLocalSeverity(finding.severity ?? "medium"); }, [finding.id, finding.severity]);
+
+  async function handleSeverityChange(newSev: string) {
+    if (newSev === localSeverity || sevSaving) return;
+    setSevSaving(true);
+    try {
+      await updateDrawerFinding.mutateAsync({ findingId: finding.id, data: { severity: newSev } as any });
+      setLocalSeverity(newSev);
+      qcDrawer.invalidateQueries({ queryKey: getListFindingsQueryKey() });
+    } catch { /* toast shown by mutation cache */ }
+    finally { setSevSaving(false); }
+  }
+
   const [activeTab, setActiveTab] = useState<DrawerMode>(initialMode ?? "metadata");
   useEffect(() => { if (initialMode) setActiveTab(initialMode); }, [initialMode]);
 
@@ -781,9 +800,24 @@ function FindingDrawer({
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               {finding.isKev && <span className="text-[9px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-bold">KEV</span>}
               <DeltaBadge f={finding} />
-              <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border", SEV_COLOR[finding.severity] ?? SEV_COLOR.info)}>
-                {finding.severity}
-              </span>
+              {/* Severity selector — upgrade / downgrade */}
+              <select
+                value={localSeverity}
+                onChange={e => handleSeverityChange(e.target.value)}
+                disabled={sevSaving}
+                title="Change severity (recalculates risk score)"
+                className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border cursor-pointer bg-transparent outline-none",
+                  sevSaving ? "opacity-50" : "",
+                  SEV_COLOR[localSeverity] ?? SEV_COLOR.info,
+                )}
+              >
+                {SEVERITIES.map(s => (
+                  <option key={s} value={s} className="bg-card text-foreground normal-case font-normal">
+                    {s}
+                  </option>
+                ))}
+              </select>
               <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase border", STATUS_COLOR[finding.status] ?? "")}>
                 {finding.status?.replace(/_/g, " ")}
               </span>
@@ -792,6 +826,17 @@ function FindingDrawer({
             {finding.cve && <p className="text-xs font-mono text-amber-400/80 mt-0.5">{finding.cve}</p>}
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* Open full detail page */}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-[10px] px-2 text-primary hover:text-primary hover:bg-primary/10"
+              onClick={() => { onClose(); navigate(`/findings/${finding.id}`); }}
+              title="Open full detail page"
+            >
+              <ExternalLink className="w-3.5 h-3.5 mr-1" />
+              Full Page
+            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -1373,7 +1418,7 @@ export default function FindingsPage() {
                 const impScore = importanceScore(f);
 
                 return (
-                  <tr key={f.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors group cursor-pointer" onClick={() => openDrawer(f, "metadata")}>
+                  <tr key={f.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors group cursor-pointer" onClick={() => navigate(`/findings/${f.id}`)}>
                     {/* Title + delta badge */}
                     <td className="px-3 py-2.5 max-w-[260px]">
                       <div className="flex items-start gap-1.5">

@@ -5,9 +5,11 @@
  * CTEM Platform API — Continuous Threat Exposure Management
  * OpenAPI spec version: 0.1.0
  */
+import type { FindingUpdateSeverity } from './findingUpdateSeverity';
 
 export interface FindingUpdate {
   status?: string;
+  severity?: FindingUpdateSeverity;
   remediation?: string;
   evidence?: string;
 }

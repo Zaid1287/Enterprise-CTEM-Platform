@@ -1033,6 +1033,7 @@ export const UpdateFindingParams = zod.object({
 
 export const UpdateFindingBody = zod.object({
   "status": zod.string().optional(),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'info']).optional(),
   "remediation": zod.string().optional(),
   "evidence": zod.string().optional()
 })
