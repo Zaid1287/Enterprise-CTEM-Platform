@@ -33,7 +33,7 @@ const { dbState } = vi.hoisted(() => {
   const dbState = {
     selectIdx: 0,
     selectResults: [] as unknown[][],
-    updateCalls: [] as { set: unknown; where: unknown }[],
+    updateCalls: [] as { set: { status?: string; error?: string; completedAt?: Date | null; [key: string]: unknown }; where: unknown }[],
     reset() {
       this.selectIdx = 0;
       this.selectResults = [];
@@ -64,7 +64,7 @@ vi.mock("@workspace/db", () => {
   };
 
   const makeUpdate = (_table: unknown) => ({
-    set: (payload: unknown) => ({
+    set: (payload: { status?: string; error?: string; completedAt?: Date | null; [key: string]: unknown }) => ({
       where: (cond: unknown) => {
         dbState.updateCalls.push({ set: payload, where: cond });
         return { catch: (_fn: unknown) => Promise.resolve() };
