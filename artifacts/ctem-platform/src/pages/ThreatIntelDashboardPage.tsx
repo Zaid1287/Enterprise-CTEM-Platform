@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Shield, Crosshair, Users, Layers, Bug, Radio, AlertTriangle,
   RefreshCw, Loader2, CheckCircle2, XCircle, Clock, Activity,
-  Globe, Zap,
+  Globe, Zap, Target, Cloud,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -76,6 +76,12 @@ export default function ThreatIntelDashboardPage() {
     staleTime: 120_000,
   });
 
+  const { data: ttpsData } = useQuery({
+    queryKey: ["ti-ttps-top"],
+    queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/ttps?limit=12`),
+    staleTime: 120_000,
+  });
+
   const triggerCorrelate = useCallback(async () => {
     setCorrelating(true);
     try {
@@ -98,6 +104,20 @@ export default function ThreatIntelDashboardPage() {
   const severityDist: { severity: string; count: number }[] = data?.severityDistribution ?? [];
   const monthlyC2: { month: string; count: number }[] = data?.monthlyC2 ?? [];
   const topMalware: any[] = (malwareData?.malware ?? []).slice(0, 8);
+  const topTtps: any[]    = (ttpsData?.ttps ?? []).slice(0, 12);
+  const recentC2List: any[] = (data?.recentC2 ?? []);
+
+  // Derive C2 geography from recentC2
+  const c2ByCountry = Object.entries(
+    recentC2List.reduce<Record<string, number>>((acc, c) => {
+      const key = c.country ?? "Unknown";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {})
+  ).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([country, count]) => ({ country, count }));
+
+  // Cloud exposure: count IOC types to approximate cloud exposure surface
+  const iocTypeDist = severityDist; // reuse severity breakdown for a different angle below
 
   const pieData = ["critical", "high", "medium", "low"]
     .map(s => ({ name: s, value: Number(severityDist.find(r => r.severity === s)?.count ?? 0) }))
@@ -276,6 +296,113 @@ export default function ThreatIntelDashboardPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Row: Top TTPs + C2 Geography */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Top ATT&CK TTPs */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Target className="w-4 h-4 text-yellow-400" />
+            <h2 className="text-sm font-semibold">Top ATT&amp;CK TTPs</h2>
+          </div>
+          {isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
+          ) : topTtps.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No TTP data — run a feed refresh</p>
+          ) : (
+            <div className="space-y-1">
+              {topTtps.map((t: any) => (
+                <div key={t.id} className="flex items-center justify-between text-xs py-1.5 border-b border-border/30">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-mono text-blue-400 text-[10px] shrink-0 w-20">{t.mitreId}</span>
+                    <span className="truncate font-medium">{t.name}</span>
+                  </div>
+                  <span className="text-muted-foreground/60 text-[10px] shrink-0 ml-2 capitalize">{t.tactic}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* C2 Geography */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-red-400" />
+            <h2 className="text-sm font-semibold">C2 Server Geography</h2>
+          </div>
+          {isLoading ? (
+            <Skeleton className="h-36 w-full" />
+          ) : c2ByCountry.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No C2 geography data yet</p>
+          ) : (
+            <div className="h-36">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={c2ByCountry} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+                  <XAxis type="number" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis type="category" dataKey="country" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={70} />
+                  <Tooltip
+                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
+                    cursor={{ fill: "hsl(var(--muted)/0.4)" }}
+                  />
+                  <Bar dataKey="count" fill="#ef4444" radius={[0, 3, 3, 0]} name="C2 servers" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          {c2ByCountry.length === 0 && recentC2List.length > 0 && (
+            <p className="text-[10px] text-muted-foreground">{recentC2List.length} C2 servers (no country data)</p>
+          )}
+        </div>
+      </div>
+
+      {/* Cloud / Infrastructure Exposure */}
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Cloud className="w-4 h-4 text-cyan-400" />
+          <h2 className="text-sm font-semibold">Infrastructure Exposure Overview</h2>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Total IOCs",         value: t.iocs         ?? 0, color: "text-orange-400", sub: "indicators of compromise" },
+            { label: "C2 Infrastructure",  value: t.c2           ?? 0, color: "text-red-400",    sub: `${t.c2Active ?? 0} currently active` },
+            { label: "KEV Vulnerabilities",value: t.kevCves      ?? 0, color: "text-red-400",    sub: "CISA known exploited" },
+            { label: "Correlated Findings",value: t.correlations ?? 0, color: "text-green-400",  sub: `${t.criticalCorrelations ?? 0} active exploitation` },
+          ].map(s => (
+            <div key={s.label} className="bg-muted/30 border border-border rounded-lg p-3">
+              <p className={cn("text-xl font-bold tabular-nums", s.color)}>{Number(s.value).toLocaleString()}</p>
+              <p className="text-xs font-medium mt-0.5">{s.label}</p>
+              <p className="text-[10px] text-muted-foreground">{s.sub}</p>
+            </div>
+          ))}
+        </div>
+        {/* IOC severity breakdown bar */}
+        {pieData.length > 0 && (
+          <div className="pt-1">
+            <p className="text-[10px] text-muted-foreground mb-2">IOC severity breakdown</p>
+            <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
+              {pieData.map(d => (
+                <div
+                  key={d.name}
+                  title={`${d.name}: ${d.value.toLocaleString()}`}
+                  style={{
+                    flex: d.value,
+                    background: d.name === "critical" ? "#ef4444" : d.name === "high" ? "#f97316" : d.name === "medium" ? "#eab308" : "#22c55e",
+                  }}
+                />
+              ))}
+            </div>
+            <div className="flex gap-4 mt-1.5">
+              {pieData.map(d => (
+                <div key={d.name} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <div className="w-2 h-2 rounded-full" style={{ background: d.name === "critical" ? "#ef4444" : d.name === "high" ? "#f97316" : d.name === "medium" ? "#eab308" : "#22c55e" }} />
+                  <span className="capitalize">{d.name}</span>
+                  <span className="text-muted-foreground/60">{d.value.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Feed status (admin only — feeds/status is now admin-gated) */}

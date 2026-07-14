@@ -208,11 +208,17 @@ function QueueHealthWidget() {
 
 /* ─── Super Admin Dashboard ─────────────────────────── */
 function SuperAdminDashboard() {
-  const { user } = useAuth();
+  const { user, threatIntelEnabled } = useAuth();
   const { data, isLoading } = useQuery({
     queryKey: ["platform-overview"],
     queryFn: () => apiFetch<any>(`${BASE}/api/dashboard/platform-overview`),
     staleTime: 30_000,
+  });
+  const { data: tiData } = useQuery({
+    queryKey: ["ti-dashboard-summary"],
+    queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/dashboard`),
+    staleTime: 120_000,
+    enabled: !!threatIntelEnabled,
   });
 
   if (isLoading) return <DashboardSkeleton cards={12} />;
@@ -441,6 +447,56 @@ function SuperAdminDashboard() {
           </div>
         </div>
       </div>
+
+      {/* ── Threat Intelligence Summary (shown when TI module is active) ────── */}
+      {threatIntelEnabled && tiData && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Crosshair className="w-4 h-4 text-orange-400" /> Threat Intelligence Summary
+            </h3>
+            <Link href="/threat-intel">
+              <span className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
+                Open TI <ArrowRight className="w-3 h-3" />
+              </span>
+            </Link>
+          </div>
+          <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: "IOCs",               value: tiData.totals?.iocs         ?? 0, color: "text-orange-400" },
+              { label: "Threat Actors",      value: tiData.totals?.actors       ?? 0, color: "text-purple-400" },
+              { label: "Asset Correlations", value: tiData.totals?.correlations ?? 0, color: "text-green-400" },
+              { label: "Active Exploitation",value: tiData.totals?.criticalCorrelations ?? 0, color: "text-red-400" },
+            ].map(s => (
+              <div key={s.label} className="bg-muted/30 border border-border rounded-lg px-3 py-2.5">
+                <p className={cn("text-xl font-bold tabular-nums", s.color)}>{Number(s.value).toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+          {(tiData.topActors ?? []).length > 0 && (
+            <div className="px-4 pb-4">
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">Top Correlated Actors</p>
+              <div className="space-y-1.5">
+                {(tiData.topActors as any[]).slice(0, 3).map((a: any) => (
+                  <a key={a.id} href={`/threat-intel/actors/${a.id}`}
+                    className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/40 transition-colors text-xs group">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Users className="w-3 h-3 text-purple-400 shrink-0" />
+                      <span className="font-medium truncate group-hover:text-primary transition-colors">{a.name}</span>
+                      {a.country && <span className="text-muted-foreground/60 shrink-0">{a.country}</span>}
+                    </div>
+                    <span className={cn("font-bold tabular-nums shrink-0 ml-3 text-sm",
+                      Number(a.riskScore) >= 70 ? "text-red-400" : Number(a.riskScore) >= 40 ? "text-orange-400" : "text-yellow-400")}>
+                      {Math.round(Number(a.riskScore ?? 0))}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Recent Alerts */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">

@@ -453,11 +453,16 @@ router.get("/threat-intel/correlations", requireAuth, async (req: AuthenticatedR
   // admin/super_admin/manager/account_manager see all tenant correlations
   let scopeCond = eq(tiAssetCorrelationsTable.tenantId, tenantId);
   if (role === "client") {
-    // Explicitly scope to the tenant's assets (belt-and-suspenders over the tenantId filter)
+    // Client users only see correlations for assets explicitly assigned to them
+    // (assignedClientId = their userId — same gate as findings/TPRM routes)
+    const userId = req.user!.userId;
     const assetIds = await db
       .select({ id: assetsTable.id })
       .from(assetsTable)
-      .where(eq(assetsTable.tenantId, tenantId))
+      .where(and(
+        eq(assetsTable.tenantId, tenantId),
+        eq(assetsTable.assignedClientId, userId),
+      ))
       .then(rows => rows.map(r => r.id));
     if (assetIds.length === 0) { res.json({ correlations: [], total: 0 }); return; }
     scopeCond = and(
