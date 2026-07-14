@@ -407,6 +407,7 @@ interface SocialSourceStatus {
   tiktok: boolean;
   youtube: boolean;
   meta_ads: boolean;
+  linkedin: boolean;
 }
 
 const SOCIAL_SOURCES: { key: keyof SocialSourceStatus; label: string; settingsPath: string }[] = [
@@ -415,6 +416,7 @@ const SOCIAL_SOURCES: { key: keyof SocialSourceStatus; label: string; settingsPa
   { key: "tiktok",   label: "TikTok",     settingsPath: "/settings/platform" },
   { key: "youtube",  label: "YouTube",    settingsPath: "/settings/platform" },
   { key: "meta_ads", label: "Meta Ads",   settingsPath: "/settings/platform" },
+  { key: "linkedin", label: "LinkedIn",   settingsPath: "/settings/platform" },
 ];
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");

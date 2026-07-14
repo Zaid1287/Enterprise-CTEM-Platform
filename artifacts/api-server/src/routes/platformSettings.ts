@@ -54,6 +54,7 @@ const PLATFORM_KEYS: PlatformKeyDef[] = [
   { key: "twitter_x_bearer_token",       label: "Twitter/X Bearer Token",        description: "Twitter/X API v2 Bearer Token — searches recent tweets and user accounts for brand impersonation signals (scam/fraud keywords, fake handles, unofficial accounts).", category: "brand_intelligence" },
   { key: "instagram_graph_api_token",    label: "Instagram Graph API Token",     description: "Instagram Graph API access token — scans brand-related hashtags (#brandofficial, #brandfake, #brandgiveaway) for impersonation posts and scam campaigns.", category: "brand_intelligence" },
   { key: "tiktok_research_api_token",    label: "TikTok Research API Token",     description: "TikTok Research API access token (Research program) — scans TikTok videos using brand-name keywords and hashtags for scam promotions and impersonating accounts.", category: "brand_intelligence" },
+  { key: "linkedin_api_key",             label: "LinkedIn API Key",              description: "LinkedIn API key — scans for fake company pages, impersonating recruiter profiles, and unauthorized brand presence on LinkedIn.", category: "brand_intelligence" },
   { key: "auto_mitigate_threshold",      label: "Auto-Mitigate Threshold (Scans)", description: "Number of consecutive scans in which a finding must be absent before it is automatically marked as 'auto_mitigated'. Default: 3. Set to 0 to disable auto-mitigation.", category: "scanning" },
   { key: "captcha_solver_service",   label: "CAPTCHA Solver Service",  description: "Automated CAPTCHA solving service used when the scanner encounters CAPTCHA gates (reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile). Accepted values: '2captcha' or 'capmonster'. Default: '2captcha'.", category: "waf_bypass" },
   { key: "captcha_solver_api_key",   label: "CAPTCHA Solver API Key",  description: "API key for the selected CAPTCHA solver service. Get one at https://2captcha.com (2captcha) or https://capmonster.cloud (CapMonster). Without this key the CAPTCHA solver is disabled and the scanner falls back to Puppeteer JS-challenge resolution only.", category: "waf_bypass" },
@@ -140,7 +141,7 @@ router.put("/platform/settings", requireAuth, async (req: AuthenticatedRequest, 
 });
 
 router.get("/platform/social-source-status", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const SOCIAL_KEYS = ["twitter_x_bearer_token", "instagram_graph_api_token", "tiktok_research_api_token", "youtube_api_key", "meta_ads_access_token"] as const;
+  const SOCIAL_KEYS = ["twitter_x_bearer_token", "instagram_graph_api_token", "tiktok_research_api_token", "youtube_api_key", "meta_ads_access_token", "linkedin_api_key"] as const;
   const rows = await db.select().from(platformSettingsTable).where(
     inArray(platformSettingsTable.key, [...SOCIAL_KEYS])
   );
@@ -151,6 +152,7 @@ router.get("/platform/social-source-status", requireAuth, async (req: Authentica
     tiktok:     map.get("tiktok_research_api_token") ?? false,
     youtube:    map.get("youtube_api_key")            ?? false,
     meta_ads:   map.get("meta_ads_access_token")     ?? false,
+    linkedin:   map.get("linkedin_api_key")           ?? false,
   });
 });
 
