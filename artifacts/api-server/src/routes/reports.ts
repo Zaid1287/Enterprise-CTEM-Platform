@@ -6,6 +6,7 @@ import {
   db, reportsTable, findingsTable, assetsTable, complianceControlsTable,
   complianceFrameworksTable, brandThreatScansTable, brandThreatResultsTable,
   dataLeakResultsTable, phishingDetectionsTable, brandAbuseResultsTable,
+  adMonitoringResultsTable,
   riskScoresTable, technologyDetectionsTable,
 } from "@workspace/db";
 import { CreateReportBody, GetReportParams, DeleteReportParams } from "@workspace/api-zod";
@@ -271,7 +272,7 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
     if (!assignedDomains.has(scanDomain)) { res.status(404).json({ error: "Scan not found" }); return; }
   }
 
-  const [allResults, dataLeaks, phishingDetections, brandAbuse] = await Promise.all([
+  const [allResults, dataLeaks, phishingDetections, brandAbuse, adMonitoringResults] = await Promise.all([
     db.select().from(brandThreatResultsTable)
       .where(eq(brandThreatResultsTable.scanId, scanId))
       .orderBy(desc(brandThreatResultsTable.riskScore))
@@ -288,6 +289,10 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
       .where(eq(brandAbuseResultsTable.scanId, scanId))
       .orderBy(desc(brandAbuseResultsTable.createdAt))
       .limit(50),
+    db.select().from(adMonitoringResultsTable)
+      .where(eq(adMonitoringResultsTable.scanId, scanId))
+      .orderBy(desc(adMonitoringResultsTable.createdAt))
+      .limit(100),
   ]);
 
   const liveResults = allResults.filter(r => r.dnsA && r.dnsA.length > 0);
@@ -386,6 +391,24 @@ router.get("/reports/pdf-data/brand-threat/:scanId", requireAuth, async (req: Au
       description:     b.description ?? null,
       evidenceSnippet: b.evidenceSnippet ?? null,
       risk:            b.risk,
+    })),
+    // Pillar 5: Malicious Ad Monitoring
+    adMonitoringResults: adMonitoringResults.map(a => ({
+      id:             a.id,
+      platform:       a.platform,
+      adId:           a.adId ?? null,
+      adType:         a.adType ?? null,
+      title:          a.title ?? null,
+      body:           a.body ?? null,
+      advertiserName: a.advertiserName ?? null,
+      advertiserPage: a.advertiserPage ?? null,
+      impressions:    a.impressions ?? null,
+      spend:          a.spend ?? null,
+      currency:       a.currency ?? null,
+      startDate:      a.startDate ?? null,
+      endDate:        a.endDate ?? null,
+      sourceUrl:      a.sourceUrl ?? null,
+      risk:           a.risk,
     })),
     generatedAt: new Date().toISOString(),
   });
@@ -797,6 +820,84 @@ router.get("/reports/:reportId/download", requireAuth, async (req: Authenticated
         return [c.id, frameworkName ?? "", c.controlId, c.title, c.status, c.assignedTo ?? "", c.dueDate ?? "", hasEvidence ? "Yes" : "No", c.description ?? ""];
       });
       csvContent = toCsv(headers, csvRows);
+    }
+  } else if (report.type === "brand_threat") {
+    // Fetch all brand threat data (scans + results + ad monitoring) for the tenant
+    const btScans = await db.select().from(brandThreatScansTable)
+      .where(eq(brandThreatScansTable.tenantId, tenantId))
+      .orderBy(desc(brandThreatScansTable.id))
+      .limit(20);
+    const btScanIds = btScans.map(s => s.id);
+
+    if (btScanIds.length === 0) {
+      if (fmt === "json") {
+        jsonData = { report: toReportResponse(report), brandThreatScans: [], adMonitoringResults: [], brandThreatResults: [], generatedAt: new Date().toISOString() };
+      } else {
+        csvContent = "# NO BRAND THREAT SCANS FOUND\n";
+      }
+    } else {
+      const [btResults, adResults] = await Promise.all([
+        db.select().from(brandThreatResultsTable)
+          .where(inArray(brandThreatResultsTable.scanId, btScanIds))
+          .orderBy(desc(brandThreatResultsTable.riskScore))
+          .limit(500),
+        db.select().from(adMonitoringResultsTable)
+          .where(inArray(adMonitoringResultsTable.scanId, btScanIds))
+          .orderBy(desc(adMonitoringResultsTable.createdAt))
+          .limit(500),
+      ]);
+
+      if (fmt === "json") {
+        jsonData = {
+          report: toReportResponse(report),
+          brandThreatScans: btScans.map(s => ({
+            id: s.id, domain: s.domain, status: s.status,
+            totalPermutations: s.totalPermutations, liveCount: s.liveCount,
+            registeredCount: s.registeredCount, phishingRisk: s.phishingRisk,
+            createdAt: s.createdAt.toISOString(),
+          })),
+          brandThreatResults: btResults.map(r => ({
+            scanId: r.scanId, permutation: r.permutation, fuzzer: r.fuzzer,
+            riskScore: r.riskScore, isSuspicious: r.isSuspicious,
+            dnsA: r.dnsA ?? null, geoCountry: r.geoCountry ?? null,
+            vtMalicious: r.vtMalicious ?? null,
+          })),
+          adMonitoringResults: adResults.map(a => ({
+            scanId: a.scanId, platform: a.platform, adType: a.adType ?? null,
+            title: a.title ?? null, body: a.body ?? null,
+            advertiserName: a.advertiserName ?? null, impressions: a.impressions ?? null,
+            spend: a.spend ?? null, currency: a.currency ?? null,
+            startDate: a.startDate ?? null, endDate: a.endDate ?? null,
+            sourceUrl: a.sourceUrl ?? null, risk: a.risk,
+          })),
+          generatedAt: new Date().toISOString(),
+        };
+      } else {
+        const scanMap = Object.fromEntries(btScans.map(s => [s.id, s.domain]));
+
+        const typoHeaders = ["scan_domain","permutation","fuzzer_type","dns_a","risk_score","is_suspicious","geo_country","vt_malicious"];
+        const typoRows = btResults.map(r => [
+          scanMap[r.scanId ?? 0] ?? "", r.permutation, r.fuzzer,
+          (r.dnsA ?? []).join("; "), r.riskScore,
+          r.isSuspicious ? "yes" : "no",
+          r.geoCountry ?? "", r.vtMalicious ?? "",
+        ]);
+
+        const adHeaders = ["scan_domain","platform","ad_type","advertiser","title","impressions","spend","currency","start_date","end_date","risk","source_url","body"];
+        const adRows = adResults.map(a => [
+          scanMap[a.scanId ?? 0] ?? "", a.platform, a.adType ?? "",
+          a.advertiserName ?? "", a.title ?? "", a.impressions ?? "",
+          a.spend ?? "", a.currency ?? "",
+          a.startDate ?? "", a.endDate ?? "",
+          a.risk, a.sourceUrl ?? "", a.body ?? "",
+        ]);
+
+        const sections: string[] = [
+          "# BRAND THREAT PERMUTATIONS\n" + toCsv(typoHeaders, typoRows),
+          "# MALICIOUS ADS\n" + toCsv(adHeaders, adRows),
+        ];
+        csvContent = sections.join("\n\n");
+      }
     }
   } else {
     const assets = await db.select({

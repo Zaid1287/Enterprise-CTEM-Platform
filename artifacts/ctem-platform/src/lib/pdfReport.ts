@@ -1016,6 +1016,13 @@ export async function downloadBrandThreatCsv(scanId: number, token: string | nul
       id: number; type: string; platform?: string | null; url?: string | null;
       title?: string | null; description?: string | null; evidenceSnippet?: string | null; risk: string;
     }[];
+    adMonitoringResults: {
+      id: number; platform: string; adId?: string | null; adType?: string | null;
+      title?: string | null; body?: string | null; advertiserName?: string | null;
+      advertiserPage?: string | null; impressions?: string | null; spend?: string | null;
+      currency?: string | null; startDate?: string | null; endDate?: string | null;
+      sourceUrl?: string | null; risk: string;
+    }[];
   };
 
   const sections: string[] = [];
@@ -1063,6 +1070,17 @@ export async function downloadBrandThreatCsv(scanId: number, token: string | nul
     a.url ?? "", a.title ?? "", a.description ?? "", a.evidenceSnippet ?? "",
   ]);
   sections.push("# BRAND ABUSE\n" + toCsvRows(abuseHeaders, abuseRows));
+
+  const adHeaders = [
+    "pillar","platform","ad_type","advertiser","title","impressions",
+    "spend","currency","start_date","end_date","risk","source_url","body",
+  ];
+  const adRows = (d.adMonitoringResults ?? []).map(a => [
+    "malicious_ads", a.platform, a.adType ?? "", a.advertiserName ?? "",
+    a.title ?? "", a.impressions ?? "", a.spend ?? "", a.currency ?? "",
+    a.startDate ?? "", a.endDate ?? "", a.risk, a.sourceUrl ?? "", a.body ?? "",
+  ]);
+  sections.push("# MALICIOUS ADS\n" + toCsvRows(adHeaders, adRows));
 
   const csvContent = sections.join("\n\n");
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -1118,6 +1136,13 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
     brandAbuse: {
       id: number; type: string; platform?: string | null; url?: string | null;
       title?: string | null; description?: string | null; evidenceSnippet?: string | null; risk: string;
+    }[];
+    adMonitoringResults: {
+      id: number; platform: string; adId?: string | null; adType?: string | null;
+      title?: string | null; body?: string | null; advertiserName?: string | null;
+      advertiserPage?: string | null; impressions?: string | null; spend?: string | null;
+      currency?: string | null; startDate?: string | null; endDate?: string | null;
+      sourceUrl?: string | null; risk: string;
     }[];
   };
 
@@ -1396,6 +1421,51 @@ export async function downloadBrandThreatPdf(scanId: number, token: string | nul
 
     if (d.brandAbuse.length > 45) {
       doc.text(`…and ${d.brandAbuse.length - 45} more brand abuse cases not shown.`, { size: 8.5, color: TEXT2 });
+    }
+    doc.gap(8);
+  }
+
+  // Pillar 5: Malicious Ads
+  const adResults = d.adMonitoringResults ?? [];
+  if (adResults.length > 0) {
+    doc.sectionHeader("Malicious Ad Monitoring", HIGH);
+    doc.gap(6);
+    doc.text(
+      `${adResults.length} suspicious ad${adResults.length !== 1 ? "s" : ""} detected impersonating or abusing the "${d.scan.domain}" brand across ad platforms.`,
+      { size: 9, color: TEXT2 },
+    );
+    doc.gap(8);
+
+    const byPlatform: Record<string, typeof adResults> = {};
+    for (const a of adResults) {
+      (byPlatform[a.platform] ??= []).push(a);
+    }
+
+    for (const [platform, items] of Object.entries(byPlatform)) {
+      doc.subsectionHeader(`${platform} (${items.length})`, TEXT);
+      doc.gap(3);
+      doc.table(
+        ["Title / Body", "Advertiser", "Risk", "Impressions", "Period"],
+        [208, 120, 62, 88, 128],
+        items.slice(0, 20).map(a => {
+          const period = a.startDate && a.endDate
+            ? `${a.startDate} – ${a.endDate}`
+            : a.startDate ?? a.endDate ?? "—";
+          return [
+            a.title ?? a.body ?? "—",
+            a.advertiserName ?? "—",
+            a.risk,
+            a.impressions ?? "—",
+            period,
+          ];
+        }),
+        { severityCol: 2 },
+      );
+      doc.gap(8);
+    }
+
+    if (adResults.length > 60) {
+      doc.text(`…and ${adResults.length - 60} more malicious ad records not shown.`, { size: 8.5, color: TEXT2 });
     }
     doc.gap(8);
   }
