@@ -96,6 +96,49 @@ function ScoreBadge({ score, label }: { score: number | null; label: string }) {
   return <span className={cn("text-xs font-mono font-semibold", color)} title={label}>{score}</span>;
 }
 
+// ── Threat Score Badge ───────────────────────────────────────────────────────
+
+const TI_EXPLOIT_MAP: Record<string, { label: string; cls: string }> = {
+  active:    { label: "Active",    cls: "bg-red-500/20 text-red-400 border-red-500/30" },
+  confirmed: { label: "Confirmed", cls: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
+  potential: { label: "Potential", cls: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" },
+  unknown:   { label: "Unknown",   cls: "bg-muted text-muted-foreground/60 border-border" },
+};
+
+function ThreatScoreBadge({
+  score,
+  exploitationStatus,
+  onClick,
+}: {
+  score: number | null;
+  exploitationStatus: string | null;
+  onClick: (e: React.MouseEvent) => void;
+}) {
+  if (score === null) return <span className="text-xs text-muted-foreground/40">—</span>;
+  const rounded = Math.round(score);
+  const numColor =
+    rounded >= 80 ? "text-red-400" :
+    rounded >= 60 ? "text-orange-400" :
+    rounded >= 40 ? "text-yellow-400" :
+    rounded >= 20 ? "text-blue-400" :
+    "text-muted-foreground";
+  const es = TI_EXPLOIT_MAP[exploitationStatus ?? "unknown"] ?? TI_EXPLOIT_MAP.unknown;
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(e); }}
+      className="flex items-center gap-1 group/tib"
+      title={`Threat Intel correlation score: ${rounded}/100 · ${es.label} exploitation · Click to open Threat Intel tab`}
+    >
+      <span className={cn("text-xs font-mono font-bold group-hover/tib:underline", numColor)}>
+        {rounded}
+      </span>
+      <span className={cn("text-[9px] px-1 py-0.5 rounded font-semibold border", es.cls)}>
+        {es.label}
+      </span>
+    </button>
+  );
+}
+
 // ── Delta Badge — "NEW" / "RE-CONFIRMED" / "GONE" ──────────────────────────
 
 function DeltaBadge({ f }: { f: any }) {
@@ -1039,6 +1082,17 @@ export default function FindingsPage() {
 
   const groupList = (allGroups as any[]) ?? [];
 
+  const [sortBy, setSortBy] = useState<string>("");
+
+  const BASE_PAGE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const { data: tiModuleData } = useQuery({
+    queryKey: ["ti-module"],
+    queryFn: () => apiFetch<{ isEnabled: boolean }>(`${BASE_PAGE}/api/threat-intel/module`),
+    staleTime: 60_000,
+  });
+  const tiEnabled = tiModuleData?.isEnabled === true;
+
   const [drawerFinding, setDrawerFinding] = useState<any>(null);
   const [drawerMode, setDrawerMode]       = useState<DrawerMode>(null);
   const [suppressTarget, setSuppressTarget] = useState<any>(null);
@@ -1084,8 +1138,16 @@ export default function FindingsPage() {
     if (groupMemberIdSet) l = l.filter((f: any) => groupMemberIdSet.has(f.assetId));
     if (newOnly)          l = l.filter((f: any) => f.isNewSinceLastScan);
     if (staleOnly)        l = l.filter((f: any) => (f.consecutiveMissedScans ?? 0) > 0);
+    if (sortBy === "threat_score") {
+      l = [...l].sort((a: any, b: any) => (b.tiScore ?? -1) - (a.tiScore ?? -1));
+    } else if (sortBy === "severity") {
+      const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+      l = [...l].sort((a: any, b: any) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
+    } else if (sortBy === "risk_score") {
+      l = [...l].sort((a: any, b: any) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+    }
     return l;
-  }, [allList, groupMemberIdSet, newOnly, staleOnly]);
+  }, [allList, groupMemberIdSet, newOnly, staleOnly, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   const paginated  = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -1236,7 +1298,16 @@ export default function FindingsPage() {
             </SelectContent>
           </Select>
         )}
-        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); setGroupFilter(null); setNewOnly(false); setStaleOnly(false); resetPage(); }}>
+        <Select value={sortBy || "_none_"} onValueChange={v => { setSortBy(v === "_none_" ? "" : v); resetPage(); }}>
+          <SelectTrigger className="w-44 h-8 text-sm"><SelectValue placeholder="Sort by…" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="_none_">Default order</SelectItem>
+            <SelectItem value="severity">Severity (high first)</SelectItem>
+            <SelectItem value="risk_score">Risk Score (high first)</SelectItem>
+            {tiEnabled && <SelectItem value="threat_score">Threat Score (high first)</SelectItem>}
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); setGroupFilter(null); setNewOnly(false); setStaleOnly(false); setSortBy(""); resetPage(); }}>
           Clear
         </Button>
         {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setGroupFilter(null); resetPage(); }} />}
@@ -1274,6 +1345,14 @@ export default function FindingsPage() {
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">First Scan</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Last Seen</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Imp. Score</th>
+                {tiEnabled && (
+                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                    <span className="flex items-center gap-1">
+                      <Target className="w-3 h-3 text-violet-400" />
+                      Threat Score
+                    </span>
+                  </th>
+                )}
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Status</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">CVE</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Actions</th>
@@ -1282,7 +1361,7 @@ export default function FindingsPage() {
             <tbody>
               {isLoading && [...Array(8)].map((_, i) => (
                 <tr key={i} className="border-b border-border/50">
-                  {[...Array(12)].map((_, j) => (
+                  {[...Array(tiEnabled ? 13 : 12)].map((_, j) => (
                     <td key={j} className="px-3 py-3"><Skeleton className="h-4" /></td>
                   ))}
                 </tr>
@@ -1360,6 +1439,17 @@ export default function FindingsPage() {
                       <ScoreBadge score={impScore} label="Importance Score (derived from CVSS, EPSS, KEV)" />
                     </td>
 
+                    {/* Threat Score (TI module) */}
+                    {tiEnabled && (
+                      <td className="px-3 py-2.5">
+                        <ThreatScoreBadge
+                          score={f.tiScore ?? null}
+                          exploitationStatus={f.tiExploitationStatus ?? null}
+                          onClick={() => openDrawer(f, "threat-intel")}
+                        />
+                      </td>
+                    )}
+
                     {/* Status — inline dropdown */}
                     <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
                       <select
@@ -1420,7 +1510,7 @@ export default function FindingsPage() {
 
               {!isLoading && list.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={tiEnabled ? 14 : 13} className="px-4 py-10 text-center text-sm text-muted-foreground">
                     No findings match the current filters.
                   </td>
                 </tr>

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, ilike, inArray, desc, isNotNull, or, ne } from "drizzle-orm";
+import { eq, and, ilike, inArray, desc, isNotNull, or, ne, sql } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter, getEffectiveAssetIdsForTenant } from "../lib/tenantScoping";
 import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable, scanSuppressionsTable } from "@workspace/db";
@@ -26,6 +26,8 @@ function toFindingResponse(
   assetTags?: string[] | null,
   assetRiskScore?: number | null,
   tenantName?: string | null,
+  tiScore?: number | null,
+  tiExploitationStatus?: string | null,
 ) {
   const SEV_RISK: Record<string, number> = { critical: 90, high: 70, medium: 45, low: 20, info: 10 };
   const riskScore = assetRiskScore ?? f.riskScore ?? SEV_RISK[f.severity ?? "medium"] ?? 45;
@@ -55,6 +57,8 @@ function toFindingResponse(
     previousScanId: f.previousScanId ?? null,
     firstSeenScanId: f.firstSeenScanId ?? null,
     isNewSinceLastScan,
+    tiScore: tiScore ?? null,
+    tiExploitationStatus: tiExploitationStatus ?? null,
     createdAt: f.createdAt.toISOString(), updatedAt: f.updatedAt.toISOString(),
   };
 }
@@ -97,12 +101,15 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       assetPort: assetsTable.port,
       assetTags: assetsTable.tags,
       assetRiskScore: riskScoresTable.score,
+      tiScore: sql<number | null>`(SELECT threat_score FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
+      tiExploitationStatus: sql<string | null>`(SELECT exploitation_status FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
     }).from(findingsTable)
       .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
       .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+
       .where(and(...extFilters));
-    res.json(extFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
-      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
+    res.json(extFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tiScore, tiExploitationStatus }) =>
+      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, undefined, tiScore, tiExploitationStatus)));
     return;
   }
 
@@ -132,12 +139,15 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       assetPort: assetsTable.port,
       assetTags: assetsTable.tags,
       assetRiskScore: riskScoresTable.score,
+      tiScore: sql<number | null>`(SELECT threat_score FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
+      tiExploitationStatus: sql<string | null>`(SELECT exploitation_status FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
     }).from(findingsTable)
       .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
       .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
+
       .where(and(...amFilters));
-    res.json(amFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
-      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
+    res.json(amFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tiScore, tiExploitationStatus }) =>
+      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, undefined, tiScore, tiExploitationStatus)));
     return;
   }
 
@@ -178,13 +188,16 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
       assetTags: assetsTable.tags,
       assetRiskScore: riskScoresTable.score,
       tenantName: tenantsTable.name,
+      tiScore: sql<number | null>`(SELECT threat_score FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
+      tiExploitationStatus: sql<string | null>`(SELECT exploitation_status FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
     }).from(findingsTable)
       .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
       .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
       .leftJoin(tenantsTable, eq(findingsTable.tenantId, tenantsTable.id))
+
       .where(and(...saFilters));
-    res.json(saFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName }) =>
-      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName)));
+    res.json(saFindings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName, tiScore, tiExploitationStatus }) =>
+      toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tenantName, tiScore, tiExploitationStatus)));
     return;
   }
 
@@ -220,12 +233,14 @@ router.get("/findings", requireAuth, async (req: AuthenticatedRequest, res): Pro
     assetPort: assetsTable.port,
     assetTags: assetsTable.tags,
     assetRiskScore: riskScoresTable.score,
+    tiScore: sql<number | null>`(SELECT threat_score FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
+    tiExploitationStatus: sql<string | null>`(SELECT exploitation_status FROM ti_asset_correlations WHERE finding_id = ${findingsTable.id} ORDER BY threat_score DESC NULLS LAST LIMIT 1)`,
   }).from(findingsTable)
     .leftJoin(assetsTable, eq(findingsTable.assetId, assetsTable.id))
     .leftJoin(riskScoresTable, eq(findingsTable.assetId, riskScoresTable.assetId))
     .where(and(...filters));
-  res.json(findings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore }) =>
-    toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore)));
+  res.json(findings.map(({ finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, tiScore, tiExploitationStatus }) =>
+    toFindingResponse(finding, assetName, assetValue, assetType, assetLastScannedAt, assetIpAddress, assetPort, assetTags, assetRiskScore, undefined, tiScore, tiExploitationStatus)));
 });
 
 // ── False Positive: list (role-scoped) ───────────────────────────────────────
