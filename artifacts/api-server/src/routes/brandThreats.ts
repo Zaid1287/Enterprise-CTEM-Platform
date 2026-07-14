@@ -146,7 +146,7 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
       }
     } else if (role === "account_manager") {
       const amTids = await getAmClientTenantIds(user.userId);
-      if (!amTids.includes(asset.tenantId)) {
+      if (asset.tenantId === null || !amTids.includes(asset.tenantId)) {
         res.status(403).json({ error: "Access denied to this asset" }); return;
       }
     } else if (role !== "admin" && role !== "super_admin") {
@@ -163,7 +163,7 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
 
     // Derive domain from asset value (strip protocol, www, path)
     domainSource = asset.value;
-    scanTenantId = asset.tenantId;
+    scanTenantId = asset.tenantId ?? user.tenantId;
   } else {
     domainSource = String(req.body?.domain ?? "").trim();
   }
@@ -644,12 +644,12 @@ router.post("/brand-threat-schedules", requireAuth, async (req: AuthenticatedReq
 
   const [schedule] = await db.insert(brandThreatSchedulesTable).values({
     tenantId: req.user!.tenantId,
+    name: label ?? domain,
     domain,
     frequency,
     runTime,
     dayOfWeek: !isNaN(dayOfWeek!) ? dayOfWeek : null,
     dayOfMonth: !isNaN(dayOfMonth!) ? dayOfMonth : null,
-    label,
     status: "active",
     nextRunAt,
   }).returning();
@@ -672,7 +672,7 @@ router.patch("/brand-threat-schedules/:id", requireAuth, async (req: Authenticat
 
   const updates: Partial<typeof brandThreatSchedulesTable.$inferInsert> = {};
   if (req.body?.status !== undefined) updates.status = req.body.status === "paused" ? "paused" : "active";
-  if (req.body?.label !== undefined) updates.label = req.body.label ? String(req.body.label) : null;
+  if (req.body?.label !== undefined && req.body.label) updates.name = String(req.body.label);
   if (req.body?.runTime !== undefined) updates.runTime = String(req.body.runTime);
   if (req.body?.dayOfWeek !== undefined) updates.dayOfWeek = req.body.dayOfWeek != null ? parseInt(String(req.body.dayOfWeek), 10) : null;
   if (req.body?.dayOfMonth !== undefined) updates.dayOfMonth = req.body.dayOfMonth != null ? parseInt(String(req.body.dayOfMonth), 10) : null;
