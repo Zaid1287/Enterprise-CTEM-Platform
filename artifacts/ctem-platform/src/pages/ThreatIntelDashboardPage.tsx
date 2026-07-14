@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Shield, Crosshair, Users, Layers, Bug, Radio, AlertTriangle,
   RefreshCw, Loader2, CheckCircle2, XCircle, Clock, Activity,
-  Globe, Zap, Target, Cloud,
+  Globe, Zap, Target, Cloud, GitBranch, Filter,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -31,8 +31,29 @@ const FEED_META: Record<string, string> = {
 };
 
 const SEV_COLORS: Record<string, string> = {
-  critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e", unknown: "#6b7280",
+  critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e", info: "#3b82f6", unknown: "#6b7280",
 };
+
+function sevBadge(s: string | null | undefined) {
+  const sev = (s ?? "unknown").toLowerCase();
+  return cn(
+    "text-[10px] px-1.5 py-0.5 rounded border font-semibold capitalize shrink-0",
+    sev === "critical" ? "text-red-400 bg-red-500/10 border-red-500/20"
+    : sev === "high" ? "text-orange-400 bg-orange-500/10 border-orange-500/20"
+    : sev === "medium" ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/20"
+    : sev === "low" ? "text-green-400 bg-green-500/10 border-green-500/20"
+    : "text-muted-foreground bg-muted border-border",
+  );
+}
+
+function exploitBadge(status: string) {
+  return cn(
+    "text-[10px] px-1.5 py-0.5 rounded border font-semibold capitalize shrink-0",
+    status === "active" ? "text-red-400 bg-red-500/10 border-red-500/20"
+    : status === "poc" ? "text-orange-400 bg-orange-500/10 border-orange-500/20"
+    : "text-muted-foreground bg-muted border-border",
+  );
+}
 
 function StatCard({ icon: Icon, label, value, sub, color = "text-primary" }: {
   icon: any; label: string; value: number | string; sub?: string; color?: string;
@@ -54,12 +75,18 @@ function StatCard({ icon: Icon, label, value, sub, color = "text-primary" }: {
 export default function ThreatIntelDashboardPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const isSuperAdmin = user?.role === "super_admin";
   const [correlating, setCorrelating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+
+  const dashUrl = tenantFilter && isSuperAdmin
+    ? `${BASE}/api/threat-intel/dashboard?tenantId=${tenantFilter}`
+    : `${BASE}/api/threat-intel/dashboard`;
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["ti-dashboard"],
-    queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/dashboard`),
+    queryKey: ["ti-dashboard", tenantFilter],
+    queryFn: () => apiFetch<any>(dashUrl),
     staleTime: 60_000,
   });
 
@@ -104,8 +131,15 @@ export default function ThreatIntelDashboardPage() {
   const severityDist: { severity: string; count: number }[] = data?.severityDistribution ?? [];
   const monthlyC2: { month: string; count: number }[] = data?.monthlyC2 ?? [];
   const topMalware: any[] = (malwareData?.malware ?? []).slice(0, 8);
-  const topTtps: any[]    = (ttpsData?.ttps ?? []).slice(0, 12);
+  const topTtps: any[] = (ttpsData?.ttps ?? []).slice(0, 12);
   const recentC2List: any[] = (data?.recentC2 ?? []);
+
+  // New extended sections
+  const topActorsWithHits: { name: string; asset_count: number; correlation_count: number }[] = data?.topActorsWithHits ?? [];
+  const activeIocMatches: { value: string; type: string; severity: string; hit_count: number; match_count: number }[] = data?.activeIocMatches ?? [];
+  const mostTargetedCves: { cve_id: string; hit_count: number; match_count: number; cvss: number | null; severity: string | null; isKev: boolean; epss: number | null }[] = data?.mostTargetedCves ?? [];
+  const recentCorrelations: any[] = data?.recentCorrelations ?? [];
+  const tenants: { id: number; name: string }[] = data?.tenants ?? [];
 
   // Derive C2 geography from recentC2
   const c2ByCountry = Object.entries(
@@ -116,12 +150,11 @@ export default function ThreatIntelDashboardPage() {
     }, {})
   ).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([country, count]) => ({ country, count }));
 
-  // Cloud exposure: count IOC types to approximate cloud exposure surface
-  const iocTypeDist = severityDist; // reuse severity breakdown for a different angle below
-
   const pieData = ["critical", "high", "medium", "low"]
     .map(s => ({ name: s, value: Number(severityDist.find(r => r.severity === s)?.count ?? 0) }))
     .filter(d => d.value > 0);
+
+  const selectedTenantName = tenants.find(t => t.id === tenantFilter)?.name;
 
   return (
     <div className="p-6 space-y-6">
@@ -133,21 +166,46 @@ export default function ThreatIntelDashboardPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold">Threat Intelligence</h1>
-            <p className="text-xs text-muted-foreground">Global threat database & asset correlation</p>
+            <p className="text-xs text-muted-foreground">
+              Global threat database &amp; asset correlation
+              {selectedTenantName && (
+                <span className="ml-2 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-medium">
+                  {selectedTenantName}
+                </span>
+              )}
+            </p>
           </div>
         </div>
-        {isAdmin && (
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={triggerCorrelate} disabled={correlating}>
-              {correlating ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Activity className="w-3.5 h-3.5 mr-1.5" />}
-              Correlate Assets
-            </Button>
-            <Button size="sm" variant="outline" onClick={triggerRefresh} disabled={refreshing}>
-              {refreshing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
-              Refresh Feeds
-            </Button>
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Tenant filter — super_admin only */}
+          {isSuperAdmin && tenants.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+              <select
+                className="text-xs bg-card border border-border rounded-md px-2 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                value={tenantFilter ?? ""}
+                onChange={e => setTenantFilter(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">All tenants</option>
+                {tenants.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {isAdmin && (
+            <>
+              <Button size="sm" variant="outline" onClick={triggerCorrelate} disabled={correlating}>
+                {correlating ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Activity className="w-3.5 h-3.5 mr-1.5" />}
+                Run Correlation
+              </Button>
+              <Button size="sm" variant="outline" onClick={triggerRefresh} disabled={refreshing}>
+                {refreshing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+                Refresh Feeds
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Stat grid */}
@@ -168,13 +226,200 @@ export default function ThreatIntelDashboardPage() {
         </div>
       )}
 
-      {/* Row: Top threat actors + IOC severity pie */}
+      {/* ── NEW: Top Actors with Asset Hit Counts + Active IOC Matches ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top threat actors */}
+        {/* Top threat actors with asset hit counts */}
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-purple-400" />
-            <h2 className="text-sm font-semibold">Top Threat Actors by Risk</h2>
+            <h2 className="text-sm font-semibold">Top Threat Actors — Asset Hit Counts</h2>
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-1">Actors matched across your correlated assets</p>
+          {isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+          ) : topActorsWithHits.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No actor correlations yet — run correlation to populate</p>
+          ) : (
+            <div className="space-y-1.5">
+              {topActorsWithHits.map((a, idx) => (
+                <div key={a.name} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/30 transition-colors">
+                  <span className="text-[11px] text-muted-foreground/50 w-4 shrink-0 text-right">{idx + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{a.name}</p>
+                    <p className="text-[11px] text-muted-foreground">{a.correlation_count} correlation{a.correlation_count !== 1 ? "s" : ""}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className={cn("text-sm font-bold tabular-nums", a.asset_count >= 5 ? "text-red-400" : a.asset_count >= 2 ? "text-orange-400" : "text-yellow-400")}>
+                      {a.asset_count}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">asset{a.asset_count !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Active IOC Matches */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Crosshair className="w-4 h-4 text-orange-400" />
+            <h2 className="text-sm font-semibold">Active IOC Matches</h2>
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-1">IOCs correlated against your assets</p>
+          {isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+          ) : activeIocMatches.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No IOC matches yet — run correlation to populate</p>
+          ) : (
+            <div className="space-y-1.5">
+              {activeIocMatches.slice(0, 8).map((ioc, idx) => (
+                <div key={`${ioc.value}-${idx}`} className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted/30 transition-colors">
+                  <span className={sevBadge(ioc.severity)}>{ioc.severity ?? "?"}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border shrink-0 uppercase font-mono">
+                    {ioc.type ?? "ioc"}
+                  </span>
+                  <span className="text-xs font-mono truncate flex-1 min-w-0">{ioc.value}</span>
+                  <div className="text-right shrink-0">
+                    <span className={cn("text-xs font-bold tabular-nums", ioc.hit_count >= 3 ? "text-red-400" : ioc.hit_count >= 2 ? "text-orange-400" : "text-yellow-400")}>
+                      {ioc.hit_count}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground ml-0.5">hits</span>
+                  </div>
+                </div>
+              ))}
+              {activeIocMatches.length > 8 && (
+                <p className="text-[11px] text-muted-foreground text-center pt-1">
+                  +{activeIocMatches.length - 8} more IOC matches
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── NEW: Most Targeted CVEs + Recent Correlations Feed ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Most Targeted CVEs */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400" />
+            <h2 className="text-sm font-semibold">Most Targeted CVEs</h2>
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-1">CVEs with most asset hits in correlations</p>
+          {isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+          ) : mostTargetedCves.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No CVE correlations yet — run correlation to populate</p>
+          ) : (
+            <div className="space-y-1.5">
+              {mostTargetedCves.map((cve, idx) => (
+                <div key={cve.cve_id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted/30 transition-colors">
+                  <span className="text-[11px] text-muted-foreground/50 w-4 shrink-0 text-right">{idx + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <a
+                        href={`https://nvd.nist.gov/vuln/detail/${cve.cve_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-mono font-semibold text-blue-400 hover:underline truncate"
+                      >
+                        {cve.cve_id}
+                      </a>
+                      {cve.isKev && (
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-bold shrink-0">KEV</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {cve.severity && <span className={sevBadge(cve.severity)}>{cve.severity}</span>}
+                      {cve.cvss != null && <span className="text-[10px] text-muted-foreground">CVSS {Number(cve.cvss).toFixed(1)}</span>}
+                      {cve.epss != null && <span className="text-[10px] text-muted-foreground">EPSS {(Number(cve.epss) * 100).toFixed(1)}%</span>}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className={cn("text-sm font-bold tabular-nums", cve.hit_count >= 5 ? "text-red-400" : cve.hit_count >= 2 ? "text-orange-400" : "text-yellow-400")}>
+                      {cve.hit_count}
+                    </span>
+                    <p className="text-[10px] text-muted-foreground">asset{cve.hit_count !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Recent Correlations Feed */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <GitBranch className="w-4 h-4 text-green-400" />
+            <h2 className="text-sm font-semibold">Recent Correlations</h2>
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-1">Latest threat intelligence matches against assets</p>
+          {isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : recentCorrelations.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No correlations yet — run correlation to populate</p>
+          ) : (
+            <div className="space-y-2 overflow-y-auto max-h-72">
+              {recentCorrelations.map((c: any) => {
+                const actors: any[] = Array.isArray(c.matchedActors) ? c.matchedActors : [];
+                const iocs: any[] = Array.isArray(c.matchedIocs) ? c.matchedIocs : [];
+                const cves: string[] = Array.isArray(c.matchedCves) ? c.matchedCves : [];
+                return (
+                  <div key={c.id} className="border border-border/50 rounded-lg p-2.5 hover:bg-muted/20 transition-colors">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium truncate">{c.assetName ?? `Asset #${c.assetId}`}</p>
+                        {c.findingTitle && (
+                          <p className="text-[11px] text-muted-foreground truncate">{c.findingTitle}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className={exploitBadge(c.exploitationStatus)}>{c.exploitationStatus}</span>
+                        {c.findingSeverity && <span className={sevBadge(c.findingSeverity)}>{c.findingSeverity}</span>}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {actors.slice(0, 2).map((a: any, i: number) => (
+                        <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                          {typeof a === "string" ? a : (a?.name ?? "actor")}
+                        </span>
+                      ))}
+                      {iocs.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                          {iocs.length} IOC{iocs.length !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                      {cves.slice(0, 2).map((cveId: string, i: number) => (
+                        <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-mono">
+                          {cveId}
+                        </span>
+                      ))}
+                      {cves.length > 2 && (
+                        <span className="text-[10px] text-muted-foreground">+{cves.length - 2} CVEs</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/60 mt-1">
+                      {c.correlatedAt ? new Date(c.correlatedAt).toLocaleString() : ""}
+                      {c.threatScore != null && (
+                        <span className="ml-2 font-medium text-muted-foreground">score {Number(c.threatScore).toFixed(0)}</span>
+                      )}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Row: Top threat actors (by risk score) + IOC severity pie */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Top threat actors by risk score */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-purple-400" />
+            <h2 className="text-sm font-semibold">Top Threat Actors by Risk Score</h2>
           </div>
           {isLoading ? (
             <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
@@ -405,7 +650,7 @@ export default function ThreatIntelDashboardPage() {
         )}
       </div>
 
-      {/* Feed status (admin only — feeds/status is now admin-gated) */}
+      {/* Feed status (admin only) */}
       {isAdmin && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2">

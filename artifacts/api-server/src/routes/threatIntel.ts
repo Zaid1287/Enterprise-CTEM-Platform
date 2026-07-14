@@ -99,9 +99,16 @@ router.patch("/threat-intel/client/:tenantId/module", requireAuth, async (req: A
 // ── Dashboard summary ─────────────────────────────────────────────────────────
 
 router.get("/threat-intel/dashboard", requireAuth, async (req: AuthenticatedRequest, res) => {
-  const { tenantId, role } = req.user!;
-  const enabled = await getThreatIntelEnabled(tenantId, role);
+  const { tenantId: callerTenantId, role } = req.user!;
+  const enabled = await getThreatIntelEnabled(callerTenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
+
+  // super_admin can filter by a specific tenant; otherwise use caller's tenant
+  let scopeTenantId = callerTenantId;
+  if (role === "super_admin" && req.query.tenantId) {
+    const parsed = Number(req.query.tenantId);
+    if (!isNaN(parsed)) scopeTenantId = parsed;
+  }
 
   try {
     const [
@@ -125,7 +132,7 @@ router.get("/threat-intel/dashboard", requireAuth, async (req: AuthenticatedRequ
       db.select({ count: sql<number>`count(*)` }).from(tiC2ServersTable).then(r => Number(r[0]?.count ?? 0)),
       db.select({ count: sql<number>`count(*)` }).from(tiC2ServersTable).where(eq(tiC2ServersTable.isActive, true)).then(r => Number(r[0]?.count ?? 0)),
       db.select({ count: sql<number>`count(*)` }).from(tiCveIntelTable).where(eq(tiCveIntelTable.isKev, true)).then(r => Number(r[0]?.count ?? 0)),
-      db.select({ count: sql<number>`count(*)` }).from(tiAssetCorrelationsTable).where(eq(tiAssetCorrelationsTable.tenantId, tenantId)).then(r => Number(r[0]?.count ?? 0)),
+      db.select({ count: sql<number>`count(*)` }).from(tiAssetCorrelationsTable).where(eq(tiAssetCorrelationsTable.tenantId, scopeTenantId)).then(r => Number(r[0]?.count ?? 0)),
       db.select().from(tiFeedRunsTable).orderBy(desc(tiFeedRunsTable.startedAt)).limit(20),
       db.select({ id: tiThreatActorsTable.id, name: tiThreatActorsTable.name, country: tiThreatActorsTable.country, motivation: tiThreatActorsTable.motivation, riskScore: tiThreatActorsTable.riskScore, targetIndustries: tiThreatActorsTable.targetIndustries, isActive: tiThreatActorsTable.isActive }).from(tiThreatActorsTable).orderBy(desc(tiThreatActorsTable.riskScore)).limit(10),
       db.select().from(tiC2ServersTable).where(eq(tiC2ServersTable.isActive, true)).orderBy(desc(tiC2ServersTable.discoveredAt)).limit(10),
@@ -156,8 +163,121 @@ router.get("/threat-intel/dashboard", requireAuth, async (req: AuthenticatedRequ
     // Tenant correlations with critical exploitation
     const criticalCorrelations = await db.select({ count: sql<number>`count(*)` })
       .from(tiAssetCorrelationsTable)
-      .where(and(eq(tiAssetCorrelationsTable.tenantId, tenantId), eq(tiAssetCorrelationsTable.exploitationStatus, "active")))
+      .where(and(eq(tiAssetCorrelationsTable.tenantId, scopeTenantId), eq(tiAssetCorrelationsTable.exploitationStatus, "active")))
       .then(r => Number(r[0]?.count ?? 0));
+
+    // ── Tenant-scoped extended data ────────────────────────────────────────────
+
+    // Top threat actors with asset hit counts (actors appearing in tenant correlations)
+    const topActorsWithHitsResult = await db.execute(sql`
+      SELECT
+        elem->>'name' AS name,
+        COUNT(DISTINCT c.asset_id)::int AS asset_count,
+        COUNT(*)::int AS correlation_count
+      FROM ti_asset_correlations c,
+      jsonb_array_elements(c.matched_actors) elem
+      WHERE c.tenant_id = ${scopeTenantId}
+        AND jsonb_array_length(c.matched_actors) > 0
+      GROUP BY elem->>'name'
+      ORDER BY asset_count DESC, correlation_count DESC
+      LIMIT 10
+    `);
+    const topActorsWithHits: { name: string; asset_count: number; correlation_count: number }[] =
+      ((topActorsWithHitsResult as any).rows ?? []).map((r: any) => ({
+        name: r.name,
+        asset_count: Number(r.asset_count),
+        correlation_count: Number(r.correlation_count),
+      }));
+
+    // Active IOC matches — IOC values appearing in tenant correlations, with per-asset hit count
+    const activeIocMatchesResult = await db.execute(sql`
+      SELECT
+        elem->>'value'  AS value,
+        elem->>'type'   AS type,
+        elem->>'severity' AS severity,
+        COUNT(DISTINCT c.asset_id)::int AS hit_count,
+        COUNT(*)::int   AS match_count
+      FROM ti_asset_correlations c,
+      jsonb_array_elements(c.matched_iocs) elem
+      WHERE c.tenant_id = ${scopeTenantId}
+        AND jsonb_array_length(c.matched_iocs) > 0
+      GROUP BY elem->>'value', elem->>'type', elem->>'severity'
+      ORDER BY hit_count DESC, match_count DESC
+      LIMIT 15
+    `);
+    const activeIocMatches: { value: string; type: string; severity: string; hit_count: number; match_count: number }[] =
+      ((activeIocMatchesResult as any).rows ?? []).map((r: any) => ({
+        value: r.value,
+        type: r.type,
+        severity: r.severity,
+        hit_count: Number(r.hit_count),
+        match_count: Number(r.match_count),
+      }));
+
+    // Most targeted CVEs — CVE IDs appearing in tenant correlations
+    const mostTargetedCvesResult = await db.execute(sql`
+      SELECT
+        elem AS cve_id,
+        COUNT(DISTINCT c.asset_id)::int AS hit_count,
+        COUNT(*)::int AS match_count
+      FROM ti_asset_correlations c,
+      jsonb_array_elements_text(c.matched_cves) elem
+      WHERE c.tenant_id = ${scopeTenantId}
+        AND jsonb_array_length(c.matched_cves) > 0
+      GROUP BY elem
+      ORDER BY hit_count DESC, match_count DESC
+      LIMIT 10
+    `);
+    const mostTargetedCvesRaw: { cve_id: string; hit_count: number; match_count: number }[] =
+      ((mostTargetedCvesResult as any).rows ?? []).map((r: any) => ({
+        cve_id: r.cve_id,
+        hit_count: Number(r.hit_count),
+        match_count: Number(r.match_count),
+      }));
+
+    // Enrich most targeted CVEs with CVSS/KEV info from ti_cve_intel
+    const cveIds = mostTargetedCvesRaw.map(r => r.cve_id).filter(Boolean);
+    const cveIntelRows = cveIds.length
+      ? await db.select({ cveId: tiCveIntelTable.cveId, cvss: tiCveIntelTable.cvss, severity: tiCveIntelTable.severity, isKev: tiCveIntelTable.isKev, epss: tiCveIntelTable.epss })
+          .from(tiCveIntelTable).where(inArray(tiCveIntelTable.cveId, cveIds))
+      : [];
+    const cveIntelMap = new Map(cveIntelRows.map(r => [r.cveId, r]));
+    const mostTargetedCves = mostTargetedCvesRaw.map(r => ({
+      ...r,
+      cvss: cveIntelMap.get(r.cve_id)?.cvss ?? null,
+      severity: cveIntelMap.get(r.cve_id)?.severity ?? null,
+      isKev: cveIntelMap.get(r.cve_id)?.isKev ?? false,
+      epss: cveIntelMap.get(r.cve_id)?.epss ?? null,
+    }));
+
+    // Recent correlations feed with asset + finding info
+    const recentCorrelations = await db.select({
+      id: tiAssetCorrelationsTable.id,
+      assetId: tiAssetCorrelationsTable.assetId,
+      findingId: tiAssetCorrelationsTable.findingId,
+      exploitationStatus: tiAssetCorrelationsTable.exploitationStatus,
+      threatScore: tiAssetCorrelationsTable.threatScore,
+      riskBoost: tiAssetCorrelationsTable.riskBoost,
+      correlationBasis: tiAssetCorrelationsTable.correlationBasis,
+      matchedActors: tiAssetCorrelationsTable.matchedActors,
+      matchedCves: tiAssetCorrelationsTable.matchedCves,
+      matchedIocs: tiAssetCorrelationsTable.matchedIocs,
+      correlatedAt: tiAssetCorrelationsTable.correlatedAt,
+      assetName: assetsTable.name,
+      findingTitle: findingsTable.title,
+      findingSeverity: findingsTable.severity,
+    })
+      .from(tiAssetCorrelationsTable)
+      .leftJoin(assetsTable, eq(tiAssetCorrelationsTable.assetId, assetsTable.id))
+      .leftJoin(findingsTable, eq(tiAssetCorrelationsTable.findingId, findingsTable.id))
+      .where(eq(tiAssetCorrelationsTable.tenantId, scopeTenantId))
+      .orderBy(desc(tiAssetCorrelationsTable.correlatedAt))
+      .limit(15);
+
+    // Tenants list for super_admin filter dropdown
+    const tenantsList = role === "super_admin"
+      ? await db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).orderBy(tenantsTable.name)
+      : [];
 
     res.json({
       totals: { iocs: iocCount, actors: actorCount, campaigns: campaignCount, malware: malwareCount, c2: c2Count, c2Active, kevCves: kevCount, correlations: correlationCount, criticalCorrelations },
@@ -168,6 +288,13 @@ router.get("/threat-intel/dashboard", requireAuth, async (req: AuthenticatedRequ
       monthlyC2: monthlyC2.map((r: any) => ({ month: r.month, count: Number(r.count) })),
       severityDistribution: severityDist.map(r => ({ severity: r.severity, count: Number(r.count) })),
       feedStatus,
+      // Extended fields
+      topActorsWithHits,
+      activeIocMatches,
+      mostTargetedCves,
+      recentCorrelations,
+      tenants: tenantsList,
+      scopeTenantId,
     });
   } catch (err) {
     logger.error({ err }, "TI dashboard error");
