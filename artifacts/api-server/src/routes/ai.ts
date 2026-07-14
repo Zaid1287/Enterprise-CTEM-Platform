@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
-import { db, findingsTable, complianceControlsTable, complianceFrameworksTable, assetsTable, riskScoresTable, scansTable, alertsTable } from "@workspace/db";
+import { eq, and, desc } from "drizzle-orm";
+import { db, findingsTable, complianceControlsTable, complianceFrameworksTable, assetsTable, riskScoresTable, scansTable, alertsTable, tiAssetCorrelationsTable } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import {
   llmComplete, llmStream, isLLMAvailable, resolveProviderConfig,
@@ -171,6 +171,88 @@ function buildScanSummaryMessages(scan: any, asset: any, findings: any[]): LLMMe
   ];
 }
 
+function buildTiCorrelationMessages(finding: any, corr: any | null): LLMMessage[] {
+  const actors   = (corr?.matchedActors   as any[]) ?? [];
+  const iocs     = (corr?.matchedIocs     as any[]) ?? [];
+  const cves     = (corr?.matchedCves     as any[]) ?? [];
+  const malware  = (corr?.matchedMalware  as any[]) ?? [];
+  const campaigns= (corr?.matchedCampaigns as any[]) ?? [];
+
+  const actorList   = actors.length   ? actors.map((a: any)   => `${a.name}${a.country ? ` (${a.country})` : ""}${a.mitreId ? ` [${a.mitreId}]` : ""}`).join(", ") : "None identified";
+  const iocList     = iocs.length     ? iocs.map((i: any)     => `${i.type}:${i.value} [${i.severity}]`).join(", ") : "None";
+  const malwareList = malware.length  ? malware.map((m: any)  => `${m.name} (${m.malwareType})`).join(", ") : "None";
+  const campaignList= campaigns.length? campaigns.map((c: any)=> c.name).join(", ") : "None";
+  const cveDetail   = cves.length
+    ? `${cves[0].cveId} | CVSS: ${cves[0].cvss ?? "N/A"} | EPSS: ${cves[0].epss != null ? `${(cves[0].epss * 100).toFixed(2)}%` : "N/A"} | KEV: ${cves[0].isKev ? "YES" : "No"} | Status: ${cves[0].exploitationStatus}`
+    : "No CVE intel in database";
+
+  const ctx = [
+    `**Finding:** ${finding.title}`,
+    `**CVE:** ${finding.cve ?? "N/A"}`,
+    `**Severity:** ${finding.severity?.toUpperCase()}`,
+    `**CVSS:** ${finding.cvss ?? "N/A"}  |  **EPSS:** ${finding.epss != null ? `${(finding.epss * 100).toFixed(2)}%` : "N/A"}`,
+    `**CISA KEV:** ${finding.isKev ? "YES — confirmed in-the-wild exploitation" : "No"}`,
+    ``,
+    `**Threat Intelligence Correlation:**`,
+    `**Threat Score:** ${corr?.threatScore ?? 0}/100`,
+    `**Exploitation Status:** ${corr?.exploitationStatus ?? "unknown"}`,
+    `**Match Basis:** ${(corr?.correlationBasis as string[] ?? []).map((b: string) => b.replace(/_/g, " ")).join(", ") || "none"}`,
+    ``,
+    `**Matched Threat Actors:** ${actorList}`,
+    `**Linked Campaigns:** ${campaignList}`,
+    `**Linked Malware:** ${malwareList}`,
+    `**Matched IOCs:** ${iocList}`,
+    `**CVE Intel:** ${cveDetail}`,
+  ].join("\n");
+
+  return [
+    {
+      role: "system",
+      content: `You are an expert threat intelligence analyst for an enterprise CTEM platform. Explain what the threat intelligence correlation means for this specific security finding. Use Markdown with these sections: ## Threat Actor Context, ### Who is Behind This?, ### Exploitation History & Timeline, ### Likely Attack Scenarios, ### Asset-Specific Risk, ### Recommended Mitigations (numbered, specific). Be precise and actionable.`,
+    },
+    {
+      role: "user",
+      content: `Analyse the threat intelligence context for this security finding:\n\n${ctx}\n\nExplain who is likely exploiting this vulnerability, their known TTPs and motivations, what the matched IOCs indicate, and what specific mitigations are recommended based on the exploitation status and matched threat intelligence.`,
+    },
+  ];
+}
+
+function templateTiCorrelation(finding: any, corr: any | null): string {
+  const actors  = (corr?.matchedActors  as any[]) ?? [];
+  const iocs    = (corr?.matchedIocs    as any[]) ?? [];
+  const cves    = (corr?.matchedCves    as any[]) ?? [];
+  const score   = corr?.threatScore ?? 0;
+  const status  = corr?.exploitationStatus ?? "unknown";
+
+  const lines: string[] = [
+    `## Threat Intelligence Analysis: ${finding.title}`,
+    ``,
+    `**Threat Score:** ${score}/100  |  **Exploitation Status:** ${status.toUpperCase()}`,
+  ];
+
+  if (actors.length) {
+    lines.push(``, `### Threat Actors`, actors.map((a: any) => `- **${a.name}** ${a.country ? `(${a.country})` : ""} — ${a.motivation ?? "motivation unknown"}${a.mitreId ? ` · ${a.mitreId}` : ""}`).join("\n"));
+  }
+  if (iocs.length) {
+    lines.push(``, `### Matched IOCs`, iocs.map((i: any) => `- \`${i.type}:${i.value}\` — ${i.severity} severity, ${i.sources?.join(", ") ?? i.source ?? "unknown source"}`).join("\n"));
+  }
+  if (cves.length) {
+    const c = cves[0];
+    lines.push(``, `### CVE Intelligence`, `- **${c.cveId}** | CVSS: ${c.cvss ?? "N/A"} | EPSS: ${c.epss != null ? `${(c.epss * 100).toFixed(2)}%` : "N/A"} | KEV: ${c.isKev ? "**YES**" : "No"} | Exploitation: ${c.exploitationStatus}`);
+  }
+
+  if (status === "active") {
+    lines.push(``, `### ⚠ Active Exploitation — Immediate Actions`, `1. Apply vendor patch or mitigation immediately`, `2. Check your SIEM/EDR for IOC hits matching the listed indicators`, `3. Isolate affected asset if patch cannot be applied within 24 hours`, `4. File incident report and escalate to security leadership`);
+  } else if (status === "confirmed") {
+    lines.push(``, `### Priority Actions`, `1. Schedule emergency patching cycle (within 72 hours)`, `2. Hunt for IOC matches in your environment`, `3. Review access logs for the affected asset`);
+  } else {
+    lines.push(``, `### Recommended Actions`, `1. Include this finding in your next patch cycle`, `2. Monitor threat feeds for escalation of exploitation status`, `3. Review asset exposure and reduce attack surface where possible`);
+  }
+
+  lines.push(``, `> Configure an AI provider in Account Settings for detailed AI-powered threat intelligence analysis.`);
+  return lines.join("\n");
+}
+
 // ── GET /ai/providers — list configured providers for user ──────────────────
 
 router.get("/ai/providers", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -310,6 +392,17 @@ router.post("/ai/stream", requireAuth, async (req: AuthenticatedRequest, res): P
           ...chatMessages,
         ];
         templateFallback = () => "I'm a security AI assistant. To get AI-powered responses, please configure an API key in Account Settings → AI Settings (OpenAI, Gemini, Anthropic, OpenRouter, or Ollama).";
+        break;
+      }
+      case "explain-ti-correlation": {
+        if (!findingId) { send({ error: "findingId required", done: true }); if (!closed) res.end(); return; }
+        const [f] = await db.select().from(findingsTable).where(and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, req.user!.tenantId)));
+        if (!f) { send({ error: "Finding not found", done: true }); if (!closed) res.end(); return; }
+        const [corr] = await db.select().from(tiAssetCorrelationsTable).where(
+          and(eq(tiAssetCorrelationsTable.findingId, findingId), eq(tiAssetCorrelationsTable.tenantId, req.user!.tenantId))
+        ).orderBy(desc(tiAssetCorrelationsTable.correlatedAt)).limit(1);
+        messages = buildTiCorrelationMessages(f, corr ?? null);
+        templateFallback = () => templateTiCorrelation(f, corr ?? null);
         break;
       }
       default:

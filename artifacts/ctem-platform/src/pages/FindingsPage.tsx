@@ -10,13 +10,14 @@ import {
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Search, ExternalLink, ChevronLeft, ChevronRight, X,
   ShieldAlert, Globe, Network, Server, Cpu, Smartphone,
   FileText, Code2, Camera, AlignLeft, Tag, Info,
   CheckCircle2, Clock, AlertCircle, XCircle, Minus,
   MessageSquare, Send, Loader2, Sparkles, RefreshCw, ShieldOff, Layers, Brain,
+  Shield, Target, Users, Bug, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -249,7 +250,390 @@ function CommentsPanel({ findingId }: { findingId: number }) {
 }
 
 // ── Drawer Mode ─────────────────────────────────────────────────────────────
-type DrawerMode = "metadata" | "headers" | "screenshots" | "comments" | "ai" | null;
+type DrawerMode = "metadata" | "headers" | "screenshots" | "comments" | "ai" | "threat-intel" | null;
+
+// ── Exploitation status badge ─────────────────────────────────────────────────
+function ExploitationBadge({ status }: { status: string }) {
+  const MAP: Record<string, { label: string; cls: string }> = {
+    active:    { label: "Active", cls: "bg-red-500/20 text-red-400 border-red-500/30" },
+    confirmed: { label: "Confirmed", cls: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
+    potential: { label: "Potential", cls: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" },
+    unknown:   { label: "Unknown", cls: "bg-muted text-muted-foreground border-border" },
+  };
+  const s = MAP[status] ?? MAP.unknown;
+  return (
+    <span className={cn("text-[9px] px-1.5 py-0.5 rounded font-semibold border", s.cls)}>
+      {s.label}
+    </span>
+  );
+}
+
+// ── Threat Intel Tab ─────────────────────────────────────────────────────────
+function ThreatIntelTab({ finding }: { finding: any }) {
+  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const { data: moduleData } = useQuery({
+    queryKey: ["ti-module"],
+    queryFn: () => apiFetch<{ isEnabled: boolean }>(`${BASE}/api/threat-intel/module`),
+    staleTime: 60_000,
+  });
+
+  const {
+    data: corrData,
+    isLoading: corrLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ["ti-correlations-finding", finding.id],
+    queryFn: () =>
+      apiFetch<{ correlations: any[] }>(
+        `${BASE}/api/threat-intel/correlations/finding/${finding.id}`,
+      ),
+    enabled: moduleData?.isEnabled !== false,
+    staleTime: 30_000,
+  });
+
+  const [correlating, setCorrelating] = useState(false);
+  const [aiText, setAiText]           = useState("");
+  const [aiLoading, setAiLoading]     = useState(false);
+  const [aiNoKey, setAiNoKey]         = useState(false);
+
+  const corr = corrData?.correlations?.[0] ?? null;
+
+  const triggerCorrelation = async () => {
+    setCorrelating(true);
+    try {
+      await apiFetch(`${BASE}/api/threat-intel/correlate`, { method: "POST" });
+      setTimeout(async () => { await refetch(); setCorrelating(false); }, 3500);
+    } catch { setCorrelating(false); }
+  };
+
+  const triggerAiExplain = useCallback(async () => {
+    if (aiLoading) return;
+    setAiText(""); setAiLoading(true); setAiNoKey(false);
+    const token = sessionStorage.getItem("ctem_token") ?? "";
+    let accumulated = "";
+    try {
+      const resp = await fetch(`${BASE}/api/ai/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "explain-ti-correlation", findingId: finding.id }),
+      });
+      if (!resp.body) throw new Error("No stream");
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n"); buf = parts.pop() ?? "";
+        for (const line of parts) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.noKey) setAiNoKey(true);
+            if (d.text) { accumulated += d.text; setAiText(accumulated); }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { setAiText("Failed to load AI analysis."); }
+    setAiLoading(false);
+  }, [finding.id, BASE]);
+
+  if (!moduleData) {
+    return <div className="space-y-2"><Skeleton className="h-12 w-full" /><Skeleton className="h-8 w-3/4" /></div>;
+  }
+
+  if (!moduleData.isEnabled) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+        <Shield className="w-8 h-8 text-muted-foreground/30" />
+        <p className="text-sm font-medium text-foreground">Threat Intelligence not enabled</p>
+        <p className="text-xs text-muted-foreground">Enable the TI module to correlate this finding against the global threat database.</p>
+        <a href="/threat-intel">
+          <Button size="sm" variant="outline">Go to Threat Intel →</Button>
+        </a>
+      </div>
+    );
+  }
+
+  if (corrLoading) {
+    return <div className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-12 w-3/4" /><Skeleton className="h-10 w-full" /></div>;
+  }
+
+  if (!corr) {
+    return (
+      <div className="flex flex-col items-center py-10 gap-3 text-center">
+        <Shield className="w-8 h-8 text-muted-foreground/30" />
+        <p className="text-sm font-medium">No correlation data yet</p>
+        <p className="text-xs text-muted-foreground max-w-[220px]">
+          Run correlation to match this finding against the TI database (IOCs, threat actors, CVE intel, C2 servers).
+        </p>
+        <Button size="sm" onClick={triggerCorrelation} disabled={correlating}>
+          {correlating
+            ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Correlating…</>
+            : <><Shield className="w-3.5 h-3.5 mr-1.5" />Correlate Now</>}
+        </Button>
+      </div>
+    );
+  }
+
+  const actors    = (corr.matchedActors    as any[]) ?? [];
+  const iocs      = (corr.matchedIocs      as any[]) ?? [];
+  const cves      = (corr.matchedCves      as any[]) ?? [];
+  const malware   = (corr.matchedMalware   as any[]) ?? [];
+  const campaigns = (corr.matchedCampaigns as any[]) ?? [];
+  const basis     = (corr.correlationBasis as string[]) ?? [];
+
+  return (
+    <div className="space-y-4 text-xs">
+      {/* ── Threat score header ── */}
+      <div className="flex items-center justify-between p-3 rounded-xl border bg-muted/20">
+        <div className="flex items-center gap-3">
+          <div className={cn(
+            "w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0",
+            corr.threatScore >= 70 ? "bg-red-500" : corr.threatScore >= 40 ? "bg-orange-500" : "bg-yellow-500",
+          )}>
+            {corr.threatScore}
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold">Threat Score</p>
+            <p className="text-[10px] text-muted-foreground">TI correlation</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <ExploitationBadge status={corr.exploitationStatus} />
+          <Button
+            size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground"
+            onClick={() => refetch()} disabled={correlating} title="Re-correlate"
+          >
+            <RefreshCw className={cn("w-3 h-3", correlating && "animate-spin")} />
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Risk boost ── */}
+      {corr.riskBoost > 0 && (
+        <div className="flex items-center gap-2 text-[10px] text-amber-400/90 bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2">
+          <AlertTriangle className="w-3 h-3 shrink-0" />
+          TI correlation adds <strong>+{corr.riskBoost}</strong> risk boost to this finding's score
+        </div>
+      )}
+
+      {/* ── Matched threat actors ── */}
+      {actors.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold mb-2 flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5 text-purple-400" />
+            Threat Actors ({actors.length})
+          </p>
+          <div className="space-y-1.5">
+            {actors.map((a: any, i: number) => (
+              <div key={i} className="flex items-start justify-between bg-purple-500/5 border border-purple-500/15 rounded-lg px-3 py-2 gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-[11px] truncate">{a.name}</p>
+                  <p className="text-muted-foreground text-[10px]">{a.country ?? "Unknown origin"} · {a.motivation ?? "Unknown motivation"}</p>
+                  <p className="text-purple-400/70 text-[10px] italic">{a.matchReason}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[10px] font-semibold text-orange-400">Risk {Math.round(a.riskScore ?? 0)}</p>
+                  {a.mitreId && <p className="text-[9px] text-muted-foreground font-mono">{a.mitreId}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Linked campaigns ── */}
+      {campaigns.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold mb-2 flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-blue-400" />
+            Linked Campaigns ({campaigns.length})
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {campaigns.map((c: any, i: number) => (
+              <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                {c.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── CVE intelligence ── */}
+      {cves.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold mb-2 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+            CVE Intelligence
+          </p>
+          {cves.map((c: any, i: number) => (
+            <div key={i} className="bg-red-500/5 border border-red-500/15 rounded-lg px-3 py-2 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <a
+                  href={`https://nvd.nist.gov/vuln/detail/${c.cveId}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="font-mono text-[11px] text-amber-400 hover:underline"
+                >
+                  {c.cveId}
+                </a>
+                <div className="flex gap-1.5">
+                  {c.isKev && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 font-bold">KEV</span>
+                  )}
+                  <ExploitationBadge status={c.exploitationStatus} />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
+                {c.cvss  != null && <span>CVSS: <span className="text-foreground font-mono">{c.cvss}</span></span>}
+                {c.epss  != null && <span>EPSS: <span className="text-foreground font-mono">{(c.epss * 100).toFixed(2)}%</span></span>}
+                {c.patchAvailable && <span className="text-green-400">✓ Patch available</span>}
+              </div>
+              {c.linkedActors?.length > 0 && (
+                <p className="text-[10px] text-muted-foreground">
+                  Linked actors: <span className="text-foreground">{c.linkedActors.slice(0, 3).join(", ")}{c.linkedActors.length > 3 ? ` +${c.linkedActors.length - 3}` : ""}</span>
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Matched IOCs ── */}
+      {iocs.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold mb-2 flex items-center gap-1.5">
+            <Target className="w-3.5 h-3.5 text-orange-400" />
+            Matched IOCs ({iocs.length})
+          </p>
+          <div className="space-y-1.5">
+            {iocs.map((ioc: any, i: number) => (
+              <div key={i} className="flex items-start justify-between bg-orange-500/5 border border-orange-500/15 rounded-lg px-3 py-2 gap-2">
+                <div className="min-w-0">
+                  <p className="font-mono text-[10px] text-foreground truncate">{ioc.type}: {ioc.value}</p>
+                  <p className="text-muted-foreground text-[10px]">{(ioc.sources as string[])?.join(", ") ?? "unknown source"}</p>
+                  <p className="text-orange-400/70 text-[10px] italic">{ioc.matchReason}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className={cn(
+                    "text-[9px] px-1.5 py-0.5 rounded font-semibold border capitalize",
+                    ioc.severity === "critical" ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                    ioc.severity === "high"     ? "bg-orange-500/15 text-orange-400 border-orange-500/30" :
+                                                  "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+                  )}>
+                    {ioc.severity}
+                  </span>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Score: {Math.round(ioc.threatScore ?? 0)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Linked malware ── */}
+      {malware.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold mb-2 flex items-center gap-1.5">
+            <Bug className="w-3.5 h-3.5 text-yellow-400" />
+            Linked Malware ({malware.length})
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {malware.map((m: any, i: number) => (
+              <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400">
+                {m.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Correlation basis ── */}
+      {basis.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold mb-1 text-muted-foreground">Match Basis</p>
+          <div className="flex flex-wrap gap-1">
+            {basis.map((b, i) => (
+              <span key={i} className="text-[9px] px-1.5 py-0.5 bg-muted rounded font-mono text-muted-foreground">
+                {b.replace(/_/g, " ")}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Threat Analysis ── */}
+      <div className="border-t border-border pt-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[11px] font-semibold flex items-center gap-1.5">
+            <Brain className="w-3.5 h-3.5 text-violet-400" />
+            AI Threat Analysis
+          </p>
+          <Button
+            size="sm" variant="ghost"
+            className="h-6 text-[10px] px-2 text-muted-foreground hover:text-foreground"
+            onClick={() => { setAiText(""); triggerAiExplain(); }}
+            disabled={aiLoading}
+          >
+            {aiText
+              ? <RefreshCw className={cn("w-3 h-3", aiLoading && "animate-spin")} />
+              : aiLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Analyse →"}
+          </Button>
+        </div>
+        {aiNoKey && (
+          <div className="flex items-center gap-2 text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 mb-2">
+            <Sparkles className="w-3 h-3 shrink-0" />
+            Template response — <a href="/settings/account" className="underline ml-0.5">add API key</a> for AI analysis
+          </div>
+        )}
+        {aiLoading && !aiText ? (
+          <div className="space-y-1.5">
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="h-3 w-3/4" />
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50 mt-2">
+              <Sparkles className="w-3 h-3 animate-pulse text-primary" />
+              Analysing threat context…
+            </div>
+          </div>
+        ) : aiText ? (
+          <div className="bg-muted/20 border border-border/40 rounded-xl p-3">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h2: ({ children }) => <h2 className="text-xs font-bold mt-2 mb-1 text-foreground">{children}</h2>,
+                h3: ({ children }) => <h3 className="text-[11px] font-semibold mt-1.5 mb-0.5 text-foreground/90">{children}</h3>,
+                p: ({ children }) => <p className="text-[11px] text-muted-foreground mb-1 leading-relaxed">{children}</p>,
+                ul: ({ children }) => <ul className="list-disc pl-3 space-y-0.5 mb-1">{children}</ul>,
+                ol: ({ children }) => <ol className="list-decimal pl-3 space-y-0.5 mb-1">{children}</ol>,
+                li: ({ children }) => <li className="text-[11px] text-muted-foreground">{children}</li>,
+                strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 text-[11px]">{children}</a>,
+              }}
+            >
+              {aiText}
+            </ReactMarkdown>
+            {aiLoading && <span className="inline-block w-1.5 h-3.5 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />}
+          </div>
+        ) : null}
+      </div>
+
+      {/* ── Correlated timestamp ── */}
+      <p className="text-[10px] text-muted-foreground/40 text-right">
+        Correlated {new Date(corr.correlatedAt).toLocaleString()}
+        <button
+          onClick={triggerCorrelation}
+          disabled={correlating}
+          className="ml-2 underline underline-offset-2 hover:text-muted-foreground"
+        >
+          {correlating ? "re-correlating…" : "re-correlate"}
+        </button>
+      </p>
+    </div>
+  );
+}
 
 // ── Finding Drawer ──────────────────────────────────────────────────────────
 function FindingDrawer({
@@ -267,11 +651,12 @@ function FindingDrawer({
   useEffect(() => { if (initialMode) setActiveTab(initialMode); }, [initialMode]);
 
   const tabs: { key: DrawerMode; label: string; icon: React.ElementType }[] = [
-    { key: "metadata",    label: "Details",     icon: FileText },
-    { key: "headers",     label: "Headers",     icon: AlignLeft },
-    { key: "screenshots", label: "Screenshots", icon: Camera },
-    { key: "comments",    label: "Comments",    icon: MessageSquare },
-    { key: "ai",          label: "Ask AI",      icon: Brain },
+    { key: "metadata",     label: "Details",      icon: FileText },
+    { key: "headers",      label: "Headers",      icon: AlignLeft },
+    { key: "screenshots",  label: "Screenshots",  icon: Camera },
+    { key: "comments",     label: "Comments",     icon: MessageSquare },
+    { key: "ai",           label: "Ask AI",       icon: Brain },
+    { key: "threat-intel", label: "Threat Intel", icon: Shield },
   ];
 
   // ── AI tab state ────────────────────────────────────────────────────────────
@@ -492,6 +877,10 @@ function FindingDrawer({
 
           {activeTab === "comments" && (
             <CommentsPanel findingId={finding.id} />
+          )}
+
+          {activeTab === "threat-intel" && (
+            <ThreatIntelTab finding={finding} />
           )}
 
           {activeTab === "ai" && (

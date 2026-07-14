@@ -1443,6 +1443,19 @@ export async function dispatchThreatIntelFeedRefresh(): Promise<void> {
         );
       }
       logger.info({ tenantCount: enabledTenants.length }, "Beat: TI feed refresh completed");
+
+      // Run correlation engine for every TI-enabled tenant after feeds are fresh
+      try {
+        const { runThreatIntelCorrelation } = await import("../lib/threatIntel/correlationEngine.js");
+        for (const { tenantId } of enabledTenants) {
+          await runThreatIntelCorrelation(tenantId).catch(err =>
+            logger.warn({ err, tenantId }, "Beat: TI correlation failed for tenant (non-fatal)")
+          );
+        }
+        logger.info({ tenantCount: enabledTenants.length }, "Beat: TI correlation completed");
+      } catch (err) {
+        logger.warn({ err }, "Beat: TI correlation orchestration failed (non-fatal)");
+      }
     } catch (err) {
       logger.warn({ err }, "Beat: TI feed refresh orchestration failed (non-fatal)");
     } finally {
