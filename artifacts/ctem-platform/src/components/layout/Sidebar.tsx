@@ -8,7 +8,7 @@ import {
   Package, UserCheck, ShieldOff, Settings, PanelLeftClose, PanelLeftOpen,
   ShieldAlert, Network, Activity, Shield, Globe2, Crosshair,
   Cpu, Radio, ScrollText, Fingerprint, Sliders, SlidersHorizontal,
-  ListChecks, EyeOff, Target, AlertTriangle, Newspaper, Eye, Globe,
+  ListChecks, EyeOff, Target, AlertTriangle, Newspaper, Eye, Globe, Database,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 
@@ -228,17 +228,20 @@ export function Sidebar() {
   }
 
   const threatIntelVisible = threatIntelEnabled || role === "admin" || role === "super_admin" || role === "account_manager";
+  const isPrivilegedForTi = role === "admin" || role === "super_admin";
   const threatIntelItems: NavItem[] = threatIntelVisible ? [
-    { label: "Dashboard",      href: "/threat-intel",             icon: Shield       },
-    { label: "IOC Database",   href: "/threat-intel/iocs",        icon: Crosshair    },
-    { label: "Threat Actors",  href: "/threat-intel/actors",      icon: Users        },
-    { label: "Campaigns",      href: "/threat-intel/campaigns",   icon: Target       },
-    { label: "Malware",        href: "/threat-intel/malware",     icon: Bug          },
-    { label: "C2 Servers",     href: "/threat-intel/c2-servers",  icon: Radio        },
-    { label: "CVE Intel",      href: "/threat-intel/cves",        icon: AlertTriangle },
-    { label: "Threat News",    href: "/threat-intel/news",        icon: Newspaper    },
-    { label: "Dark Web",       href: "/threat-intel/dark-web",    icon: Eye          },
-    { label: "TI Reports",     href: "/threat-intel/reports",     icon: FileBarChart2 },
+    { label: "Dashboard",      href: "/threat-intel",                  icon: Shield       },
+    { label: "IOC Database",   href: "/threat-intel/iocs",             icon: Crosshair    },
+    { label: "Threat Actors",  href: "/threat-intel/actors",           icon: Users        },
+    { label: "Campaigns",      href: "/threat-intel/campaigns",        icon: Target       },
+    { label: "Malware",        href: "/threat-intel/malware",          icon: Bug          },
+    { label: "C2 Servers",     href: "/threat-intel/c2-servers",       icon: Radio        },
+    { label: "CVE Intel",      href: "/threat-intel/cves",             icon: AlertTriangle },
+    { label: "Threat News",    href: "/threat-intel/news",             icon: Newspaper    },
+    { label: "Dark Web",       href: "/threat-intel/dark-web",         icon: Eye          },
+    { label: "Correlations",   href: "/threat-intel/correlations",     icon: Activity     },
+    { label: "TI Reports",     href: "/threat-intel/reports",          icon: FileBarChart2 },
+    ...(isPrivilegedForTi ? [{ label: "Feed Management", href: "/threat-intel/feeds", icon: Database }] : []),
   ] : [];
 
   const threatIntelGroup: NavGroup | null = threatIntelItems.length > 0

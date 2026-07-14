@@ -400,7 +400,7 @@ export async function runThreatIntelCorrelation(
         result.matchedCves.length > 0 ||
         result.matchedMalware.length > 0;
 
-      if (result.threatScore === 0 && !hasMatches) {
+      if (!hasMatches) {
         skipped++;
         continue;
       }

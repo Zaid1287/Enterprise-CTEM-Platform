@@ -271,6 +271,8 @@ function ExploitationBadge({ status }: { status: string }) {
 // ── Threat Intel Tab ─────────────────────────────────────────────────────────
 function ThreatIntelTab({ finding }: { finding: any }) {
   const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   const { data: moduleData } = useQuery({
     queryKey: ["ti-module"],
@@ -369,11 +371,13 @@ function ThreatIntelTab({ finding }: { finding: any }) {
         <p className="text-xs text-muted-foreground max-w-[220px]">
           Run correlation to match this finding against the TI database (IOCs, threat actors, CVE intel, C2 servers).
         </p>
-        <Button size="sm" onClick={triggerCorrelation} disabled={correlating}>
-          {correlating
-            ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Correlating…</>
-            : <><Shield className="w-3.5 h-3.5 mr-1.5" />Correlate Now</>}
-        </Button>
+        {isAdmin && (
+          <Button size="sm" onClick={triggerCorrelation} disabled={correlating}>
+            {correlating
+              ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Correlating…</>
+              : <><Shield className="w-3.5 h-3.5 mr-1.5" />Correlate Now</>}
+          </Button>
+        )}
       </div>
     );
   }
@@ -403,12 +407,14 @@ function ThreatIntelTab({ finding }: { finding: any }) {
         </div>
         <div className="flex items-center gap-2">
           <ExploitationBadge status={corr.exploitationStatus} />
-          <Button
-            size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground"
-            onClick={() => refetch()} disabled={correlating} title="Re-correlate"
-          >
-            <RefreshCw className={cn("w-3 h-3", correlating && "animate-spin")} />
-          </Button>
+          {isAdmin && (
+            <Button
+              size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground"
+              onClick={() => refetch()} disabled={correlating} title="Re-correlate"
+            >
+              <RefreshCw className={cn("w-3 h-3", correlating && "animate-spin")} />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -623,13 +629,15 @@ function ThreatIntelTab({ finding }: { finding: any }) {
       {/* ── Correlated timestamp ── */}
       <p className="text-[10px] text-muted-foreground/40 text-right">
         Correlated {new Date(corr.correlatedAt).toLocaleString()}
-        <button
-          onClick={triggerCorrelation}
-          disabled={correlating}
-          className="ml-2 underline underline-offset-2 hover:text-muted-foreground"
-        >
-          {correlating ? "re-correlating…" : "re-correlate"}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={triggerCorrelation}
+            disabled={correlating}
+            className="ml-2 underline underline-offset-2 hover:text-muted-foreground"
+          >
+            {correlating ? "re-correlating…" : "re-correlate"}
+          </button>
+        )}
       </p>
     </div>
   );

@@ -71,7 +71,7 @@ const OrchestratorConfigPage = lazy(() => import("@/pages/OrchestratorConfigPage
 const ScanTelemetryPage      = lazy(() => import("@/pages/ScanTelemetryPage"));
 const OrchestratorPage       = lazy(() => import("@/pages/OrchestratorPage"));
 
-// Threat Intelligence pages (placeholder — full pages in Task #152)
+// Threat Intelligence pages
 const ThreatIntelDashboardPage         = lazy(() => import("@/pages/ThreatIntelDashboardPage"));
 const ThreatIntelIocsPage              = lazy(() => import("@/pages/ThreatIntelIocsPage"));
 const ThreatIntelActorsPage            = lazy(() => import("@/pages/ThreatIntelActorsPage"));
@@ -83,6 +83,8 @@ const ThreatIntelCvesPage              = lazy(() => import("@/pages/ThreatIntelC
 const ThreatIntelNewsPage              = lazy(() => import("@/pages/ThreatIntelNewsPage"));
 const ThreatIntelDarkWebPage           = lazy(() => import("@/pages/ThreatIntelDarkWebPage"));
 const ThreatIntelReportsPage           = lazy(() => import("@/pages/ThreatIntelReportsPage"));
+const ThreatIntelCorrelationsPage      = lazy(() => import("@/pages/ThreatIntelCorrelationsPage"));
+const ThreatIntelFeedsPage             = lazy(() => import("@/pages/ThreatIntelFeedsPage"));
 const ThreatIntelUpgradePage           = lazy(() => import("@/pages/ThreatIntelUpgradePage"));
 
 // TPRM pages
@@ -429,6 +431,8 @@ function Router() {
       <Route path="/threat-intel/news" component={() => <ThreatIntelRoute component={ThreatIntelNewsPage} />} />
       <Route path="/threat-intel/dark-web" component={() => <ThreatIntelRoute component={ThreatIntelDarkWebPage} />} />
       <Route path="/threat-intel/reports" component={() => <ThreatIntelRoute component={ThreatIntelReportsPage} />} />
+      <Route path="/threat-intel/correlations" component={() => <ThreatIntelRoute component={ThreatIntelCorrelationsPage} />} />
+      <Route path="/threat-intel/feeds" component={() => <ThreatIntelRoute component={ThreatIntelFeedsPage} />} />
       <Route path="/threat-intel/upgrade" component={() => <ProtectedRoute component={ThreatIntelUpgradePage} />} />
 
       {/* TPRM — public respond route (no auth) */}
