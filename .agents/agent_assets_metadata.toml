@@ -12,3 +12,9 @@ id = "U3LFlWn-DpAwLqoxkyo3q"
 uri = "file://REQUIREMENTS.md"
 type = "text"
 title = "Sentinelware CTEM — Requirements"
+
+[[outputs]]
+id = "md8UHUekV9DSDRxCUyftk"
+uri = "file://.canvas/assets/sentinelware-architecture.zip"
+type = "unspecified"
+title = "Sentinelware — Full CTEM Architecture Diagram (HTML)"

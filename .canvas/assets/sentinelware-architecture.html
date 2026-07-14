@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sentinelware — Full CTEM Platform Architecture</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0a0e1a;
+    color: #e2e8f0;
+    padding: 32px 24px 64px;
+    min-width: 1200px;
+  }
+
+  /* ── HEADER ── */
+  .page-header {
+    background: linear-gradient(135deg, #1e3a8a 0%, #312e81 50%, #1e1b4b 100%);
+    border: 1px solid #3730a3;
+    border-radius: 16px;
+    padding: 32px 40px;
+    margin-bottom: 32px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .page-header .logo { font-size: 48px; }
+  .page-header h1 { font-size: 28px; font-weight: 800; color: #f8fafc; letter-spacing: -0.5px; }
+  .page-header p { font-size: 14px; color: #94a3b8; margin-top: 4px; }
+  .badge {
+    display: inline-block;
+    background: #1e3a8a;
+    border: 1px solid #3b82f6;
+    color: #93c5fd;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    margin-right: 6px;
+    margin-top: 8px;
+  }
+
+  /* ── LAYER WRAPPER ── */
+  .layer {
+    margin-bottom: 28px;
+  }
+  .layer-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+  }
+  .layer-header .num {
+    background: rgba(255,255,255,0.15);
+    border-radius: 50%;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800;
+  }
+
+  .layer-l1 { background: rgba(99,102,241,0.15); border-left: 3px solid #6366f1; color: #a5b4fc; }
+  .layer-l2 { background: rgba(34,197,94,0.12); border-left: 3px solid #22c55e; color: #86efac; }
+  .layer-l3 { background: rgba(249,115,22,0.12); border-left: 3px solid #f97316; color: #fdba74; }
+  .layer-l4 { background: rgba(168,85,247,0.12); border-left: 3px solid #a855f7; color: #d8b4fe; }
+  .layer-l5 { background: rgba(59,130,246,0.12); border-left: 3px solid #3b82f6; color: #93c5fd; }
+  .layer-l6 { background: rgba(100,116,139,0.15); border-left: 3px solid #64748b; color: #94a3b8; }
+  .layer-l7 { background: rgba(20,184,166,0.12); border-left: 3px solid #14b8a6; color: #5eead4; }
+
+  /* ── GRID LAYOUTS ── */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .col-span-2 { grid-column: span 2; }
+
+  /* ── MODULE CARD ── */
+  .card {
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid rgba(255,255,255,0.07);
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 12px 12px 0 0;
+  }
+
+  /* card color themes */
+  .card-violet  { background: rgba(124,58,237,0.12); } .card-violet::before  { background: #7c3aed; }
+  .card-blue    { background: rgba(37,99,235,0.12);  } .card-blue::before    { background: #2563eb; }
+  .card-lblue   { background: rgba(56,189,248,0.10); } .card-lblue::before   { background: #38bdf8; }
+  .card-green   { background: rgba(34,197,94,0.10);  } .card-green::before   { background: #22c55e; }
+  .card-lgreen  { background: rgba(74,222,128,0.08); } .card-lgreen::before  { background: #4ade80; }
+  .card-orange  { background: rgba(249,115,22,0.12); } .card-orange::before  { background: #f97316; }
+  .card-yellow  { background: rgba(234,179,8,0.10);  } .card-yellow::before  { background: #eab308; }
+  .card-red     { background: rgba(239,68,68,0.10);  } .card-red::before     { background: #ef4444; }
+  .card-purple  { background: rgba(168,85,247,0.12); } .card-purple::before  { background: #a855f7; }
+  .card-lpurple { background: rgba(192,132,252,0.08);} .card-lpurple::before { background: #c084fc; }
+  .card-teal    { background: rgba(20,184,166,0.10); } .card-teal::before    { background: #14b8a6; }
+  .card-grey    { background: rgba(100,116,139,0.12);} .card-grey::before    { background: #64748b; }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    letter-spacing: 0.3px;
+  }
+  .card-icon { font-size: 18px; }
+
+  .feature-list { list-style: none; }
+  .feature-list li {
+    font-size: 11.5px;
+    color: #94a3b8;
+    padding: 2.5px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    line-height: 1.5;
+  }
+  .feature-list li:last-child { border-bottom: none; }
+  .feature-list li::before {
+    content: '›';
+    color: #475569;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .feature-list .sub {
+    padding-left: 14px;
+    color: #64748b;
+    font-size: 11px;
+  }
+  .feature-list .sub::before { content: '·'; color: #334155; }
+
+  .section-divider {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    margin: 10px 0;
+  }
+
+  .tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 4px;
+    margin: 1px 2px;
+  }
+  .tag-red    { background: rgba(239,68,68,0.2);  color: #fca5a5; }
+  .tag-orange { background: rgba(249,115,22,0.2); color: #fdba74; }
+  .tag-yellow { background: rgba(234,179,8,0.2);  color: #fde047; }
+  .tag-green  { background: rgba(34,197,94,0.2);  color: #86efac; }
+  .tag-blue   { background: rgba(59,130,246,0.2); color: #93c5fd; }
+  .tag-purple { background: rgba(168,85,247,0.2); color: #d8b4fe; }
+  .tag-grey   { background: rgba(100,116,139,0.2);color: #94a3b8; }
+
+  /* ── INTEGRATION ROW ── */
+  .integration-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .int-chip {
+    background: rgba(20,184,166,0.10);
+    border: 1px solid rgba(20,184,166,0.25);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 11.5px;
+    color: #5eead4;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .int-chip .int-icon { font-size: 16px; }
+  .int-chip .int-name { font-weight: 600; }
+  .int-chip .int-desc { color: #94a3b8; font-size: 10.5px; display: block; margin-top: 1px; }
+
+  /* ── FLOW DIAGRAM ── */
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 8px 0;
+    flex-wrap: wrap;
+  }
+  .flow-step {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #e2e8f0;
+    white-space: nowrap;
+  }
+  .flow-arrow {
+    color: #475569;
+    font-size: 16px;
+    padding: 0 6px;
+    flex-shrink: 0;
+  }
+
+  /* ── PHASE BLOCK ── */
+  .phase-block {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+  }
+  .phase-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #64748b;
+    margin-bottom: 6px;
+  }
+  .phase-label.green { color: #22c55e; }
+  .phase-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .phase-item {
+    font-size: 10.5px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+    padding: 2px 8px;
+    color: #cbd5e1;
+  }
+
+  /* ── REQUEST FLOW VISUAL ── */
+  .req-flow {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-size: 11.5px;
+    color: #64748b;
+    font-family: 'Courier New', monospace;
+    line-height: 2;
+  }
+  .req-flow .hl { color: #93c5fd; font-weight: 600; }
+  .req-flow .hl-green { color: #86efac; }
+  .req-flow .hl-orange { color: #fdba74; }
+  .req-flow .hl-purple { color: #d8b4fe; }
+  .req-flow .arrow { color: #475569; }
+
+  /* ── FOOTER ── */
+  .footer {
+    margin-top: 48px;
+    text-align: center;
+    font-size: 11px;
+    color: #334155;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+
+  @media print {
+    body { background: #fff; color: #111; padding: 16px; }
+    .card { border: 1px solid #ddd; background: #fafafa !important; }
+    .card::before { display: none; }
+    .layer-header { background: #f1f5f9 !important; color: #1e293b !important; }
+    .feature-list li { color: #334155; }
+    .page-header { background: #1e3a8a !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════════════ -->
+<div class="page-header">
+  <div class="logo">🛡️</div>
+  <div>
+    <h1>Sentinelware — CTEM Platform</h1>
+    <p>Continuous Threat Exposure Management &nbsp;·&nbsp; Full System Architecture</p>
+    <div style="margin-top:10px">
+      <span class="badge">React 19 + Vite</span>
+      <span class="badge">Express 5 + Node 24</span>
+      <span class="badge">PostgreSQL + Drizzle ORM</span>
+      <span class="badge">Multi-Tenant SaaS</span>
+      <span class="badge">EASM</span>
+      <span class="badge">CAASM</span>
+      <span class="badge">Threat Intelligence</span>
+      <span class="badge">AI Copilot</span>
+      <span class="badge">Compliance</span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     REQUEST FLOW
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l1">
+    <span class="num">→</span> Request Flow & Authentication
+  </div>
+  <div class="req-flow">
+    <span class="hl">Browser</span>
+    <span class="arrow"> ──► </span>
+    <span class="hl">Replit Proxy :80</span>
+    <span class="arrow"> ──┬──► </span>
+    <span class="hl-green">/api/*  → Express 5 API Server :8080</span>
+    <span class="arrow"> ──► </span>
+    Helmet · CORS · express.json · Rate Limiter
+    <span class="arrow"> ──► </span>
+    <span class="hl-purple">requireAuth (JWT verify → { userId, tenantId, role })</span>
+    <span class="arrow"> ──► </span>
+    Route Handler
+    <span class="arrow"> ──► </span>
+    <span class="hl-orange">Drizzle ORM  WHERE tenant_id = JWT.tenantId</span>
+    <span class="arrow"> ──► </span>
+    PostgreSQL (RLS enforced)<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+    <span class="arrow"> └──► </span>
+    <span class="hl-green">/*  → React + Vite Frontend :23203</span>
+    <span class="arrow"> ──► </span>
+    Wouter Router
+    <span class="arrow"> ──► </span>
+    TanStack Query (Orval hooks)
+    <span class="arrow"> ──► </span>
+    Zustand Auth Store
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     LAYER 1 — CORE INFRASTRUCTURE
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l1">
+    <span class="num">1</span> Core Infrastructure
+  </div>
+  <div class="grid-3">
+
+    <div class="card card-violet">
+      <div class="card-title"><span class="card-icon">🔐</span> Auth &amp; RBAC</div>
+      <ul class="feature-list">
+        <li>JWT Access Tokens (15 min) + Refresh Tokens (7 days, stored in DB)</li>
+        <li>Bcrypt password hashing · Reset password via email flow</li>
+        <li>Two-Factor Authentication (Email OTP + TOTP-compatible verify)</li>
+        <li>Roles: <span class="tag tag-red">super_admin</span><span class="tag tag-orange">admin</span><span class="tag tag-yellow">manager</span><span class="tag tag-green">client</span></li>
+        <li>Session management — list active sessions + revoke individual</li>
+        <li>Avatar upload (multipart/form-data)</li>
+        <li>Rate limiting: 20/15 min on /auth/* · 200/15 min global</li>
+        <li>Helmet security headers + CORS policy</li>
+        <li>Express trust proxy (Replit proxy-aware, X-Forwarded-For)</li>
+        <li>Invitation system (pre-registration email tokens)</li>
+      </ul>
+    </div>
+
+    <div class="card card-blue">
+      <div class="card-title"><span class="card-icon">🗄️</span> Database &amp; Multi-Tenancy</div>
+      <ul class="feature-list">
+        <li>PostgreSQL (Replit-managed, auto-provisioned)</li>
+        <li>Drizzle ORM — schema definition, migrations, query builder</li>
+        <li>drizzle-zod — schema → Zod validation schemas</li>
+        <li>30+ tables, all with <code>tenantId</code> column</li>
+        <li>Row-Level Security (RLS) on every tenant-scoped table</li>
+        <li>PostgreSQL <code>tsvector</code> full-text search (assets + findings)</li>
+        <li>Immutable audit log (PostgreSQL BEFORE UPDATE/DELETE trigger)</li>
+        <li>Orval codegen — OpenAPI → React Query hooks + Zod schemas</li>
+        <li>Stripe billing schema (packages, subscriptions, tiers)</li>
+        <li>All queries: <code>WHERE tenant_id = JWT.tenantId</code></li>
+      </ul>
+    </div>
+
+    <div class="card card-lblue">
+      <div class="card-title"><span class="card-icon">⚙️</span> Background Workers &amp; Queue</div>
+      <ul class="feature-list">
+        <li>beatScheduler — polls every 60 s (not hourly — critical)</li>
+        <li>Dispatches asset-frequency scans (hourly/daily/weekly/monthly)</li>
+        <li>Dispatches schedule-based pipeline triggers via nextRunAt</li>
+        <li>BullMQ job queue (Redis) with in-memory FIFO fallback</li>
+        <li>MAX_CONCURRENT_SCANS = 5 · MAX_PARALLEL_ASSETS = 3</li>
+        <li>Stuck-job watchdog (10 min timeout → auto-fail)</li>
+        <li>Alert worker — async notification dispatch queue</li>
+        <li>Startup scan recovery — resumes scans interrupted by restart</li>
+        <li>finalizeScannedAssets() — risk recalculation post-scan</li>
+        <li>Queue Monitor page (super_admin, BullMQ metrics)</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     LAYER 2 — DATA COLLECTION ENGINES
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l2">
+    <span class="num">2</span> Data Collection Engines
+  </div>
+  <div class="grid-2">
+
+    <div class="card card-green">
+      <div class="card-title"><span class="card-icon">🔬</span> Active Scan Pipeline — 5-Phase Architecture</div>
+      <div class="phase-block">
+        <div class="phase-label green">Phase 1 — Passive Recon (parallel)</div>
+        <div class="phase-items">
+          <span class="phase-item">WHOIS</span><span class="phase-item">DNS (A/AAAA/MX/NS/TXT/SOA/CNAME/SRV)</span>
+          <span class="phase-item">SPF full policy parse</span><span class="phase-item">DMARC (adkim/aspf/pct/rua)</span>
+          <span class="phase-item">DKIM selector probing</span><span class="phase-item">crt.sh CT logs</span>
+          <span class="phase-item">ASN lookup (ip-api.com)</span><span class="phase-item">Shodan InternetDB</span>
+          <span class="phase-item">VirusTotal enrichment</span>
+        </div>
+      </div>
+      <div class="phase-block">
+        <div class="phase-label green">Phase 2 — Network &amp; TLS (parallel)</div>
+        <div class="phase-items">
+          <span class="phase-item">Nmap -sT → Naabu → Masscan (fallback chain)</span>
+          <span class="phase-item">26 dangerous port categories</span>
+          <span class="phase-item">SSL/TLS cert analysis (tls.connect)</span>
+          <span class="phase-item">HTTP probing (status, title, headers, HSTS)</span>
+        </div>
+      </div>
+      <div class="phase-block">
+        <div class="phase-label green">Phase 3 — Web Fingerprinting (parallel)</div>
+        <div class="phase-items">
+          <span class="phase-item">Technology Detection (400+ signatures)</span>
+          <span class="phase-item">Puppeteer Screenshots (homepage, login, admin)</span>
+          <span class="phase-item">Directory Fuzzing (BFS depth-3, 2000 endpoints max)</span>
+        </div>
+      </div>
+      <div class="phase-block">
+        <div class="phase-label green">Phase 4 — Deep Analysis (parallel)</div>
+        <div class="phase-items">
+          <span class="phase-item">Nuclei (40+ templates)</span>
+          <span class="phase-item">Secrets Hunting (trufflehog-style)</span>
+          <span class="phase-item">JS Analyzer (API keys in JS bundles)</span>
+          <span class="phase-item">Cloud Recon (S3/GCS/Azure permutation)</span>
+          <span class="phase-item">Parameter Discovery (injectable params)</span>
+        </div>
+      </div>
+      <div class="phase-block">
+        <div class="phase-label green">Phase 5 — Finalization (sequential)</div>
+        <div class="phase-items">
+          <span class="phase-item">EXP-PORT findings (26 dangerous ports → critical)</span>
+          <span class="phase-item">EPSS batch enrichment (100 CVEs/req)</span>
+          <span class="phase-item">KEV enrichment (CISA, 24h cache)</span>
+          <span class="phase-item">Deduplication (CVE ID + assetId)</span>
+          <span class="phase-item">Finding INSERT to DB</span>
+          <span class="phase-item">finalizeScannedAssets() → risk recalculation</span>
+          <span class="phase-item">dispatchNotifications → alert rules → channels</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card-lgreen">
+      <div class="card-title"><span class="card-icon">🔭</span> Passive Discovery — OSINT Sources</div>
+      <ul class="feature-list">
+        <li>Certificate Transparency — crt.sh (subdomain enumeration)</li>
+        <li>WHOIS registration data (creation, expiry, registrar, contacts)</li>
+        <li>ASN enrichment — ip-api.com (org, AS number, country, ISP)</li>
+        <li>DNS enumeration: A · AAAA · MX · NS · TXT · SOA · CNAME · SRV</li>
+        <li>SPF policy full parse (includes, redirect, all mechanisms)</li>
+        <li>DMARC policy (adkim / aspf / pct / rua / ruf tags)</li>
+        <li>DKIM selector probing (common selector list)</li>
+        <li>GitHub Exposure — Search API (secret leaks in public repos)</li>
+        <li>AlienVault OTX — threat intelligence feed integration</li>
+        <li>Wayback Machine — historical endpoint discovery</li>
+        <li>URLScan.io — historical scan result correlation</li>
+        <li>RapidDNS — passive DNS database lookup</li>
+        <li>CommonCrawl — URL corpus mining for endpoint discovery</li>
+        <li>Shodan InternetDB — open ports, CVEs, tags, banners</li>
+        <hr class="section-divider">
+        <li>Subdomain Enumeration: subfinder · dnsx · shuffledns</li>
+        <li>Ownership Verification: DNS TXT · HTTP file upload · Email confirm</li>
+        <li>Results stored historically (discovery_results table per asset)</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     LAYER 3 — ASSET MANAGEMENT & VULNERABILITY MANAGEMENT
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l3">
+    <span class="num">3</span> Asset Management &amp; Vulnerability Management
+  </div>
+  <div class="grid-3">
+
+    <div class="card card-orange">
+      <div class="card-title"><span class="card-icon">🌐</span> EASM — External Attack Surface Management</div>
+      <ul class="feature-list">
+        <li>10 Asset Types: Domain · Subdomain · URL · IP · CIDR · API · SSL Cert · Cloud Asset · Host · Mobile App</li>
+        <li>Asset Groups — group-level risk + member management</li>
+        <li>Business Impact field (1–10, factored into risk score)</li>
+        <li>Asset Tags: Production · Staging · Development · Critical · Internal · External</li>
+        <li>Ownership Verification: DNS TXT · HTTP file · Email confirmation</li>
+        <li>Technology Detection (400+ fingerprint rules, techDetector.ts)</li>
+        <li>SSL/TLS cert parsing (expiry, issuer, SANs, chain)</li>
+        <li>Puppeteer Screenshots (homepage, login, admin panels → base64 PNG)</li>
+        <li>D3 v7 Force-Directed Topology Graph (zoom/pan/drag/cluster)</li>
+        <li>Asset Group Detail page (group-level risk + member view)</li>
+        <li>lastScannedAt + riskLevel on every asset record</li>
+        <li>Full CRUD + bulk tag / status / delete / rescan actions</li>
+      </ul>
+    </div>
+
+    <div class="card card-yellow">
+      <div class="card-title"><span class="card-icon">🗺️</span> CAASM — Cyber Asset Attack Surface Management</div>
+      <ul class="feature-list">
+        <li>Asset Inventory (filterable, sortable, paginated table)</li>
+        <li>Attack Surface Topology (D3 v7 force-directed graph)</li>
+        <li class="sub">Nodes: Org · Asset · Port · Finding · CVE</li>
+        <li class="sub">Edges: OWNS · SUBDOMAIN_OF · RESOLVES_TO · EXPOSES · HAS_VULNERABILITY · REFERENCES_CVE</li>
+        <li class="sub">Neo4j-style graph API response ({nodes, relationships, meta})</li>
+        <li>Exposure Analysis — 26 dangerous port categories → EXP-PORT findings</li>
+        <li>HTTP security headers audit (HSTS · CSP · X-Frame-Options · etc.)</li>
+        <li>Misconfiguration + information disclosure detection</li>
+        <li>Scan Schedules (hourly/daily/weekly/monthly via beatScheduler)</li>
+        <li>Full-text Search across assets + findings (PostgreSQL tsvector)</li>
+        <li>Asset risk level history + riskLevel indexed column</li>
+        <li>Subdomain takeover signal detection</li>
+      </ul>
+    </div>
+
+    <div class="card card-red">
+      <div class="card-title"><span class="card-icon">🔴</span> Vulnerability Management</div>
+      <ul class="feature-list">
+        <li>Finding statuses: open · in_progress · accepted_risk · false_positive · mitigated</li>
+        <li>Severity levels: <span class="tag tag-red">critical</span><span class="tag tag-orange">high</span><span class="tag tag-yellow">medium</span><span class="tag tag-blue">low</span><span class="tag tag-grey">info</span></li>
+        <li>CVE IDs + CVSS scores (float) + CWE classification</li>
+        <li>EPSS scores (first.org batch API, 100 CVEs per request)</li>
+        <li>CISA KEV flag (Known Exploited Vulnerabilities, 24h cache)</li>
+        <li>Finding deduplication on (cveId, assetId) via onConflictDoUpdate</li>
+        <li>Threaded comments per finding (with user attribution + timestamps)</li>
+        <li>Finding Drawer tabs: Details · Headers · Screenshots · Comments · Threat Intel</li>
+        <li>Threat Score column from TI correlation engine (heat-mapped badge)</li>
+        <li>Bulk status updates + filter by severity / status / asset / TI score</li>
+        <li>AI remediation guidance (SSE streaming response)</li>
+        <li>Scan data raw view per finding (full scan output)</li>
+        <li>First seen / last seen tracking + finding age</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     LAYER 4 — THREAT INTELLIGENCE & RISK MANAGEMENT
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l4">
+    <span class="num">4</span> Threat Intelligence &amp; Risk Management
+  </div>
+  <div class="grid-2">
+
+    <div class="card card-purple">
+      <div class="card-title"><span class="card-icon">🕵️</span> Threat Intelligence Module</div>
+      <ul class="feature-list">
+        <li>IOC Database: IP · Domain · URL · File Hash · Email · CVE with TLP (RED/AMBER/GREEN/WHITE), confidence, date-range filters</li>
+        <li>Threat Actors — CRUD (name, aliases, origin country, sophistication level)</li>
+        <li class="sub">Actor TTPs: MITRE ATT&CK tactic + technique ID + name (ti_actor_ttps table)</li>
+        <li class="sub">Actor campaigns · malware · infrastructure IOC linkage</li>
+        <li class="sub">Actor detail page with Infrastructure tab (IOC lookup by actor name)</li>
+        <li>Campaign Tracking (start/end dates, linked actor, description)</li>
+        <li>Malware Library (category, actor_ids[], MITRE technique refs)</li>
+        <li>CVE Intel — CVSS · EPSS · KEV · MITRE refs · publish date filters</li>
+        <li>Dark Web Monitoring — paste site hits, forum mentions, keywords</li>
+        <li>Threat Intel News Feed — severity-tagged articles per tenant</li>
+        <li>Feeds Management — API key status badge per provider (masked/configured)</li>
+        <li>TI Dashboard: Top actors / Active IOC matches / Most targeted CVEs / Recent correlations / Super_admin tenant filter</li>
+        <li>Correlation Engine (POST /threat-intel/correlate — admin/SA only): matches findings to actors by CVE ID, technology, port, keywords</li>
+        <li class="sub">Stores threat_score (0–100) + exploitation_status per finding-actor pair</li>
+        <li class="sub">Client RBAC: correlations endpoint passes allowClient:true, scoped to assigned assets</li>
+        <li>SSE AI explanation for TI correlations (action: "explain-ti-correlation")</li>
+        <li>GET /threat-intel/ttps — aggregated ATT&CK technique counts across all actors</li>
+      </ul>
+    </div>
+
+    <div class="card card-orange">
+      <div class="card-title"><span class="card-icon">📊</span> Risk &amp; Exposure Management</div>
+      <ul class="feature-list">
+        <li>Multi-Factor Risk Score (0–100) per asset</li>
+        <li class="sub">CVSS component — vulnerability severity weighting</li>
+        <li class="sub">EPSS component — exploit probability (first.org)</li>
+        <li class="sub">KEV bonus — +10 if in CISA Known Exploited list</li>
+        <li class="sub">Criticality bonus — asset criticality flag contribution</li>
+        <li class="sub">Exposure bonus — dangerous open ports detected</li>
+        <li class="sub">Business Impact component — 1–10 integer asset field</li>
+        <li>Risk levels: <span class="tag tag-red">critical</span><span class="tag tag-orange">high</span><span class="tag tag-yellow">medium</span><span class="tag tag-green">low</span></li>
+        <li>Per-asset risk score history in risk_scores table</li>
+        <li>Risk Scores page — all assets ranked by score</li>
+        <li>Force recalculate: POST /risk/recalculate</li>
+        <li>finalizeScannedAssets() — auto-recalculates risk after every scan</li>
+        <li>Risk trend charts (Recharts line + area)</li>
+        <li>Exposure Analysis page with 26 dangerous port categories</li>
+        <li>HTTP security headers audit (HSTS · CSP · Referrer-Policy)</li>
+        <li>Cloud storage bucket enumeration (S3/GCS/Azure open bucket detection)</li>
+        <li>Directory traversal + endpoint exposure classification</li>
+        <li>riskLevel stored on asset record and indexed for fast filtering</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     LAYER 5 — GOVERNANCE, OUTPUT & AI
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l5">
+    <span class="num">5</span> Governance, Output &amp; AI
+  </div>
+  <div class="grid-3">
+
+    <div class="card card-blue">
+      <div class="card-title"><span class="card-icon">📋</span> Compliance Management</div>
+      <ul class="feature-list">
+        <li>Frameworks: <span class="tag tag-blue">ISO 27001</span><span class="tag tag-blue">SOC 2</span><span class="tag tag-blue">PCI DSS</span><span class="tag tag-blue">HIPAA</span><span class="tag tag-blue">CIS Controls</span></li>
+        <li>Control statuses: compliant · partial · non_compliant · not_applicable</li>
+        <li>Evidence upload per control (base64 stored in DB)</li>
+        <li>Evidence file download + delete endpoints</li>
+        <li>Gap Analysis summary per framework (% compliant breakdown)</li>
+        <li>Control assignment (assignee field + due date per control)</li>
+        <li>Custom control creation per framework</li>
+        <li>Compliance score cards on main dashboard</li>
+        <li>Framework detail drill-down page</li>
+        <li>Evidence file listing per control with filename management</li>
+        <li>Compliance export (included in report engine)</li>
+      </ul>
+    </div>
+
+    <div class="card card-lpurple">
+      <div class="card-title"><span class="card-icon">🔔</span> Alerting &amp; Real-Time Notifications</div>
+      <ul class="feature-list">
+        <li>Alert Rule triggers: any · new_finding · critical_finding · high_finding · scan_complete · brand_threat</li>
+        <li>Notification channels:</li>
+        <li class="sub">Email — Nodemailer / Resend API</li>
+        <li class="sub">Slack — incoming webhook</li>
+        <li class="sub">Discord — webhook</li>
+        <li class="sub">Telegram — bot API (configurable chat ID)</li>
+        <li class="sub">Generic webhook — POST JSON payload to any URL</li>
+        <li>SSE real-time alert stream (GET /alerts/stream)</li>
+        <li>Alert inbox — acknowledge · dismiss · mark read</li>
+        <li>Per-tenant alert rules + channel configs stored as JSONB</li>
+        <li>Platform-level fallback channels (when tenant has none)</li>
+        <li>dispatchMultiTenantNotifications() — fires per-tenant + fallback</li>
+        <li>BullMQ alert worker (async dispatch, retries on failure)</li>
+      </ul>
+    </div>
+
+    <div class="card card-green">
+      <div class="card-title"><span class="card-icon">🤖</span> AI Security Copilot &amp; Reporting</div>
+      <ul class="feature-list">
+        <li>AI Security Copilot (GPT-4o-mini via direct OpenAI fetch)</li>
+        <li class="sub">Explain finding + CVE + risk context (SSE stream)</li>
+        <li class="sub">Remediation step-by-step guidance (SSE stream)</li>
+        <li class="sub">Executive summary generation</li>
+        <li class="sub">Compliance control guidance</li>
+        <li class="sub">TI correlation explanation (SSE, action: explain-ti-correlation)</li>
+        <li class="sub">Per-user LLM settings (model + custom system prompt)</li>
+        <li class="sub">Graceful fallback when OPENAI_API_KEY absent</li>
+        <li>Reporting Engine:</li>
+        <li class="sub">Types: Executive · Technical · Compliance · Inventory</li>
+        <li class="sub">Formats: CSV · JSON · PDF-data endpoints</li>
+        <li class="sub">Puppeteer screenshot embedding in reports</li>
+        <li class="sub">Asset-level + brand-threat + full-report PDF data</li>
+        <li class="sub">Report download (/download?format=csv|json)</li>
+        <li class="sub">Report history listing with generation status</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     LAYER 6 — PLATFORM SERVICES
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l6">
+    <span class="num">6</span> Platform Services
+  </div>
+  <div class="grid-4">
+
+    <div class="card card-red">
+      <div class="card-title"><span class="card-icon">🏴</span> Brand Threats &amp; Takedowns</div>
+      <ul class="feature-list">
+        <li>Domain permutation enumeration</li>
+        <li>Typosquatting + lookalike domain detection</li>
+        <li>Brand threat scan management (CRUD)</li>
+        <li>Domain risk scoring per result</li>
+        <li>Registrar + registration date extraction</li>
+        <li>Puppeteer screenshots of phishing pages</li>
+        <li>Takedown Request workflow: pending → submitted → resolved/rejected</li>
+        <li>Brand threat SSE/alert integration</li>
+        <li>Brand threat PDF report data endpoint</li>
+      </ul>
+    </div>
+
+    <div class="card card-grey">
+      <div class="card-title"><span class="card-icon">🛠️</span> Security Tools Library</div>
+      <ul class="feature-list">
+        <li>15 tool binaries in Nix PATH:</li>
+        <li class="sub">nmap · naabu · masscan · subfinder</li>
+        <li class="sub">dnsx · shuffledns · httpx · nuclei</li>
+        <li class="sub">gobuster · ffuf · whatweb · nikto</li>
+        <li class="sub">dalfox · trufflehog · amass</li>
+        <li>Pipeline config per tenant (phase assignment, order, enable/disable)</li>
+        <li>Tool run history (exit codes + stdout/stderr output)</li>
+        <li>Real shell execution via execFile()</li>
+        <li>Manual tool trigger: POST /tools/run</li>
+        <li>Tool library page + pipeline config UI</li>
+      </ul>
+    </div>
+
+    <div class="card card-grey">
+      <div class="card-title"><span class="card-icon">⚙️</span> Platform Settings</div>
+      <ul class="feature-list">
+        <li>Key-value store (platform_settings table)</li>
+        <li>API keys: NVD · Shodan · VirusTotal · OTX · URLScan · Resend</li>
+        <li>AI provider config (OpenAI key + model selector)</li>
+        <li>Email SMTP / Resend transactional email config</li>
+        <li>Stripe keys (secret key + webhook signing secret)</li>
+        <li>Module toggles per tenant:</li>
+        <li class="sub">Threat Intelligence · AI Mapper · TPRM · Brand Threats</li>
+        <li>Package / pricing tier management</li>
+        <li>Stripe checkout + subscription management</li>
+        <li>Billing portal session (Stripe Customer Portal)</li>
+      </ul>
+    </div>
+
+    <div class="card card-blue">
+      <div class="card-title"><span class="card-icon">👥</span> Users, Tenants &amp; Audit</div>
+      <ul class="feature-list">
+        <li>Multi-tenant SaaS (single DB, RLS isolation)</li>
+        <li>User CRUD — admin manages own tenant users</li>
+        <li>Invitation system (pre-registration email tokens)</li>
+        <li>Account Manager → Client assignments (AM dashboard)</li>
+        <li>Tenant management (super_admin only)</li>
+        <li>Queue Monitor (BullMQ metrics, super_admin)</li>
+        <li>Immutable Audit Log:</li>
+        <li class="sub">action / resource / IP / timestamp per mutation</li>
+        <li class="sub">PostgreSQL trigger blocks UPDATE + DELETE on audit_logs</li>
+        <li class="sub">All API mutations logged automatically</li>
+        <li>Audit log page with filters + export</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     LAYER 7 — EXTERNAL INTEGRATIONS
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l7">
+    <span class="num">7</span> External Data Sources &amp; Third-Party Integrations
+  </div>
+  <div class="integration-grid">
+    <div class="int-chip"><span class="int-icon">🏛️</span><div><span class="int-name">NVD / NIST</span><span class="int-desc">CVE data + CVSS scores · API key for 50 req/30s</span></div></div>
+    <div class="int-chip"><span class="int-icon">🔍</span><div><span class="int-name">Shodan InternetDB</span><span class="int-desc">Open ports, CVEs, tags, banners</span></div></div>
+    <div class="int-chip"><span class="int-icon">🦠</span><div><span class="int-name">VirusTotal</span><span class="int-desc">Domain + IP reputation scoring</span></div></div>
+    <div class="int-chip"><span class="int-icon">📜</span><div><span class="int-name">crt.sh</span><span class="int-desc">Certificate Transparency — subdomain enum</span></div></div>
+    <div class="int-chip"><span class="int-icon">🚨</span><div><span class="int-name">CISA KEV</span><span class="int-desc">Known Exploited Vulnerabilities catalog · 24h cache</span></div></div>
+    <div class="int-chip"><span class="int-icon">📈</span><div><span class="int-name">EPSS / first.org</span><span class="int-desc">Exploit probability scores · 100 CVEs per batch</span></div></div>
+    <div class="int-chip"><span class="int-icon">👾</span><div><span class="int-name">AlienVault OTX</span><span class="int-desc">Open Threat Exchange — threat feeds</span></div></div>
+    <div class="int-chip"><span class="int-icon">🔎</span><div><span class="int-name">URLScan.io</span><span class="int-desc">Historical web scan results</span></div></div>
+    <div class="int-chip"><span class="int-icon">🕰️</span><div><span class="int-name">Wayback Machine</span><span class="int-desc">Historical endpoint discovery</span></div></div>
+    <div class="int-chip"><span class="int-icon">🕸️</span><div><span class="int-name">CommonCrawl</span><span class="int-desc">URL corpus mining</span></div></div>
+    <div class="int-chip"><span class="int-icon">📡</span><div><span class="int-name">RapidDNS</span><span class="int-desc">Passive DNS database lookup</span></div></div>
+    <div class="int-chip"><span class="int-icon">🌍</span><div><span class="int-name">ip-api.com</span><span class="int-desc">ASN + geolocation enrichment</span></div></div>
+    <div class="int-chip"><span class="int-icon">🐱</span><div><span class="int-name">GitHub Search API</span><span class="int-desc">Secret exposure in public repos</span></div></div>
+    <div class="int-chip"><span class="int-icon">🤖</span><div><span class="int-name">OpenAI GPT-4o-mini</span><span class="int-desc">AI Copilot — SSE streaming inference</span></div></div>
+    <div class="int-chip"><span class="int-icon">📧</span><div><span class="int-name">Resend / Nodemailer</span><span class="int-desc">Transactional email dispatch</span></div></div>
+    <div class="int-chip"><span class="int-icon">💳</span><div><span class="int-name">Stripe</span><span class="int-desc">Billing, checkout, subscriptions, webhooks</span></div></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     FRONTEND PAGES TABLE
+════════════════════════════════════════════════════════ -->
+<div class="layer">
+  <div class="layer-header layer-l1">
+    <span class="num">→</span> Frontend Pages (React + Wouter Router)
+  </div>
+  <div class="grid-3">
+
+    <div class="card card-blue">
+      <div class="card-title"><span class="card-icon">📱</span> Core Pages</div>
+      <ul class="feature-list">
+        <li>/dashboard — Risk trends, severity chart, top vulnerable assets, alerts</li>
+        <li>/assets — Asset inventory table, bulk actions, filters</li>
+        <li>/assets/:id — Full asset detail (findings, tech, screenshots, risk)</li>
+        <li>/asset-groups — Group management</li>
+        <li>/asset-groups/:id — Group members + group-level risk</li>
+        <li>/topology — D3 force-directed attack surface graph</li>
+        <li>/findings — Vulnerability management + finding drawer</li>
+        <li>/findings/:id — Individual finding detail page</li>
+        <li>/scans — Scan management, live progress, schedule config</li>
+        <li>/scan-reports — List of completed scan reports</li>
+        <li>/scan-reports/:id — Full scan report with all findings</li>
+      </ul>
+    </div>
+
+    <div class="card card-purple">
+      <div class="card-title"><span class="card-icon">🕵️</span> TI &amp; Intelligence Pages</div>
+      <ul class="feature-list">
+        <li>/threat-intel/dashboard — Global TI view, top actors, IOC hits</li>
+        <li>/threat-intel/iocs — IOC Database with TLP + date filters</li>
+        <li>/threat-intel/actors — Threat actor list + CRUD</li>
+        <li>/threat-intel/actors/:id — Actor detail (TTPs, campaigns, malware, IOCs)</li>
+        <li>/threat-intel/campaigns — Campaign tracking</li>
+        <li>/threat-intel/malware — Malware library</li>
+        <li>/threat-intel/cves — CVE intel with date + CVSS filters</li>
+        <li>/threat-intel/correlations — Correlation engine + AI explanation</li>
+        <li>/threat-intel/dark-web — Dark web monitoring results</li>
+        <li>/threat-intel/news — Threat intel news feed</li>
+        <li>/threat-intel/feeds — Feed management + API key status</li>
+        <li>/brand-threats — Brand threat scan management</li>
+        <li>/brand-threats/:id — Typosquatting results + domain risk</li>
+        <li>/takedowns — Takedown request management</li>
+      </ul>
+    </div>
+
+    <div class="card card-green">
+      <div class="card-title"><span class="card-icon">⚙️</span> Platform &amp; Admin Pages</div>
+      <ul class="feature-list">
+        <li>/discovery — Passive OSINT results per asset</li>
+        <li>/exposure — Exposure analysis, dangerous ports, misconfigs</li>
+        <li>/compliance — Framework scores, gap analysis, evidence upload</li>
+        <li>/risk — Risk scoring dashboard, asset risk breakdown</li>
+        <li>/alerts — Alert inbox, alert rules, channel config</li>
+        <li>/alerts/:id — Individual alert detail</li>
+        <li>/ai-copilot — AI chat: explain, remediate, summarize</li>
+        <li>/reports — Report generation, PDF/CSV/JSON download</li>
+        <li>/audit-logs — Immutable audit trail with filters</li>
+        <li>/tools — Tool library, pipeline config, run history</li>
+        <li>/settings/users — User management (admin)</li>
+        <li>/settings/tenant — Tenant configuration</li>
+        <li>/settings/platform — Platform-wide API keys + toggles</li>
+        <li>/settings/account — Profile, avatar, 2FA, sessions, AI settings</li>
+        <li>/queue-monitor — BullMQ metrics (super_admin)</li>
+        <li>/tenants — Tenant management (super_admin)</li>
+        <li>/packages — Pricing tiers + Stripe subscription</li>
+        <li>/my-clients — Account manager client list</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<div class="footer">
+  Sentinelware CTEM Platform &nbsp;·&nbsp; Architecture Diagram &nbsp;·&nbsp; Generated July 2026 &nbsp;·&nbsp;
+  Stack: React 19 + Vite · Express 5 + Node 24 · PostgreSQL + Drizzle ORM · TypeScript 5.9 · Tailwind CSS v4 + ShadCN UI
+</div>
+
+</body>
+</html>
