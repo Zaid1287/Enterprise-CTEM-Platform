@@ -694,6 +694,19 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
   // ALL roles "submit" for review when marking as false_positive.
   // Only the dedicated PATCH /fp-status endpoint can confirm/reject/progress.
   const updateData: Record<string, unknown> = { ...parsed.data };
+
+  // Explicitly merge severity — the running server may have a cached Zod schema that strips it.
+  // Validate manually so we never write arbitrary strings to the DB.
+  const VALID_SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
+  if (req.body.severity && VALID_SEVERITIES.includes(req.body.severity)) {
+    updateData.severity = req.body.severity;
+  }
+
+  // Guard: Drizzle throws "No values to set" on an empty set() call.
+  if (Object.keys(updateData).length === 0) {
+    res.status(400).json({ error: "No valid fields to update" }); return;
+  }
+
   if (parsed.data.status === "false_positive") {
     updateData.falsePositiveStatus = "submitted";
     updateData.isFalsePositive = false;

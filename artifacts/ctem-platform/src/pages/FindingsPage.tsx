@@ -7,6 +7,7 @@ import {
   useListFindingComments, useCreateFindingComment, getListFindingCommentsQueryKey,
   useListAssetGroups, useGetAssetGroupMembers,
   getListAssetGroupsQueryKey, getGetAssetGroupMembersQueryKey,
+  useListAssetScreenshots, getListAssetScreenshotsQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
@@ -14,7 +15,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Search, ExternalLink, ChevronLeft, ChevronRight, X,
   ShieldAlert, Globe, Network, Server, Cpu, Smartphone,
-  FileText, Code2, Camera, AlignLeft, Tag, Info,
+  FileText, Code2, Camera, Tag, Info,
   CheckCircle2, Clock, AlertCircle, XCircle, Minus,
   MessageSquare, Send, Loader2, Sparkles, RefreshCw, ShieldOff, Layers, Brain,
   Shield, Target, Users, Bug, AlertTriangle,
@@ -293,7 +294,7 @@ function CommentsPanel({ findingId }: { findingId: number }) {
 }
 
 // ── Drawer Mode ─────────────────────────────────────────────────────────────
-type DrawerMode = "metadata" | "headers" | "screenshots" | "comments" | "ai" | "threat-intel" | null;
+type DrawerMode = "metadata" | "screenshots" | "comments" | "ai" | "threat-intel" | null;
 
 // ── Exploitation status badge ─────────────────────────────────────────────────
 function ExploitationBadge({ status }: { status: string }) {
@@ -717,12 +718,17 @@ function FindingDrawer({
     finally { setSevSaving(false); }
   }
 
+  // Real screenshots from DB for this finding's asset
+  const { data: drawerScreenshots } = useListAssetScreenshots(
+    finding.assetId,
+    { query: { queryKey: getListAssetScreenshotsQueryKey(finding.assetId), enabled: !!finding.assetId } },
+  );
+
   const [activeTab, setActiveTab] = useState<DrawerMode>(initialMode ?? "metadata");
   useEffect(() => { if (initialMode) setActiveTab(initialMode); }, [initialMode]);
 
   const tabs: { key: DrawerMode; label: string; icon: React.ElementType }[] = [
     { key: "metadata",     label: "Details",      icon: FileText },
-    { key: "headers",      label: "Headers",      icon: AlignLeft },
     { key: "screenshots",  label: "Screenshots",  icon: Camera },
     { key: "comments",     label: "Comments",     icon: MessageSquare },
     { key: "ai",           label: "Ask AI",       icon: Brain },
@@ -786,7 +792,6 @@ function FindingDrawer({
   const evidence = (() => {
     try { return JSON.parse(finding.evidence ?? "{}") as Record<string, unknown>; } catch { return {}; }
   })();
-  const headers = (evidence as any).headers ?? {};
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
@@ -934,40 +939,62 @@ function FindingDrawer({
             </div>
           )}
 
-          {activeTab === "headers" && (
-            <div className="space-y-2 text-xs">
-              {Object.keys(headers).length === 0
-                ? <p className="text-muted-foreground/60">No HTTP header data available for this finding.</p>
-                : Object.entries(headers).map(([k, v]) => (
-                    <div key={k} className="flex gap-2 items-start bg-muted/20 rounded px-2 py-1.5">
-                      <span className="font-mono text-primary/80 shrink-0 min-w-[180px]">{k}</span>
-                      <span className="font-mono text-muted-foreground break-all">{String(v)}</span>
-                    </div>
-                  ))
-              }
-            </div>
-          )}
-
           {activeTab === "screenshots" && (
             <div className="space-y-3">
-              <div className="rounded-lg border border-border bg-muted/20 p-4 flex flex-col items-center gap-3 text-center">
-                <Camera className="w-8 h-8 text-muted-foreground/40" />
-                <div>
-                  <p className="text-sm font-medium text-foreground">Screenshots are stored per asset</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Screenshots captured during scans are attached to the asset, not individual findings.
-                  </p>
+              {!finding.assetId ? (
+                <p className="text-xs text-muted-foreground/60 text-center py-8">No asset linked to this finding.</p>
+              ) : !drawerScreenshots ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/40" />
                 </div>
-                {finding.assetId && (
-                  <a
-                    href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/assets/${finding.assetId}#screenshots`}
-                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium underline underline-offset-2"
+              ) : (drawerScreenshots as any[]).length === 0 ? (
+                <div className="rounded-lg border border-border bg-muted/20 p-6 flex flex-col items-center gap-3 text-center">
+                  <Camera className="w-8 h-8 text-muted-foreground/30" />
+                  <div>
+                    <p className="text-sm font-medium text-foreground">No screenshots yet</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Screenshots are captured during active scans. Run a scan on this asset to generate them.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { onClose(); navigate(`/assets/${finding.assetId}`); }}
+                    className="text-xs text-primary hover:text-primary/80 underline underline-offset-2 font-medium"
                   >
-                    <Camera className="w-3.5 h-3.5" />
-                    View screenshots for {finding.assetName ?? "this asset"}
-                  </a>
-                )}
-              </div>
+                    Go to asset →
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {(drawerScreenshots as any[]).map((s: any) => (
+                    <div key={s.id} className="rounded-lg border border-border overflow-hidden bg-muted/10">
+                      {s.data ? (
+                        <img
+                          src={`data:image/png;base64,${s.data}`}
+                          alt={s.title ?? s.url ?? "Screenshot"}
+                          className="w-full object-cover max-h-72"
+                        />
+                      ) : (
+                        <div className="h-28 flex items-center justify-center bg-muted/30">
+                          <Camera className="w-8 h-8 text-muted-foreground/30" />
+                        </div>
+                      )}
+                      <div className="px-3 py-2 space-y-0.5">
+                        {s.title && <p className="text-xs font-medium text-foreground truncate">{s.title}</p>}
+                        {s.url && (
+                          <a href={s.url} target="_blank" rel="noopener noreferrer"
+                            className="text-[10px] text-primary/70 hover:text-primary truncate block font-mono">
+                            {s.url}
+                          </a>
+                        )}
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          {s.statusCode && <span className={cn("font-mono", s.statusCode < 400 ? "text-green-400" : "text-red-400")}>HTTP {s.statusCode}</span>}
+                          {s.createdAt && <span>{formatDate(s.createdAt)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
