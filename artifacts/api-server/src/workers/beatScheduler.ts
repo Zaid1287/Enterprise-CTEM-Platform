@@ -655,20 +655,28 @@ async function dispatchDueWatchlistNonDomainItems(): Promise<void> {
 
   for (const item of dueItems) {
     try {
-      // Find most recent completed brand threat scan for this tenant to attach results to
-      const [recentScan] = await db
-        .select({ id: brandThreatScansTable.id })
-        .from(brandThreatScansTable)
-        .where(
-          and(
-            eq(brandThreatScansTable.tenantId, item.tenantId),
-            eq(brandThreatScansTable.status, "done"),
-          ),
-        )
-        .orderBy(desc(brandThreatScansTable.createdAt))
-        .limit(1);
+      // Derive a display domain from the item value (used as brand_threat_scans.domain)
+      let displayDomain = item.value;
+      if (item.type === "email") {
+        displayDomain = item.value.includes("@") ? (item.value.split("@")[1] ?? item.value) : item.value;
+      } else if (item.type === "social_handle") {
+        displayDomain = item.value.replace(/^@/, "");
+      } else if (item.type === "logo_url") {
+        try { displayDomain = new URL(item.value.startsWith("http") ? item.value : `https://${item.value}`).hostname; } catch { /* keep as-is */ }
+      }
 
-      const scanId = recentScan?.id ?? null;
+      // Create a dedicated scan record for this watchlist item
+      const [newScan] = await db.insert(brandThreatScansTable).values({
+        tenantId: item.tenantId,
+        domain: displayDomain,
+        status: "running",
+        progress: 5,
+        watchlistItemId: item.id,
+        watchlistItemType: item.type,
+        watchlistItemValue: item.value,
+      } as any).returning();
+
+      const scanId: number = (newScan as any).id;
 
       // IntelX search for keyword / email / social_handle
       if (intelxKey && ["keyword", "email", "social_handle"].includes(item.type)) {
@@ -742,6 +750,11 @@ async function dispatchDueWatchlistNonDomainItems(): Promise<void> {
         }
       }
 
+      // Mark scan as done
+      await db.update(brandThreatScansTable)
+        .set({ status: "done", progress: 100, completedAt: now, lastScannedAt: now } as any)
+        .where(eq(brandThreatScansTable.id, scanId));
+
       const nextScanAt = computeWatchlistNextScanAt(
         item.frequency ?? "none",
         now,
@@ -751,10 +764,10 @@ async function dispatchDueWatchlistNonDomainItems(): Promise<void> {
       );
       await db
         .update(brandWatchlistItemsTable)
-        .set({ lastScanAt: now, nextScanAt })
+        .set({ lastScanAt: now, nextScanAt, lastScanId: scanId })
         .where(eq(brandWatchlistItemsTable.id, item.id));
 
-      logger.info({ itemId: item.id, type: item.type, value: item.value }, "Beat: non-domain watchlist intel scan done");
+      logger.info({ itemId: item.id, scanId, type: item.type, value: item.value }, "Beat: non-domain watchlist intel scan done");
     } catch (err) {
       logger.error({ err, itemId: item.id }, "Beat: non-domain watchlist item intel scan failed");
     }

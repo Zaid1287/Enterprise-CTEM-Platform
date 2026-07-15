@@ -41,6 +41,11 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   lastScannedAt:     timestamp("last_scanned_at", { withTimezone: true }),
   subdomainThreats:  jsonb("subdomain_threats"),
 
+  // Watchlist item metadata — set when this scan was triggered from a watchlist item
+  watchlistItemId:    integer("watchlist_item_id"),
+  watchlistItemType:  text("watchlist_item_type"),   // keyword | email | social_handle | mobile_app | logo_url | domain | ip
+  watchlistItemValue: text("watchlist_item_value"),  // original item value (the keyword, email, handle, etc.)
+
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:       timestamp("completed_at", { withTimezone: true }),
 });

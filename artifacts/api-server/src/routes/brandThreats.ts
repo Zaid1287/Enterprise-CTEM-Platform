@@ -573,6 +573,190 @@ router.delete("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedRequ
   res.json({ success: true });
 });
 
+// ── POST /brand-watchlist/:id/scan ───────────────────────────────────────────
+// Triggers a type-appropriate intelligence scan for a watchlist item.
+// Domain/subdomain/url → domain typosquatting scan (triggerBrandThreatScan).
+// keyword / email / social_handle / mobile_app / logo_url → IntelX + brandAbuse scan.
+// In all cases a brand_threat_scans record is created (or reused for domain types)
+// with watchlistItemId/Type/Value metadata so the detail page can contextualise the scan.
+router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const itemId = parseInt(String(req.params.id), 10);
+  if (isNaN(itemId)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+  const [item] = await db
+    .select()
+    .from(brandWatchlistItemsTable)
+    .where(and(eq(brandWatchlistItemsTable.id, itemId), eq(brandWatchlistItemsTable.tenantId, req.user!.tenantId)));
+  if (!item) { res.status(404).json({ error: "Watchlist item not found" }); return; }
+
+  const tenantId = req.user!.tenantId;
+
+  // ── Domain / subdomain / url → standard typosquatting scan ─────────────────
+  if (item.type === "domain" || item.type === "subdomain" || item.type === "url") {
+    let domain = item.value;
+    if (item.type === "url") {
+      try { domain = new URL(item.value.startsWith("http") ? item.value : `https://${item.value}`).hostname; } catch { /* keep as-is */ }
+    }
+    domain = domain.replace(/^www\./, "");
+    const scan = await triggerBrandThreatScan(tenantId, domain);
+    if (!scan) {
+      res.status(409).json({ error: "A scan is already running for this domain" });
+      return;
+    }
+    // Tag scan with watchlist item metadata
+    await db.update(brandThreatScansTable)
+      .set({ watchlistItemId: item.id, watchlistItemType: item.type, watchlistItemValue: item.value } as any)
+      .where(eq(brandThreatScansTable.id, scan.id));
+    await db.update(brandWatchlistItemsTable)
+      .set({ lastScanAt: new Date(), lastScanId: scan.id })
+      .where(eq(brandWatchlistItemsTable.id, item.id));
+    res.json({ ...scan, watchlistItemId: item.id, watchlistItemType: item.type, watchlistItemValue: item.value });
+    return;
+  }
+
+  // ── Non-domain types: create a dedicated brand_threat_scans record ──────────
+  // Derive a display domain from the item value
+  let displayDomain = item.value;
+  if (item.type === "email") {
+    displayDomain = item.value.includes("@") ? item.value.split("@")[1] ?? item.value : item.value;
+  } else if (item.type === "social_handle") {
+    displayDomain = item.value.replace(/^@/, "");
+  } else if (item.type === "logo_url") {
+    try { displayDomain = new URL(item.value.startsWith("http") ? item.value : `https://${item.value}`).hostname; } catch { /* keep as-is */ }
+  }
+
+  // Create the scan record
+  const [newScan] = await db.insert(brandThreatScansTable).values({
+    tenantId,
+    domain: displayDomain,
+    status: "running",
+    progress: 5,
+    watchlistItemId: item.id,
+    watchlistItemType: item.type,
+    watchlistItemValue: item.value,
+  } as any).returning();
+
+  if (!newScan) { res.status(500).json({ error: "Failed to create scan record" }); return; }
+  const scanId: number = (newScan as any).id;
+
+  // Update watchlist item lastScanId immediately
+  await db.update(brandWatchlistItemsTable)
+    .set({ lastScanAt: new Date(), lastScanId: scanId })
+    .where(eq(brandWatchlistItemsTable.id, item.id));
+
+  res.json(newScan);
+
+  // ── Run intelligence in background ─────────────────────────────────────────
+  setImmediate(async () => {
+    try {
+      const { getPlatformSetting } = await import("../routes/platformSettings");
+      const { intelxSearch, intelxTypeToBucket } = await import("../lib/intelxClient");
+      const { scanBrandAbuse } = await import("../lib/brandAbuseScanner");
+      const { dataLeakResultsTable: dlTable, brandAbuseResultsTable: baTable } = await import("@workspace/db");
+
+      const intelxKey = await getPlatformSetting("intelx_api_key").catch(() => null);
+      const youtubeKey = await getPlatformSetting("youtube_api_key").catch(() => null);
+
+      let dataLeakCount = 0;
+      let brandAbuseCount = 0;
+
+      // IntelX for keyword / email / social_handle
+      if (intelxKey && ["keyword", "email", "social_handle"].includes(item.type)) {
+        const results = await intelxSearch(item.value, intelxKey, 20).catch(() => null);
+        if (results?.length) {
+          const leakInserts: typeof dlTable.$inferInsert[] = [];
+          const abuseInserts: typeof baTable.$inferInsert[] = [];
+          for (const r of results) {
+            const bucket = intelxTypeToBucket(r.type);
+            const url = r.storageid ? `https://intelx.io/?did=${encodeURIComponent(r.storageid)}` : "https://intelx.io";
+            const isBrandAbuse = ["forum", "reddit", "twitter", "linkedin", "documents"].includes(bucket);
+            if (isBrandAbuse) {
+              abuseInserts.push({
+                tenantId,
+                scanId,
+                type: "fake_social",
+                platform: bucket.charAt(0).toUpperCase() + bucket.slice(1),
+                url,
+                title: r.name || `IntelX ${bucket} mention`,
+                description: r.preview ?? `Watchlist "${item.value}" mention found in ${bucket} via IntelX`,
+                evidenceSnippet: r.preview ?? undefined,
+                risk: "medium",
+              });
+            } else {
+              leakInserts.push({
+                tenantId,
+                scanId,
+                source: bucket === "darkweb" ? "IntelX-DarkWeb" : bucket === "pastes" ? "IntelX-Paste" : "IntelX",
+                title: r.name || "IntelX match",
+                breachDate: r.date ? r.date.slice(0, 10) : null,
+                description: r.preview ?? `Watchlist item "${item.value}" found in dark/deep web via IntelX`,
+                domainMatch: item.type === "email" ? undefined : item.value,
+                emailMatch: item.type === "email" ? item.value : undefined,
+                severity: bucket === "darkweb" ? "critical" : bucket === "credential" ? "high" : "medium",
+                url,
+              });
+            }
+          }
+          if (leakInserts.length) {
+            for (let i = 0; i < leakInserts.length; i += 50) {
+              await db.insert(dlTable).values(leakInserts.slice(i, i + 50));
+            }
+            dataLeakCount += leakInserts.length;
+          }
+          if (abuseInserts.length) {
+            for (let i = 0; i < abuseInserts.length; i += 50) {
+              await db.insert(baTable).values(abuseInserts.slice(i, i + 50));
+            }
+            brandAbuseCount += abuseInserts.length;
+          }
+        }
+      }
+
+      // brandAbuse scanner for social_handle + mobile_app
+      if (item.type === "social_handle" || item.type === "mobile_app") {
+        const brandName = item.value.replace(/^@/, "");
+        const handles = item.type === "social_handle" ? [item.value] : [];
+        const abuseData = await scanBrandAbuse(brandName, "", handles, youtubeKey ?? undefined).catch(() => ({ results: [], warnings: [] }));
+        if (abuseData.results.length) {
+          await db.insert(baTable).values(
+            abuseData.results.map((a: any) => ({
+              tenantId,
+              scanId,
+              type: a.type,
+              platform: a.platform ?? undefined,
+              url: a.url ?? undefined,
+              title: a.title ?? undefined,
+              description: a.description ?? undefined,
+              evidenceSnippet: a.evidenceSnippet ?? undefined,
+              risk: a.risk,
+            })),
+          );
+          brandAbuseCount += abuseData.results.length;
+        }
+      }
+
+      // Mark scan done
+      await db.update(brandThreatScansTable)
+        .set({
+          status: "done",
+          progress: 100,
+          completedAt: new Date(),
+          lastScannedAt: new Date(),
+          dataLeakCount,
+          brandAbuseCount,
+        } as any)
+        .where(eq(brandThreatScansTable.id, scanId));
+
+      logger.info({ scanId, itemId: item.id, type: item.type, dataLeakCount, brandAbuseCount }, "Watchlist intel scan completed");
+    } catch (err) {
+      logger.error({ err, scanId, itemId: item.id }, "Watchlist intel scan failed");
+      await db.update(brandThreatScansTable)
+        .set({ status: "error", error: String(err), completedAt: new Date() } as any)
+        .where(eq(brandThreatScansTable.id, scanId));
+    }
+  });
+});
+
 // ── POST /brand-threats/:id/rescan ───────────────────────────────────────────
 router.post("/brand-threats/:id/rescan", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);

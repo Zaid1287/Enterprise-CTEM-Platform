@@ -2165,6 +2165,7 @@ export default function BrandThreatDetailPage() {
   const [downloading, setDownloading] = useState(false);
   const [downloadingCsv, setDownloadingCsv] = useState(false);
   const [activeTab, setActiveTab] = useState<TabMode>("typosquatting");
+  const [tabAutoSet, setTabAutoSet] = useState(false);
   const [watchlistItem, setWatchlistItem] = useState<any | null>(null);
   const [allWatchlistItems, setAllWatchlistItems] = useState<any[]>([]);
   const [confirmDeleteScan, setConfirmDeleteScan] = useState(false);
@@ -2215,8 +2216,17 @@ export default function BrandThreatDetailPage() {
       .then(r => r.ok ? r.json() : [])
       .then((items: any[]) => {
         setAllWatchlistItems(items);
-        if (s?.domain) {
-          const domain = s.domain.toLowerCase().replace(/^www\./, "");
+        // Match by watchlistItemId if the scan has it, otherwise fall back to domain match
+        if (s?.watchlistItemId) {
+          const byId = items.find((i: any) => i.id === s.watchlistItemId);
+          setWatchlistItem(byId ?? null);
+        } else if (s?.watchlistItemType && s?.watchlistItemValue) {
+          const byTypeValue = items.find((i: any) =>
+            i.type === s.watchlistItemType && i.value === s.watchlistItemValue,
+          );
+          setWatchlistItem(byTypeValue ?? null);
+        } else if (s?.domain) {
+          const domain = (s.domain as string).toLowerCase().replace(/^www\./, "");
           const match = items.find((i: any) =>
             i.type === "domain" &&
             i.value.toLowerCase().replace(/^www\./, "") === domain,
@@ -2225,7 +2235,29 @@ export default function BrandThreatDetailPage() {
         }
       })
       .catch(() => {});
-  }, [s?.domain]);
+  }, [s?.domain, s?.watchlistItemId, s?.watchlistItemType, s?.watchlistItemValue]);
+
+  // Auto-select the most relevant tab for non-domain watchlist item scans
+  useEffect(() => {
+    if (!s || tabAutoSet) return;
+    const itemType: string = s.watchlistItemType ?? "";
+    let bestTab: TabMode | null = null;
+    if (itemType === "email") {
+      bestTab = "data_leaks";
+    } else if (itemType === "keyword") {
+      bestTab = "data_leaks";
+    } else if (itemType === "social_handle") {
+      bestTab = "social_media";
+    } else if (itemType === "mobile_app") {
+      bestTab = "mobile_apps";
+    } else if (itemType === "logo_url") {
+      bestTab = s.faviconMd5 ? "favicon_clones" : "typosquatting";
+    }
+    if (bestTab) {
+      setActiveTab(bestTab);
+      setTabAutoSet(true);
+    }
+  }, [s?.watchlistItemType, s?.faviconMd5, tabAutoSet]);
 
   useEffect(() => { refreshFalsePositives(); }, [id]);
 
@@ -2756,6 +2788,52 @@ export default function BrandThreatDetailPage() {
         );
       })()}
 
+
+      {/* ── Watchlist item context banner (non-domain scans) ─────────────────── */}
+      {s.watchlistItemType && s.watchlistItemType !== "domain" && s.watchlistItemType !== "subdomain" && s.watchlistItemType !== "url" && (
+        <div className="mx-6 mt-4 shrink-0">
+          {(() => {
+            const typeLabel: Record<string, string> = {
+              keyword: "Keyword",
+              email: "Email Address",
+              social_handle: "Social Handle",
+              mobile_app: "Mobile App",
+              logo_url: "Logo / Image",
+              ip: "IP Address",
+            };
+            const typeColor: Record<string, string> = {
+              keyword: "border-violet-500/30 bg-violet-500/8 text-violet-400",
+              email: "border-orange-500/30 bg-orange-500/8 text-orange-400",
+              social_handle: "border-pink-500/30 bg-pink-500/8 text-pink-400",
+              mobile_app: "border-blue-500/30 bg-blue-500/8 text-blue-400",
+              logo_url: "border-cyan-500/30 bg-cyan-500/8 text-cyan-400",
+              ip: "border-green-500/30 bg-green-500/8 text-green-400",
+            };
+            const tabHint: Record<string, string> = {
+              keyword: "Results appear in Data Leaks and Social Media tabs.",
+              email: "Results appear in the Data Leaks tab.",
+              social_handle: "Results appear in the Social Media and Data Leaks tabs.",
+              mobile_app: "Results appear in the Mobile Apps tab.",
+              logo_url: "Results appear in the Favicon Clones tab.",
+            };
+            const label = typeLabel[s.watchlistItemType] ?? s.watchlistItemType;
+            const colorClass = typeColor[s.watchlistItemType] ?? "border-border bg-muted/30 text-muted-foreground";
+            const hint = tabHint[s.watchlistItemType] ?? "";
+            return (
+              <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border text-sm ${colorClass}`}>
+                <Shield className="w-4 h-4 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="font-semibold">{label} Intelligence Scan</span>
+                  {s.watchlistItemValue && (
+                    <span className="ml-2 font-mono text-xs opacity-80">{s.watchlistItemValue}</span>
+                  )}
+                  {hint && <span className="ml-3 text-xs opacity-60">{hint}</span>}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       {(s.status === "done" || s.status === "error") && (

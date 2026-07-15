@@ -10,7 +10,7 @@ import {
   CheckCircle2, Clock, XCircle, RefreshCw, Eye, Zap, Shield,
   TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
   BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link, CalendarClock,
-  RotateCw, Edit2, Check, X, LockKeyhole, Megaphone,
+  RotateCw, Edit2, Check, X, LockKeyhole, Megaphone, Image,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -281,8 +281,41 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <span className="text-sm font-semibold font-mono truncate">{scan.domain}</span>
+              {scan.watchlistItemType && scan.watchlistItemType !== "domain" && scan.watchlistItemType !== "subdomain" && scan.watchlistItemType !== "url" ? (
+                <>
+                  {(() => {
+                    const typeIcon: Record<string, React.ReactNode> = {
+                      keyword: <Tag className="w-3.5 h-3.5 text-violet-400 shrink-0" />,
+                      email: <AtSign className="w-3.5 h-3.5 text-orange-400 shrink-0" />,
+                      social_handle: <AtSign className="w-3.5 h-3.5 text-pink-400 shrink-0" />,
+                      mobile_app: <Smartphone className="w-3.5 h-3.5 text-blue-400 shrink-0" />,
+                      logo_url: <Image className="w-3.5 h-3.5 text-cyan-400 shrink-0" />,
+                    };
+                    const typeLabel: Record<string, string> = {
+                      keyword: "Keyword",
+                      email: "Email",
+                      social_handle: "Social",
+                      mobile_app: "Mobile App",
+                      logo_url: "Logo",
+                      ip: "IP",
+                    };
+                    return (
+                      <>
+                        {typeIcon[scan.watchlistItemType] ?? <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+                        <span className="text-sm font-semibold font-mono truncate">{scan.watchlistItemValue ?? scan.domain}</span>
+                        <span className="text-[10px] bg-muted/60 text-muted-foreground border border-border px-1.5 py-0.5 rounded-full shrink-0">
+                          {typeLabel[scan.watchlistItemType] ?? scan.watchlistItemType} scan
+                        </span>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : (
+                <>
+                  <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-sm font-semibold font-mono truncate">{scan.domain}</span>
+                </>
+              )}
               {scan.pipelineScanId && (
                 <span className="text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 shrink-0">
                   <Zap className="w-2.5 h-2.5" /> Auto
@@ -976,6 +1009,15 @@ function WatchlistSection() {
 
   function latestScanForItem(item: any) {
     const scans = (allScans as any[]) ?? [];
+    // Primary: match by watchlistItemId (most reliable — set by the new /scan endpoint)
+    const byId = scans.find((s: any) => s.watchlistItemId === item.id);
+    if (byId) return byId;
+    // Secondary: match by watchlistItemType + watchlistItemValue
+    const byTypeVal = scans.find((s: any) =>
+      s.watchlistItemType === item.type && s.watchlistItemValue === item.value,
+    );
+    if (byTypeVal) return byTypeVal;
+    // Fallback: derive domain and match (legacy domain scans without watchlist metadata)
     const { domain: derivedDomain } = extractScanDomain(item);
     const normalizedVal = normalizeDomain(item.value ?? "");
     const matches = scans.filter((s: any) => {
@@ -1052,17 +1094,11 @@ function WatchlistSection() {
   }
 
   async function handleRunScan(item: any) {
-    const { domain, error } = extractScanDomain(item);
-    if (!domain) {
-      toast({ title: error ?? "Cannot scan this item type", variant: "destructive" });
-      return;
-    }
     setRunningScanItemId(item.id);
     try {
-      const res = await fetch("/api/brand-threats", {
+      const res = await fetch(`/api/brand-watchlist/${item.id}/scan`, {
         method: "POST",
         headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ domain }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
