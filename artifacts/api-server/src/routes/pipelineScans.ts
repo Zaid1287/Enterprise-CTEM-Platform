@@ -668,7 +668,7 @@ function parseSpfPolicy(spf: string): string {
   const redirectTo = parts.find(p => p.startsWith("redirect="))?.replace("redirect=", "");
   const allMech = parts.find(p => /^[~?+\-]?all$/.test(p));
   const allDesc =
-    allMech === "-all" ? "❌ Reject (hard fail)" :
+    allMech === "-all" ? "✅ Reject (hard fail — most secure)" :
     allMech === "~all" ? "⚠️ Soft fail (mark as spam)" :
     allMech === "?all" ? "❓ Neutral" :
     allMech === "+all" ? "🚨 Pass all — dangerous!" :

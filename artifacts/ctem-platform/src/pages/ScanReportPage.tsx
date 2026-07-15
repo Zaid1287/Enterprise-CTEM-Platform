@@ -1851,6 +1851,7 @@ function EndpointsTab({ endpoints, isClient }: { endpoints: any[]; isClient?: bo
             <thead>
               <tr className="text-left border-b border-border">
                 <th className="pb-2 font-medium text-muted-foreground">URL</th>
+                <th className="pb-2 font-medium text-muted-foreground w-16">Status</th>
                 <th className="pb-2 font-medium text-muted-foreground w-28">Category</th>
                 {!isClient && <th className="pb-2 font-medium text-muted-foreground w-24">Source</th>}
               </tr>
@@ -1866,6 +1867,21 @@ function EndpointsTab({ endpoints, isClient }: { endpoints: any[]; isClient?: bo
                         <ExternalLink className="w-3 h-3" />
                       </a>
                     </div>
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    {e.statusCode ? (
+                      <span className={cn(
+                        "text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold tabular-nums",
+                        e.statusCode >= 200 && e.statusCode < 300 ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                        e.statusCode >= 300 && e.statusCode < 400 ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                        e.statusCode === 401 || e.statusCode === 403 ? "bg-orange-500/15 text-orange-400 border-orange-500/30" :
+                        e.statusCode >= 400 && e.statusCode < 500 ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                        e.statusCode >= 500 ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                        "bg-accent/30 text-muted-foreground border-border"
+                      )}>{e.statusCode}</span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground/40">—</span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-2">
                     <span className={cn("text-[10px] border rounded-lg px-2 py-0.5 font-semibold capitalize", CAT_STYLE[(e.category as string) ?? "other"] ?? CAT_STYLE.other)}>
