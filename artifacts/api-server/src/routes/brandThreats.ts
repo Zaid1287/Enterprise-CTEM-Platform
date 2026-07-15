@@ -713,6 +713,60 @@ router.delete("/brand-threat-schedules/:id", requireAuth, async (req: Authentica
   res.json({ success: true });
 });
 
+// ── GET /brand-threats/:id/false-positives ────────────────────────────────────
+router.get("/brand-threats/:id/false-positives", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const scanId = parseInt(String(req.params.id), 10);
+  if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scan ID" }); return; }
+  const filter = await btScanAccessFilter(scanId, req.user!);
+  if (!filter) { res.status(404).json({ error: "Not found" }); return; }
+  const { sql } = await import("drizzle-orm");
+  const result = await db.execute(
+    sql`SELECT id, scan_id, item_type, item_id, item_ref, comment, status, created_at, created_by, reviewed_at, reviewed_by, review_note FROM brand_threat_false_positives WHERE scan_id = ${scanId} AND tenant_id = ${req.user!.tenantId} ORDER BY created_at DESC`
+  );
+  res.json((result.rows ?? result) as unknown[]);
+});
+
+// ── POST /brand-threats/:id/false-positives ───────────────────────────────────
+router.post("/brand-threats/:id/false-positives", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const scanId = parseInt(String(req.params.id), 10);
+  if (isNaN(scanId)) { res.status(400).json({ error: "Invalid scan ID" }); return; }
+  const filter = await btScanAccessFilter(scanId, req.user!);
+  if (!filter) { res.status(404).json({ error: "Not found" }); return; }
+  const { itemType, itemId, itemRef, comment } = req.body as { itemType: string; itemId?: number; itemRef: string; comment?: string };
+  if (!itemType || !itemRef) { res.status(400).json({ error: "itemType and itemRef are required" }); return; }
+  const { sql } = await import("drizzle-orm");
+  const result = await db.execute<{ id: number; status: string; created_at: string }>(
+    sql`INSERT INTO brand_threat_false_positives (tenant_id, scan_id, item_type, item_id, item_ref, comment, status, created_by)
+        VALUES (${req.user!.tenantId}, ${scanId}, ${itemType}, ${itemId ?? null}, ${itemRef}, ${comment ?? null}, 'pending', ${req.user!.userId})
+        RETURNING id, status, created_at`
+  );
+  const row = ((result.rows ?? result) as any[])[0];
+  res.status(201).json(row);
+});
+
+// ── PATCH /brand-threats/false-positives/:fpId ────────────────────────────────
+router.patch("/brand-threats/false-positives/:fpId", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const fpId = parseInt(String(req.params.fpId), 10);
+  if (isNaN(fpId)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const { status, reviewNote } = req.body as { status?: string; reviewNote?: string };
+  if (!status && !reviewNote) { res.status(400).json({ error: "Nothing to update" }); return; }
+  const validStatuses = ["pending", "confirmed", "rejected"];
+  if (status && !validStatuses.includes(status)) { res.status(400).json({ error: "Invalid status" }); return; }
+  const { sql } = await import("drizzle-orm");
+  const result = await db.execute<{ id: number; status: string }>(
+    sql`UPDATE brand_threat_false_positives
+        SET status = COALESCE(${status ?? null}, status),
+            review_note = COALESCE(${reviewNote ?? null}, review_note),
+            reviewed_by = CASE WHEN ${status ?? null} IS NOT NULL THEN ${req.user!.userId} ELSE reviewed_by END,
+            reviewed_at = CASE WHEN ${status ?? null} IS NOT NULL THEN NOW() ELSE reviewed_at END
+        WHERE id = ${fpId} AND tenant_id = ${req.user!.tenantId}
+        RETURNING id, status`
+  );
+  const rows = (result.rows ?? result) as any[];
+  if (!rows.length) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(rows[0]);
+});
+
 // ── GET /data-leaks (tenant-wide) ─────────────────────────────────────────────
 router.get("/data-leaks", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const results = await db.select().from(dataLeakResultsTable)

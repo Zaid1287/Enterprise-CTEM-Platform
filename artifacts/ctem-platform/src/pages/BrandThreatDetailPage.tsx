@@ -10,7 +10,8 @@ import {
   Hash, Search, ChevronRight, Download, Fish, Database, Target,
   MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
   TrendingUp, Megaphone, History, BookmarkCheck, Clock, AtSign,
-  Tag, Smartphone, RotateCw,
+  Tag, Smartphone, RotateCw, Ban, CheckCircle, AlertCircle, Send,
+  Twitter, Facebook, Instagram, Youtube, Linkedin,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -59,7 +60,118 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
 };
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "brand_abuse" | "malicious_ads" | "takedowns" | "favicon_clones" | "watchlist" | "subdomains";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "mobile_apps" | "suspicious_certs" | "social_media" | "malicious_ads" | "takedowns" | "favicon_clones" | "subdomains";
+
+interface FalsePositive {
+  id: number;
+  item_type: string;
+  item_id: number | null;
+  item_ref: string;
+  comment: string | null;
+  status: "pending" | "confirmed" | "rejected";
+  created_at: string;
+  review_note: string | null;
+}
+
+function FalsePositiveButton({
+  scanId, itemType, itemId, itemRef, existingFp, onCreated,
+}: {
+  scanId: number; itemType: string; itemId?: number; itemRef: string;
+  existingFp?: FalsePositive; onCreated?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [comment, setComment] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
+  const status = existingFp?.status;
+
+  const STATUS_META: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string; border: string }> = {
+    pending:   { label: "FP Review",  icon: <Clock className="w-3 h-3" />,        color: "text-amber-400",  bg: "bg-amber-500/10",  border: "border-amber-500/30" },
+    confirmed: { label: "Confirmed",  icon: <CheckCircle className="w-3 h-3" />,   color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30" },
+    rejected:  { label: "Rejected",   icon: <AlertCircle className="w-3 h-3" />,   color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30" },
+  };
+
+  if (status) {
+    const meta = STATUS_META[status]!;
+    return (
+      <span
+        title={existingFp?.comment ?? undefined}
+        className={cn("inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border cursor-default", meta.color, meta.bg, meta.border)}
+      >
+        {meta.icon} {meta.label}
+        {existingFp?.review_note && <span className="opacity-70 ml-0.5">· {existingFp.review_note.slice(0, 20)}</span>}
+      </span>
+    );
+  }
+
+  async function submit() {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const res = await apiFetch(`/api/brand-threats/${scanId}/false-positives`, {
+        method: "POST",
+        body: JSON.stringify({ itemType, itemId, itemRef, comment: comment.trim() || undefined }),
+      }) as Response;
+      if (!res.ok) throw new Error("Failed");
+      toast({ title: "False positive submitted", description: `${itemRef} marked for review.` });
+      setOpen(false);
+      setComment("");
+      onCreated?.();
+    } catch {
+      toast({ title: "Error", description: "Could not submit false positive.", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(true); }}
+        title="Mark as false positive"
+        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-amber-400 hover:bg-amber-500/10 border border-transparent hover:border-amber-500/20 px-1.5 py-0.5 rounded-full transition-all"
+      >
+        <Ban className="w-3 h-3" /> FP
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold flex items-center gap-2">
+              <Ban className="w-4 h-4 text-amber-400" /> Mark as False Positive
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="rounded-lg bg-muted/40 border border-border px-3 py-2">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">{itemType.replace(/_/g, " ")}</p>
+              <p className="text-sm font-mono font-medium truncate">{itemRef}</p>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Comment (optional)</label>
+              <textarea
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                placeholder="Why is this a false positive?"
+                rows={3}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground/70">
+              This item will be flagged as a false positive and queued for admin review. Status will be visible across all tabs.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button size="sm" onClick={submit} disabled={saving} className="gap-1.5">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Submit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 function RiskScoreBar({ score }: { score: number }) {
   return (
@@ -903,40 +1015,12 @@ function SocialPlatformMonitor({ scanDomain }: { scanDomain?: string }) {
   );
 }
 
-function BrandAbuseTab({ abuse, warnings, scanDomain }: { abuse: any[]; warnings?: ScanWarning[]; scanDomain?: string }) {
+function MobileAppsTab({ abuse, warnings, scanId, falsePositives, onFpCreated }: {
+  abuse: any[]; warnings?: ScanWarning[]; scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
+}) {
   const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
-  const socialResults = abuse.filter(r => r.type === "fake_social");
-
-  if (!abuse.length) {
-    return (
-      <div className="p-6 space-y-5">
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Shield className="w-10 h-10 text-green-400/40 mb-3" />
-          <p className="text-base font-semibold text-green-400">No brand abuse found</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            Certificate transparency, DNS lookalike, and app store checks found no brand abuse.
-          </p>
-          {activeWarnings.length > 0 && (
-            <div className="mt-6 w-full max-w-lg text-left space-y-2">
-              {activeWarnings.map((w, i) => (
-                <div key={i} className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-semibold text-amber-300">{w.platform} rate limited</p>
-                    <p className="text-xs text-amber-200/80 mt-0.5">{w.message}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="mt-4">
-            <SocialSourceBadges />
-          </div>
-        </div>
-        <SocialPlatformMonitor scanDomain={scanDomain} />
-      </div>
-    );
-  }
+  const appItems = abuse.filter(r => r.type === "rogue_app");
+  const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "rogue_app").map(fp => [fp.item_ref, fp]));
 
   const RISK_COLOR: Record<string, string> = {
     critical: "text-red-400 bg-red-500/10 border-red-500/20",
@@ -945,29 +1029,22 @@ function BrandAbuseTab({ abuse, warnings, scanDomain }: { abuse: any[]; warnings
     low: "text-green-400 bg-green-500/10 border-green-500/20",
   };
 
-  const TYPE_ICON: Record<string, React.ReactNode> = {
-    suspicious_certificate: <Lock className="w-3.5 h-3.5 text-violet-400 shrink-0" />,
-    lookalike_domain:       <Globe className="w-3.5 h-3.5 text-red-400 shrink-0" />,
-    rogue_app:              <Target className="w-3.5 h-3.5 text-orange-400 shrink-0" />,
-    fake_social:            <Target className="w-3.5 h-3.5 text-pink-400 shrink-0" />,
-    brand_abuse:            <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 shrink-0" />,
-    impersonation:          <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />,
-  };
+  if (!appItems.length) {
+    return (
+      <div className="p-6 flex flex-col items-center justify-center py-20 text-center">
+        <Smartphone className="w-10 h-10 text-green-400/40 mb-3" />
+        <p className="text-base font-semibold text-green-400">No mobile app threats found</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          No rogue or lookalike mobile applications found on app stores.
+        </p>
+      </div>
+    );
+  }
 
-  // Group rogue_app items by platform; group everything else by type
-  const appStoreItems = abuse.filter(r => r.type === "rogue_app" && r.platform && APP_STORE_PLATFORMS.has(r.platform));
-  const otherItems    = abuse.filter(r => !(r.type === "rogue_app" && r.platform && APP_STORE_PLATFORMS.has(r.platform)));
-
-  const appsByPlatform = appStoreItems.reduce((acc: Record<string, any[]>, r: any) => {
+  const appsByPlatform = appItems.reduce((acc: Record<string, any[]>, r: any) => {
     const key = r.platform ?? "Unknown Store";
     if (!acc[key]) acc[key] = [];
     acc[key]!.push(r);
-    return acc;
-  }, {});
-
-  const otherByType = otherItems.reduce((acc: Record<string, any[]>, r: any) => {
-    if (!acc[r.type]) acc[r.type] = [];
-    acc[r.type]!.push(r);
     return acc;
   }, {});
 
@@ -983,18 +1060,14 @@ function BrandAbuseTab({ abuse, warnings, scanDomain }: { abuse: any[]; warnings
 
   return (
     <div className="p-5 space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Target className="w-4 h-4 text-orange-400" />
-          <span className="font-semibold">{abuse.length} brand abuse finding{abuse.length !== 1 ? "s" : ""}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Live sources:</span>
-          <SocialSourceBadges />
+          <Smartphone className="w-4 h-4 text-orange-400" />
+          <span className="font-semibold">{appItems.length} mobile app{appItems.length !== 1 ? "s" : ""} detected</span>
+          <span className="text-xs text-muted-foreground">across {sortedPlatforms.length} store{sortedPlatforms.length !== 1 ? "s" : ""}</span>
         </div>
       </div>
 
-      {/* Rate-limit warnings */}
       {activeWarnings.length > 0 && (
         <div className="space-y-2">
           {activeWarnings.map((w, i) => (
@@ -1009,144 +1082,242 @@ function BrandAbuseTab({ abuse, warnings, scanDomain }: { abuse: any[]; warnings
         </div>
       )}
 
-      {/* App Store section — per-platform grouping */}
-      {sortedPlatforms.length > 0 && (
-        <div className="space-y-5">
-          <div className="flex items-center gap-2">
-            <Target className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Rogue Apps — App Stores ({appStoreItems.length})
-            </p>
-          </div>
-          {sortedPlatforms.map(platform => {
-            const items: any[] = appsByPlatform[platform] ?? [];
-            const pmeta = PLATFORM_META[platform] ?? { color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" };
-            return (
-              <div key={platform}>
-                <div className={cn("flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg border w-fit", pmeta.bg, pmeta.border)}>
-                  <span className={cn("text-[11px] font-semibold", pmeta.color)}>{platform}</span>
-                  <span className={cn("text-[10px] opacity-60", pmeta.color)}>({items.length})</span>
-                </div>
-                <div className="space-y-2">
-                  {items.map((item: any) => (
-                    <div key={item.id} className="bg-card border border-border rounded-xl p-3.5">
-                      <div className="flex items-start gap-3">
-                        {/* App icon */}
-                        {item.iconUrl ? (
-                          <img
-                            src={item.iconUrl}
-                            alt=""
-                            className="w-10 h-10 rounded-xl border border-border object-cover shrink-0 mt-0.5"
-                            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-xl border border-border bg-muted/30 flex items-center justify-center shrink-0 mt-0.5">
-                            <Target className="w-4 h-4 text-muted-foreground/40" />
+      {sortedPlatforms.map(platform => {
+        const items: any[] = appsByPlatform[platform] ?? [];
+        const pmeta = PLATFORM_META[platform] ?? { color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" };
+        return (
+          <div key={platform}>
+            <div className={cn("flex items-center gap-2 mb-3 px-3 py-1.5 rounded-lg border w-fit", pmeta.bg, pmeta.border)}>
+              <Smartphone className={cn("w-3.5 h-3.5", pmeta.color)} />
+              <span className={cn("text-[11px] font-semibold", pmeta.color)}>{platform}</span>
+              <span className={cn("text-[10px] opacity-60", pmeta.color)}>({items.length})</span>
+            </div>
+            <div className="space-y-3">
+              {items.map((item: any) => {
+                const ref = item.url ?? item.title ?? String(item.id);
+                const fp = fpMap.get(ref);
+                return (
+                  <div key={item.id} className={cn("bg-card border rounded-xl p-4", fp?.status === "confirmed" ? "border-green-500/20 opacity-60" : "border-border")}>
+                    <div className="flex items-start gap-3">
+                      {item.iconUrl ? (
+                        <img src={item.iconUrl} alt="" className="w-10 h-10 rounded-xl border border-border object-cover shrink-0 mt-0.5"
+                          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                      ) : (
+                        <div className="w-10 h-10 rounded-xl border border-border bg-muted/30 flex items-center justify-center shrink-0 mt-0.5">
+                          <Smartphone className="w-4 h-4 text-muted-foreground/40" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <span className="text-sm font-medium leading-snug">{item.title ?? item.url ?? item.platform}</span>
+                            {item.isNew && (
+                              <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">New</span>
+                            )}
                           </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-2 mb-1">
-                            <div className="flex items-center gap-2 flex-wrap min-w-0">
-                              <span className="text-sm font-medium leading-snug">
-                                {item.title ?? item.url ?? item.platform}
-                              </span>
-                              {item.isNew && (
-                                <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">
-                                  New
-                                </span>
-                              )}
-                            </div>
-                            <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize shrink-0", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>
-                              {item.risk}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <FalsePositiveButton scanId={scanId} itemType="rogue_app" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
+                            <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize shrink-0", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>{item.risk}</span>
+                          </div>
+                        </div>
+                        {item.description && <p className="text-xs text-muted-foreground/80 leading-relaxed">{item.description}</p>}
+                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                          {item.installCount && (
+                            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                              <TrendingUp className="w-3 h-3" /> {item.installCount}
                             </span>
-                          </div>
-                          {item.description && (
-                            <p className="text-xs text-muted-foreground/80 leading-relaxed">{item.description}</p>
-                          )}
-                          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                            {item.installCount && (
-                              <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                                <TrendingUp className="w-3 h-3" /> {item.installCount}
-                              </span>
-                            )}
-                            {item.evidenceSnippet && (
-                              <span className="text-[11px] font-mono text-muted-foreground/60 truncate max-w-xs">
-                                {item.evidenceSnippet}
-                              </span>
-                            )}
-                          </div>
-                          {item.url && (
-                            <a href={item.url} target="_blank" rel="noopener noreferrer"
-                              className="mt-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
-                              <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 55)}{item.url.length > 55 ? "…" : ""}
-                            </a>
                           )}
                         </div>
+                        {item.url && (
+                          <a href={item.url} target="_blank" rel="noopener noreferrer"
+                            className="mt-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
+                            <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 55)}{item.url.length > 55 ? "…" : ""}
+                          </a>
+                        )}
                       </div>
                     </div>
-                  ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SuspiciousCertsTab({ abuse, scanId, falsePositives, onFpCreated }: {
+  abuse: any[]; scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
+}) {
+  const certs = abuse.filter(r => r.type === "suspicious_certificate");
+  const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "suspicious_certificate").map(fp => [fp.item_ref, fp]));
+
+  const RISK_COLOR: Record<string, string> = {
+    critical: "text-red-400 bg-red-500/10 border-red-500/20",
+    high: "text-orange-400 bg-orange-500/10 border-orange-500/20",
+    medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
+    low: "text-green-400 bg-green-500/10 border-green-500/20",
+  };
+
+  if (!certs.length) {
+    return (
+      <div className="p-6 flex flex-col items-center justify-center py-20 text-center">
+        <Lock className="w-10 h-10 text-green-400/40 mb-3" />
+        <p className="text-base font-semibold text-green-400">No suspicious certificates found</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          No certificate transparency entries matching brand name patterns were found.
+        </p>
+        <p className="text-xs text-muted-foreground/60 mt-2">
+          Data sourced from crt.sh certificate transparency logs.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex items-center gap-2 mb-2">
+        <Lock className="w-4 h-4 text-violet-400" />
+        <span className="font-semibold">{certs.length} suspicious certificate{certs.length !== 1 ? "s" : ""}</span>
+        <span className="text-xs text-muted-foreground">— from certificate transparency logs (crt.sh)</span>
+      </div>
+      <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3 text-xs text-violet-300/80">
+        <Info className="w-3.5 h-3.5 inline mr-1.5 text-violet-400" />
+        Certificates issued for domains containing brand keywords may indicate phishing infrastructure being prepared. Certificate issuance precedes domain activation by hours to days.
+      </div>
+      <div className="space-y-3">
+        {certs.map((item: any) => {
+          const ref = item.url ?? item.title ?? String(item.id);
+          const fp = fpMap.get(ref);
+          return (
+            <div key={item.id} className={cn("bg-card border rounded-xl p-4", fp?.status === "confirmed" ? "border-green-500/20 opacity-60" : "border-border")}>
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                  <Lock className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                  <span className="text-sm font-mono font-medium truncate">{item.title ?? item.url}</span>
+                  {item.isNew && (
+                    <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">New</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <FalsePositiveButton scanId={scanId} itemType="suspicious_certificate" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>{item.risk}</span>
                 </div>
               </div>
-            );
-          })}
+              {item.description && (
+                <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{item.description}</p>
+              )}
+              {item.evidenceSnippet && (
+                <p className="text-[11px] font-mono bg-muted/30 rounded-lg px-3 py-1.5 mt-2 text-muted-foreground/70">{item.evidenceSnippet}</p>
+              )}
+              {item.url && (
+                <a href={item.url} target="_blank" rel="noopener noreferrer"
+                  className="mt-2 ml-5 text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
+                  <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 60)}{item.url.length > 60 ? "…" : ""}
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SocialMediaTab({ abuse, warnings, scanDomain, scanId, falsePositives, onFpCreated }: {
+  abuse: any[]; warnings?: ScanWarning[]; scanDomain?: string;
+  scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
+}) {
+  const socialItems = abuse.filter(r => r.type === "fake_social");
+  const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "fake_social").map(fp => [fp.item_ref, fp]));
+  const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
+
+  const RISK_COLOR: Record<string, string> = {
+    critical: "text-red-400 bg-red-500/10 border-red-500/20",
+    high: "text-orange-400 bg-orange-500/10 border-orange-500/20",
+    medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
+    low: "text-green-400 bg-green-500/10 border-green-500/20",
+  };
+
+  const PLATFORM_ICONS: Record<string, React.ReactNode> = {
+    Twitter: <Twitter className="w-3.5 h-3.5" />,
+    "X (Twitter)": <Twitter className="w-3.5 h-3.5" />,
+    Facebook: <Facebook className="w-3.5 h-3.5" />,
+    Instagram: <Instagram className="w-3.5 h-3.5" />,
+    YouTube: <Youtube className="w-3.5 h-3.5" />,
+    LinkedIn: <Linkedin className="w-3.5 h-3.5" />,
+  };
+
+  return (
+    <div className="p-5 space-y-6">
+      <div className="flex items-center gap-2 mb-1">
+        <AtSign className="w-4 h-4 text-pink-400" />
+        <span className="font-semibold">
+          {socialItems.length > 0 ? `${socialItems.length} social media threat${socialItems.length !== 1 ? "s" : ""} detected` : "Social Media Monitor"}
+        </span>
+        <div className="flex-1" />
+        <SocialSourceBadges />
+      </div>
+
+      {activeWarnings.length > 0 && (
+        <div className="space-y-2">
+          {activeWarnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-amber-300">{w.platform} rate limited</p>
+                <p className="text-xs text-amber-200/80 mt-0.5">{w.message}</p>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Other findings — grouped by type */}
-      {Object.entries(otherByType).map(([type, items]) => (
-        <div key={type}>
-          <div className="flex items-center gap-2 mb-3">
-            {TYPE_ICON[type] ?? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              {type.replace(/_/g, " ")} ({(items as any[]).length})
-            </p>
-          </div>
-          <div className="space-y-2">
-            {(items as any[]).map((item: any) => (
-              <div key={item.id} className="bg-card border border-border rounded-xl p-4">
+      {socialItems.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Detected Impersonating Accounts</p>
+          {socialItems.map((item: any) => {
+            const ref = item.url ?? item.title ?? String(item.id);
+            const fp = fpMap.get(ref);
+            return (
+              <div key={item.id} className={cn("bg-card border rounded-xl p-4", fp?.status === "confirmed" ? "border-green-500/20 opacity-60" : "border-border")}>
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                    {TYPE_ICON[item.type] ?? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
-                    <span className="text-sm font-medium truncate">{item.title ?? item.url ?? item.platform}</span>
+                    <span className="text-pink-400 shrink-0">
+                      {PLATFORM_ICONS[item.platform ?? ""] ?? <AtSign className="w-3.5 h-3.5" />}
+                    </span>
+                    <span className="text-sm font-medium truncate">{item.title ?? item.url}</span>
+                    {item.platform && <PlatformBadge platform={item.platform} />}
                     {item.isNew && (
-                      <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">
-                        New
-                      </span>
+                      <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">New</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {item.platform && <PlatformBadge platform={item.platform} />}
-                    <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>
-                      {item.risk}
-                    </span>
+                    <FalsePositiveButton scanId={scanId} itemType="fake_social" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
+                    <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>{item.risk}</span>
                   </div>
                 </div>
                 {item.description && (
                   <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{item.description}</p>
                 )}
                 {item.evidenceSnippet && (
-                  <p className="text-[11px] font-mono bg-muted/30 rounded-lg px-3 py-1.5 mt-2 text-muted-foreground/70">
-                    {item.evidenceSnippet}
-                  </p>
+                  <p className="text-[11px] font-mono bg-muted/30 rounded-lg px-3 py-1.5 mt-2 text-muted-foreground/70">{item.evidenceSnippet}</p>
                 )}
                 {item.url && (
-                  <div className="ml-5 mt-2">
-                    <a href={item.url} target="_blank" rel="noopener noreferrer"
-                      className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
-                      <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 60)}{item.url.length > 60 ? "…" : ""}
-                    </a>
-                  </div>
+                  <a href={item.url} target="_blank" rel="noopener noreferrer"
+                    className="mt-2 ml-5 text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
+                    <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 60)}{item.url.length > 60 ? "…" : ""}
+                  </a>
                 )}
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
-      ))}
-
-      {/* Social platform monitor — always shown when no automated social results */}
-      {socialResults.length === 0 && (
-        <SocialPlatformMonitor scanDomain={scanDomain} />
       )}
+
+      {/* Manual platform monitor — always shown */}
+      <SocialPlatformMonitor scanDomain={scanDomain} />
     </div>
   );
 }
@@ -1695,6 +1866,15 @@ export default function BrandThreatDetailPage() {
   const [watchlistItem, setWatchlistItem] = useState<any | null>(null);
   const [allWatchlistItems, setAllWatchlistItems] = useState<any[]>([]);
   const [confirmDeleteScan, setConfirmDeleteScan] = useState(false);
+  const [falsePositives, setFalsePositives] = useState<FalsePositive[]>([]);
+
+  function refreshFalsePositives() {
+    if (!id) return;
+    void (apiFetch(`/api/brand-threats/${id}/false-positives`) as Promise<Response>)
+      .then(r => r.ok ? r.json() as Promise<FalsePositive[]> : Promise.resolve([] as FalsePositive[]))
+      .then(rows => setFalsePositives(rows))
+      .catch(() => {});
+  }
   const deleteScan = useDeleteBrandThreatScan();
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -1744,6 +1924,9 @@ export default function BrandThreatDetailPage() {
       })
       .catch(() => {});
   }, [s?.domain]);
+
+  useEffect(() => { refreshFalsePositives(); }, [id]);
+
   const results: any[] = s?.results ?? [];
   const phishingDetections: any[] = s?.phishingDetections ?? [];
   const dataLeaks: any[] = s?.dataLeaks ?? [];
@@ -1805,16 +1988,21 @@ export default function BrandThreatDetailPage() {
     ? (s.pipelineSubdomains as PipelineSubdomain[])
     : [];
 
+  const mobileAppsCount = brandAbuse.filter((a: any) => a.type === "rogue_app").length;
+  const suspCertsCount  = brandAbuse.filter((a: any) => a.type === "suspicious_certificate").length;
+  const socialCount     = brandAbuse.filter((a: any) => a.type === "fake_social").length;
+
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
-    { id: "typosquatting", label: "Typosquatting", icon: <Globe className="w-3.5 h-3.5" />, count: results.length },
-    { id: "phishing",      label: "Phishing",      icon: <Fish className="w-3.5 h-3.5" />,  count: totalPhishingData, color: totalPhishingData > 0 ? "text-red-400" : undefined },
-    { id: "data_leaks",    label: "Data Leaks",    icon: <Database className="w-3.5 h-3.5" />, count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
-    { id: "brand_abuse",   label: "Brand Abuse",   icon: <Target className="w-3.5 h-3.5" />,   count: brandAbuse.length, color: brandAbuse.length > 0 ? "text-yellow-400" : undefined },
-    { id: "malicious_ads", label: "Malicious Ads", icon: <Megaphone className="w-3.5 h-3.5" />, count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
+    { id: "typosquatting",   label: "Typosquatting",   icon: <Globe className="w-3.5 h-3.5" />,      count: results.length + lookalikeDomains.length },
+    { id: "phishing",        label: "Phishing",        icon: <Fish className="w-3.5 h-3.5" />,        count: totalPhishingData, color: totalPhishingData > 0 ? "text-red-400" : undefined },
+    { id: "data_leaks",      label: "Data Leaks",      icon: <Database className="w-3.5 h-3.5" />,    count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
+    { id: "suspicious_certs",label: "Susp. Certs",     icon: <Lock className="w-3.5 h-3.5" />,        count: suspCertsCount, color: suspCertsCount > 0 ? "text-violet-400" : undefined },
+    { id: "social_media",    label: "Social Media",    icon: <AtSign className="w-3.5 h-3.5" />,      count: socialCount, color: socialCount > 0 ? "text-pink-400" : undefined },
+    { id: "mobile_apps",     label: "Mobile Apps",     icon: <Smartphone className="w-3.5 h-3.5" />,  count: mobileAppsCount, color: mobileAppsCount > 0 ? "text-orange-400" : undefined },
+    { id: "malicious_ads",   label: "Malicious Ads",   icon: <Megaphone className="w-3.5 h-3.5" />,   count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
     ...(hasFaviconData ? [{ id: "favicon_clones" as TabMode, label: "Favicon Clones", icon: <Fingerprint className="w-3.5 h-3.5" />, count: shodanCloneCount, color: shodanCloneCount > 0 ? "text-violet-400" : undefined }] : []),
     ...(pipelineSubdomains.length > 0 ? [{ id: "subdomains" as TabMode, label: "Subdomains", icon: <Server className="w-3.5 h-3.5" />, count: pipelineSubdomains.length, color: "text-blue-400" }] : []),
-    { id: "watchlist",     label: "Watchlist",     icon: <BookmarkCheck className="w-3.5 h-3.5" />, count: allWatchlistItems.length, color: allWatchlistItems.length > 0 ? "text-blue-400" : undefined },
-    { id: "takedowns",     label: "Takedowns",     icon: <Shield className="w-3.5 h-3.5" /> },
+    { id: "takedowns",       label: "Takedowns",       icon: <Shield className="w-3.5 h-3.5" /> },
   ];
 
   return (
@@ -2284,10 +2472,24 @@ export default function BrandThreatDetailPage() {
           </div>
         )}
 
-        {/* ── BRAND ABUSE tab ── */}
-        {activeTab === "brand_abuse" && s.status === "done" && (
+        {/* ── SUSPICIOUS CERTS tab ── */}
+        {activeTab === "suspicious_certs" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <BrandAbuseTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanDomain={s.domain} />
+            <SuspiciousCertsTab abuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
+          </div>
+        )}
+
+        {/* ── SOCIAL MEDIA tab ── */}
+        {activeTab === "social_media" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <SocialMediaTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanDomain={s.domain} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
+          </div>
+        )}
+
+        {/* ── MOBILE APPS tab ── */}
+        {activeTab === "mobile_apps" && s.status === "done" && (
+          <div className="h-full overflow-y-auto">
+            <MobileAppsTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
@@ -2295,13 +2497,6 @@ export default function BrandThreatDetailPage() {
         {activeTab === "malicious_ads" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
             <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} />
-          </div>
-        )}
-
-        {/* ── WATCHLIST tab ── */}
-        {activeTab === "watchlist" && (
-          <div className="h-full overflow-y-auto p-6">
-            <WatchlistDetailTab items={allWatchlistItems} scanDomain={s.domain} />
           </div>
         )}
 
@@ -2551,13 +2746,15 @@ export default function BrandThreatDetailPage() {
                   function PermRow({ r }: { r: any }) {
                     const fm = FUZZER_META[r.fuzzer];
                     const isExpanded = expandedId === r.id;
+                    const existingFp = falsePositives.find(fp => fp.item_type === "permutation" && fp.item_ref === r.permutation);
                     return (
                       <div>
                         <div
                           className={cn(
-                            "grid grid-cols-[28px_1fr_110px_80px_60px_60px_90px_100px] items-center px-5 py-2.5 hover:bg-muted/20 transition-colors cursor-pointer",
+                            "grid grid-cols-[28px_1fr_110px_80px_60px_60px_90px_100px_80px] items-center px-5 py-2.5 hover:bg-muted/20 transition-colors cursor-pointer",
                             r.isSuspicious && "bg-orange-500/3",
                             r.isPhishing && "bg-red-500/5",
+                            existingFp?.status === "confirmed" && "opacity-50",
                           )}
                           onClick={() => setExpandedId(isExpanded ? null : r.id)}
                         >
@@ -2612,6 +2809,9 @@ export default function BrandThreatDetailPage() {
                           </div>
                           <div className="px-2">
                             <RiskScoreBar score={r.riskScore} />
+                          </div>
+                          <div className="flex justify-center" onClick={e => e.stopPropagation()}>
+                            <FalsePositiveButton scanId={id} itemType="permutation" itemRef={r.permutation} existingFp={existingFp} onCreated={refreshFalsePositives} />
                           </div>
                         </div>
 
@@ -2710,7 +2910,7 @@ export default function BrandThreatDetailPage() {
                   }
 
                   const REG_HEADER = (
-                    <div className="grid grid-cols-[28px_1fr_110px_80px_60px_60px_90px_100px] items-center px-5 py-2 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider">
+                    <div className="grid grid-cols-[28px_1fr_110px_80px_60px_60px_90px_100px_80px] items-center px-5 py-2 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider">
                       <span />
                       <span>Domain</span>
                       <span className="text-center">Type</span>
@@ -2719,6 +2919,7 @@ export default function BrandThreatDetailPage() {
                       <span className="text-center">MX</span>
                       <span className="text-center">VT</span>
                       <span className="text-center">Risk</span>
+                      <span className="text-center">FP</span>
                     </div>
                   );
 
@@ -2728,7 +2929,7 @@ export default function BrandThreatDetailPage() {
 
                   return (
                     <div className="divide-y divide-border">
-                      {/* ── Active Threats (score ≥ 70) ── */}
+                      {/* ── Active Threats (score ≥ 70) + Lookalike Domains ── */}
                       <div>
                         <div className="px-5 py-2.5 bg-red-500/5 border-b border-red-500/20 flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
@@ -2736,10 +2937,42 @@ export default function BrandThreatDetailPage() {
                             Active Threats
                           </span>
                           <span className="text-[10px] text-red-400/60 bg-red-500/10 px-1.5 py-0.5 rounded-full font-bold">
-                            {activeThreats.length}
+                            {activeThreats.length + lookalikeDomains.length}
                           </span>
-                          <span className="text-[10px] text-muted-foreground ml-1">— risk score ≥ 70, likely active abuse or phishing</span>
+                          <span className="text-[10px] text-muted-foreground ml-1">— risk score ≥ 70 or confirmed lookalike domains</span>
                         </div>
+
+                        {/* Lookalike domains from brand abuse scanner */}
+                        {lookalikeDomains.length > 0 && (
+                          <div className="divide-y divide-border">
+                            {lookalikeDomains.map((ld: any) => {
+                              const ldRef = ld.url ?? ld.title ?? String(ld.id);
+                              const ldFp = falsePositives.find(fp => fp.item_type === "lookalike_domain" && fp.item_ref === ldRef);
+                              return (
+                                <div key={`ld-${ld.id}`} className={cn("flex items-center gap-3 px-5 py-3 bg-orange-500/5", ldFp?.status === "confirmed" && "opacity-50")}>
+                                  <Globe className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                                  <span className="flex-1 text-sm font-mono text-orange-300 truncate">{ld.title ?? ld.url}</span>
+                                  <span className="text-[9px] font-bold bg-orange-500/15 text-orange-400 border border-orange-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">
+                                    Lookalike Domain
+                                  </span>
+                                  {ld.description && (
+                                    <span className="text-[11px] text-muted-foreground/60 max-w-xs truncate hidden md:block">{ld.description}</span>
+                                  )}
+                                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize shrink-0",
+                                    ld.risk === "critical" ? "text-red-400 bg-red-500/10 border-red-500/20" :
+                                    ld.risk === "high"     ? "text-orange-400 bg-orange-500/10 border-orange-500/20" :
+                                    ld.risk === "medium"   ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/20" :
+                                                             "text-green-400 bg-green-500/10 border-green-500/20"
+                                  )}>{ld.risk ?? "high"}</span>
+                                  <div onClick={e => e.stopPropagation()}>
+                                    <FalsePositiveButton scanId={id} itemType="lookalike_domain" itemId={ld.id} itemRef={ldRef} existingFp={ldFp} onCreated={refreshFalsePositives} />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
                         {activeThreats.length > 0 ? (
                           <>
                             {REG_HEADER}
@@ -2747,11 +2980,11 @@ export default function BrandThreatDetailPage() {
                               {activeThreats.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((r: any) => <PermRow key={r.id} r={r} />)}
                             </div>
                           </>
-                        ) : (
+                        ) : lookalikeDomains.length === 0 ? (
                           <div className="flex items-center gap-2 px-5 py-4 text-sm text-green-400/70">
                             <CheckCircle2 className="w-4 h-4 shrink-0" /> No active threats found — good signal
                           </div>
-                        )}
+                        ) : null}
                       </div>
 
                       {/* ── Under Watch (score 40-69) ── */}
