@@ -474,13 +474,32 @@ function SubdomainsContent({ subdomains }: { subdomains: any[] }) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
         {visible.map((s: any, i: number) => {
-          const name = typeof s === "string" ? s : (s.subdomain ?? s.name ?? "");
-          const ip   = typeof s === "object" ? (s.ip ?? "") : "";
+          const name       = typeof s === "string" ? s : (s.subdomain ?? s.name ?? "");
+          const ip         = typeof s === "object" ? (s.ip ?? "") : "";
+          const httpStatus = typeof s === "object" ? (s.httpStatus ?? null) : null;
+          const httpTitle  = typeof s === "object" ? (s.httpTitle ?? "") : "";
+          const sc = httpStatus as number | null;
+          const statusClass = !sc ? "" :
+            sc >= 200 && sc < 300 ? "bg-green-500/15 text-green-400 border-green-500/30" :
+            sc >= 300 && sc < 400 ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+            sc === 401 || sc === 403 ? "bg-orange-500/15 text-orange-400 border-orange-500/30" :
+            sc >= 400 && sc < 500 ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+            sc >= 500 ? "bg-red-500/15 text-red-400 border-red-500/30" :
+            "bg-accent/30 text-muted-foreground border-border";
           return (
-            <div key={i} className="flex items-center gap-2.5 bg-muted/15 border border-border/50 rounded-xl px-3 py-2.5 hover:bg-accent/20 transition-colors">
+            <div key={i} className="flex items-center gap-2 bg-muted/15 border border-border/50 rounded-xl px-3 py-2.5 hover:bg-accent/20 transition-colors min-w-0">
               <Globe className="w-3 h-3 text-primary/50 shrink-0" />
-              <span className="text-xs font-mono text-foreground/80 truncate flex-1">{name}</span>
-              {ip && <span className="text-[10px] text-muted-foreground/50 font-mono shrink-0">{ip}</span>}
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-mono text-foreground/80 truncate block">{name}</span>
+                {httpTitle && <span className="text-[10px] text-muted-foreground/60 truncate block">{httpTitle}</span>}
+              </div>
+              {sc && (
+                <span className={cn("text-[10px] font-mono font-bold border rounded px-1.5 py-0.5 shrink-0 tabular-nums", statusClass)}>
+                  {sc}
+                </span>
+              )}
+              {ip && !sc && <span className="text-[10px] text-muted-foreground/50 font-mono shrink-0">{ip}</span>}
+              {ip && sc && <span className="text-[10px] text-muted-foreground/40 font-mono shrink-0 hidden lg:block">{ip}</span>}
             </div>
           );
         })}
@@ -2233,7 +2252,8 @@ function NucleiTab({ vulnScan }: { vulnScan: any }) {
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-2">
             <select value={sevFilter} onChange={e => setSevFilter(e.target.value)}
-              className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+              style={{ colorScheme: "dark" }}
+              className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none cursor-pointer">
               <option value="all">All severities</option>
               <option value="critical">Critical</option>
               <option value="high">High</option>
@@ -2242,7 +2262,8 @@ function NucleiTab({ vulnScan }: { vulnScan: any }) {
               <option value="info">Info</option>
             </select>
             <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
-              className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+              style={{ colorScheme: "dark" }}
+              className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none cursor-pointer">
               <option value="all">All categories</option>
               {categories.map((c: any) => (
                 <option key={c} value={c}>{c.replace(/-/g, " ").replace(/\b\w/g, (x: string) => x.toUpperCase())}</option>
@@ -2572,13 +2593,15 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
           {/* Host filter */}
           {hosts.length > 1 && (
             <select value={hostFilter} onChange={e => setHostFilter(e.target.value)}
-              className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none max-w-44 truncate">
+              style={{ colorScheme: "dark" }}
+              className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none max-w-44 truncate cursor-pointer">
               {hostNames.map(h => <option key={h} value={h}>{h === "all" ? "All hosts" : h}</option>)}
             </select>
           )}
           {/* Source filter */}
           <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
-            className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+            style={{ colorScheme: "dark" }}
+            className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none cursor-pointer">
             <option value="all">All sources</option>
             <option value="fuzz">Active Scan</option>
             <option value="recursive">Recursive</option>
@@ -2587,7 +2610,8 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
           </select>
           {/* Status filter */}
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-            className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+            style={{ colorScheme: "dark" }}
+            className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none cursor-pointer">
             <option value="all">All statuses</option>
             <option value="2xx">2xx (OK)</option>
             <option value="3xx">3xx (Redirect)</option>
@@ -2595,7 +2619,8 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
           </select>
           {/* Depth filter */}
           <select value={depthFilter} onChange={e => setDepthFilter(e.target.value)}
-            className="bg-accent/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none">
+            style={{ colorScheme: "dark" }}
+            className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none cursor-pointer">
             <option value="all">All depths</option>
             <option value="0">Depth 0 (root)</option>
             <option value="1">Depth 1</option>
@@ -3229,40 +3254,79 @@ function CloudReconTab({ cloudRecon }: { cloudRecon: any }) {
       {/* ── SSRF Metadata Endpoints section ── */}
       {section === "ssrf" && (
         <div className="space-y-3">
-          <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3 flex items-start gap-2">
+          {/* Header callout */}
+          <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3 flex items-start gap-3">
             <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-orange-400">For Manual Testing Only</p>
-              <p className="text-xs text-muted-foreground mt-0.5">These endpoints are only reachable from within cloud VM instances. If you discover an SSRF vulnerability in the target application, probe these URLs to escalate to credential theft and lateral movement.</p>
+            <div className="space-y-1 flex-1">
+              <p className="text-xs font-semibold text-orange-400">For Manual Testing Only — Not Actively Probed</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                These cloud metadata service URLs (<span className="font-mono text-[10px] bg-orange-500/10 border border-orange-500/20 rounded px-1">169.254.x.x</span> link-local range) are only routable from inside cloud VM instances — they cannot be reached from external scanners.
+                HTTP status codes are not shown because no live probe is possible. Use these payloads if you find an SSRF vulnerability in the target application.
+              </p>
+            </div>
+            <div className="shrink-0 text-right">
+              <span className="text-[10px] font-bold border rounded px-1.5 py-0.5 bg-accent/30 text-muted-foreground border-border">Not probed</span>
             </div>
           </div>
-          {ssrf.map((e: any, i: number) => (
-            <div key={i} className="bg-accent/10 border border-border rounded-lg p-3 space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5",
-                  e.risk === "critical" ? "bg-red-500/15 text-red-400 border-red-500/40" : "bg-orange-500/15 text-orange-400 border-orange-500/40"
-                )}>{e.risk?.toUpperCase()}</span>
-                <span className="text-sm font-semibold text-foreground">{e.provider}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] text-primary/80 bg-primary/5 border border-primary/20 rounded px-2 py-1">{e.url}</span>
-              </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">{e.description}</p>
-              {e.payloadVariants && e.payloadVariants.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Payload Variants</p>
-                  <div className="space-y-0.5 max-h-36 overflow-y-auto">
-                    {e.payloadVariants.map((v: string, j: number) => (
-                      <div key={j} className="font-mono text-[10px] text-muted-foreground bg-muted/30 rounded px-2 py-1 break-all">{v}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {e.notes && (
-                <p className="text-[10px] text-muted-foreground/80 border-t border-border pt-2 leading-relaxed">{e.notes}</p>
-              )}
+
+          {ssrf.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground space-y-1">
+              <Cloud className="w-7 h-7 mx-auto opacity-30" />
+              <p className="text-sm">No SSRF metadata endpoints catalogued</p>
             </div>
-          ))}
+          ) : (
+            <div className="space-y-2">
+              {ssrf.map((e: any, i: number) => (
+                <div key={i} className={cn("border rounded-lg overflow-hidden",
+                  e.risk === "critical" ? "border-red-500/25" : "border-orange-500/25"
+                )}>
+                  {/* Card header */}
+                  <div className={cn("flex items-center gap-2 px-3 py-2.5 flex-wrap",
+                    e.risk === "critical" ? "bg-red-500/8" : "bg-orange-500/8"
+                  )}>
+                    <span className={cn("text-[10px] font-bold border rounded px-1.5 py-0.5 shrink-0",
+                      e.risk === "critical" ? "bg-red-500/15 text-red-400 border-red-500/40" : "bg-orange-500/15 text-orange-400 border-orange-500/40"
+                    )}>{(e.risk ?? "high").toUpperCase()}</span>
+                    <span className="text-sm font-semibold text-foreground truncate flex-1">{e.provider}</span>
+                    <span className="text-[10px] font-bold border rounded px-1.5 py-0.5 bg-accent/30 text-muted-foreground/60 border-border shrink-0 tabular-nums">
+                      Status: —
+                    </span>
+                  </div>
+                  {/* Primary URL */}
+                  <div className="px-3 py-2 bg-accent/5 border-t border-border/40 flex items-center gap-2">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide shrink-0 w-10">URL</span>
+                    <code className="font-mono text-[11px] text-primary/90 bg-primary/5 border border-primary/20 rounded px-2 py-1 flex-1 break-all">{e.url}</code>
+                  </div>
+                  {/* Description */}
+                  <div className="px-3 py-2 border-t border-border/40">
+                    <p className="text-xs text-muted-foreground leading-relaxed">{e.description}</p>
+                  </div>
+                  {/* Notes */}
+                  {e.notes && (
+                    <div className="px-3 py-2 border-t border-border/40 bg-accent/5">
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Notes</p>
+                      <p className="text-[11px] text-muted-foreground/80 leading-relaxed">{e.notes}</p>
+                    </div>
+                  )}
+                  {/* Payload Variants */}
+                  {e.payloadVariants && e.payloadVariants.length > 0 && (
+                    <div className="px-3 py-2 border-t border-border/40">
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                        Payload Variants <span className="normal-case font-normal">({e.payloadVariants.length})</span>
+                      </p>
+                      <div className="space-y-1 max-h-36 overflow-y-auto">
+                        {e.payloadVariants.map((v: string, j: number) => (
+                          <div key={j} className="font-mono text-[10px] text-foreground/70 bg-muted/30 border border-border/40 rounded px-2 py-1 break-all">
+                            {v}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
