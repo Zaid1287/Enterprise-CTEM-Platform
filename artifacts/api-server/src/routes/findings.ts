@@ -714,6 +714,11 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
     updateData.fpSubmittedAt = new Date();
     updateData.fpReviewedBy = null;
     updateData.fpReviewedAt = null;
+    // Persist the analyst's reason — passed as fpNote in the request body.
+    // The Zod schema may strip unknown fields so we merge it explicitly.
+    if (typeof req.body.fpNote === "string" && req.body.fpNote.trim()) {
+      updateData.fpNote = req.body.fpNote.trim().slice(0, 2000);
+    }
   }
   // When status is changed away from false_positive, clear the FP tracking fields
   if (parsed.data.status && parsed.data.status !== "false_positive") {

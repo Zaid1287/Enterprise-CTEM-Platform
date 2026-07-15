@@ -1175,14 +1175,36 @@ export default function FindingsPage() {
   const [drawerFinding, setDrawerFinding] = useState<any>(null);
   const [drawerMode, setDrawerMode]       = useState<DrawerMode>(null);
   const [suppressTarget, setSuppressTarget] = useState<any>(null);
+  // False-positive reason modal
+  const [fpTarget, setFpTarget]   = useState<{ id: number } | null>(null);
+  const [fpReason, setFpReason]   = useState("");
+  const [fpSaving, setFpSaving]   = useState(false);
 
   const qc = useQueryClient();
   const updateFinding = useUpdateFinding();
 
   const handleStatusChange = async (findingId: number, newStatus: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    // Intercept false_positive — ask for a reason first
+    if (newStatus === "false_positive") {
+      setFpReason("");
+      setFpTarget({ id: findingId });
+      return;
+    }
     await updateFinding.mutateAsync({ findingId, data: { status: newStatus } as any });
     qc.invalidateQueries({ queryKey: getListFindingsQueryKey() });
+  };
+
+  const submitFalsePositive = async () => {
+    if (!fpTarget) return;
+    setFpSaving(true);
+    try {
+      await updateFinding.mutateAsync({ findingId: fpTarget.id, data: { status: "false_positive", fpNote: fpReason.trim() || undefined } as any });
+      qc.invalidateQueries({ queryKey: getListFindingsQueryKey() });
+      setFpTarget(null);
+    } finally {
+      setFpSaving(false);
+    }
   };
 
   function openDrawer(finding: any, mode: DrawerMode) {
@@ -1559,20 +1581,14 @@ export default function FindingsPage() {
                     {/* Actions */}
                     <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); navigate(`/findings/${f.id}`); }}
-                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-primary/15 text-primary hover:bg-primary/30 transition-colors font-semibold border border-primary/20"
-                          title="Open full finding detail page"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>Open</span>
-                        </button>
+                        {/* Details — opens sidebar drawer; Full Page link is inside the drawer */}
                         <button
                           onClick={(e) => { e.stopPropagation(); openDrawer(f, "metadata"); }}
-                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-accent/60 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors font-medium"
-                          title="Quick preview in sidebar"
+                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+                          title="View details in sidebar"
                         >
                           <FileText className="w-3 h-3" />
+                          <span>Details</span>
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); openDrawer(f, "comments"); }}
@@ -1651,6 +1667,59 @@ export default function FindingsPage() {
             closeDrawer();
           }}
         />
+      )}
+
+      {/* False-Positive Reason Modal */}
+      {fpTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setFpTarget(null)}>
+          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-muted/50 flex-shrink-0">
+                <Minus className="w-4 h-4 text-muted-foreground" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Mark as False Positive</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Explain why you believe this is not a real vulnerability. This reason is stored and visible to reviewers.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1.5">
+                  Reason <span className="text-muted-foreground font-normal">(optional but recommended)</span>
+                </label>
+                <textarea
+                  value={fpReason}
+                  onChange={e => setFpReason(e.target.value)}
+                  placeholder="e.g. This endpoint is behind authentication and not publicly accessible. The scanner detected it as open but it requires a valid session token..."
+                  rows={4}
+                  maxLength={2000}
+                  className="w-full rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/50 resize-none"
+                  autoFocus
+                />
+                <p className="text-[10px] text-muted-foreground/60 mt-1 text-right">{fpReason.length}/2000</p>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => setFpTarget(null)}
+                  className="flex-1 px-3 py-2 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitFalsePositive}
+                  disabled={fpSaving}
+                  className="flex-1 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {fpSaving ? "Saving…" : "Confirm False Positive"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
