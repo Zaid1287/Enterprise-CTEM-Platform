@@ -31,7 +31,7 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; label: string; colo
   error:   { icon: <XCircle className="w-3.5 h-3.5" />,                        label: "Error",    color: "text-red-400" },
 };
 
-const SCANNABLE_TYPES = ["domain", "subdomain", "url"] as const;
+const SCANNABLE_TYPES = ["keyword","logo_url","domain","email","social_handle","mobile_app","subdomain","url"] as const;
 const TYPE_LABEL: Record<string, string> = { domain: "Domain", subdomain: "Subdomain", url: "URL" };
 
 function normalizeDomainPreview(value: string): string {
@@ -571,7 +571,7 @@ function WatchlistItem({
   const [pendingTime, setPendingTime] = useState<string>(item.scanTime ?? "03:00");
   const [pendingDow, setPendingDow] = useState<number>(item.dayOfWeek ?? 1);
   const [pendingDom, setPendingDom] = useState<number>(item.dayOfMonth ?? 1);
-  const isSchedulable = ["domain", "keyword", "email", "social_handle", "mobile_app"].includes(item.type);
+  const isSchedulable = item.type !== "ip";
 
   function openEditor() {
     setPendingFreq(item.frequency ?? "none");
@@ -615,6 +615,17 @@ function WatchlistItem({
           {item.notes && (
             <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{item.notes}</p>
           )}
+          {/* For non-domain types, show the derived domain that will be scanned */}
+          {!["domain","subdomain","url"].includes(item.type) && (() => {
+            const { domain } = extractScanDomain(item);
+            if (!domain) return null;
+            return (
+              <p className="text-[10px] text-muted-foreground/50 mt-0.5 flex items-center gap-1">
+                <Globe className="w-2.5 h-2.5 shrink-0" />
+                Scans: <span className="font-mono">{domain}</span>
+              </p>
+            );
+          })()}
         </div>
         <span className="text-[10px] text-muted-foreground/50 shrink-0 hidden sm:block">{formatDate(item.createdAt)}</span>
         {/* Scan status badge — shown when a scan exists */}
@@ -647,8 +658,8 @@ function WatchlistItem({
             {runningScan ? "Starting…" : latestScan ? "View Intel" : "Scan Now"}
           </Button>
         )}
-        {/* Re-scan button — only for scannable types that already have a scan */}
-        {latestScan && SCANNABLE_TYPES.includes(item.type) && onRunScan && (
+        {/* Re-scan button — shown for all types that can produce a scan domain */}
+        {latestScan && item.type !== "ip" && onRunScan && (
           <Button
             variant="ghost" size="sm"
             onClick={() => onRunScan(item)}
@@ -784,6 +795,61 @@ function normalizeDomain(v: string): string {
   return (v ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!.trim();
 }
 
+/** Per-type: extract the domain that will actually be sent to POST /brand-threats */
+function extractScanDomain(item: { type: string; value: string }): { domain: string | null; error?: string } {
+  const v = (item.value ?? "").trim();
+  switch (item.type) {
+    case "domain":
+    case "subdomain": {
+      const d = normalizeDomain(v);
+      return d && /\.[a-z]{2,}$/i.test(d) ? { domain: d } : { domain: null, error: "Invalid domain — expected format: example.com" };
+    }
+    case "url":
+    case "logo_url": {
+      const d = normalizeDomain(v);
+      return d && /\.[a-z]{2,}$/i.test(d) ? { domain: d } : { domain: null, error: "Could not extract a valid domain from this URL" };
+    }
+    case "email": {
+      const atIdx = v.indexOf("@");
+      if (atIdx === -1) return { domain: null, error: "Invalid email — expected format: user@example.com" };
+      const d = normalizeDomain(v.slice(atIdx + 1));
+      return d && /\.[a-z]{2,}$/i.test(d) ? { domain: d } : { domain: null, error: "Could not extract a valid domain from this email address" };
+    }
+    case "social_handle": {
+      const handle = v.replace(/^@+/, "").toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "").trim();
+      if (!handle) return { domain: null, error: "Invalid social handle — enter the handle without special characters" };
+      return { domain: handle.includes(".") ? handle : `${handle}.com` };
+    }
+    case "keyword": {
+      const kw = v.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "").trim();
+      if (!kw) return { domain: null, error: "Invalid keyword — use letters, numbers, or hyphens" };
+      return { domain: kw.includes(".") ? kw : `${kw}.com` };
+    }
+    case "mobile_app": {
+      const name = v.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9]/g, "").trim();
+      if (!name) return { domain: null, error: "Invalid app name" };
+      return { domain: name.includes(".") ? name : `${name}.com` };
+    }
+    case "ip":
+      return { domain: null, error: "IP addresses are correlated against scan results — add the associated domain to run a brand threat scan" };
+    default:
+      return { domain: null, error: "Unknown watchlist item type" };
+  }
+}
+
+/** Per-type input guidance for the Add Item form */
+const TYPE_HINTS: Record<string, { placeholder: string; hint: string }> = {
+  domain:        { placeholder: "e.g. sentinelwares.com",                    hint: "Root domain — scanned for typosquatting & phishing threats" },
+  subdomain:     { placeholder: "e.g. app.sentinelwares.com",                hint: "Subdomain — root domain is extracted and scanned" },
+  url:           { placeholder: "e.g. https://sentinelwares.com/login",      hint: "Any URL — the host domain is extracted and scanned" },
+  keyword:       { placeholder: "e.g. sentinelware",                         hint: 'Brand keyword — scanned as "sentinelware.com" for impersonation' },
+  email:         { placeholder: "e.g. support@sentinelwares.com",            hint: "Email — the domain part is scanned for phishing & data breaches" },
+  social_handle: { placeholder: "e.g. @sentinelwares or sentinelwares",      hint: 'Handle — scanned as "sentinelwares.com" + searches for fake accounts' },
+  mobile_app:    { placeholder: "e.g. Sentinelware Security",                hint: "App name — scanned as brand domain + searches app stores for fakes" },
+  logo_url:      { placeholder: "e.g. https://sentinelwares.com/logo.png",   hint: "Logo URL — host domain monitored for lookalike sites" },
+  ip:            { placeholder: "e.g. 1.2.3.4",                              hint: "IP — correlated with typosquatting A records (no direct scan)" },
+};
+
 function WatchlistSection() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -794,11 +860,13 @@ function WatchlistSection() {
 
   function latestScanForItem(item: any) {
     const scans = (allScans as any[]) ?? [];
+    const { domain: derivedDomain } = extractScanDomain(item);
     const normalizedVal = normalizeDomain(item.value ?? "");
     const matches = scans.filter((s: any) => {
       const d = normalizeDomain(s.domain ?? "");
-      const b = normalizeDomain(s.brandName ?? "");
-      return d === normalizedVal || b === normalizedVal;
+      if (derivedDomain && d === normalizeDomain(derivedDomain)) return true;
+      if (d && d === normalizedVal) return true;
+      return false;
     });
     return matches[0] ?? null;
   }
@@ -868,8 +936,11 @@ function WatchlistSection() {
   }
 
   async function handleRunScan(item: any) {
-    const domain = normalizeDomain(item.value ?? "");
-    if (!domain) return;
+    const { domain, error } = extractScanDomain(item);
+    if (!domain) {
+      toast({ title: error ?? "Cannot scan this item type", variant: "destructive" });
+      return;
+    }
     setRunningScanItemId(item.id);
     try {
       const res = await fetch("/api/brand-threats", {
@@ -896,11 +967,12 @@ function WatchlistSection() {
       navigate(`/brand-threats/${latest.id}`);
       return;
     }
-    if (SCANNABLE_TYPES.includes(item.type as any)) {
-      await handleRunScan(item);
+    const { domain, error } = extractScanDomain(item);
+    if (!domain) {
+      toast({ title: error ?? "This item cannot be scanned directly", variant: "destructive" });
       return;
     }
-    navigate("/brand-threats");
+    await handleRunScan(item);
   }
 
   async function handleScheduleChange(id: number, schedule: WatchlistSchedule) {
@@ -956,19 +1028,10 @@ function WatchlistSection() {
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">New Watchlist Item</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground block mb-1">Value *</label>
-                <input
-                  value={form.value}
-                  onChange={e => setForm(v => ({ ...v, value: e.target.value }))}
-                  placeholder="e.g. acme, acme.com, @acmecorp"
-                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                />
-              </div>
-              <div>
                 <label className="text-xs text-muted-foreground block mb-1">Type</label>
                 <select
                   value={form.type}
-                  onChange={e => setForm(v => ({ ...v, type: e.target.value }))}
+                  onChange={e => setForm(v => ({ ...v, type: e.target.value, value: "" }))}
                   className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
                 >
                   {WATCHLIST_TYPES.map(t => (
@@ -976,8 +1039,57 @@ function WatchlistSection() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">
+                  {form.type === "keyword" ? "Brand Keyword *" :
+                   form.type === "email" ? "Email Address *" :
+                   form.type === "social_handle" ? "Social Handle *" :
+                   form.type === "mobile_app" ? "App Name *" :
+                   form.type === "logo_url" ? "Logo URL *" :
+                   form.type === "ip" ? "IP Address *" :
+                   "Domain *"}
+                </label>
+                <input
+                  value={form.value}
+                  onChange={e => setForm(v => ({ ...v, value: e.target.value }))}
+                  placeholder={TYPE_HINTS[form.type]?.placeholder ?? "Enter value"}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
             </div>
-            {!["logo_url", "ip"].includes(form.type) && (
+            {/* Per-type hint + derived domain preview */}
+            {form.value.trim() && (() => {
+              if (form.type === "ip") {
+                return (
+                  <p className="text-[11px] text-muted-foreground/70 flex items-center gap-1.5 -mt-1">
+                    <Target className="w-3 h-3 shrink-0" />
+                    {TYPE_HINTS[form.type]?.hint}
+                  </p>
+                );
+              }
+              const { domain, error } = extractScanDomain({ type: form.type, value: form.value });
+              if (domain) {
+                return (
+                  <p className="text-[11px] text-emerald-400/80 flex items-center gap-1.5 -mt-1">
+                    <Zap className="w-3 h-3 shrink-0" />
+                    Will scan: <span className="font-mono font-medium">{domain}</span>
+                  </p>
+                );
+              }
+              if (error) {
+                return (
+                  <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1.5 -mt-1">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    {error}
+                  </p>
+                );
+              }
+              return null;
+            })()}
+            {!form.value.trim() && TYPE_HINTS[form.type] && (
+              <p className="text-[11px] text-muted-foreground/60 -mt-1">{TYPE_HINTS[form.type]!.hint}</p>
+            )}
+            {form.type !== "ip" && (
               <div className="space-y-2">
                 <label className="text-xs text-muted-foreground block mb-1">
                   <span className="flex items-center gap-1"><CalendarClock className="w-3 h-3" /> Auto-scan Schedule</span>
@@ -1060,7 +1172,7 @@ function WatchlistSection() {
             </div>
             <p className="text-sm font-medium text-muted-foreground">No watchlist items yet</p>
             <p className="text-xs text-muted-foreground/60 mt-1 max-w-xs">
-              Add a domain to auto-scan it daily or weekly for new typosquatting and phishing threats.
+              Add domains, emails, keywords, social handles, or mobile apps to monitor for brand impersonation, typosquatting, phishing, and fake accounts.
             </p>
           </div>
         ) : (
