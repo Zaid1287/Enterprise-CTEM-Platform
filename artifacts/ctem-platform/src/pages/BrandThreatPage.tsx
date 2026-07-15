@@ -554,11 +554,12 @@ function scheduleLabel(item: any): string {
 }
 
 function WatchlistItem({
-  item, onDelete, onScheduleChange, deleting, latestScan, onViewScan, onRunScan, onView, runningScan,
+  item, onDelete, onScheduleChange, onEdit, deleting, latestScan, onViewScan, onRunScan, onView, runningScan,
 }: {
   item: any;
   onDelete: (id: number) => void;
   onScheduleChange: (id: number, schedule: WatchlistSchedule) => void;
+  onEdit: (id: number, updates: { value: string; type: string; notes: string }) => Promise<void>;
   deleting: boolean;
   latestScan?: any;
   onViewScan?: (id: number) => void;
@@ -573,11 +574,38 @@ function WatchlistItem({
   const [pendingDom, setPendingDom] = useState<number>(item.dayOfMonth ?? 1);
   const isSchedulable = item.type !== "ip";
 
+  // Inline item edit state
+  const [editingItem, setEditingItem] = useState(false);
+  const [editValue, setEditValue] = useState(item.value ?? "");
+  const [editType, setEditType] = useState(item.type ?? "domain");
+  const [editNotes, setEditNotes] = useState(item.notes ?? "");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  function openItemEdit() {
+    setEditValue(item.value ?? "");
+    setEditType(item.type ?? "domain");
+    setEditNotes(item.notes ?? "");
+    setEditingFreq(false); // close schedule editor if open
+    setEditingItem(true);
+  }
+
+  async function saveItemEdit() {
+    if (!editValue.trim()) return;
+    setSavingEdit(true);
+    try {
+      await onEdit(item.id, { value: editValue.trim(), type: editType, notes: editNotes });
+      setEditingItem(false);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   function openEditor() {
     setPendingFreq(item.frequency ?? "none");
     setPendingTime(item.scanTime ?? "03:00");
     setPendingDow(item.dayOfWeek ?? 1);
     setPendingDom(item.dayOfMonth ?? 1);
+    setEditingItem(false); // close item editor if open
     setEditingFreq(true);
   }
 
@@ -592,6 +620,8 @@ function WatchlistItem({
   }
 
   const label = scheduleLabel(item);
+  // Live preview of derived scan domain while editing
+  const editPreview = editingItem ? extractScanDomain({ type: editType, value: editValue }) : null;
 
   return (
     <div className="bg-muted/10 border border-border rounded-xl px-4 py-3 space-y-2">
@@ -675,12 +705,20 @@ function WatchlistItem({
           <Button
             variant="ghost" size="sm"
             onClick={() => editingFreq ? setEditingFreq(false) : openEditor()}
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-blue-400 shrink-0"
+            className={cn("h-7 w-7 p-0 shrink-0", editingFreq ? "text-blue-400" : "text-muted-foreground hover:text-blue-400")}
             title="Set scan schedule"
           >
             <CalendarClock className="w-3.5 h-3.5" />
           </Button>
         )}
+        <Button
+          variant="ghost" size="sm"
+          onClick={() => editingItem ? setEditingItem(false) : openItemEdit()}
+          className={cn("h-7 w-7 p-0 shrink-0", editingItem ? "text-amber-400" : "text-muted-foreground hover:text-amber-400")}
+          title="Edit watchlist item"
+        >
+          <Edit2 className="w-3.5 h-3.5" />
+        </Button>
         <Button
           variant="ghost" size="sm"
           onClick={() => onDelete(item.id)}
@@ -704,6 +742,84 @@ function WatchlistItem({
               <CalendarClock className="w-3 h-3" /> Next: {formatDate(item.nextScanAt)}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Inline item editor */}
+      {editingItem && (
+        <div className="space-y-2.5 pt-2 border-t border-amber-500/20 mt-1">
+          <p className="text-[10px] font-semibold text-amber-400/80 uppercase tracking-wider">Edit Watchlist Item</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Type</span>
+              <select
+                value={editType}
+                onChange={e => { setEditType(e.target.value); setEditValue(""); }}
+                className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+              >
+                {WATCHLIST_TYPES.map(t => (
+                  <option key={t} value={t}>{t.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                {editType === "keyword" ? "Brand Keyword" :
+                 editType === "email" ? "Email Address" :
+                 editType === "social_handle" ? "Social Handle" :
+                 editType === "mobile_app" ? "App Name" :
+                 editType === "logo_url" ? "Logo URL" :
+                 editType === "ip" ? "IP Address" : "Domain"}
+              </span>
+              <input
+                value={editValue}
+                onChange={e => setEditValue(e.target.value)}
+                placeholder={TYPE_HINTS[editType]?.placeholder ?? "Enter value"}
+                className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+                autoFocus
+              />
+            </div>
+          </div>
+          {/* Live scan domain preview */}
+          {editValue.trim() && editType !== "ip" && editPreview?.domain && (
+            <p className="text-[10px] text-emerald-400/80 flex items-center gap-1.5">
+              <Zap className="w-3 h-3 shrink-0" />
+              Will scan: <span className="font-mono font-medium">{editPreview.domain}</span>
+            </p>
+          )}
+          {editValue.trim() && editType !== "ip" && !editPreview?.domain && editPreview?.error && (
+            <p className="text-[10px] text-muted-foreground/60 flex items-center gap-1.5">
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              {editPreview.error}
+            </p>
+          )}
+          <div className="space-y-1">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Notes (optional)</span>
+            <input
+              value={editNotes}
+              onChange={e => setEditNotes(e.target.value)}
+              placeholder="Optional context or description"
+              className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+            />
+          </div>
+          <div className="flex gap-1.5 justify-end">
+            <Button
+              size="sm" variant="ghost"
+              onClick={() => setEditingItem(false)}
+              className="h-7 px-2.5 text-xs text-muted-foreground"
+            >
+              <X className="w-3 h-3 mr-1" /> Cancel
+            </Button>
+            <Button
+              size="sm" variant="ghost"
+              onClick={saveItemEdit}
+              disabled={savingEdit || !editValue.trim()}
+              className="h-7 px-2.5 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+            >
+              {savingEdit ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Check className="w-3 h-3 mr-1" />}
+              Save Changes
+            </Button>
+          </div>
         </div>
       )}
 
@@ -1000,6 +1116,22 @@ function WatchlistSection() {
     }
   }
 
+  async function handleEditItem(id: number, updates: { value: string; type: string; notes: string }) {
+    const res = await fetch(`/api/brand-watchlist/${id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast({ title: err.error ?? "Failed to update watchlist item", variant: "destructive" });
+      throw new Error(err.error ?? "Failed");
+    }
+    const updated = await res.json();
+    setItems(prev => prev.map(i => i.id === id ? updated : i));
+    toast({ title: "Watchlist item updated" });
+  }
+
   const scheduledCount = items.filter((i: any) => i.frequency && i.frequency !== "none").length;
 
   return (
@@ -1183,6 +1315,7 @@ function WatchlistSection() {
                 item={item}
                 onDelete={handleDelete}
                 onScheduleChange={handleScheduleChange}
+                onEdit={handleEditItem}
                 deleting={deletingId === item.id}
                 latestScan={latestScanForItem(item)}
                 onViewScan={id => navigate(`/brand-threats/${id}`)}

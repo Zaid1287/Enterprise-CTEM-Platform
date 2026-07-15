@@ -520,7 +520,24 @@ router.patch("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedReque
   if (!existing) { res.status(404).json({ error: "Watchlist item not found" }); return; }
 
   const updates: Partial<typeof brandWatchlistItemsTable.$inferInsert> = {};
+
+  // Core fields — updatable via inline edit
+  if (req.body?.value !== undefined) {
+    const val = String(req.body.value).trim();
+    if (!val) { res.status(400).json({ error: "value cannot be empty" }); return; }
+    updates.value = val;
+  }
+  if (req.body?.type !== undefined) {
+    const validTypes = ["keyword", "logo_url", "domain", "ip", "email", "social_handle", "mobile_app"];
+    const t = String(req.body.type).trim();
+    if (!validTypes.includes(t)) {
+      res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` }); return;
+    }
+    updates.type = t;
+  }
   if (req.body?.notes !== undefined) updates.notes = String(req.body.notes).trim() || null;
+
+  // Schedule fields
   if (req.body?.scanTime !== undefined) updates.scanTime = req.body.scanTime ? String(req.body.scanTime) : null;
   if (req.body?.dayOfWeek !== undefined) updates.dayOfWeek = req.body.dayOfWeek != null ? parseInt(String(req.body.dayOfWeek), 10) : null;
   if (req.body?.dayOfMonth !== undefined) updates.dayOfMonth = req.body.dayOfMonth != null ? parseInt(String(req.body.dayOfMonth), 10) : null;
