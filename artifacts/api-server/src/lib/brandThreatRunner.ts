@@ -1134,6 +1134,42 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
           await db.insert(brandAbuseResultsTable).values(abuseInserts.slice(i, i + 50));
         }
         brandAbuseCount = abuseInserts.length;
+
+        // ── Lookalike live count + abuse.ch phishing check ──────────────────
+        // Brand-abuse "lookalike_domain" entries are CONFIRMED live domains
+        // (discovered via direct DNS resolution in brandAbuseScanner). Add them
+        // to liveCount so the scan summary reflects the true threat count.
+        // Also query abuse.ch (URLhaus + ThreatFox, no API key) for each one.
+        const lookalikeDomainEntries = abuseInserts.filter(a => a.type === "lookalike_domain");
+        if (lookalikeDomainEntries.length > 0) {
+          liveCount += lookalikeDomainEntries.length;
+          const lookalikeDomains = lookalikeDomainEntries
+            .map(a => String(a.url ?? "").replace(/^https?:\/\//, "").split("/")[0]!)
+            .filter(Boolean);
+          const abusechHits: Awaited<ReturnType<typeof queryAbuseChFeeds>> = [];
+          for (const dom of lookalikeDomains) {
+            const hits = await queryAbuseChFeeds(dom).catch(() => []);
+            abusechHits.push(...hits);
+          }
+          if (abusechHits.length > 0) {
+            const extraPhishInserts: typeof phishingDetectionsTable.$inferInsert[] = abusechHits.map(entry => ({
+              tenantId,
+              scanId,
+              url: entry.url,
+              source: entry.source,
+              verified: true as boolean,
+              targetBrand: domain,
+              threatType: entry.threat.toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
+              submittedAt: entry.addedAt ?? new Date().toISOString(),
+            }));
+            for (let i = 0; i < extraPhishInserts.length; i += 50) {
+              await db.insert(phishingDetectionsTable).values(extraPhishInserts.slice(i, i + 50));
+            }
+            phishingCount += abusechHits.length;
+            logger.info({ scanId, domain, count: abusechHits.length }, "abuse.ch hits on lookalike_domain brand abuse entries");
+          }
+        }
+
         const worstAbuseRisk = abuseInserts.some(a => a.risk === "critical") ? "critical"
           : abuseInserts.some(a => a.risk === "high") ? "high" : "medium";
         const uniquePlatforms = [...new Set(abuseInserts.map(a => a.platform).filter(Boolean))];
