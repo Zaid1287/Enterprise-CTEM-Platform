@@ -43,7 +43,7 @@ export function statusBadgeClass(status: string): string {
   return "bg-muted text-muted-foreground border border-border";
 }
 
-export function riskLevelBg(level: string): string {
+export function riskLevelBg(level: string | null | undefined): string {
   switch (level?.toLowerCase()) {
     case "critical": return "bg-red-500/15 text-red-400 border border-red-500/30";
     case "high": return "bg-orange-500/15 text-orange-400 border border-orange-500/30";

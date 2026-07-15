@@ -148,9 +148,9 @@ router.get("/dashboard/top-risky-assets", requireAuth, async (req: Authenticated
     findingsByAsset[f.assetId] = (findingsByAsset[f.assetId] ?? 0) + 1;
   }
 
-  // Include assets that have a risk_scores entry OR have risk_level set on the asset itself
+  // Only include assets that have been scanned — unscanned assets have no real risk data
   const result = tenantAssets
-    .filter(a => rsMap.has(a.id) || a.riskLevel !== null)
+    .filter(a => a.lastScannedAt !== null)
     .map(a => {
       const rs = rsMap.get(a.id);
       return {

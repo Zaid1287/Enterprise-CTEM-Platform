@@ -240,19 +240,19 @@ export default function RiskPage() {
                   {[...Array(10)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
               ))}
-              {!isLoading && [...list].sort((a: any, b: any) => b.score - a.score).map((s: any) => (
+              {!isLoading && [...list].filter((s: any) => s.score !== null).sort((a: any, b: any) => b.score - a.score).map((s: any) => (
                 <tr key={s.assetId} className="border-b border-border/50 hover:bg-accent/30">
                   <td className="px-4 py-2.5 text-sm font-medium max-w-[140px] truncate">{s.assetName}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
                       <div className="w-14 h-1.5 bg-accent rounded-full overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${s.score}%`, background: RISK_COLORS[s.level] ?? "#64748b" }} />
+                        <div className="h-full rounded-full" style={{ width: `${s.score ?? 0}%`, background: RISK_COLORS[s.level] ?? "#64748b" }} />
                       </div>
-                      <span className="text-xs font-bold tabular-nums">{Math.round(s.score)}</span>
+                      <span className="text-xs font-bold tabular-nums">{s.score != null ? Math.round(s.score) : "—"}</span>
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", riskLevelBg(s.level))}>{s.level}</span>
+                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", riskLevelBg(s.level))}>{s.level ?? "—"}</span>
                   </td>
                   <td className="px-3 py-2.5 text-xs tabular-nums text-right text-muted-foreground">{(s.cvssComponent ?? 0).toFixed(1)}</td>
                   <td className="px-3 py-2.5 text-xs tabular-nums text-right text-muted-foreground">{(s.epssComponent ?? 0).toFixed(1)}</td>

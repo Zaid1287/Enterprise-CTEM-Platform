@@ -391,13 +391,13 @@ function SuperAdminDashboard() {
                     </div>
                   </div>
                   <span className={cn("ml-2 shrink-0 text-xs px-2 py-0.5 rounded font-semibold border capitalize", riskLevelBg(a.riskLevel))}>
-                    {a.riskScore}
+                    {a.riskScore != null ? a.riskScore : "—"}
                   </span>
                 </div>
                 <div className="ml-6">
                   <div className="h-1.5 bg-accent rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all"
-                      style={{ width: `${a.riskScore}%`, background: a.riskScore >= 70 ? "#ef4444" : a.riskScore >= 40 ? "#f97316" : "#eab308" }} />
+                      style={{ width: `${a.riskScore ?? 0}%`, background: (a.riskScore ?? 0) >= 70 ? "#ef4444" : (a.riskScore ?? 0) >= 40 ? "#f97316" : "#eab308" }} />
                   </div>
                 </div>
                 {a.criticalCount > 0 && (
@@ -1045,11 +1045,11 @@ function AccountManagerDashboard() {
                       </p>
                     </div>
                     <span className={cn("ml-3 shrink-0 text-xs px-2 py-0.5 rounded font-semibold border capitalize", riskLevelBg(a.riskLevel))}>
-                      {a.riskLevel}
+                      {a.riskLevel ?? "—"}
                     </span>
                   </div>
                   <div className="ml-6">
-                    <RiskBar score={a.riskScore} level={a.riskLevel} />
+                    <RiskBar score={a.riskScore ?? 0} level={a.riskLevel ?? "low"} />
                   </div>
                 </div>
               </Link>

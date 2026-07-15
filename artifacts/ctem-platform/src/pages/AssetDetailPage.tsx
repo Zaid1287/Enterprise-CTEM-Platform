@@ -388,11 +388,11 @@ export default function AssetDetailPage() {
           </div>
           {rs && (
             <div className="text-right">
-              <p className="text-3xl font-bold tabular-nums" style={{ color: rs.level === "critical" ? "#ef4444" : rs.level === "high" ? "#f97316" : rs.level === "medium" ? "#eab308" : "#22c55e" }}>
-                {Math.round(rs.score)}
+              <p className="text-3xl font-bold tabular-nums" style={{ color: rs.level === "critical" ? "#ef4444" : rs.level === "high" ? "#f97316" : rs.level === "medium" ? "#eab308" : rs.level ? "#22c55e" : "#64748b" }}>
+                {rs.score != null ? Math.round(rs.score) : "—"}
               </p>
               <p className="text-xs text-muted-foreground">risk score</p>
-              <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", riskLevelBg(rs.level))}>{rs.level}</span>
+              <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", riskLevelBg(rs.level))}>{rs.level ?? "Not Scanned"}</span>
               <button
                 className="mt-1.5 flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors ml-auto"
                 onClick={() => {

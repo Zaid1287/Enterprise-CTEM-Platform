@@ -15,7 +15,7 @@ export const assetsTable = pgTable("assets", {
   verificationMethod: text("verification_method"),
   verificationEmailToken: text("verification_email_token"),
   verificationEmailExpiry: timestamp("verification_email_expiry", { withTimezone: true }),
-  riskLevel: text("risk_level").notNull().default("low"),
+  riskLevel: text("risk_level"),
   tags: text("tags").array().notNull().default([]),
   description: text("description"),
   ipAddress: text("ip_address"),

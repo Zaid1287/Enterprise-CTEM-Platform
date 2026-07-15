@@ -55,16 +55,17 @@ router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): 
   const rsMap = new Map(scores.map(r => [r.assetId, r]));
 
   const result = assets
-    .filter(a => rsMap.has(a.id) || a.riskLevel !== null)
     .map(a => {
       const rs = rsMap.get(a.id);
+      const scanned = a.lastScannedAt !== null;
       return {
         id: rs?.id ?? null,
         assetId: a.id,
         assetName: a.name ?? "Unknown",
         assetType: a.type ?? null,
-        score: rs?.score ?? 0,
-        level: rs?.level ?? a.riskLevel ?? "low",
+        lastScannedAt: a.lastScannedAt?.toISOString() ?? null,
+        score: scanned ? (rs?.score ?? 0) : null,
+        level: scanned ? (rs?.level ?? a.riskLevel) : null,
         cvssComponent: rs?.cvssComponent ?? null,
         epssComponent: rs?.epssComponent ?? null,
         kevBonus: rs?.kevBonus ?? null,
@@ -74,7 +75,7 @@ router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): 
         updatedAt: rs?.updatedAt?.toISOString() ?? null,
       };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
 
   res.json(result);
 });
