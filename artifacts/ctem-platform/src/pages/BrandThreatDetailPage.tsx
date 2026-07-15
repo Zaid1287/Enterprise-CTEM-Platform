@@ -11,7 +11,7 @@ import {
   MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
   TrendingUp, Megaphone, History, BookmarkCheck, Clock, AtSign,
   Tag, Smartphone, RotateCw, Ban, CheckCircle, AlertCircle, Send,
-  Twitter, Facebook, Instagram, Youtube, Linkedin,
+  Twitter, Facebook, Instagram, Youtube, Linkedin, Flag,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,7 @@ function SeverityPill({ risk: initialRisk, onPatch }: { risk: string; onPatch: (
   const [risk, setRisk] = useState(initialRisk);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  useEffect(() => { setRisk(initialRisk); }, [initialRisk]);
   const rm = RISK_META[risk] ?? RISK_META.medium!;
   async function pick(newRisk: string) {
     if (newRisk === risk) { setOpen(false); return; }
@@ -393,6 +394,136 @@ function ShodanFaviconPanel({ matches }: { matches: any[] }) {
   );
 }
 
+// ── TakedownButton ────────────────────────────────────────────────────────────
+interface TakedownPrefill {
+  type: string;
+  targetUrl: string;
+  targetDomain?: string;
+  targetIp?: string;
+  registrar?: string;
+  title: string;
+  description?: string;
+  brandAbused?: string;
+  priority?: string;
+}
+
+function TakedownButton({ prefill, onCreated }: { prefill: TakedownPrefill; onCreated?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<TakedownPrefill>(prefill);
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
+  function openModal(e: React.MouseEvent) {
+    e.stopPropagation();
+    setForm({ ...prefill });
+    setOpen(true);
+  }
+
+  async function submit() {
+    if (!form.targetUrl || !form.title) return;
+    setSaving(true);
+    try {
+      await apiFetch("/api/takedowns", {
+        method: "POST",
+        body: JSON.stringify({
+          type: form.type,
+          targetUrl: form.targetUrl,
+          targetDomain: form.targetDomain ?? null,
+          targetIp: form.targetIp ?? null,
+          registrar: form.registrar ?? null,
+          title: form.title,
+          description: form.description ?? null,
+          brandAbused: form.brandAbused ?? null,
+          priority: form.priority ?? "medium",
+        }),
+      });
+      toast({ title: "Takedown request submitted", description: form.targetDomain ?? form.targetUrl });
+      setOpen(false);
+      onCreated?.();
+    } catch (err: any) {
+      toast({ title: "Failed to submit takedown", description: (err as Error).message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <button onClick={openModal} title="Request Takedown"
+        className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-semibold text-amber-400 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20 transition-all shrink-0">
+        <Flag className="w-2.5 h-2.5" /> Takedown
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg" onClick={e => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Flag className="w-4 h-4 text-amber-400" />
+              Submit Takedown Request
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Type</label>
+                <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                  className="w-full text-xs bg-background border border-border rounded-lg px-2 py-1.5 text-foreground">
+                  {(["phishing","brand_impersonation","domain_squatting","fake_social","malware_hosting","other"] as const).map(t =>
+                    <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+                  )}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Priority</label>
+                <select value={form.priority ?? "medium"} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
+                  className="w-full text-xs bg-background border border-border rounded-lg px-2 py-1.5 text-foreground">
+                  {(["critical","high","medium","low"] as const).map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Title</label>
+              <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                className="w-full text-xs bg-background border border-border rounded-lg px-2 py-1.5 text-foreground" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Target URL</label>
+              <input value={form.targetUrl} onChange={e => setForm(f => ({ ...f, targetUrl: e.target.value }))}
+                className="w-full text-xs bg-background border border-border rounded-lg px-2 py-1.5 text-foreground font-mono" />
+            </div>
+            {form.targetDomain !== undefined && (
+              <div>
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Target Domain</label>
+                <input value={form.targetDomain ?? ""} onChange={e => setForm(f => ({ ...f, targetDomain: e.target.value }))}
+                  className="w-full text-xs bg-background border border-border rounded-lg px-2 py-1.5 text-foreground font-mono" />
+              </div>
+            )}
+            {form.registrar !== undefined && (
+              <div>
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Registrar</label>
+                <input value={form.registrar ?? ""} onChange={e => setForm(f => ({ ...f, registrar: e.target.value }))}
+                  className="w-full text-xs bg-background border border-border rounded-lg px-2 py-1.5 text-foreground" />
+              </div>
+            )}
+            <div>
+              <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Description / Evidence</label>
+              <textarea value={form.description ?? ""} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                rows={3} className="w-full text-xs bg-background border border-border rounded-lg px-2 py-1.5 text-foreground resize-none" />
+            </div>
+          </div>
+          <DialogFooter className="mt-1">
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button size="sm" disabled={saving || !form.targetUrl || !form.title} onClick={() => void submit()}
+              className="bg-amber-500 hover:bg-amber-600 text-white border-0">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Flag className="w-3.5 h-3.5 mr-1" />}
+              Submit Takedown
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId, falsePositives = [], onFpCreated }: {
   phishing: any[];
   brandAbuse?: any[];
@@ -455,6 +586,7 @@ function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId,
                     <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full font-semibold">
                       Live Domain
                     </span>
+                    <TakedownButton prefill={{ type: "phishing", targetUrl: a.url ?? "", targetDomain: (a.url ?? "").replace(/^https?:\/\//, "").split("/")[0], title: `Phishing Domain: ${(a.url ?? "").replace(/^https?:\/\//, "").split("/")[0]}`, description: a.description ?? a.evidenceSnippet ?? undefined, priority: (a.risk === "critical" || a.risk === "high") ? a.risk : "high" }} />
                     {scanId && <FalsePositiveButton scanId={scanId} itemType="lookalike_phishing" itemRef={aRef} existingFp={aFp} onCreated={onFpCreated} />}
                   </div>
                 </div>
@@ -517,6 +649,7 @@ function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId,
                     <div className="flex items-center gap-2 shrink-0">
                       <SeverityPill risk={riskLvl} onPatch={async (nr) => { await apiFetch(`/api/brand-threats/results/${r.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: nr }) }); }} />
                       {r.phishingSource && <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">{r.phishingSource}</span>}
+                      <TakedownButton prefill={{ type: "phishing", targetUrl: `https://${r.permutation}`, targetDomain: r.permutation, registrar: r.whoisRegistrar ?? undefined, title: `Confirmed Phishing: ${r.permutation}`, priority: riskLvl }} />
                       {scanId && <FalsePositiveButton scanId={scanId} itemType="permutation" itemRef={rRef} existingFp={rFp} onCreated={onFpCreated} />}
                     </div>
                   </div>
@@ -545,6 +678,7 @@ function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId,
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">{p.source}</span>
+                    <TakedownButton prefill={{ type: "phishing", targetUrl: p.url ?? "", targetDomain: (p.url ?? "").replace(/^https?:\/\//, "").split("/")[0], title: `Phishing URL: ${(p.url ?? "").replace(/^https?:\/\//, "").split("/")[0]}`, description: p.targetBrand ? `Brand targeted: ${p.targetBrand}` : undefined, priority: "high" }} />
                     {scanId && <FalsePositiveButton scanId={scanId} itemType="phishing" itemRef={pRef} existingFp={pFp} onCreated={onFpCreated} />}
                   </div>
                 </div>
@@ -631,6 +765,7 @@ function DataLeaksTab({ leaks, scanId, falsePositives = [], onFpCreated }: {
                     <Calendar className="w-3 h-3" /> {leak.breachDate}
                   </span>
                 )}
+                <TakedownButton prefill={{ type: "other", targetUrl: leak.url ?? leak.domainMatch ? `https://${leak.domainMatch}` : "", title: `Data Breach: ${leak.title}`, description: leak.description ?? undefined, priority: leak.severity === "critical" || leak.severity === "high" ? leak.severity : "medium" }} />
                 {scanId && <FalsePositiveButton scanId={scanId} itemType="data_leak" itemRef={lRef} existingFp={lFp} onCreated={onFpCreated} />}
               </div>
             </div>
@@ -1234,6 +1369,7 @@ function MobileAppsTab({ abuse, warnings, scanId, falsePositives, onFpCreated }:
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <SeverityPill risk={item.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${item.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+                            <TakedownButton prefill={{ type: "brand_impersonation", targetUrl: item.url ?? "", title: `Rogue App: ${item.title ?? item.platform ?? "Unknown"}`, description: item.description ?? undefined, priority: item.risk === "critical" || item.risk === "high" ? item.risk : "high" }} />
                             <FalsePositiveButton scanId={scanId} itemType="rogue_app" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
                           </div>
                         </div>
@@ -1308,6 +1444,7 @@ function SuspiciousCertsTab({ abuse, scanId, falsePositives, onFpCreated }: {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <SeverityPill risk={item.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${item.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+            <TakedownButton prefill={{ type: "phishing", targetUrl: item.url ?? "", targetDomain: item.title ?? item.url ?? undefined, title: `Suspicious Certificate: ${item.title ?? item.url ?? "Unknown"}`, description: item.evidenceSnippet ?? item.description ?? undefined, priority: item.risk === "critical" || item.risk === "high" ? item.risk : "medium" }} />
             <FalsePositiveButton scanId={scanId} itemType="suspicious_certificate" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
           </div>
         </div>
@@ -1446,6 +1583,7 @@ function SocialMediaTab({ abuse, warnings, scanDomain, scanId, falsePositives, o
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <SeverityPill risk={item.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${item.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+                    <TakedownButton prefill={{ type: "fake_social", targetUrl: item.url ?? "", title: `Fake ${item.platform ?? "Social"} Account: ${item.title ?? item.url ?? "Unknown"}`, description: item.description ?? undefined, priority: item.risk === "critical" || item.risk === "high" ? item.risk : "high" }} />
                     <FalsePositiveButton scanId={scanId} itemType="fake_social" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
                   </div>
                 </div>
@@ -1571,7 +1709,8 @@ function MaliciousAdsTab({ ads, hasMetaToken, scanId, falsePositives = [], onFpC
                       <ExternalLink className="w-3 h-3" /> View Ad
                     </a>
                   )}
-                  <SeverityPill risk={ad.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${ad.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+                  <SeverityPill risk={ad.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/ad-monitoring/${ad.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+                  <TakedownButton prefill={{ type: "brand_impersonation", targetUrl: ad.snapshotUrl ?? ad.sourceUrl ?? "", title: `Malicious Ad: ${ad.title ?? ad.advertiserName ?? "Unknown Advertiser"}`, description: ad.body ? `Ad body: ${ad.body}${ad.advertiserName ? `\nAdvertiser: ${ad.advertiserName}` : ""}` : undefined, priority: ad.risk === "critical" || ad.risk === "high" ? ad.risk : "medium" }} />
                   {scanId && <FalsePositiveButton scanId={scanId} itemType="malicious_ad" itemRef={adRef} existingFp={adFp} onCreated={onFpCreated} />}
                 </div>
               </div>
@@ -2966,6 +3105,7 @@ export default function BrandThreatDetailPage() {
                             risk={(r.riskScore ?? 0) >= 80 ? "critical" : (r.riskScore ?? 0) >= 60 ? "high" : (r.riskScore ?? 0) >= 40 ? "medium" : "low"}
                             onPatch={async (nr) => { await apiFetch(`/api/brand-threats/results/${r.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: nr }) }); }}
                           />
+                          <TakedownButton prefill={{ type: "domain_squatting", targetUrl: `https://${r.permutation}`, targetDomain: r.permutation, registrar: r.whoisRegistrar ?? undefined, title: `Typosquatting Domain: ${r.permutation}`, description: r.whoisRegistrar ? `Registrar: ${r.whoisRegistrar}` : undefined, priority: (r.riskScore ?? 0) >= 80 ? "critical" : (r.riskScore ?? 0) >= 60 ? "high" : "medium" }} />
                           <FalsePositiveButton scanId={id} itemType="permutation" itemRef={r.permutation} existingFp={existingFp} onCreated={refreshFalsePositives} />
                         </div>
                       </div>

@@ -793,9 +793,17 @@ router.patch("/brand-threats/results/:id/risk", requireAuth, async (req: Authent
     res.status(400).json({ error: "risk must be critical | high | medium | low" }); return;
   }
   const score = riskToScore[risk]!;
+  const tenantId = req.user!.tenantId;
   const [row] = await db.update(brandThreatResultsTable)
     .set({ riskScore: score, isSuspicious: score >= 60 })
-    .where(eq(brandThreatResultsTable.id, id))
+    .where(and(
+      eq(brandThreatResultsTable.id, id),
+      inArray(brandThreatResultsTable.scanId,
+        db.select({ id: brandThreatScansTable.id })
+          .from(brandThreatScansTable)
+          .where(eq(brandThreatScansTable.tenantId, tenantId))
+      )
+    ))
     .returning({ id: brandThreatResultsTable.id, riskScore: brandThreatResultsTable.riskScore });
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(row);
@@ -813,6 +821,22 @@ router.patch("/brand-threats/data-leaks/:id/severity", requireAuth, async (req: 
     .set({ severity })
     .where(and(eq(dataLeakResultsTable.id, id), eq(dataLeakResultsTable.tenantId, req.user!.tenantId)))
     .returning({ id: dataLeakResultsTable.id, severity: dataLeakResultsTable.severity });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
+// ── PATCH /brand-threats/ad-monitoring/:id/risk ───────────────────────────────
+router.patch("/brand-threats/ad-monitoring/:id/risk", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const { risk } = req.body as { risk?: string };
+  if (!risk || !["critical","high","medium","low"].includes(risk)) {
+    res.status(400).json({ error: "risk must be critical | high | medium | low" }); return;
+  }
+  const [row] = await db.update(adMonitoringResultsTable)
+    .set({ risk })
+    .where(and(eq(adMonitoringResultsTable.id, id), eq(adMonitoringResultsTable.tenantId, req.user!.tenantId)))
+    .returning({ id: adMonitoringResultsTable.id, risk: adMonitoringResultsTable.risk });
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(row);
 });
