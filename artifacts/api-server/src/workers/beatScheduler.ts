@@ -956,7 +956,7 @@ async function checkQueueDepth(): Promise<void> {
  */
 async function cancelStuckRunningScans(): Promise<void> {
   try {
-    const cutoff = new Date(Date.now() - 15 * 60 * 1000);
+    const cutoff = new Date(Date.now() - 60 * 60 * 1000);
     const stuck = await db
       .select({ id: scansTable.id, tenantId: scansTable.tenantId, startedAt: scansTable.startedAt })
       .from(scansTable)
