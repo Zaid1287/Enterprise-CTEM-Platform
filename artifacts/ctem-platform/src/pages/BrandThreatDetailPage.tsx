@@ -345,7 +345,13 @@ function ShodanFaviconPanel({ matches }: { matches: any[] }) {
   );
 }
 
-function PhishingTab({ phishing, brandAbuse = [] }: { phishing: any[]; brandAbuse?: any[] }) {
+function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], onFpCreated }: {
+  phishing: any[];
+  brandAbuse?: any[];
+  scanId?: number;
+  falsePositives?: any[];
+  onFpCreated?: () => void;
+}) {
   const lookalikeLive = brandAbuse.filter((a: any) => a.type === "lookalike_domain");
   const hasData = phishing.length > 0 || lookalikeLive.length > 0;
 
@@ -371,8 +377,11 @@ function PhishingTab({ phishing, brandAbuse = [] }: { phishing: any[]; brandAbus
             <span className="font-semibold">{phishing.length} confirmed phishing detection{phishing.length !== 1 ? "s" : ""}</span>
             <span className="text-xs text-muted-foreground">— verified by threat feeds</span>
           </div>
-          {phishing.map((p: any) => (
-            <div key={p.id} className="bg-card border border-red-500/20 rounded-xl p-4 space-y-2">
+          {phishing.map((p: any) => {
+            const pRef = p.url ?? String(p.id);
+            const pFp = falsePositives.find(fp => fp.item_type === "phishing" && fp.item_ref === pRef);
+            return (
+            <div key={p.id} className={cn("bg-card border border-red-500/20 rounded-xl p-4 space-y-2", pFp?.status === "confirmed" && "opacity-50")}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
@@ -383,9 +392,12 @@ function PhishingTab({ phishing, brandAbuse = [] }: { phishing: any[]; brandAbus
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold shrink-0">
-                  {p.source}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">
+                    {p.source}
+                  </span>
+                  {scanId && <FalsePositiveButton scanId={scanId} itemType="phishing" itemRef={pRef} existingFp={pFp} onCreated={onFpCreated} />}
+                </div>
               </div>
               <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                 {p.targetBrand && <span><span className="font-medium text-foreground/70">Target:</span> {p.targetBrand}</span>}
@@ -404,7 +416,7 @@ function PhishingTab({ phishing, brandAbuse = [] }: { phishing: any[]; brandAbus
                 </a>
               </div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
 
@@ -419,8 +431,11 @@ function PhishingTab({ phishing, brandAbuse = [] }: { phishing: any[]; brandAbus
             These domains resolved to real IP addresses during the scan. They mimic your brand and may be used for phishing campaigns.
             Check VirusTotal and abuse.ch for current threat classification.
           </div>
-          {lookalikeLive.map((a: any) => (
-            <div key={a.id ?? a.url} className="bg-card border border-orange-500/20 rounded-xl p-4 space-y-2">
+          {lookalikeLive.map((a: any) => {
+            const aRef = a.url ?? a.title ?? String(a.id);
+            const aFp = falsePositives.find(fp => fp.item_type === "lookalike_phishing" && fp.item_ref === aRef);
+            return (
+            <div key={a.id ?? a.url} className={cn("bg-card border border-orange-500/20 rounded-xl p-4 space-y-2", aFp?.status === "confirmed" && "opacity-50")}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <AlertTriangle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
@@ -431,9 +446,12 @@ function PhishingTab({ phishing, brandAbuse = [] }: { phishing: any[]; brandAbus
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full font-semibold shrink-0">
-                  Live Domain
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full font-semibold">
+                    Live Domain
+                  </span>
+                  {scanId && <FalsePositiveButton scanId={scanId} itemType="lookalike_phishing" itemRef={aRef} existingFp={aFp} onCreated={onFpCreated} />}
+                </div>
               </div>
               {a.description && (
                 <p className="text-xs text-muted-foreground">{a.description}</p>
@@ -456,14 +474,19 @@ function PhishingTab({ phishing, brandAbuse = [] }: { phishing: any[]; brandAbus
                 </a>
               </div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
     </div>
   );
 }
 
-function DataLeaksTab({ leaks }: { leaks: any[] }) {
+function DataLeaksTab({ leaks, scanId, falsePositives = [], onFpCreated }: {
+  leaks: any[];
+  scanId?: number;
+  falsePositives?: any[];
+  onFpCreated?: () => void;
+}) {
   if (!leaks.length) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -491,8 +514,10 @@ function DataLeaksTab({ leaks }: { leaks: any[] }) {
       {leaks.map((leak: any) => {
         const sev = SEV_META[leak.severity] ?? SEV_META.low;
         const dataClasses: string[] = Array.isArray(leak.exposedData) ? leak.exposedData : [];
+        const lRef = leak.title ?? String(leak.id);
+        const lFp = falsePositives.find(fp => fp.item_type === "data_leak" && fp.item_ref === lRef);
         return (
-          <div key={leak.id} className={cn("bg-card border rounded-xl p-4 space-y-3", sev.border)}>
+          <div key={leak.id} className={cn("bg-card border rounded-xl p-4 space-y-3", sev.border, lFp?.status === "confirmed" && "opacity-50")}>
             <div className="flex items-start justify-between gap-2">
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -511,11 +536,14 @@ function DataLeaksTab({ leaks }: { leaks: any[] }) {
                   <p className="text-[11px] text-muted-foreground mt-0.5 ml-5">Domain: {leak.domainMatch}</p>
                 )}
               </div>
-              {leak.breachDate && (
-                <span className="text-[11px] text-muted-foreground flex items-center gap-1 shrink-0">
-                  <Calendar className="w-3 h-3" /> {leak.breachDate}
-                </span>
-              )}
+              <div className="flex items-center gap-2 shrink-0">
+                {leak.breachDate && (
+                  <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <Calendar className="w-3 h-3" /> {leak.breachDate}
+                  </span>
+                )}
+                {scanId && <FalsePositiveButton scanId={scanId} itemType="data_leak" itemRef={lRef} existingFp={lFp} onCreated={onFpCreated} />}
+              </div>
             </div>
             {leak.description && (
               <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{leak.description}</p>
@@ -1329,7 +1357,13 @@ const AD_RISK_META: Record<string, { label: string; color: string; bg: string; b
   low:      { label: "Low",      color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30" },
 };
 
-function MaliciousAdsTab({ ads, hasMetaToken }: { ads: any[]; hasMetaToken?: boolean }) {
+function MaliciousAdsTab({ ads, hasMetaToken, scanId, falsePositives = [], onFpCreated }: {
+  ads: any[];
+  hasMetaToken?: boolean;
+  scanId?: number;
+  falsePositives?: any[];
+  onFpCreated?: () => void;
+}) {
   const highRisk = ads.filter((a: any) => a.risk === "critical" || a.risk === "high").length;
   if (ads.length === 0) {
     return (
@@ -1370,8 +1404,10 @@ function MaliciousAdsTab({ ads, hasMetaToken }: { ads: any[]; hasMetaToken?: boo
       <div className="space-y-3">
         {ads.map((ad: any, i: number) => {
           const risk = AD_RISK_META[ad.risk as string] ?? AD_RISK_META.medium;
+          const adRef = String(ad.id ?? ad.adId ?? i);
+          const adFp = falsePositives.find(fp => fp.item_type === "malicious_ad" && fp.item_ref === adRef);
           return (
-            <div key={ad.id ?? i} className={cn("rounded-xl border p-4 space-y-3", risk.bg, risk.border)}>
+            <div key={ad.id ?? i} className={cn("rounded-xl border p-4 space-y-3", risk.bg, risk.border, adFp?.status === "confirmed" && "opacity-50")}>
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -1401,16 +1437,19 @@ function MaliciousAdsTab({ ads, hasMetaToken }: { ads: any[]; hasMetaToken?: boo
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed line-clamp-3">{ad.body}</p>
                   )}
                 </div>
-                {ad.snapshotUrl && (
-                  <a
-                    href={ad.snapshotUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors shrink-0"
-                  >
-                    <ExternalLink className="w-3 h-3" /> View Ad
-                  </a>
-                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {ad.snapshotUrl && (
+                    <a
+                      href={ad.snapshotUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3" /> View Ad
+                    </a>
+                  )}
+                  {scanId && <FalsePositiveButton scanId={scanId} itemType="malicious_ad" itemRef={adRef} existingFp={adFp} onCreated={onFpCreated} />}
+                </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                 {ad.advertiserName && (
@@ -2424,33 +2463,34 @@ export default function BrandThreatDetailPage() {
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       {s.status === "done" && (
         <div className="px-6 pt-4 shrink-0">
-          <div className="flex items-center gap-1 bg-muted/30 rounded-xl p-1 w-fit">
-            {TABS.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all",
-                  activeTab === tab.id
-                    ? "bg-card shadow-sm text-foreground border border-border"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                )}
-              >
-                <span className={cn(activeTab === tab.id ? "text-primary" : "text-muted-foreground", tab.color && activeTab !== tab.id ? tab.color : "")}>
-                  {tab.icon}
-                </span>
-                {tab.label}
-                {tab.count !== undefined && (
-                  <span className={cn(
-                    "text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center",
-                    activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
-                    tab.color && tab.count > 0 ? "bg-current/10" : "",
-                  )}>
-                    {tab.count}
+          <div className="overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-1 bg-muted/30 rounded-xl p-1 w-max min-w-full">
+              {TABS.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap shrink-0",
+                    activeTab === tab.id
+                      ? "bg-card shadow-sm text-foreground border border-border"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  )}
+                >
+                  <span className={cn(activeTab === tab.id ? "text-primary" : "text-muted-foreground", tab.color && activeTab !== tab.id ? tab.color : "")}>
+                    {tab.icon}
                   </span>
-                )}
-              </button>
-            ))}
+                  {tab.label}
+                  {tab.count !== undefined && (
+                    <span className={cn(
+                      "text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center",
+                      activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+                    )}>
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -2461,14 +2501,14 @@ export default function BrandThreatDetailPage() {
         {/* ── PHISHING tab ── */}
         {activeTab === "phishing" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <PhishingTab phishing={phishingDetections} brandAbuse={brandAbuse} />
+            <PhishingTab phishing={phishingDetections} brandAbuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
         {/* ── DATA LEAKS tab ── */}
         {activeTab === "data_leaks" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <DataLeaksTab leaks={dataLeaks} />
+            <DataLeaksTab leaks={dataLeaks} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
@@ -2496,7 +2536,7 @@ export default function BrandThreatDetailPage() {
         {/* ── MALICIOUS ADS tab ── */}
         {activeTab === "malicious_ads" && s.status === "done" && (
           <div className="h-full overflow-y-auto">
-            <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} />
+            <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 

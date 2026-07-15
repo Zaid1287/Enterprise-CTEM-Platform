@@ -56,3 +56,4 @@
 - [assigned_client_id is a user ID not tenant ID](assigned-client-id-mapping.md) — assets.assigned_client_id stores a user ID; resolve to tenant via userTenantMap = new Map(allUsers.map(u=>[u.id,u.tenantId])). Never compare a.assignedClientId === t.id (tenant ID).
 - [Pipeline scan bugs and fixes](pipeline-scan-bugs.md) — Phase 3 needs 10-min timeout; endpoint findings need body-verification; finalizeScannedAssets must be awaited; auto-mitigation default=2 not 3.
 - [Admin user management parity](admin-user-mgmt-parity.md) — admin needs isAdminOrSA (not isSuperAdmin) for Tenant ID field + handleSave; platform admin bypasses parentTenantId check.
+- [dnstwist DNS resolver sandboxed](dnstwist-dns-sandbox.md) — dnstwist binary runs fine in Replit but its internal DNS resolver is blocked; all permutations return empty dns_a/mx/ns. Fix: after runDnstwistBinary(), enrich zero-DNS results via Node.js checkDNSFull() with 20 concurrent workers.

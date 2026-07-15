@@ -250,15 +250,41 @@ async function runBuiltinEngine(domain: string): Promise<PermResult[]> {
 }
 
 async function scanPermutations(domain: string): Promise<PermResult[]> {
+  let results: PermResult[];
   try {
     logger.info({ domain }, "Running dnstwist binary for brand threat scan");
-    const results = await runDnstwistBinary(domain);
-    logger.info({ domain, count: results.length }, "dnstwist completed");
-    return results;
+    results = await runDnstwistBinary(domain);
+    logger.info({ domain, count: results.length }, "dnstwist permutations done, enriching DNS via Node.js");
   } catch (err) {
     logger.warn({ err, domain }, "dnstwist binary unavailable — falling back to built-in engine");
     return runBuiltinEngine(domain);
   }
+
+  // dnstwist's own DNS resolver is blocked in this environment.
+  // Re-resolve every permutation that came back empty using the Node.js dns module
+  // (which uses the system resolver and works correctly).
+  const toEnrich = results.filter(r =>
+    r.dnsA.length === 0 && r.dnsAaaa.length === 0 && r.dnsMx.length === 0 && r.dnsNs.length === 0,
+  );
+  if (toEnrich.length > 0) {
+    logger.info({ domain, count: toEnrich.length }, "Node.js DNS enrichment starting");
+    const queue = [...toEnrich];
+    async function enrichWorker() {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (!item) break;
+        const resolved = await checkDNSFull(item.permutation);
+        item.dnsA    = resolved.dnsA;
+        item.dnsAaaa = resolved.dnsAaaa;
+        item.dnsMx   = resolved.dnsMx;
+        item.dnsNs   = resolved.dnsNs;
+      }
+    }
+    await Promise.all(Array.from({ length: 20 }, () => enrichWorker()));
+    const live = results.filter(r => r.dnsA.length > 0).length;
+    logger.info({ domain, live }, "Node.js DNS enrichment complete");
+  }
+  return results;
 }
 
 // ── Risk scoring ───────────────────────────────────────────────────────────────
