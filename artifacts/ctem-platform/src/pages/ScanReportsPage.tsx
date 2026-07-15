@@ -7,7 +7,7 @@ import {
 import {
   Zap, Shield, Network, AlertTriangle, CheckCircle2, Clock,
   Loader2, XCircle, Search, Filter, ExternalLink, RefreshCw,
-  Calendar, Timer, Database,
+  Calendar, Timer, Database, ChevronsLeft, ChevronsRight, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -301,16 +301,76 @@ export default function ScanReportsPage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-1">
+        <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
           <p className="text-xs text-muted-foreground">
             Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} scans
           </p>
           <div className="flex items-center gap-1">
-            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</Button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-              <Button key={p} size="sm" variant={p === page ? "default" : "outline"} className="h-7 w-7 p-0 text-xs" onClick={() => setPage(p)}>{p}</Button>
-            ))}
-            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>›</Button>
+            {/* Go to first */}
+            <Button
+              size="sm" variant="outline" className="h-7 w-7 p-0"
+              disabled={page === 1} onClick={() => setPage(1)}
+              title="First page"
+            >
+              <ChevronsLeft className="w-3.5 h-3.5" />
+            </Button>
+            {/* Previous */}
+            <Button
+              size="sm" variant="outline" className="h-7 w-7 p-0"
+              disabled={page === 1} onClick={() => setPage(p => p - 1)}
+              title="Previous page"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </Button>
+
+            {/* Smart page numbers */}
+            {(() => {
+              const SIBLING = 2;
+              const pages: (number | "...")[] = [];
+              const rangeStart = Math.max(2, page - SIBLING);
+              const rangeEnd   = Math.min(totalPages - 1, page + SIBLING);
+
+              pages.push(1);
+              if (rangeStart > 2) pages.push("...");
+              for (let i = rangeStart; i <= rangeEnd; i++) pages.push(i);
+              if (rangeEnd < totalPages - 1) pages.push("...");
+              if (totalPages > 1) pages.push(totalPages);
+
+              return pages.map((p, idx) =>
+                p === "..." ? (
+                  <span key={`ellipsis-${idx}`} className="h-7 w-6 flex items-center justify-center text-xs text-muted-foreground select-none">
+                    …
+                  </span>
+                ) : (
+                  <Button
+                    key={p}
+                    size="sm"
+                    variant={p === page ? "default" : "outline"}
+                    className="h-7 w-7 p-0 text-xs"
+                    onClick={() => setPage(p)}
+                  >
+                    {p}
+                  </Button>
+                )
+              );
+            })()}
+
+            {/* Next */}
+            <Button
+              size="sm" variant="outline" className="h-7 w-7 p-0"
+              disabled={page === totalPages} onClick={() => setPage(p => p + 1)}
+              title="Next page"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Button>
+            {/* Go to last */}
+            <Button
+              size="sm" variant="outline" className="h-7 w-7 p-0"
+              disabled={page === totalPages} onClick={() => setPage(totalPages)}
+              title="Last page"
+            >
+              <ChevronsRight className="w-3.5 h-3.5" />
+            </Button>
           </div>
         </div>
       )}
