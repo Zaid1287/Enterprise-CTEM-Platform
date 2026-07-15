@@ -250,7 +250,7 @@ router.get("/brand-threats/:id", requireAuth, async (req: AuthenticatedRequest, 
       scanRounds[bucket] = { archivedAt: r.archivedAt.toISOString(), total: 0, registered: 0, phishing: 0, highRisk: 0 };
     }
     scanRounds[bucket]!.total++;
-    if (r.registrationStatus === "registered" || r.registrationStatus === "active") scanRounds[bucket]!.registered++;
+    if (["registered", "active", "parked"].includes(r.registrationStatus ?? "")) scanRounds[bucket]!.registered++;
     if (r.isPhishing) scanRounds[bucket]!.phishing++;
     if ((r.riskScore ?? 0) >= 60) scanRounds[bucket]!.highRisk++;
   }

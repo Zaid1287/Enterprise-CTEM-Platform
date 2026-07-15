@@ -247,30 +247,38 @@ function NewScanModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
 function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
   scan: any; onDelete: (id: number) => void; onView: (id: number) => void; onRetry: (id: number) => void; deleting: boolean; retrying: boolean;
 }) {
-  const status = STATUS_CONFIG[scan.status] ?? STATUS_CONFIG.pending;
-  const risk   = RISK_META[scan.phishingRisk] ?? RISK_META.low;
-  const liveCount = scan.liveCount ?? 0;
-  const mxCount   = scan.registeredCount ?? 0;
-  const isActive  = scan.status === "running" || scan.status === "pending";
+  const status     = STATUS_CONFIG[scan.status] ?? STATUS_CONFIG.pending;
+  const risk       = RISK_META[scan.phishingRisk] ?? RISK_META.low;
+  const liveCount  = scan.liveCount ?? 0;
+  const isActive   = scan.status === "running" || scan.status === "pending";
+  const isDone     = scan.status === "done";
+  const isCritical = isDone && scan.phishingRisk === "critical";
+  const isHigh     = isDone && scan.phishingRisk === "high";
+  const isMedium   = isDone && scan.phishingRisk === "medium";
+  const hasStats   = isDone || (scan.status === "error" && (liveCount > 0 || (scan.phishingCount ?? 0) > 0 || (scan.dataLeakCount ?? 0) > 0 || (scan.brandAbuseCount ?? 0) > 0));
 
   return (
     <div className={cn(
-      "bg-card border rounded-2xl overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5",
-      isActive ? "border-blue-500/30" : "border-border",
+      "bg-card border rounded-2xl overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5 flex flex-col",
+      isActive   ? "border-blue-500/30" :
+      isCritical ? "border-red-500/40 shadow-[0_0_20px_-4px_rgba(239,68,68,0.15)]" :
+      isHigh     ? "border-orange-500/30" :
+      "border-border",
     )}>
-      {/* Card top strip — risk color */}
+      {/* Accent bar — thicker gradient for critical, solid for others */}
       <div className={cn(
-        "h-1 w-full",
-        scan.status === "done" ? (
-          scan.phishingRisk === "critical" ? "bg-red-500" :
-          scan.phishingRisk === "high"     ? "bg-orange-500" :
-          scan.phishingRisk === "medium"   ? "bg-yellow-500" : "bg-green-500"
+        "h-1.5 w-full shrink-0",
+        isDone ? (
+          isCritical ? "bg-gradient-to-r from-red-600 via-red-500 to-orange-500" :
+          isHigh     ? "bg-orange-500" :
+          isMedium   ? "bg-yellow-500" : "bg-green-500"
         ) : isActive ? "bg-blue-500 animate-pulse" : "bg-muted"
       )} />
 
-      <div className="p-5">
-        {/* Header row */}
-        <div className="flex items-start justify-between gap-2 mb-3">
+      <div className="p-5 flex flex-col flex-1 gap-3">
+
+        {/* ── Header ── */}
+        <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -286,108 +294,134 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-muted-foreground mt-1">
+            <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
               {scan.lastScannedAt
                 ? <>Last scanned {formatDate(scan.lastScannedAt)} · First seen {formatDate(scan.createdAt)}</>
                 : formatDate(scan.createdAt)
               }
             </p>
           </div>
-          {/* Status pill */}
           <span className={cn("flex items-center gap-1 text-[11px] font-medium shrink-0", status.color)}>
             {status.icon}
             {status.label}
           </span>
         </div>
 
-        {/* Stats row — shown when done, or when error but has partial data */}
-        {(scan.status === "done" || (scan.status === "error" && ((scan.liveCount ?? 0) > 0 || (scan.phishingCount ?? 0) > 0 || (scan.dataLeakCount ?? 0) > 0 || (scan.brandAbuseCount ?? 0) > 0))) && (
-          <div className={cn("grid gap-2 mb-3", (scan.adMonitoringCount ?? 0) > 0 ? "grid-cols-5" : "grid-cols-4")}>
-            <div className="bg-background rounded-xl p-2.5 text-center">
-              <p className="text-[10px] text-muted-foreground mb-0.5">Live</p>
-              <p className={cn("text-base font-bold tabular-nums", liveCount > 0 ? "text-red-400" : "text-green-400")}>
-                {liveCount}
-              </p>
-            </div>
-            {/* Phishing badge — CRIT color when > 0 */}
+        {/* ── Critical / High threat banner ── */}
+        {(isCritical || isHigh) && (
+          <div className={cn(
+            "rounded-xl px-3.5 py-2.5 flex items-center gap-2.5 border",
+            isCritical
+              ? "bg-red-500/8 border-red-500/30"
+              : "bg-orange-500/8 border-orange-500/25",
+          )}>
             <div className={cn(
-              "rounded-xl p-2.5 text-center border",
-              (scan.phishingCount ?? 0) > 0
-                ? "bg-red-500/10 border-red-500/25"
-                : "bg-background border-transparent",
-            )}>
-              <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
-                <Fish className="w-2.5 h-2.5" /> Phishing
+              "w-2 h-2 rounded-full shrink-0",
+              isCritical ? "bg-red-500 animate-pulse" : "bg-orange-500",
+            )} />
+            <div className="flex-1 min-w-0">
+              <p className={cn("text-xs font-semibold leading-tight", isCritical ? "text-red-400" : "text-orange-400")}>
+                {isCritical ? "Critical Phishing Threat Detected" : "High Phishing Risk Identified"}
               </p>
-              <p className={cn(
-                "text-base font-bold tabular-nums",
-                (scan.phishingCount ?? 0) > 0 ? "text-red-400" : "text-muted-foreground/50",
-              )}>
-                {scan.phishingCount ?? 0}
-              </p>
-            </div>
-            {/* Data leaks badge — HIGH color when > 0 */}
-            <div className={cn(
-              "rounded-xl p-2.5 text-center border",
-              (scan.dataLeakCount ?? 0) > 0
-                ? "bg-orange-500/10 border-orange-500/25"
-                : "bg-background border-transparent",
-            )}>
-              <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
-                <Database className="w-2.5 h-2.5" /> Leaks
-              </p>
-              <p className={cn(
-                "text-base font-bold tabular-nums",
-                (scan.dataLeakCount ?? 0) > 0 ? "text-orange-400" : "text-muted-foreground/50",
-              )}>
-                {scan.dataLeakCount ?? 0}
+              <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                {isCritical
+                  ? `${liveCount > 0 ? `${liveCount} live domain${liveCount !== 1 ? "s" : ""} actively impersonating` : "Active threat actors targeting"} this brand`
+                  : `${liveCount > 0 ? `${liveCount} live suspicious domain${liveCount !== 1 ? "s" : ""} detected` : "Elevated threat indicators found"}`
+                }
               </p>
             </div>
-            {/* Brand abuse badge — MED color when > 0 */}
-            <div className={cn(
-              "rounded-xl p-2.5 text-center border",
-              (scan.brandAbuseCount ?? 0) > 0
-                ? "bg-yellow-500/10 border-yellow-500/25"
-                : "bg-background border-transparent",
-            )}>
-              <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
-                <Target className="w-2.5 h-2.5" /> Abuse
-              </p>
-              <p className={cn(
-                "text-base font-bold tabular-nums",
-                (scan.brandAbuseCount ?? 0) > 0 ? "text-yellow-400" : "text-muted-foreground/50",
-              )}>
-                {scan.brandAbuseCount ?? 0}
-              </p>
-            </div>
-            {/* Malicious ads badge — only shown when > 0 */}
-            {(scan.adMonitoringCount ?? 0) > 0 && (
-              <div className="rounded-xl p-2.5 text-center border bg-purple-500/10 border-purple-500/25">
-                <p className="text-[10px] text-muted-foreground mb-0.5 flex items-center justify-center gap-0.5">
-                  <Megaphone className="w-2.5 h-2.5" /> Mal. Ads
-                </p>
-                <p className="text-base font-bold tabular-nums text-purple-400">
-                  {scan.adMonitoringCount}
-                </p>
-              </div>
-            )}
+            <ShieldAlert className={cn("w-4 h-4 shrink-0", isCritical ? "text-red-400" : "text-orange-400")} />
           </div>
         )}
 
-        {/* Running progress */}
+        {/* ── Stats grid ── */}
+        {hasStats && (
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              {
+                icon: <Activity className="w-2.5 h-2.5" />,
+                label: "Live",
+                value: liveCount,
+                positive: liveCount > 0,
+                activeColor: "text-red-400",
+                activeBg: "bg-red-500/8 border-red-500/20",
+              },
+              {
+                icon: <Fish className="w-2.5 h-2.5" />,
+                label: "Phishing",
+                value: scan.phishingCount ?? 0,
+                positive: (scan.phishingCount ?? 0) > 0,
+                activeColor: "text-red-500",
+                activeBg: "bg-red-500/10 border-red-500/25",
+              },
+              {
+                icon: <Globe className="w-2.5 h-2.5" />,
+                label: "Registered",
+                value: scan.registeredCount ?? 0,
+                positive: (scan.registeredCount ?? 0) > 0,
+                activeColor: "text-orange-400",
+                activeBg: "bg-orange-500/8 border-orange-500/20",
+              },
+              {
+                icon: <Database className="w-2.5 h-2.5" />,
+                label: "Leaks",
+                value: scan.dataLeakCount ?? 0,
+                positive: (scan.dataLeakCount ?? 0) > 0,
+                activeColor: "text-yellow-400",
+                activeBg: "bg-yellow-500/8 border-yellow-500/20",
+              },
+              {
+                icon: <Target className="w-2.5 h-2.5" />,
+                label: "Abuse",
+                value: scan.brandAbuseCount ?? 0,
+                positive: (scan.brandAbuseCount ?? 0) > 0,
+                activeColor: "text-yellow-500",
+                activeBg: "bg-yellow-500/10 border-yellow-500/25",
+              },
+              {
+                icon: <Megaphone className="w-2.5 h-2.5" />,
+                label: "Mal. Ads",
+                value: scan.adMonitoringCount ?? 0,
+                positive: (scan.adMonitoringCount ?? 0) > 0,
+                activeColor: "text-violet-400",
+                activeBg: "bg-violet-500/10 border-violet-500/25",
+              },
+            ].map(item => (
+              <div key={item.label} className={cn(
+                "rounded-xl p-2.5 text-center border transition-colors",
+                item.positive ? item.activeBg : "bg-background/60 border-border/50",
+              )}>
+                <p className={cn(
+                  "text-[10px] mb-0.5 flex items-center justify-center gap-0.5",
+                  item.positive ? "text-muted-foreground" : "text-muted-foreground/60",
+                )}>
+                  {item.icon} {item.label}
+                </p>
+                <p className={cn(
+                  "text-base font-bold tabular-nums",
+                  item.positive ? item.activeColor : "text-muted-foreground/40",
+                )}>
+                  {item.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Running progress ── */}
         {isActive && (
-          <div className="mb-4 bg-blue-500/5 border border-blue-500/20 rounded-xl p-3">
+          <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-3">
             <div className="flex items-center gap-2.5 mb-2">
               <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-blue-400">Full intelligence scan in progress</p>
+                <p className="text-xs font-medium text-blue-400">Intelligence scan in progress</p>
                 <p className="text-[10px] text-muted-foreground truncate">
                   {scan.totalPermutations > 0
                     ? `${scan.totalPermutations} permutations · RDAP + GeoIP + VT + phishing feeds + HIBP…`
                     : "Generating permutations + running intelligence engines…"}
                 </p>
               </div>
-              <span className="text-[11px] font-semibold text-blue-400 shrink-0">{scan.progress ?? 0}%</span>
+              <span className="text-[11px] font-bold text-blue-400 shrink-0 tabular-nums">{scan.progress ?? 0}%</span>
             </div>
             <div className="w-full bg-blue-500/10 rounded-full h-1.5 overflow-hidden">
               <div
@@ -398,23 +432,23 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
           </div>
         )}
 
-        {/* Error */}
+        {/* ── Error ── */}
         {scan.status === "error" && (() => {
           const isTimeout = scan.error?.toLowerCase().includes("timed out");
           return (
-            <div className="mb-4 bg-red-500/5 border border-red-500/20 rounded-xl p-3 space-y-2">
+            <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-3">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-red-400">
                     {isTimeout ? "Scan timed out" : "Scan failed"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed font-mono">
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed font-mono line-clamp-2">
                     {scan.error ?? "An unexpected error occurred."}
                   </p>
                   {isTimeout && (
-                    <p className="text-[11px] text-muted-foreground/70 mt-1 leading-relaxed">
-                      Click Retry Scan to start a fresh scan for this domain.
+                    <p className="text-[11px] text-muted-foreground/70 mt-1">
+                      Click Retry Scan to start a fresh scan.
                     </p>
                   )}
                 </div>
@@ -423,19 +457,26 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
           );
         })()}
 
-        {/* Footer row */}
-        <div className="flex items-center justify-between gap-2">
-          {scan.status === "done" && scan.phishingRisk ? (
-            <span className={cn(
-              "text-[11px] font-semibold px-2.5 py-1 rounded-full border capitalize",
-              risk.color, risk.bg, risk.border,
+        {/* ── Footer ── */}
+        <div className="flex items-center justify-between gap-2 mt-auto pt-1 border-t border-border/40">
+          {isDone && scan.phishingRisk ? (
+            <div className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border",
+              risk.bg, risk.border,
             )}>
-              {scan.phishingRisk} phishing risk
-            </span>
+              {isCritical ? (
+                <ShieldAlert className={cn("w-3.5 h-3.5 shrink-0", risk.color)} />
+              ) : (
+                <Shield className={cn("w-3 h-3 shrink-0", risk.color)} />
+              )}
+              <span className={cn("text-[11px] font-semibold capitalize", risk.color)}>
+                {scan.phishingRisk} phishing risk
+              </span>
+            </div>
           ) : <div />}
 
           <div className="flex items-center gap-1">
-            {(scan.status === "done" || scan.status === "error") && (
+            {(isDone || scan.status === "error") && (
               <Button size="sm" variant="ghost" onClick={() => onView(scan.id)} className="h-7 text-xs gap-1">
                 View <ChevronRight className="w-3 h-3" />
               </Button>
@@ -448,7 +489,7 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
                 className="h-7 text-xs gap-1 text-red-400 hover:text-red-300"
               >
                 {retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}
-                Retry Scan
+                Retry
               </Button>
             )}
             <Button
@@ -461,6 +502,7 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
             </Button>
           </div>
         </div>
+
       </div>
     </div>
   );
