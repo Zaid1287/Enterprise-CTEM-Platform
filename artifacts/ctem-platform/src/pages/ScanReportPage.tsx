@@ -3387,19 +3387,21 @@ function ParamDiscoveryTab({ paramDiscovery }: { paramDiscovery: any }) {
         ? <EmptyState message="No parameters match the current filter" icon={FileCode} />
         : (
           <div className="rounded-lg border border-border overflow-hidden">
-            <div className="grid grid-cols-[1fr_auto_auto_auto_2fr] gap-0 border-b border-border bg-accent/20 px-3 py-2">
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto_2fr] gap-0 border-b border-border bg-accent/20 px-3 py-2">
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Parameter</span>
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">Source</span>
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">Method</span>
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">Confidence</span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">Status</span>
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2">URL / Context</span>
             </div>
             <div className="divide-y divide-border/40">
               {filtered.slice(0, 500).map((p: any, i: number) => {
                 const catMeta = PARAM_CAT_META[p.category] ?? PARAM_CAT_META.other;
                 const srcMeta = SOURCE_META[p.source] ?? { label: p.source, color: "text-muted-foreground border-border" };
+                const sc = p.statusCode as number | undefined;
                 return (
-                  <div key={i} className="grid grid-cols-[1fr_auto_auto_auto_2fr] gap-0 px-3 py-2 text-xs hover:bg-accent/20 transition-colors items-center">
+                  <div key={i} className="grid grid-cols-[1fr_auto_auto_auto_auto_2fr] gap-0 px-3 py-2 text-xs hover:bg-accent/20 transition-colors items-center">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className={cn("text-[9px] font-bold border rounded px-1 py-0.5 uppercase tracking-wide whitespace-nowrap shrink-0", catMeta.color)}>
                         {catMeta.label}
@@ -3414,6 +3416,21 @@ function ParamDiscoveryTab({ paramDiscovery }: { paramDiscovery: any }) {
                     </div>
                     <div className="px-2">
                       <span className={cn("text-[10px] font-semibold", CONF_COLORS[p.confidence])}>{p.confidence}</span>
+                    </div>
+                    <div className="px-2">
+                      {sc ? (
+                        <span className={cn(
+                          "text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold tabular-nums",
+                          sc >= 200 && sc < 300 ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                          sc >= 300 && sc < 400 ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                          sc === 401 || sc === 403 ? "bg-orange-500/15 text-orange-400 border-orange-500/30" :
+                          sc >= 400 && sc < 500 ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                          sc >= 500 ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                          "bg-accent/30 text-muted-foreground border-border"
+                        )}>{sc}</span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground/40">—</span>
+                      )}
                     </div>
                     <div className="px-2 flex items-center gap-2 min-w-0">
                       <span className="font-mono text-[10px] text-muted-foreground/70 truncate flex-1">{p.url}</span>

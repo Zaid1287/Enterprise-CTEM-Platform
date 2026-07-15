@@ -14,6 +14,7 @@ export interface DiscoveredParam {
   method: "GET" | "POST";
   category: ParamCategory;
   confidence: "high" | "medium" | "low";
+  statusCode?: number;
 }
 
 export interface ParamDiscoveryResult {
@@ -228,12 +229,12 @@ async function crawlForParams(baseUrl: string): Promise<DiscoveredParam[]> {
   const origin = new URL(baseUrl).origin;
   const seen = new Set<string>();
 
-  const addParam = (name: string, url: string, source: "crawl" | "form", method: "GET" | "POST" = "GET", example?: string) => {
+  const addParam = (name: string, url: string, source: "crawl" | "form", method: "GET" | "POST" = "GET", example?: string, statusCode?: number) => {
     if (!name || name.length < 2 || name.length > 60) return;
     const key = `${name}::${source}::${url}`;
     if (seen.has(key)) return;
     seen.add(key);
-    results.push({ name, example, url, source, method, category: categorizeParam(name), confidence: "medium" });
+    results.push({ name, example, url, source, method, category: categorizeParam(name), confidence: "medium", statusCode });
   };
 
   while (queue.length > 0 && visited.size < 20) {
@@ -248,7 +249,17 @@ async function crawlForParams(baseUrl: string): Promise<DiscoveredParam[]> {
       addParam(name, url.split("?")[0], "crawl", "GET", ex);
     }
 
-    const html = await fetchText(url, 10000);
+    // Fetch with status code capture
+    let html: string | null = null;
+    let pageStatus: number | undefined;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
+      const res = await orchestratedFetch(url, { signal: ctrl.signal, headers: { "User-Agent": UA } }, { intensity: "endpoint-discovery" });
+      clearTimeout(t);
+      pageStatus = res.status;
+      if (res.ok) html = await res.text();
+    } catch {}
     if (!html) continue;
 
     // Form inputs (ParamSpider-style)
@@ -262,7 +273,7 @@ async function crawlForParams(baseUrl: string): Promise<DiscoveredParam[]> {
         let ex: string | undefined;
         const valMatch = inputMatch[0].match(/value=['"]([^'"]{0,60})['"]/i);
         if (valMatch) ex = valMatch[1];
-        addParam(name, action, "form", method, ex);
+        addParam(name, action, "form", method, ex, pageStatus);
       }
     }
 
@@ -274,7 +285,7 @@ async function crawlForParams(baseUrl: string): Promise<DiscoveredParam[]> {
       for (const name of parseQueryParams(resolved)) {
         let ex: string | undefined;
         try { ex = new URL(resolved).searchParams.get(name) ?? undefined; } catch {}
-        addParam(name, resolved.split("?")[0], "crawl", "GET", ex);
+        addParam(name, resolved.split("?")[0], "crawl", "GET", ex, pageStatus);
       }
       // Queue new pages on the same domain (strip query)
       const clean = resolved.split("?")[0].split("#")[0];
@@ -370,6 +381,7 @@ async function bruteForceParams(baseUrl: string): Promise<DiscoveredParam[]> {
                 category: categorizeParam(paramName),
                 confidence: singleReflect ? "high" : "medium",
                 example: singleReflect ? PROBE_VALUE : undefined,
+                statusCode: res2.status,
               });
             }
           } catch {}
