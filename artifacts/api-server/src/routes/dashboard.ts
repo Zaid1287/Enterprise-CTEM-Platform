@@ -279,12 +279,10 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   // Count AMs globally — AM users may live on the platform tenant itself
   const amCount = allUsers.filter(u => u.role === "account_manager").length;
 
-  // clientsAtCriticalRisk: distinct tenants that have at least 1 asset at critical risk_level
-  // Uses asset risk_level (set by scans or manually) — more accurate than counting critical findings
-  const tenantsWithCritical = new Set(
-    allAssets.filter(a => a.riskLevel === "critical").map(a => a.tenantId)
-  );
-  const clientsAtCriticalRisk = tenantsWithCritical.size;
+  // criticalRiskAssetCount: total assets at critical risk_level across ALL tenants (global).
+  // Counts individual assets — not organizations — so 2 critical assets → 2, regardless of
+  // which tenant they belong to. Includes assets with risk_level set by scan OR manually.
+  const clientsAtCriticalRisk = allAssets.filter(a => a.riskLevel === "critical").length;
 
   const _dedupedAlerts = allAlerts.filter((a, idx, arr) =>
     a.type !== "tool_update" || arr.findIndex(x => x.title === a.title) === idx
@@ -1160,7 +1158,8 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
     };
   }).sort((a, b) => b.avgRisk - a.avgRisk);
 
-  const criticalClients = clientRiskRankings.filter(c => c.criticalCount > 0 || c.riskLevel === "critical").length;
+  // Count critical-risk ASSETS globally (not organizations) — consistent with SA platform-overview
+  const criticalClients = allAssets.filter(a => a.riskLevel === "critical").length;
 
   const _dedupedAlerts = allAlerts.filter((a, idx, arr) =>
     a.type !== "tool_update" || arr.findIndex(x => x.title === a.title) === idx

@@ -259,7 +259,7 @@ function SuperAdminDashboard() {
             { label: "Total Clients", value: d.tenantCount, color: "text-purple-300" },
             { label: "Account Managers", value: d.amCount, color: "text-blue-300" },
             { label: "Total Assets", value: d.assetCount, color: "text-cyan-300" },
-            { label: "Critical Clients", value: d.clientsAtCriticalRisk, color: "text-red-300" },
+            { label: "Critical Risk Assets", value: d.clientsAtCriticalRisk, color: "text-red-300" },
           ].map(s => (
             <div key={s.label} className="bg-white/5 rounded-xl px-4 py-3 border border-white/10">
               <p className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</p>
@@ -274,7 +274,7 @@ function SuperAdminDashboard() {
         <StatCard label="Total Clients" value={d.tenantCount} icon={Building2}
           sub={`${d.activeTenantCount ?? 0} active`} color="text-purple-400" />
         <StatCard label="Account Managers" value={d.amCount} icon={Users} color="text-blue-400" />
-        <StatCard label="Clients at Critical Risk" value={d.clientsAtCriticalRisk} icon={ShieldAlert}
+        <StatCard label="Critical Risk Assets" value={d.clientsAtCriticalRisk} icon={ShieldAlert}
           color={d.clientsAtCriticalRisk > 0 ? "text-red-400" : "text-green-400"} />
         <StatCard label="Total Client Assets" value={d.assetCount} icon={Server} />
       </div>
@@ -1441,7 +1441,7 @@ function AdminDashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Account Managers" value={d.amCount ?? 0} icon={Users} color="text-blue-400" />
           <StatCard label="Total Clients" value={d.totalClients ?? 0} icon={Building2} color="text-purple-400" />
-          <StatCard label="Critical Clients" value={d.criticalClients ?? 0} icon={ShieldAlert}
+          <StatCard label="Critical Risk Assets" value={d.criticalClients ?? 0} icon={ShieldAlert}
             color={(d.criticalClients ?? 0) > 0 ? "text-red-400" : undefined} />
           <StatCard label="Active Scans" value={d.activeScans ?? 0} icon={Radar} color="text-blue-400" />
         </div>
