@@ -317,6 +317,9 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
     if (q.data.severity) filters.push(eq(alertsTable.severity, q.data.severity));
     if (q.data.read !== undefined) filters.push(eq(alertsTable.isRead, q.data.read));
   }
+  // Type filter — not in generated schema, read directly from query
+  const qType = req.query.type as string | undefined;
+  if (qType) filters.push(eq(alertsTable.type, qType));
 
   // Fetch alerts with tenant name via left join
   const rows = await db

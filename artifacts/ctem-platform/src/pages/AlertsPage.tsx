@@ -51,10 +51,27 @@ const CHANNEL_PLACEHOLDER: Record<string, string> = {
 
 type TestState = { status: "idle" } | { status: "testing" } | { status: "ok"; dest: string } | { status: "error"; msg: string };
 
+// All real alert types from the DB — labels map to stored `type` values
+const ALERT_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "new_finding",           label: "New Finding" },
+  { value: "critical_finding",      label: "Critical Finding" },
+  { value: "high_finding",          label: "High Finding" },
+  { value: "scan_complete",         label: "Scan Complete" },
+  { value: "tool_update",           label: "Tool Update" },
+  { value: "brand_threat",          label: "Brand Threat Scan" },
+  { value: "brand_abuse_found",     label: "Brand Abuse" },
+  { value: "shadow_it_discovered",  label: "Shadow IT Discovered" },
+  { value: "phishing_detected",     label: "Phishing Detected" },
+  { value: "data_leak_found",       label: "Data Leak" },
+  { value: "tprm_vendor_risk_change", label: "TPRM Risk Change" },
+  { value: "orchestrator_event",    label: "Orchestrator" },
+];
+
 export default function AlertsPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [severityFilter, setSeverityFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const [archivePage, setArchivePage] = useState(0);
   const { user } = useAuth();
@@ -127,7 +144,8 @@ export default function AlertsPage() {
 
   const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
   const alertParams = {
-    severity: severityFilter || undefined,
+    severity:  severityFilter || undefined,
+    type:      typeFilter      || undefined,
     ...(isPrivileged && tenantFilter ? { tenantId: tenantFilter } : {}),
   };
   const { data: alerts, isLoading } = useListAlerts(alertParams as any, {
@@ -214,26 +232,99 @@ export default function AlertsPage() {
   const archivedAlerts = alertList.filter((a: any) => a.isRead);
   const unreadCount = unreadAlerts.length;
 
-  const filteredUnread = severityFilter
-    ? unreadAlerts.filter((a: any) => a.severity === severityFilter)
-    : unreadAlerts;
-  const filteredArchive = severityFilter
-    ? archivedAlerts.filter((a: any) => a.severity === severityFilter)
-    : archivedAlerts;
+  // Client-side fallback filtering (backend already filters by severity + type,
+  // but we also filter here so the counts stay accurate before next refetch)
+  const filteredUnread = unreadAlerts
+    .filter((a: any) => !severityFilter || a.severity === severityFilter)
+    .filter((a: any) => !typeFilter    || a.type     === typeFilter);
+  const filteredArchive = archivedAlerts
+    .filter((a: any) => !severityFilter || a.severity === severityFilter)
+    .filter((a: any) => !typeFilter    || a.type     === typeFilter);
 
   const archiveTotalPages = Math.max(1, Math.ceil(filteredArchive.length / ARCHIVE_PAGE_SIZE));
   const archivePaged = filteredArchive.slice(archivePage * ARCHIVE_PAGE_SIZE, (archivePage + 1) * ARCHIVE_PAGE_SIZE);
 
+  const hasActiveFilters = severityFilter || typeFilter || tenantFilter;
+
+  const resetFilters = () => {
+    setSeverityFilter("");
+    setTypeFilter("");
+    setTenantFilter(null);
+    setArchivePage(0);
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-semibold">Alerts</h1>
           <p className="text-sm text-muted-foreground">
             {unreadCount} unread · {archivedAlerts.length} archived
           </p>
         </div>
-        {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setArchivePage(0); }} />}
+      </div>
+
+      {/* ── Unified filter bar ─────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2 bg-card border border-border rounded-xl px-3 py-2.5">
+        {/* Client / Tenant filter (privileged only) */}
+        {isPrivileged && (
+          <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setArchivePage(0); }} />
+        )}
+
+        {/* Severity filter */}
+        <Select value={severityFilter || "_all_"} onValueChange={(v) => { setSeverityFilter(v === "_all_" ? "" : v); setArchivePage(0); }}>
+          <SelectTrigger className="w-36 h-7 text-xs">
+            <SelectValue placeholder="All Severity" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="_all_">All Severity</SelectItem>
+            <SelectItem value="critical">Critical</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="info">Info</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Alert type filter */}
+        <Select value={typeFilter || "_all_"} onValueChange={(v) => { setTypeFilter(v === "_all_" ? "" : v); setArchivePage(0); }}>
+          <SelectTrigger className="w-48 h-7 text-xs">
+            <SelectValue placeholder="All Types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="_all_">All Types</SelectItem>
+            {ALERT_TYPE_OPTIONS.map(o => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Active filter chips + clear */}
+        {hasActiveFilters && (
+          <div className="flex items-center gap-1.5 ml-auto">
+            {severityFilter && (
+              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/25 font-medium">
+                {severityFilter}
+                <button onClick={() => setSeverityFilter("")} className="hover:text-foreground transition-colors"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            )}
+            {typeFilter && (
+              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/25 font-medium">
+                {ALERT_TYPE_OPTIONS.find(o => o.value === typeFilter)?.label ?? typeFilter}
+                <button onClick={() => setTypeFilter("")} className="hover:text-foreground transition-colors"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            )}
+            {tenantFilter && (
+              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25 font-medium">
+                Tenant #{tenantFilter}
+                <button onClick={() => setTenantFilter(null)} className="hover:text-foreground transition-colors"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            )}
+            <button onClick={resetFilters} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors ml-1 underline underline-offset-2">
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
 
       <Tabs defaultValue="inbox">
@@ -262,16 +353,6 @@ export default function AlertsPage() {
         {/* ── Inbox — unread alerts ─────────────────────────────── */}
         <TabsContent value="inbox" className="space-y-3 mt-3">
           <div className="flex gap-2 items-center">
-            <Select value={severityFilter || "_all_"} onValueChange={(v) => setSeverityFilter(v === "_all_" ? "" : v)}>
-              <SelectTrigger className="w-32 h-7 text-xs"><SelectValue placeholder="All severity" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_all_">All</SelectItem>
-                <SelectItem value="critical">Critical</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-              </SelectContent>
-            </Select>
             {unreadCount > 0 && (
               <Button
                 variant="outline" size="sm" className="h-7 text-xs"
@@ -406,21 +487,10 @@ export default function AlertsPage() {
 
         {/* ── Archive — read alerts with pagination ────────────── */}
         <TabsContent value="archive" className="space-y-3 mt-3">
-          <div className="flex gap-2 items-center justify-between">
-            <Select value={severityFilter || "_all_"} onValueChange={(v) => { setSeverityFilter(v === "_all_" ? "" : v); setArchivePage(0); }}>
-              <SelectTrigger className="w-32 h-7 text-xs"><SelectValue placeholder="All severity" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_all_">All</SelectItem>
-                <SelectItem value="critical">Critical</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              {filteredArchive.length} archived alert{filteredArchive.length !== 1 ? "s" : ""}
-            </p>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            {filteredArchive.length} archived alert{filteredArchive.length !== 1 ? "s" : ""}
+            {hasActiveFilters ? " (filtered)" : ""}
+          </p>
 
           {isLoading && [...Array(4)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
 
