@@ -241,7 +241,7 @@ export default function RiskPage() {
                 </tr>
               ))}
               {!isLoading && [...list].sort((a: any, b: any) => b.score - a.score).map((s: any) => (
-                <tr key={s.id} className="border-b border-border/50 hover:bg-accent/30">
+                <tr key={s.assetId} className="border-b border-border/50 hover:bg-accent/30">
                   <td className="px-4 py-2.5 text-sm font-medium max-w-[140px] truncate">{s.assetName}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
@@ -260,7 +260,7 @@ export default function RiskPage() {
                   <td className="px-3 py-2.5 text-xs tabular-nums text-right text-muted-foreground">{(s.businessImpactComponent ?? 0).toFixed(1)}</td>
                   <td className="px-3 py-2.5 text-xs tabular-nums text-right text-muted-foreground">{(s.criticalityBonus ?? 0).toFixed(0)}</td>
                   <td className="px-3 py-2.5 text-xs tabular-nums text-right text-muted-foreground">{(s.exposureBonus ?? 0).toFixed(1)}</td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{new Date(s.updatedAt).toLocaleDateString()}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : "—"}</td>
                 </tr>
               ))}
               {!isLoading && list.length === 0 && (

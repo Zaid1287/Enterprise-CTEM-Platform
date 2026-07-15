@@ -44,26 +44,39 @@ router.get("/risk/scores", requireAuth, async (req: AuthenticatedRequest, res): 
   const whereClause = await buildAssetFilter(req);
   if (whereClause === null) { res.json([]); return; }
 
-  const scores = await db.select({
-    score: riskScoresTable,
-    assetName: assetsTable.name,
-    assetType: assetsTable.type,
-  }).from(riskScoresTable)
-    .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
-    .where(whereClause);
+  // Start from assetsTable so assets with risk_level set but no risk_scores entry
+  // (i.e. never scanned) still appear — they get score=0 and level from assets.risk_level.
+  const assets = await db.select().from(assetsTable).where(whereClause);
+  const assetIds = assets.map(a => a.id);
+  const scores = assetIds.length > 0
+    ? await db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+    : [];
 
-  res.json(scores.map(({ score, assetName, assetType }) => ({
-    id: score.id, assetId: score.assetId, assetName: assetName ?? "Unknown",
-    assetType: assetType ?? null,
-    score: score.score, level: score.level,
-    cvssComponent: score.cvssComponent,
-    epssComponent: score.epssComponent,
-    kevBonus: score.kevBonus,
-    criticalityBonus: score.criticalityBonus,
-    exposureBonus: score.exposureBonus,
-    businessImpactComponent: score.businessImpactComponent,
-    updatedAt: score.updatedAt.toISOString(),
-  })));
+  const rsMap = new Map(scores.map(r => [r.assetId, r]));
+
+  const result = assets
+    .filter(a => rsMap.has(a.id) || a.riskLevel !== null)
+    .map(a => {
+      const rs = rsMap.get(a.id);
+      return {
+        id: rs?.id ?? null,
+        assetId: a.id,
+        assetName: a.name ?? "Unknown",
+        assetType: a.type ?? null,
+        score: rs?.score ?? 0,
+        level: rs?.level ?? a.riskLevel ?? "low",
+        cvssComponent: rs?.cvssComponent ?? null,
+        epssComponent: rs?.epssComponent ?? null,
+        kevBonus: rs?.kevBonus ?? null,
+        criticalityBonus: rs?.criticalityBonus ?? null,
+        exposureBonus: rs?.exposureBonus ?? null,
+        businessImpactComponent: rs?.businessImpactComponent ?? null,
+        updatedAt: rs?.updatedAt?.toISOString() ?? null,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  res.json(result);
 });
 
 // ── GET /risk/scores/:assetId ────────────────────────────────────────────────
