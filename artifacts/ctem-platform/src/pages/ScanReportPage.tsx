@@ -12,7 +12,7 @@ import {
   ChevronLeft, ChevronDown, ChevronRight, Shield, Globe, Network, AlertTriangle, Server,
   Database, Search, Cpu, Eye, CheckCircle2, XCircle, AlertCircle,
   Info, ExternalLink, Terminal, Wifi, Square, Loader2, Clock, Key,
-  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud, GitBranch, Github, FolderOpen, Filter, Zap, Wrench,
+  Lock, Fingerprint, Download, Camera, X, Tag, Code, FileCode, ShieldAlert, Cloud, GitBranch, Github, FolderOpen, Filter, Zap, Wrench, Copy, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -3057,6 +3057,42 @@ const BUCKET_STATUS_META: Record<string, { label: string; color: string }> = {
   error:           { label: "ERROR",             color: "bg-accent/30 text-muted-foreground/60 border-border" },
 };
 
+// ── SSRF Variant Row (copy-to-clipboard per row) ──────────────────────────────
+function SsrfVariantRow({ index, url }: { index: number; url: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }).catch(() => {});
+  };
+  return (
+    <div className="grid grid-cols-[28px_1fr_auto_auto] gap-0 px-3 py-1.5 hover:bg-accent/15 transition-colors items-center group">
+      {/* Row number */}
+      <span className="text-[9px] text-muted-foreground/40 font-mono tabular-nums select-none">{index + 1}</span>
+      {/* URL */}
+      <code className="font-mono text-[10px] text-foreground/75 break-all leading-relaxed pr-2">{url}</code>
+      {/* Status badge — always "—" since these are link-local, not externally probeable */}
+      <span className="text-[10px] font-mono border rounded px-1.5 py-0.5 mx-2 shrink-0 bg-accent/30 text-muted-foreground/50 border-border tabular-nums whitespace-nowrap">
+        Status: —
+      </span>
+      {/* Copy button */}
+      <button
+        onClick={handleCopy}
+        title="Copy URL"
+        className={cn(
+          "shrink-0 flex items-center justify-center w-6 h-6 rounded border transition-all",
+          copied
+            ? "bg-green-500/15 border-green-500/40 text-green-400"
+            : "bg-accent/20 border-border/50 text-muted-foreground/50 hover:text-foreground hover:border-border hover:bg-accent/40 opacity-0 group-hover:opacity-100"
+        )}
+      >
+        {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      </button>
+    </div>
+  );
+}
+
 function CloudReconTab({ cloudRecon }: { cloudRecon: any }) {
   const [section, setSection] = useState<"buckets" | "firebase" | "ssrf">("buckets");
   const [search, setSearch] = useState("");
@@ -3310,15 +3346,31 @@ function CloudReconTab({ cloudRecon }: { cloudRecon: any }) {
                   )}
                   {/* Payload Variants */}
                   {e.payloadVariants && e.payloadVariants.length > 0 && (
-                    <div className="px-3 py-2 border-t border-border/40">
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                        Payload Variants <span className="normal-case font-normal">({e.payloadVariants.length})</span>
-                      </p>
-                      <div className="space-y-1 max-h-36 overflow-y-auto">
+                    <div className="border-t border-border/40">
+                      {/* Section header */}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-accent/10">
+                        <Zap className="w-3 h-3 text-yellow-400 shrink-0" />
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                          Payload Variants
+                        </span>
+                        <span className="text-[10px] text-muted-foreground/60 font-normal">
+                          ({e.payloadVariants.length})
+                        </span>
+                        <span className="ml-auto text-[10px] text-muted-foreground/50 italic">
+                          Use via SSRF injection point
+                        </span>
+                      </div>
+                      {/* Column header row */}
+                      <div className="grid grid-cols-[28px_1fr_auto_auto] gap-0 px-3 py-1.5 bg-muted/10 border-b border-border/30">
+                        <span className="text-[9px] font-bold text-muted-foreground/50 uppercase tracking-wide">#</span>
+                        <span className="text-[9px] font-bold text-muted-foreground/50 uppercase tracking-wide">URL</span>
+                        <span className="text-[9px] font-bold text-muted-foreground/50 uppercase tracking-wide px-2">Status</span>
+                        <span className="text-[9px] font-bold text-muted-foreground/50 uppercase tracking-wide px-1">Copy</span>
+                      </div>
+                      {/* Scrollable variant list */}
+                      <div className="divide-y divide-border/25 max-h-64 overflow-y-auto overscroll-contain scroll-smooth" style={{ scrollbarWidth: "thin", scrollbarColor: "hsl(var(--border)) transparent" }}>
                         {e.payloadVariants.map((v: string, j: number) => (
-                          <div key={j} className="font-mono text-[10px] text-foreground/70 bg-muted/30 border border-border/40 rounded px-2 py-1 break-all">
-                            {v}
-                          </div>
+                          <SsrfVariantRow key={j} index={j} url={v} />
                         ))}
                       </div>
                     </div>
