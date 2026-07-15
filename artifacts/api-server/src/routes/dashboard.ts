@@ -129,29 +129,42 @@ router.get("/dashboard/asset-breakdown", requireAuth, async (req: AuthenticatedR
 
 router.get("/dashboard/top-risky-assets", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const limit = parseInt(String(req.query.limit ?? "10"), 10);
-  const scores = await db.select({
-    score: riskScoresTable,
-    assetName: assetsTable.name,
-    assetType: assetsTable.type,
-    tenantId: assetsTable.tenantId,
-  }).from(riskScoresTable)
-    .leftJoin(assetsTable, eq(riskScoresTable.assetId, assetsTable.id))
-    .where(eq(assetsTable.tenantId, req.user!.tenantId));
-
   const tid = req.user!.tenantId;
-  const findings = await db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid));
+
+  // Fetch all tenant assets first (not just those with risk_scores entries)
+  const [tenantAssets, findings] = await Promise.all([
+    db.select().from(assetsTable).where(eq(assetsTable.tenantId, tid)),
+    db.select().from(findingsTable).where(eq(findingsTable.tenantId, tid)),
+  ]);
+
+  const assetIds = tenantAssets.map(a => a.id);
+  const riskScores = assetIds.length > 0
+    ? await db.select().from(riskScoresTable).where(inArray(riskScoresTable.assetId, assetIds))
+    : [];
+
+  const rsMap = new Map(riskScores.map(r => [r.assetId, r]));
   const findingsByAsset: Record<number, number> = {};
   for (const f of findings) {
     findingsByAsset[f.assetId] = (findingsByAsset[f.assetId] ?? 0) + 1;
   }
 
-  const result = scores
-    .sort((a, b) => b.score.score - a.score.score)
-    .slice(0, limit)
-    .map(({ score, assetName, assetType }) => ({
-      assetId: score.assetId, assetName: assetName ?? "Unknown", assetType: assetType ?? "unknown",
-      riskScore: score.score, riskLevel: score.level, findingsCount: findingsByAsset[score.assetId] ?? 0,
-    }));
+  // Include assets that have a risk_scores entry OR have risk_level set on the asset itself
+  const result = tenantAssets
+    .filter(a => rsMap.has(a.id) || a.riskLevel !== null)
+    .map(a => {
+      const rs = rsMap.get(a.id);
+      return {
+        assetId: a.id,
+        assetName: a.name ?? "Unknown",
+        assetType: a.type ?? "unknown",
+        riskScore: rs?.score ?? 0,
+        riskLevel: rs?.level ?? a.riskLevel ?? "low",
+        findingsCount: findingsByAsset[a.id] ?? 0,
+      };
+    })
+    .sort((a, b) => b.riskScore - a.riskScore)
+    .slice(0, limit);
+
   res.json(result);
 });
 
@@ -266,8 +279,11 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
   // Count AMs globally — AM users may live on the platform tenant itself
   const amCount = allUsers.filter(u => u.role === "account_manager").length;
 
-  // clientsAtCriticalRisk: total distinct tenants (any type) with ≥1 critical finding
-  const tenantsWithCritical = new Set(allFindings.filter(f => f.severity === "critical").map(f => f.tenantId));
+  // clientsAtCriticalRisk: distinct tenants that have at least 1 asset at critical risk_level
+  // Uses asset risk_level (set by scans or manually) — more accurate than counting critical findings
+  const tenantsWithCritical = new Set(
+    allAssets.filter(a => a.riskLevel === "critical").map(a => a.tenantId)
+  );
   const clientsAtCriticalRisk = tenantsWithCritical.size;
 
   const _dedupedAlerts = allAlerts.filter((a, idx, arr) =>
@@ -326,7 +342,9 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     };
   });
 
+  // riskScoreMap: assetId → score; riskLevelMap: assetId → level (from risk_scores table)
   const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r.score]));
+  const riskLevelMap = new Map(allRiskScores.map(r => [r.assetId, r.level]));
 
   // ── Platform tenant (SA's own org) metrics ────────────────────────────────
   // The SA's own assets/findings live under the platform tenant. Include this
@@ -340,19 +358,21 @@ router.get("/dashboard/platform-overview", requireAuth, async (req: Authenticate
     : 0;
   const platformRiskLevel = platformAvgRisk >= 70 ? "critical" : platformAvgRisk >= 40 ? "high" : platformAvgRisk >= 20 ? "medium" : "low";
 
-  // Top risky assets platform-wide (SA view across all tenants)
+  // Top risky assets platform-wide (SA view across all tenants).
+  // Include assets that have a risk_scores entry OR have risk_level set on the asset itself
+  // so that assets without scan data (but with a manually-set risk level) are not hidden.
   const assetRiskRankings = allAssets
+    .filter(a => riskScoreMap.has(a.id) || a.riskLevel !== null)
     .map(a => ({
       id: a.id,
       name: a.name,
       type: a.type,
       tenantName: tenantNameMap.get(a.tenantId ?? 0) ?? "Unknown",
       riskScore: riskScoreMap.get(a.id) ?? 0,
-      riskLevel: a.riskLevel ?? "low",
+      riskLevel: riskLevelMap.get(a.id) ?? a.riskLevel ?? "low",
       criticalCount: allFindings.filter(f => f.assetId === a.id && f.severity === "critical").length,
       openFindingCount: allFindings.filter(f => f.assetId === a.id && f.status === "open").length,
     }))
-    .filter(a => a.riskScore > 0)
     .sort((a, b) => b.riskScore - a.riskScore)
     .slice(0, 8);
 
@@ -643,14 +663,15 @@ router.get("/dashboard/am-overview", requireAuth, async (req: AuthenticatedReque
   const findingsByAsset: Record<number, number> = {};
   for (const f of allFindings) findingsByAsset[f.assetId] = (findingsByAsset[f.assetId] ?? 0) + 1;
 
+  // Include assets with a risk_scores entry OR risk_level set on the asset itself
   const topRiskAssets = rawAssets
-    .filter(a => riskScoreMap.has(a.id))
+    .filter(a => riskScoreMap.has(a.id) || a.riskLevel !== null)
     .sort((a, b) => (riskScoreMap.get(b.id)?.score ?? 0) - (riskScoreMap.get(a.id)?.score ?? 0))
     .slice(0, 5)
     .map(a => ({
       assetId: a.id, assetName: a.name, assetType: a.type,
       riskScore: Math.round(riskScoreMap.get(a.id)?.score ?? 0),
-      riskLevel: riskScoreMap.get(a.id)?.level ?? "low",
+      riskLevel: riskScoreMap.get(a.id)?.level ?? a.riskLevel ?? "low",
       findingsCount: findingsByAsset[a.id] ?? 0,
       clientName: clients.find(c => c.id === a.tenantId)?.name ?? "Unknown",
     }));
@@ -1182,15 +1203,17 @@ router.get("/dashboard/admin-overview", requireAuth, async (req: AuthenticatedRe
   });
 
   const riskScoreMap = new Map(allRiskScores.map(r => [r.assetId, r]));
+  // Include assets with a risk_scores entry OR risk_level set on the asset itself
   const assetRiskRankings = allAssets
-    .filter(a => riskScoreMap.has(a.id))
+    .filter(a => riskScoreMap.has(a.id) || a.riskLevel !== null)
     .sort((a, b) => (riskScoreMap.get(b.id)?.score ?? 0) - (riskScoreMap.get(a.id)?.score ?? 0))
     .slice(0, 8)
     .map(a => {
-      const rs = riskScoreMap.get(a.id)!;
+      const rs = riskScoreMap.get(a.id);
       return {
         assetId: a.id, assetName: a.name, assetType: a.type,
-        riskScore: Math.round(rs.score), riskLevel: rs.level,
+        riskScore: Math.round(rs?.score ?? 0),
+        riskLevel: rs?.level ?? a.riskLevel ?? "low",
         findingsCount: allFindings.filter(f => f.assetId === a.id).length,
         criticalCount: allFindings.filter(f => f.assetId === a.id && f.severity === "critical").length,
       };
