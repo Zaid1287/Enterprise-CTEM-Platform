@@ -2272,7 +2272,7 @@ export default function BrandThreatDetailPage() {
           );
         })()}
 
-        {s.status === "done" && (
+        {(s.status === "done" || s.status === "error") && (
           <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 mt-5">
             {[
               { label: "Permutations", value: (s.totalPermutations ?? 0).toLocaleString(), color: "", sub: "total" },
@@ -2461,7 +2461,7 @@ export default function BrandThreatDetailPage() {
 
 
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
-      {s.status === "done" && (
+      {(s.status === "done" || s.status === "error") && (
         <div className="px-6 pt-4 shrink-0">
           <div className="overflow-x-auto scrollbar-none">
             <div className="flex items-center gap-1 bg-muted/30 rounded-xl p-1 w-max min-w-full">
@@ -2499,49 +2499,49 @@ export default function BrandThreatDetailPage() {
       <div className="flex-1 min-h-0 overflow-hidden">
 
         {/* ── PHISHING tab ── */}
-        {activeTab === "phishing" && s.status === "done" && (
+        {activeTab === "phishing" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <PhishingTab phishing={phishingDetections} brandAbuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
         {/* ── DATA LEAKS tab ── */}
-        {activeTab === "data_leaks" && s.status === "done" && (
+        {activeTab === "data_leaks" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <DataLeaksTab leaks={dataLeaks} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
         {/* ── SUSPICIOUS CERTS tab ── */}
-        {activeTab === "suspicious_certs" && s.status === "done" && (
+        {activeTab === "suspicious_certs" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <SuspiciousCertsTab abuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
         {/* ── SOCIAL MEDIA tab ── */}
-        {activeTab === "social_media" && s.status === "done" && (
+        {activeTab === "social_media" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <SocialMediaTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanDomain={s.domain} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
         {/* ── MOBILE APPS tab ── */}
-        {activeTab === "mobile_apps" && s.status === "done" && (
+        {activeTab === "mobile_apps" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <MobileAppsTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
         {/* ── MALICIOUS ADS tab ── */}
-        {activeTab === "malicious_ads" && s.status === "done" && (
+        {activeTab === "malicious_ads" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
           </div>
         )}
 
         {/* ── TAKEDOWNS tab ── */}
-        {activeTab === "takedowns" && s.status === "done" && (
+        {activeTab === "takedowns" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <TakedownsTab scanId={Number(id)} scanDomain={s.domain} results={results} />
           </div>
@@ -2663,14 +2663,14 @@ export default function BrandThreatDetailPage() {
         )}
 
         {/* ── SUBDOMAINS tab ── */}
-        {activeTab === "subdomains" && s.status === "done" && (
+        {activeTab === "subdomains" && (s.status === "done" || s.status === "error") && (
           <div className="h-full overflow-y-auto">
             <SubdomainsTab subdomains={pipelineSubdomains} pipelineScanId={s.pipelineScanId as number} scanDomain={s.domain} subdomainThreats={(s as any).subdomainThreats ?? []} />
           </div>
         )}
 
         {/* ── TYPOSQUATTING tab ── */}
-        {(activeTab === "typosquatting" || s.status !== "done") && results.length > 0 && (
+        {(activeTab === "typosquatting" || (s.status !== "done" && s.status !== "error")) && results.length > 0 && (
           <div className="flex h-full overflow-hidden mt-0">
             {/* Left sidebar */}
             <div className="w-64 shrink-0 border-r border-border overflow-y-auto p-4 space-y-4 bg-card/50">

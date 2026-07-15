@@ -300,8 +300,8 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
           </span>
         </div>
 
-        {/* Stats row — only when done */}
-        {scan.status === "done" && (
+        {/* Stats row — shown when done, or when error but has partial data */}
+        {(scan.status === "done" || (scan.status === "error" && ((scan.liveCount ?? 0) > 0 || (scan.phishingCount ?? 0) > 0 || (scan.dataLeakCount ?? 0) > 0 || (scan.brandAbuseCount ?? 0) > 0))) && (
           <div className={cn("grid gap-2 mb-3", (scan.adMonitoringCount ?? 0) > 0 ? "grid-cols-5" : "grid-cols-4")}>
             <div className="bg-background rounded-xl p-2.5 text-center">
               <p className="text-[10px] text-muted-foreground mb-0.5">Live</p>
@@ -435,7 +435,7 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
           ) : <div />}
 
           <div className="flex items-center gap-1">
-            {scan.status === "done" && (
+            {(scan.status === "done" || scan.status === "error") && (
               <Button size="sm" variant="ghost" onClick={() => onView(scan.id)} className="h-7 text-xs gap-1">
                 View <ChevronRight className="w-3 h-3" />
               </Button>

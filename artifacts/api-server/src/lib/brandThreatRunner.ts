@@ -788,7 +788,15 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
       phishingCount   = insertedRows.filter(r => r.isPhishing).length;
     }
 
-    await db.update(brandThreatScansTable).set({ progress: 65 }).where(eq(brandThreatScansTable.id, scanId));
+    // Save partial counts immediately after Phase 3 so that even if the scan
+    // errors in a later phase, the card shows real live/registered/phishing data
+    // rather than staying at 0.
+    await db.update(brandThreatScansTable).set({
+      progress:        65,
+      liveCount:       liveCount,
+      registeredCount: registeredCount,
+      phishingCount:   phishingCount,
+    }).where(eq(brandThreatScansTable.id, scanId));
 
     // ── Phase 3b: Screenshots for high-risk domains (score ≥ 70) ─────────────
     try {
@@ -1303,7 +1311,7 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
 
 // ── Auto-trigger helper (used by pipeline scans & asset scans) ────────────────
 
-const STUCK_SCAN_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+const STUCK_SCAN_THRESHOLD_MS = 120 * 60 * 1000; // 2 hours — brand threat scans for large domains can take 40–90 min
 
 // ── Subdomain takeover fingerprints ──────────────────────────────────────────
 const TAKEOVER_FINGERPRINTS: Record<string, string> = {
@@ -1492,6 +1500,8 @@ export async function triggerBrandThreatScan(
       db.delete(brandAbuseResultsTable).where(eq(brandAbuseResultsTable.scanId, latest.id)),
       db.delete(adMonitoringResultsTable).where(eq(adMonitoringResultsTable.scanId, latest.id)),
     ]);
+    // Reset createdAt to NOW so the watchdog calculates age from this restart,
+    // not from the original scan creation time (which could be hours ago).
     await db.update(brandThreatScansTable).set({
       status:            "pending",
       progress:          0,
@@ -1500,8 +1510,14 @@ export async function triggerBrandThreatScan(
       permutationsCache: null,
       completedAt:       null,
       subdomainThreats:  null,
+      liveCount:         0,
+      registeredCount:   0,
+      phishingCount:     0,
+      dataLeakCount:     0,
+      brandAbuseCount:   0,
       scanCount:         sql`scan_count + 1`,
       pipelineScanId:    pipelineScanId ?? latest.pipelineScanId,
+      createdAt:         new Date(),
     }).where(eq(brandThreatScansTable.id, latest.id));
 
     logger.info(
@@ -1529,8 +1545,8 @@ export async function triggerBrandThreatScan(
 
 // ── Brand threat watchdog ──────────────────────────────────────────────────────
 
-const WATCHDOG_POLL_INTERVAL_MS  = 5  * 60 * 1000; // 5 minutes
-const WATCHDOG_STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+const WATCHDOG_POLL_INTERVAL_MS  = 5  * 60 * 1000;  // 5 minutes
+const WATCHDOG_STUCK_THRESHOLD_MS = 120 * 60 * 1000; // 2 hours — brand threat scans for large domains can take 40–90 min
 
 /**
  * Startup enrichment that runs three passes over brand threat scan data:

@@ -17,7 +17,7 @@ import { triggerBrandThreatScan, detectSubdomainThreats, type SubdomainThreat } 
 import { dispatchNotifications } from "../lib/notifier";
 import { logger } from "../lib/logger";
 
-const STUCK_SCAN_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+const STUCK_SCAN_THRESHOLD_MS = 120 * 60 * 1000; // 2 hours — brand threat scans for large domains can take 40–90 min
 
 const router = Router();
 router.use(denyExternalMembers);
