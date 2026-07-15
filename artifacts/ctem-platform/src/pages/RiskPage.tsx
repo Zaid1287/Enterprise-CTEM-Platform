@@ -73,7 +73,8 @@ export default function RiskPage() {
     level, count: list.filter((s: any) => s.level === level).length,
     color: RISK_COLORS[level],
   }));
-  const avgScore = list.length > 0 ? list.reduce((s: number, a: any) => s + a.score, 0) / list.length : 0;
+  const scannedList = list.filter((a: any) => a.score !== null);
+  const avgScore = scannedList.length > 0 ? scannedList.reduce((s: number, a: any) => s + (a.score ?? 0), 0) / scannedList.length : 0;
 
   // Format history for chart
   const trendData = history.map((h: any) => ({
