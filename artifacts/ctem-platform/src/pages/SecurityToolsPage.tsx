@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, capitalize, formatDateTime } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 import RunScanDialog from "@/components/scan/RunScanDialog";
 import ScheduledScansList from "@/components/scan/ScheduledScansList";
 
@@ -80,6 +81,7 @@ const emptyForm = {
 };
 
 export default function SecurityToolsPage() {
+  const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("tools");
   const [showAdd, setShowAdd] = useState(false);
   const [editingTool, setEditingTool] = useState<any>(null);
@@ -118,27 +120,28 @@ export default function SecurityToolsPage() {
   const [selectedNuclei, setSelectedNuclei] = useState<any>(null);
   const [nucleiAssignments, setNucleiAssignments] = useState<any[]>([]);
   const [nucleiAssetsLoading, setNucleiAssetsLoading] = useState(false);
+  const [nucleiTriggeringAssetId, setNucleiTriggeringAssetId] = useState<number | null>(null);
 
   // Fetch helpers
   const fetchScripts = useCallback(async () => {
     setScriptsLoading(true);
-    try { const d = await apiFetch<any>("/custom-scripts"); setScripts(d); } finally { setScriptsLoading(false); }
+    try { const d = await apiFetch<any>("/api/custom-scripts"); setScripts(d); } finally { setScriptsLoading(false); }
   }, []);
   const fetchNucleiTemplates = useCallback(async () => {
     setNucleiLoading(true);
-    try { const d = await apiFetch<any>("/custom-nuclei-templates"); setNucleiTemplates(d); } finally { setNucleiLoading(false); }
+    try { const d = await apiFetch<any>("/api/custom-nuclei-templates"); setNucleiTemplates(d); } finally { setNucleiLoading(false); }
   }, []);
   const fetchScriptRuns = useCallback(async (scriptId: number) => {
     setScriptRunsLoading(true);
-    try { const d = await apiFetch<any>(`/custom-scripts/${scriptId}/runs`); setScriptRuns(d.data ?? []); } finally { setScriptRunsLoading(false); }
+    try { const d = await apiFetch<any>(`/api/custom-scripts/${scriptId}/runs`); setScriptRuns(d.data ?? []); } finally { setScriptRunsLoading(false); }
   }, []);
   const fetchScriptAssignments = useCallback(async (scriptId: number) => {
     setScriptAssetsLoading(true);
-    try { const d = await apiFetch<any>(`/custom-scripts/${scriptId}/assignments`); setScriptAssignments(d); } finally { setScriptAssetsLoading(false); }
+    try { const d = await apiFetch<any>(`/api/custom-scripts/${scriptId}/assignments`); setScriptAssignments(d); } finally { setScriptAssetsLoading(false); }
   }, []);
   const fetchNucleiAssignments = useCallback(async (templateId: number) => {
     setNucleiAssetsLoading(true);
-    try { const d = await apiFetch<any>(`/custom-nuclei-templates/${templateId}/assignments`); setNucleiAssignments(d); } finally { setNucleiAssetsLoading(false); }
+    try { const d = await apiFetch<any>(`/api/custom-nuclei-templates/${templateId}/assignments`); setNucleiAssignments(d); } finally { setNucleiAssetsLoading(false); }
   }, []);
 
   useEffect(() => { if (tab === "scripts") fetchScripts(); }, [tab, fetchScripts]);
@@ -1146,7 +1149,7 @@ export default function SecurityToolsPage() {
                   </Button>
                   <Button size="sm" variant="destructive" onClick={async () => {
                     if (!confirm("Delete this script?")) return;
-                    await apiFetch(`/custom-scripts/${selectedScript.id}`, { method: "DELETE" });
+                    await apiFetch(`/api/custom-scripts/${selectedScript.id}`, { method: "DELETE" });
                     setSelectedScript(null); fetchScripts();
                   }}>
                     <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
@@ -1176,7 +1179,7 @@ export default function SecurityToolsPage() {
                     if (!scriptRunAssetId) return;
                     setScriptRunningId(selectedScript.id);
                     try {
-                      await apiFetch(`/custom-scripts/${selectedScript.id}/run`, { method: "POST", body: JSON.stringify({ assetId: Number(scriptRunAssetId) }) });
+                      await apiFetch(`/api/custom-scripts/${selectedScript.id}/run`, { method: "POST", body: JSON.stringify({ assetId: Number(scriptRunAssetId) }) });
                       setTimeout(() => fetchScriptRuns(selectedScript.id), 1500);
                     } finally { setScriptRunningId(null); }
                   }}>
@@ -1205,7 +1208,7 @@ export default function SecurityToolsPage() {
                       <Button size="sm" variant="outline" onClick={async () => {
                         const sel = document.getElementById("script-assign-select") as HTMLSelectElement;
                         if (!sel.value) return;
-                        await apiFetch(`/custom-scripts/${selectedScript.id}/assignments`, { method: "POST", body: JSON.stringify({ assetId: Number(sel.value) }) });
+                        await apiFetch(`/api/custom-scripts/${selectedScript.id}/assignments`, { method: "POST", body: JSON.stringify({ assetId: Number(sel.value) }) });
                         sel.value = "";
                         fetchScriptAssignments(selectedScript.id);
                       }}>Assign</Button>
@@ -1216,7 +1219,7 @@ export default function SecurityToolsPage() {
                       <div key={sa.assetId} className="flex items-center justify-between text-sm bg-accent/30 rounded px-3 py-1.5">
                         <span>{sa.asset?.name ?? `Asset #${sa.assetId}`}</span>
                         <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-400" onClick={async () => {
-                          await apiFetch(`/custom-scripts/${selectedScript.id}/assignments/${sa.assetId}`, { method: "DELETE" });
+                          await apiFetch(`/api/custom-scripts/${selectedScript.id}/assignments/${sa.assetId}`, { method: "DELETE" });
                           fetchScriptAssignments(selectedScript.id);
                         }}><XCircle className="w-3.5 h-3.5" /></Button>
                       </div>
@@ -1283,11 +1286,11 @@ export default function SecurityToolsPage() {
           <form onSubmit={async e => {
             e.preventDefault();
             if (editScript) {
-              await apiFetch(`/custom-scripts/${editScript.id}`, { method: "PATCH", body: JSON.stringify({ ...scriptForm, timeout: Number(scriptForm.timeout) }) });
+              await apiFetch(`/api/custom-scripts/${editScript.id}`, { method: "PATCH", body: JSON.stringify({ ...scriptForm, timeout: Number(scriptForm.timeout) }) });
               setSelectedScript({ ...editScript, ...scriptForm, timeout: Number(scriptForm.timeout) });
               setEditScript(null);
             } else {
-              await apiFetch("/custom-scripts", { method: "POST", body: JSON.stringify({ ...scriptForm, timeout: Number(scriptForm.timeout) }) });
+              await apiFetch("/api/custom-scripts", { method: "POST", body: JSON.stringify({ ...scriptForm, timeout: Number(scriptForm.timeout) }) });
               setShowAddScript(false);
             }
             fetchScripts();
@@ -1410,7 +1413,7 @@ export default function SecurityToolsPage() {
                   </Button>
                   <Button size="sm" variant="destructive" onClick={async () => {
                     if (!confirm("Delete this template?")) return;
-                    await apiFetch(`/custom-nuclei-templates/${selectedNuclei.id}`, { method: "DELETE" });
+                    await apiFetch(`/api/custom-nuclei-templates/${selectedNuclei.id}`, { method: "DELETE" });
                     setSelectedNuclei(null); fetchNucleiTemplates();
                   }}>
                     <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
@@ -1445,7 +1448,7 @@ export default function SecurityToolsPage() {
                       <Button size="sm" variant="outline" onClick={async () => {
                         const sel = document.getElementById("nuclei-assign-select") as HTMLSelectElement;
                         if (!sel.value) return;
-                        await apiFetch(`/custom-nuclei-templates/${selectedNuclei.id}/assignments`, { method: "POST", body: JSON.stringify({ assetId: Number(sel.value) }) });
+                        await apiFetch(`/api/custom-nuclei-templates/${selectedNuclei.id}/assignments`, { method: "POST", body: JSON.stringify({ assetId: Number(sel.value) }) });
                         sel.value = "";
                         fetchNucleiAssignments(selectedNuclei.id);
                       }}>Assign</Button>
@@ -1455,10 +1458,24 @@ export default function SecurityToolsPage() {
                     ) : nucleiAssignments.map((na: any) => (
                       <div key={na.assetId} className="flex items-center justify-between text-sm bg-accent/30 rounded px-3 py-1.5">
                         <span>{na.asset?.name ?? `Asset #${na.assetId}`}</span>
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-400" onClick={async () => {
-                          await apiFetch(`/custom-nuclei-templates/${selectedNuclei.id}/assignments/${na.assetId}`, { method: "DELETE" });
-                          fetchNucleiAssignments(selectedNuclei.id);
-                        }}><XCircle className="w-3.5 h-3.5" /></Button>
+                        <div className="flex items-center gap-1">
+                          <Button size="sm" variant="outline" className="h-6 px-2 text-xs gap-1" disabled={nucleiTriggeringAssetId === na.assetId} onClick={async () => {
+                            setNucleiTriggeringAssetId(na.assetId);
+                            try {
+                              await apiFetch("/api/scans/pipeline-run", { method: "POST", body: JSON.stringify({ assetIds: [na.assetId] }) });
+                              toast({ title: "Pipeline scan started", description: `Scan with custom template queued for ${na.asset?.name ?? `asset #${na.assetId}`}.` });
+                            } catch (err: any) {
+                              toast({ title: "Scan failed to start", description: err?.message ?? "Unknown error", variant: "destructive" });
+                            } finally { setNucleiTriggeringAssetId(null); }
+                          }}>
+                            {nucleiTriggeringAssetId === na.assetId ? <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <Play className="w-3 h-3" />}
+                            {nucleiTriggeringAssetId === na.assetId ? "Starting…" : "Run Scan"}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-400" onClick={async () => {
+                            await apiFetch(`/api/custom-nuclei-templates/${selectedNuclei.id}/assignments/${na.assetId}`, { method: "DELETE" });
+                            fetchNucleiAssignments(selectedNuclei.id);
+                          }}><XCircle className="w-3.5 h-3.5" /></Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1485,11 +1502,11 @@ export default function SecurityToolsPage() {
           <form onSubmit={async e => {
             e.preventDefault();
             if (editNuclei) {
-              await apiFetch(`/custom-nuclei-templates/${editNuclei.id}`, { method: "PATCH", body: JSON.stringify(nucleiForm) });
+              await apiFetch(`/api/custom-nuclei-templates/${editNuclei.id}`, { method: "PATCH", body: JSON.stringify(nucleiForm) });
               setSelectedNuclei({ ...editNuclei, ...nucleiForm });
               setEditNuclei(null);
             } else {
-              await apiFetch("/custom-nuclei-templates", { method: "POST", body: JSON.stringify(nucleiForm) });
+              await apiFetch("/api/custom-nuclei-templates", { method: "POST", body: JSON.stringify(nucleiForm) });
               setShowAddNuclei(false);
             }
             fetchNucleiTemplates();

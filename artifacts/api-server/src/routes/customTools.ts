@@ -86,6 +86,9 @@ router.delete("/custom-scripts/:id", requireAuth, async (req: AuthenticatedReque
     .from(customScriptsTable)
     .where(and(eq(customScriptsTable.id, Number(req.params.id)), eq(customScriptsTable.tenantId, tenantId)));
   if (!existing) { res.status(404).json({ error: "Script not found" }); return; }
+  // Delete child records first (runs have no onDelete cascade in schema)
+  await db.delete(customScriptRunsTable).where(eq(customScriptRunsTable.scriptId, existing.id));
+  await db.delete(customScriptAssignmentsTable).where(eq(customScriptAssignmentsTable.scriptId, existing.id));
   await db.delete(customScriptsTable).where(eq(customScriptsTable.id, existing.id));
   await logAudit(req.user!, "custom_script_deleted", "custom_script", existing.id, "", req.ip ?? "");
   res.status(204).send();
