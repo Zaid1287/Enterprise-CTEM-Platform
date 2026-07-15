@@ -284,6 +284,16 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   }
   const filters: any[] = tenantFilter ? [tenantFilter] : [];
 
+  // Determine "all-clients" view once — used for dedup below and for the verified-asset gate
+  const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
+  const isAllTenantsAdminView = (role === "super_admin" || role === "admin") && isNaN(qTenantId);
+
+  // When showing alerts across ALL clients, only surface alerts linked to verified assets.
+  // Alerts with no relatedAssetId (tool_update, scan_complete, orchestrator, etc.) always pass through.
+  if (isAllTenantsAdminView) {
+    filters.push(or(isNull(alertsTable.relatedAssetId), eq(assetsTable.verificationStatus, "verified")) as any);
+  }
+
   if (role === "client") {
     // Platform-managed assets assigned to this client (may be in a different tenant, e.g. tenantId=1)
     const assignedAssets = await db.select({ id: assetsTable.id, tenantId: assetsTable.tenantId })
@@ -321,7 +331,7 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   const qType = req.query.type as string | undefined;
   if (qType) filters.push(eq(alertsTable.type, qType));
 
-  // Fetch alerts with tenant name via left join
+  // Fetch alerts with tenant name via left join; also join assets for verificationStatus filtering
   const rows = await db
     .select({
       id: alertsTable.id, tenantId: alertsTable.tenantId, title: alertsTable.title,
@@ -332,15 +342,13 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
     })
     .from(alertsTable)
     .leftJoin(tenantsTable, eq(alertsTable.tenantId, tenantsTable.id))
+    .leftJoin(assetsTable, eq(alertsTable.relatedAssetId, assetsTable.id))
     .where(filters.length ? and(...filters) : undefined);
 
   // For privileged users viewing all tenants (no specific tenant filter), deduplicate
   // tool_update alerts by title — the same tool update fires for every tenant but is
   // platform-wide news, so showing N identical rows is confusing. Keep the most recent
   // per title and report how many tenants share it via tenantCount.
-  const qTenantId = req.query.tenantId ? parseInt(req.query.tenantId as string, 10) : NaN;
-  const isAllTenantsAdminView = (role === "super_admin" || role === "admin") && isNaN(qTenantId);
-
   let result: typeof rows;
   if (isAllTenantsAdminView) {
     const seen = new Map<string, typeof rows[number] & { tenantCount: number }>();
