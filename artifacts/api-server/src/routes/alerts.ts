@@ -330,6 +330,9 @@ router.get("/alerts", requireAuth, async (req: AuthenticatedRequest, res): Promi
   // Type filter — not in generated schema, read directly from query
   const qType = req.query.type as string | undefined;
   if (qType) filters.push(eq(alertsTable.type, qType));
+  // Asset filter — narrow to a specific verified asset
+  const qAssetId = req.query.assetId ? parseInt(req.query.assetId as string, 10) : NaN;
+  if (!isNaN(qAssetId)) filters.push(eq(alertsTable.relatedAssetId, qAssetId));
 
   // Fetch alerts with tenant name via left join; also join assets for verificationStatus filtering
   const rows = await db

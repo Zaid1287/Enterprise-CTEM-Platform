@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   useListAlerts, useUpdateAlert, useListAlertRules, useCreateAlertRule,
-  useUpdateAlertRule, useDeleteAlertRule, useListAssetGroups,
+  useUpdateAlertRule, useDeleteAlertRule, useListAssetGroups, useListAssets,
   getListAlertsQueryKey, getListAlertRulesQueryKey, getListAssetGroupsQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -85,10 +85,11 @@ export default function AlertsPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [severityFilter, setSeverityFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
-  const [inboxPage,   setInboxPage]   = useState(0);
-  const [archivePage, setArchivePage] = useState(0);
+  const [typeFilter, setTypeFilter]         = useState("");
+  const [tenantFilter, setTenantFilter]     = useState<number | null>(null);
+  const [assetFilter, setAssetFilter]       = useState<number | null>(null);
+  const [inboxPage,   setInboxPage]         = useState(0);
+  const [archivePage, setArchivePage]       = useState(0);
   const { user } = useAuth();
   const [showCreateRule, setShowCreateRule] = useState(false);
   const [ruleForm, setRuleForm] = useState<{ name: string; triggerType: string; channel: string; destination: string; groupId: number | null }>({ name: "", triggerType: "new_finding", channel: "email", destination: "", groupId: null });
@@ -162,7 +163,14 @@ export default function AlertsPage() {
     severity:  severityFilter || undefined,
     type:      typeFilter      || undefined,
     ...(isPrivileged && tenantFilter ? { tenantId: tenantFilter } : {}),
+    ...(assetFilter ? { assetId: assetFilter } : {}),
   };
+
+  // Verified assets for the asset filter dropdown (privileged only)
+  const { data: allAssetsRaw } = useListAssets({} as any, { query: { enabled: isPrivileged, staleTime: 60_000 } } as any);
+  const verifiedAssets: { id: number; name: string; domain?: string }[] = ((allAssetsRaw as any[]) ?? [])
+    .filter((a: any) => a.verificationStatus === "verified")
+    .map((a: any) => ({ id: a.id, name: a.name ?? a.domain ?? `Asset #${a.id}`, domain: a.domain }));
   const { data: alerts, isLoading } = useListAlerts(alertParams as any, {
     query: {
       queryKey: getListAlertsQueryKey(alertParams as any),
@@ -251,22 +259,25 @@ export default function AlertsPage() {
   // but we also filter here so the counts stay accurate before next refetch)
   const filteredUnread = unreadAlerts
     .filter((a: any) => !severityFilter || a.severity === severityFilter)
-    .filter((a: any) => !typeFilter    || a.type     === typeFilter);
+    .filter((a: any) => !typeFilter    || a.type     === typeFilter)
+    .filter((a: any) => !assetFilter   || a.relatedAssetId === assetFilter);
   const filteredArchive = archivedAlerts
     .filter((a: any) => !severityFilter || a.severity === severityFilter)
-    .filter((a: any) => !typeFilter    || a.type     === typeFilter);
+    .filter((a: any) => !typeFilter    || a.type     === typeFilter)
+    .filter((a: any) => !assetFilter   || a.relatedAssetId === assetFilter);
 
   const inboxTotalPages  = Math.max(1, Math.ceil(filteredUnread.length  / INBOX_PAGE_SIZE));
   const inboxPaged       = filteredUnread.slice(inboxPage   * INBOX_PAGE_SIZE,   (inboxPage   + 1) * INBOX_PAGE_SIZE);
   const archiveTotalPages = Math.max(1, Math.ceil(filteredArchive.length / ARCHIVE_PAGE_SIZE));
   const archivePaged = filteredArchive.slice(archivePage * ARCHIVE_PAGE_SIZE, (archivePage + 1) * ARCHIVE_PAGE_SIZE);
 
-  const hasActiveFilters = severityFilter || typeFilter || tenantFilter;
+  const hasActiveFilters = severityFilter || typeFilter || tenantFilter || assetFilter;
 
   const resetFilters = () => {
     setSeverityFilter("");
     setTypeFilter("");
     setTenantFilter(null);
+    setAssetFilter(null);
     setInboxPage(0);
     setArchivePage(0);
   };
@@ -317,6 +328,26 @@ export default function AlertsPage() {
           </SelectContent>
         </Select>
 
+        {/* Verified asset filter (privileged only) */}
+        {isPrivileged && verifiedAssets.length > 0 && (
+          <Select
+            value={assetFilter ? String(assetFilter) : "_all_"}
+            onValueChange={(v) => { setAssetFilter(v === "_all_" ? null : parseInt(v, 10)); setInboxPage(0); setArchivePage(0); }}
+          >
+            <SelectTrigger className="w-48 h-7 text-xs">
+              <SelectValue placeholder="All Assets" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_all_">All Verified Assets</SelectItem>
+              {verifiedAssets.map(a => (
+                <SelectItem key={a.id} value={String(a.id)}>
+                  {a.name}{a.domain && a.domain !== a.name ? ` (${a.domain})` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         {/* Active filter chips + clear */}
         {hasActiveFilters && (
           <div className="flex items-center gap-1.5 ml-auto">
@@ -336,6 +367,12 @@ export default function AlertsPage() {
               <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25 font-medium">
                 Tenant #{tenantFilter}
                 <button onClick={() => setTenantFilter(null)} className="hover:text-foreground transition-colors"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            )}
+            {assetFilter && (
+              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 font-medium">
+                {verifiedAssets.find(a => a.id === assetFilter)?.name ?? `Asset #${assetFilter}`}
+                <button onClick={() => setAssetFilter(null)} className="hover:text-foreground transition-colors"><X className="w-2.5 h-2.5" /></button>
               </span>
             )}
             <button onClick={resetFilters} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors ml-1 underline underline-offset-2">
