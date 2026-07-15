@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import dns from "node:dns/promises";
-import { eq, and, gte, isNotNull, isNull, lt, desc, sql } from "drizzle-orm";
+import { eq, and, gt, gte, isNotNull, isNull, lt, desc, sql } from "drizzle-orm";
 import {
   db,
   brandThreatScansTable, brandThreatResultsTable,
@@ -1531,6 +1531,179 @@ export async function triggerBrandThreatScan(
 
 const WATCHDOG_POLL_INTERVAL_MS  = 5  * 60 * 1000; // 5 minutes
 const WATCHDOG_STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * One-time startup enrichment: finds completed scans whose live_count is 0
+ * (because dnstwist's internal DNS resolver was blocked at scan time) and
+ * re-resolves every result row using Node.js dns, then recalculates the
+ * scan-level live_count / registered_count / phishing_risk fields.
+ *
+ * Runs entirely in the background — never blocks startup.
+ */
+export async function enrichStaleScans(): Promise<void> {
+  try {
+    // Find "done" scans that produced permutations but recorded no live domains
+    const staleScans = await db
+      .select({
+        id:                brandThreatScansTable.id,
+        domain:            brandThreatScansTable.domain,
+        phishingCount:     brandThreatScansTable.phishingCount,
+        dataLeakCount:     brandThreatScansTable.dataLeakCount,
+        brandAbuseCount:   brandThreatScansTable.brandAbuseCount,
+        adMonitoringCount: brandThreatScansTable.adMonitoringCount,
+      })
+      .from(brandThreatScansTable)
+      .where(
+        and(
+          eq(brandThreatScansTable.status, "done"),
+          gt(brandThreatScansTable.totalPermutations, 0),
+          eq(brandThreatScansTable.liveCount, 0),
+        ),
+      );
+
+    if (staleScans.length === 0) {
+      logger.info("Brand threat enrichment: no stale scans found — nothing to do");
+      return;
+    }
+
+    logger.info({ count: staleScans.length }, "Brand threat enrichment: starting DNS backfill for stale scans");
+
+    for (const scan of staleScans) {
+      try {
+        logger.info({ scanId: scan.id, domain: scan.domain }, "Brand threat enrichment: enriching scan");
+
+        // Fetch all result rows for this scan that have no A record
+        const emptyRows = await db
+          .select({
+            id:              brandThreatResultsTable.id,
+            permutation:     brandThreatResultsTable.permutation,
+            fuzzer:          brandThreatResultsTable.fuzzer,
+            vtMalicious:     brandThreatResultsTable.vtMalicious,
+            vtSuspicious:    brandThreatResultsTable.vtSuspicious,
+            isPhishing:      brandThreatResultsTable.isPhishing,
+            phishingSource:  brandThreatResultsTable.phishingSource,
+            whoisAgeDays:    brandThreatResultsTable.whoisAgeDays,
+            geoCountry:      brandThreatResultsTable.geoCountry,
+          })
+          .from(brandThreatResultsTable)
+          .where(
+            and(
+              eq(brandThreatResultsTable.scanId, scan.id),
+              isNull(brandThreatResultsTable.dnsA),
+              isNull(brandThreatResultsTable.archivedAt),
+            ),
+          );
+
+        if (emptyRows.length === 0) {
+          logger.info({ scanId: scan.id }, "Brand threat enrichment: no empty-DNS rows for scan — skipping");
+          continue;
+        }
+
+        logger.info({ scanId: scan.id, domain: scan.domain, rowCount: emptyRows.length },
+          "Brand threat enrichment: resolving DNS for empty rows");
+
+        // Run DNS resolution with 20 concurrent workers
+        const queue = [...emptyRows];
+        async function enrichWorker() {
+          while (queue.length > 0) {
+            const row = queue.shift();
+            if (!row) break;
+
+            const resolved = await checkDNSFull(row.permutation);
+
+            // Only update rows where DNS actually resolved — skip still-empty ones
+            if (resolved.dnsA.length === 0 && resolved.dnsAaaa.length === 0 &&
+                resolved.dnsMx.length === 0 && resolved.dnsNs.length === 0) {
+              continue;
+            }
+
+            const registrationStatus =
+              resolved.dnsA.length > 0  ? "active" :
+              resolved.dnsNs.length > 0 ? "parked" :
+              resolved.dnsMx.length > 0 ? "registered" :
+              "unregistered";
+
+            const riskScore = computeRisk(
+              resolved.dnsA,
+              resolved.dnsMx,
+              resolved.dnsNs,
+              row.fuzzer ?? "original",
+              row.vtMalicious ?? 0,
+              row.vtSuspicious ?? 0,
+              row.isPhishing ?? false,
+              row.phishingSource ?? null,
+              row.whoisAgeDays ?? null,
+              row.geoCountry ?? null,
+              null,  // geoCountryCode not stored in DB — omit
+              [],    // cdnRanges not needed for enrichment pass
+            );
+
+            await db
+              .update(brandThreatResultsTable)
+              .set({
+                dnsA:               resolved.dnsA.length   ? resolved.dnsA   : undefined,
+                dnsAaaa:            resolved.dnsAaaa.length ? resolved.dnsAaaa : undefined,
+                dnsMx:              resolved.dnsMx.length   ? resolved.dnsMx   : undefined,
+                dnsNs:              resolved.dnsNs.length   ? resolved.dnsNs   : undefined,
+                registrationStatus,
+                riskScore,
+                isSuspicious:       riskScore >= 60,
+              })
+              .where(eq(brandThreatResultsTable.id, row.id));
+          }
+        }
+
+        await Promise.all(Array.from({ length: 20 }, () => enrichWorker()));
+
+        // Recount from DB now that rows are updated
+        const updatedRows = await db
+          .select({
+            dnsA:       brandThreatResultsTable.dnsA,
+            dnsMx:      brandThreatResultsTable.dnsMx,
+            isPhishing: brandThreatResultsTable.isPhishing,
+          })
+          .from(brandThreatResultsTable)
+          .where(
+            and(
+              eq(brandThreatResultsTable.scanId, scan.id),
+              isNull(brandThreatResultsTable.archivedAt),
+            ),
+          );
+
+        const newLiveCount       = updatedRows.filter(r => r.dnsA  && r.dnsA.length  > 0).length;
+        const newRegisteredCount = updatedRows.filter(r =>
+          (r.dnsA && r.dnsA.length > 0) || (r.dnsMx && r.dnsMx.length > 0),
+        ).length;
+        const phishingCount      = scan.phishingCount ?? 0;
+
+        const phishingRisk =
+          phishingCount > 5 || newLiveCount > 20 ? "critical" :
+          phishingCount > 2 || newLiveCount > 10 ? "high" :
+          newLiveCount > 3 ? "medium" : "low";
+
+        await db
+          .update(brandThreatScansTable)
+          .set({
+            liveCount:       newLiveCount,
+            registeredCount: newRegisteredCount,
+            phishingRisk,
+          })
+          .where(eq(brandThreatScansTable.id, scan.id));
+
+        logger.info(
+          { scanId: scan.id, domain: scan.domain, newLiveCount, newRegisteredCount, phishingRisk },
+          "Brand threat enrichment: scan updated",
+        );
+      } catch (scanErr) {
+        logger.warn({ err: scanErr, scanId: scan.id }, "Brand threat enrichment: failed for scan — skipping");
+      }
+    }
+
+    logger.info({ count: staleScans.length }, "Brand threat enrichment: completed");
+  } catch (err) {
+    logger.warn({ err }, "Brand threat enrichment: failed (non-fatal)");
+  }
+}
 
 /**
  * Periodic watchdog that catches brand threat scans stuck in "running" state

@@ -13,7 +13,7 @@ import { startBeatScheduler } from "./workers/beatScheduler";
 import { db, platformSettingsTable, brandThreatScansTable, orchestratorConfigTable, scanFingerprintProfilesTable, tenantsTable } from "@workspace/db";
 import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { runBrandThreatScan, startBrandThreatWatchdog, PermResult } from "./lib/brandThreatRunner";
+import { runBrandThreatScan, startBrandThreatWatchdog, enrichStaleScans, PermResult } from "./lib/brandThreatRunner";
 import { WebSocketServer } from "ws";
 import { scanProgressSockets, attackRunSockets } from "./routes/aiMapper";
 import { verifyToken } from "./lib/auth";
@@ -338,6 +338,10 @@ const server = app.listen(port, (err) => {
 
   // Beat scheduler handles asset-frequency and schedule-based scans
   startBeatScheduler(port).catch(e => logger.error({ err: e }, "Beat scheduler startup error"));
+
+  // Backfill DNS data for existing scans whose live_count is 0 due to dnstwist
+  // DNS resolver being sandboxed — runs fully in the background, non-blocking.
+  setImmediate(() => { void enrichStaleScans(); });
 
   // Watchdog: periodically reset brand threat scans stuck in "running" mid-run
   const stopBrandThreatWatchdog = startBrandThreatWatchdog();

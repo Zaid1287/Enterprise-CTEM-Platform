@@ -16,3 +16,5 @@ After calling `runDnstwistBinary(domain)`, always enrich zero-DNS results with N
 - Existing scans with stale zero-DNS data can be fixed via the Re-scan button (POST /api/brand-threats/:id/rescan)
 
 **Verified:** Node.js `dns.resolve4('deltin.net')` → `66.39.159.31` works; dnstwist DNS for same domain → empty.
+
+**Backfill pattern:** `enrichStaleScans()` in brandThreatRunner.ts finds done scans with `liveCount=0 AND totalPermutations>0`, re-resolves all null-dnsA result rows with checkDNSFull (20 workers), updates registrationStatus + riskScore, then recounts live/registered and saves back to brand_threat_scans. Called via setImmediate() on server startup — non-blocking. Future restarts that find stale scans (e.g. after DNS enrichment bug is fixed on new deployments) will auto-enrich.
