@@ -208,7 +208,8 @@ async function checkCertTransparencyAbuse(
         installCount: null,
         iconUrl: null,
         risk: "medium",
-      });
+        certValidTo: cert.not_after ?? null,
+      } as any);
 
       if (out.length >= 30) break;
     }

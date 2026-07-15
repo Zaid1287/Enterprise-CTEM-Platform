@@ -59,6 +59,41 @@ const ENGINE_META: Record<string, { color: string; bg: string; border: string }>
   "Validin":      { color: "text-violet-400", bg: "bg-violet-500/10", border: "border-violet-500/25" },
 };
 
+function SeverityPill({ risk: initialRisk, onPatch }: { risk: string; onPatch: (r: string) => Promise<void>; }) {
+  const [risk, setRisk] = useState(initialRisk);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const rm = RISK_META[risk] ?? RISK_META.medium!;
+  async function pick(newRisk: string) {
+    if (newRisk === risk) { setOpen(false); return; }
+    setLoading(true);
+    try { await onPatch(newRisk); setRisk(newRisk); } catch { /* keep old */ }
+    finally { setLoading(false); setOpen(false); }
+  }
+  return (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <button disabled={loading} onClick={() => setOpen(o => !o)}
+        className={cn("flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize hover:opacity-80 cursor-pointer transition-all", rm.color, rm.bg, rm.border)}>
+        {loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : risk}
+        <ChevronDown className="w-2 h-2 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-xl shadow-2xl overflow-hidden min-w-[110px]">
+          {(["critical","high","medium","low"] as const).map(r => {
+            const m = RISK_META[r]!;
+            return (
+              <button key={r} onClick={() => void pick(r)}
+                className={cn("w-full text-left px-3 py-1.5 text-xs font-semibold hover:bg-muted/40 transition-colors capitalize", m.color, r === risk && "bg-muted/30")}>
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
 type TabMode = "typosquatting" | "phishing" | "data_leaks" | "mobile_apps" | "suspicious_certs" | "social_media" | "malicious_ads" | "takedowns" | "favicon_clones" | "subdomains";
 
@@ -358,9 +393,10 @@ function ShodanFaviconPanel({ matches }: { matches: any[] }) {
   );
 }
 
-function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], onFpCreated }: {
+function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId, falsePositives = [], onFpCreated }: {
   phishing: any[];
   brandAbuse?: any[];
+  confirmedResults?: any[];
   scanId?: number;
   falsePositives?: any[];
   onFpCreated?: () => void;
@@ -387,7 +423,6 @@ function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], o
       {/* ── Section 1: Active Lookalike Domains ── */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 pb-1 border-b border-border">
-          <span className="text-[10px] font-bold bg-orange-500/15 text-orange-400 border border-orange-500/25 px-2 py-0.5 rounded-full uppercase tracking-wider">Section 1</span>
           <AlertTriangle className="w-4 h-4 text-orange-400" />
           <span className="font-semibold text-orange-300">Active Lookalike Domains</span>
           <span className="text-[10px] text-orange-400/70 bg-orange-500/10 px-2 py-0.5 rounded-full font-bold border border-orange-500/20">{lookalikeLive.length}</span>
@@ -416,6 +451,7 @@ function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], o
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <SeverityPill risk={a.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${a.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
                     <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full font-semibold">
                       Live Domain
                     </span>
@@ -452,40 +488,63 @@ function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], o
         )}
       </div>
 
-      {/* ── Section 2: Confirmed Phishing Domains ── */}
+      {/* ── Confirmed Phishing Domains ── */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 pb-1 border-b border-border">
-          <span className="text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/25 px-2 py-0.5 rounded-full uppercase tracking-wider">Section 2</span>
           <Fish className="w-4 h-4 text-red-400" />
           <span className="font-semibold">Confirmed Phishing Domains</span>
-          <span className="text-[10px] text-red-400/70 bg-red-500/10 px-2 py-0.5 rounded-full font-bold border border-red-500/20">{phishing.length}</span>
+          <span className="text-[10px] text-red-400/70 bg-red-500/10 px-2 py-0.5 rounded-full font-bold border border-red-500/20">{phishing.length + confirmedResults.length}</span>
           <span className="text-xs text-muted-foreground">— verified by threat intelligence feeds</span>
         </div>
 
-        {phishing.length > 0 ? (
+        {(phishing.length > 0 || confirmedResults.length > 0) ? (
           <>
             <div className="text-xs text-muted-foreground bg-red-500/5 border border-red-500/15 rounded-lg px-3 py-2">
               Confirmed by PhishTank, OpenPhish, Google Safe Browsing, or abuse.ch as active phishing infrastructure targeting this brand.
             </div>
+            {confirmedResults.map((r: any) => {
+              const rRef = r.permutation ?? String(r.id);
+              const rFp = falsePositives.find(fp => fp.item_type === "permutation" && fp.item_ref === rRef);
+              const riskLvl = (r.riskScore ?? 0) >= 80 ? "critical" : (r.riskScore ?? 0) >= 60 ? "high" : (r.riskScore ?? 0) >= 40 ? "medium" : "low";
+              return (
+                <div key={`cr-${r.id}`} className={cn("bg-card border border-red-500/20 rounded-xl p-4 space-y-2", rFp?.status === "confirmed" && "opacity-50")}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      <span className="font-mono text-sm text-red-300 truncate">{r.permutation}</span>
+                      {r.isNew && <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase">New</span>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <SeverityPill risk={riskLvl} onPatch={async (nr) => { await apiFetch(`/api/brand-threats/results/${r.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: nr }) }); }} />
+                      {r.phishingSource && <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">{r.phishingSource}</span>}
+                      {scanId && <FalsePositiveButton scanId={scanId} itemType="permutation" itemRef={rRef} existingFp={rFp} onCreated={onFpCreated} />}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                    {r.dnsA?.[0] && <span><span className="font-medium text-foreground/70">IP:</span> <span className="font-mono">{r.dnsA[0]}</span></span>}
+                    {r.geoCountry && <span><span className="font-medium text-foreground/70">Country:</span> {r.geoCountry}</span>}
+                    {r.vtMalicious != null && <span className={r.vtMalicious > 0 ? "text-red-400 font-medium" : "text-green-400/70"}>VT: {r.vtMalicious} malicious</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <a href={`https://www.virustotal.com/gui/domain/${r.permutation}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"><ExternalLink className="w-3 h-3" /> VirusTotal</a>
+                    <a href={`https://phishtank.org/phish_search.php?q=${encodeURIComponent(r.permutation ?? "")}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"><ExternalLink className="w-3 h-3" /> PhishTank</a>
+                  </div>
+                </div>
+              );
+            })}
             {phishing.map((p: any) => {
               const pRef = p.url ?? String(p.id);
               const pFp = falsePositives.find(fp => fp.item_type === "phishing" && fp.item_ref === pRef);
               return (
-              <div key={p.id} className={cn("bg-card border border-red-500/20 rounded-xl p-4 space-y-2", pFp?.status === "confirmed" && "opacity-50")}>
+              <div key={`feed-${p.id}`} className={cn("bg-card border border-red-500/20 rounded-xl p-4 space-y-2", pFp?.status === "confirmed" && "opacity-50")}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
                     <span className="font-mono text-sm text-red-300 truncate">{p.url}</span>
-                    {p.isNew && (
-                      <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
-                        New
-                      </span>
-                    )}
+                    {p.isNew && <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase">New</span>}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">
-                      {p.source}
-                    </span>
+                    <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">{p.source}</span>
                     {scanId && <FalsePositiveButton scanId={scanId} itemType="phishing" itemRef={pRef} existingFp={pFp} onCreated={onFpCreated} />}
                   </div>
                 </div>
@@ -496,17 +555,12 @@ function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], o
                   {p.verified && <span className="text-green-400 flex items-center gap-0.5"><CheckCircle2 className="w-3 h-3" /> Verified</span>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <a href={`https://www.virustotal.com/gui/url/${btoa(p.url)}`} target="_blank" rel="noopener noreferrer"
-                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                    <ExternalLink className="w-3 h-3" /> VirusTotal
-                  </a>
-                  <a href={`https://phishtank.org/phish_search.php?valid=y&active=y&Search=Search&q=${encodeURIComponent(p.url)}`} target="_blank" rel="noopener noreferrer"
-                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                    <ExternalLink className="w-3 h-3" /> PhishTank
-                  </a>
+                  <a href={`https://www.virustotal.com/gui/url/${btoa(p.url)}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"><ExternalLink className="w-3 h-3" /> VirusTotal</a>
+                  <a href={`https://phishtank.org/phish_search.php?q=${encodeURIComponent(p.url)}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"><ExternalLink className="w-3 h-3" /> PhishTank</a>
                 </div>
               </div>
-            ); })}
+              );
+            })}
           </>
         ) : (
           <div className="flex items-center gap-2.5 py-4 text-sm text-green-400/70">
@@ -560,9 +614,7 @@ function DataLeaksTab({ leaks, scanId, falsePositives = [], onFpCreated }: {
                 <div className="flex items-center gap-2 flex-wrap">
                   <Database className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                   <span className="font-semibold text-sm">{leak.title}</span>
-                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", sev.color, sev.bg, sev.border)}>
-                    {leak.severity}
-                  </span>
+                  <SeverityPill risk={leak.severity ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/data-leaks/${leak.id}/severity`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ severity: r }) }); }} />
                   {leak.isNew && (
                     <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
                       New
@@ -1181,8 +1233,8 @@ function MobileAppsTab({ abuse, warnings, scanId, falsePositives, onFpCreated }:
                             )}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
+                            <SeverityPill risk={item.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${item.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
                             <FalsePositiveButton scanId={scanId} itemType="rogue_app" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
-                            <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize shrink-0", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>{item.risk}</span>
                           </div>
                         </div>
                         {item.description && <p className="text-xs text-muted-foreground/80 leading-relaxed">{item.description}</p>}
@@ -1217,75 +1269,109 @@ function SuspiciousCertsTab({ abuse, scanId, falsePositives, onFpCreated }: {
 }) {
   const certs = abuse.filter(r => r.type === "suspicious_certificate");
   const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "suspicious_certificate").map(fp => [fp.item_ref, fp]));
+  const now = Date.now();
 
-  const RISK_COLOR: Record<string, string> = {
-    critical: "text-red-400 bg-red-500/10 border-red-500/20",
-    high: "text-orange-400 bg-orange-500/10 border-orange-500/20",
-    medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
-    low: "text-green-400 bg-green-500/10 border-green-500/20",
-  };
+  function getExpiryDate(item: any): Date | null {
+    if (item.certValidTo) { const d = new Date(item.certValidTo); if (!isNaN(d.getTime())) return d; }
+    const m = (item.description ?? "").match(/Issued:\s*(\S+)/);
+    if (m?.[1] && m[1] !== "unknown.") {
+      const issued = new Date(m[1].replace(/\.$/, ""));
+      if (!isNaN(issued.getTime())) return new Date(issued.getTime() + 90 * 86400000);
+    }
+    return null;
+  }
+
+  function certStatus(item: any): "expired" | "expiring" | "suspicious" {
+    const exp = getExpiryDate(item);
+    if (!exp) return "suspicious";
+    const ms = exp.getTime() - now;
+    if (ms < 0) return "expired";
+    if (ms < 30 * 86400000) return "expiring";
+    return "suspicious";
+  }
+
+  const expired = certs.filter(c => certStatus(c) === "expired");
+  const expiring = certs.filter(c => certStatus(c) === "expiring");
+  const suspicious = certs.filter(c => certStatus(c) === "suspicious");
+
+  function CertCard({ item }: { item: any }) {
+    const ref = item.url ?? item.title ?? String(item.id);
+    const fp = fpMap.get(ref);
+    const expiry = getExpiryDate(item);
+    return (
+      <div className={cn("bg-card border rounded-xl p-4 space-y-2", fp?.status === "confirmed" ? "border-green-500/20 opacity-60" : "border-border")}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+            <Lock className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+            <span className="text-sm font-mono font-medium truncate">{item.title ?? item.url}</span>
+            {item.isNew && <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">New</span>}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <SeverityPill risk={item.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${item.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+            <FalsePositiveButton scanId={scanId} itemType="suspicious_certificate" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
+          </div>
+        </div>
+        {expiry && <p className="text-xs text-muted-foreground/70 ml-5">Expires: <span className={cn("font-medium", expiry.getTime() < now ? "text-red-400" : expiry.getTime() - now < 30*86400000 ? "text-orange-400" : "text-foreground/60")}>{expiry.toISOString().slice(0, 10)}</span></p>}
+        {item.description && <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{item.description}</p>}
+        {item.evidenceSnippet && <p className="text-[11px] font-mono bg-muted/30 rounded-lg px-3 py-1.5 text-muted-foreground/70">{item.evidenceSnippet}</p>}
+        {item.url && <a href={item.url} target="_blank" rel="noopener noreferrer" className="ml-5 text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit"><ExternalLink className="w-3 h-3" /> {item.url.slice(0, 60)}{item.url.length > 60 ? "…" : ""}</a>}
+      </div>
+    );
+  }
 
   if (!certs.length) {
     return (
       <div className="p-6 flex flex-col items-center justify-center py-20 text-center">
         <Lock className="w-10 h-10 text-green-400/40 mb-3" />
         <p className="text-base font-semibold text-green-400">No suspicious certificates found</p>
-        <p className="text-sm text-muted-foreground mt-1">
-          No certificate transparency entries matching brand name patterns were found.
-        </p>
-        <p className="text-xs text-muted-foreground/60 mt-2">
-          Data sourced from crt.sh certificate transparency logs.
-        </p>
+        <p className="text-sm text-muted-foreground mt-1">No certificate transparency entries matching brand name patterns were found.</p>
+        <p className="text-xs text-muted-foreground/60 mt-2">Data sourced from crt.sh certificate transparency logs.</p>
       </div>
     );
   }
 
   return (
-    <div className="p-5 space-y-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Lock className="w-4 h-4 text-violet-400" />
-        <span className="font-semibold">{certs.length} suspicious certificate{certs.length !== 1 ? "s" : ""}</span>
-        <span className="text-xs text-muted-foreground">— from certificate transparency logs (crt.sh)</span>
-      </div>
+    <div className="p-5 space-y-6">
       <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3 text-xs text-violet-300/80">
         <Info className="w-3.5 h-3.5 inline mr-1.5 text-violet-400" />
-        Certificates issued for domains containing brand keywords may indicate phishing infrastructure being prepared. Certificate issuance precedes domain activation by hours to days.
+        Certificates issued for domains containing brand keywords may indicate phishing infrastructure. Issuance precedes domain activation by hours to days. <span className="font-semibold">{certs.length} total</span> certificates detected.
       </div>
-      <div className="space-y-3">
-        {certs.map((item: any) => {
-          const ref = item.url ?? item.title ?? String(item.id);
-          const fp = fpMap.get(ref);
-          return (
-            <div key={item.id} className={cn("bg-card border rounded-xl p-4", fp?.status === "confirmed" ? "border-green-500/20 opacity-60" : "border-border")}>
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                  <Lock className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                  <span className="text-sm font-mono font-medium truncate">{item.title ?? item.url}</span>
-                  {item.isNew && (
-                    <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">New</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <FalsePositiveButton scanId={scanId} itemType="suspicious_certificate" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
-                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>{item.risk}</span>
-                </div>
-              </div>
-              {item.description && (
-                <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{item.description}</p>
-              )}
-              {item.evidenceSnippet && (
-                <p className="text-[11px] font-mono bg-muted/30 rounded-lg px-3 py-1.5 mt-2 text-muted-foreground/70">{item.evidenceSnippet}</p>
-              )}
-              {item.url && (
-                <a href={item.url} target="_blank" rel="noopener noreferrer"
-                  className="mt-2 ml-5 text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
-                  <ExternalLink className="w-3 h-3" /> {item.url.slice(0, 60)}{item.url.length > 60 ? "…" : ""}
-                </a>
-              )}
-            </div>
-          );
-        })}
-      </div>
+
+      {expired.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 pb-1 border-b border-border">
+            <XCircle className="w-4 h-4 text-red-400" />
+            <span className="font-semibold text-red-300">Expired</span>
+            <span className="text-[10px] text-red-400/70 bg-red-500/10 px-2 py-0.5 rounded-full font-bold border border-red-500/20">{expired.length}</span>
+            <span className="text-xs text-muted-foreground">— certificate has already expired</span>
+          </div>
+          <div className="space-y-3">{expired.map((item: any) => <CertCard key={item.id} item={item} />)}</div>
+        </div>
+      )}
+
+      {expiring.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 pb-1 border-b border-border">
+            <Clock className="w-4 h-4 text-orange-400" />
+            <span className="font-semibold text-orange-300">Expiring Soon</span>
+            <span className="text-[10px] text-orange-400/70 bg-orange-500/10 px-2 py-0.5 rounded-full font-bold border border-orange-500/20">{expiring.length}</span>
+            <span className="text-xs text-muted-foreground">— expires within 30 days</span>
+          </div>
+          <div className="space-y-3">{expiring.map((item: any) => <CertCard key={item.id} item={item} />)}</div>
+        </div>
+      )}
+
+      {suspicious.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 pb-1 border-b border-border">
+            <ShieldAlert className="w-4 h-4 text-violet-400" />
+            <span className="font-semibold text-violet-300">Suspicious</span>
+            <span className="text-[10px] text-violet-400/70 bg-violet-500/10 px-2 py-0.5 rounded-full font-bold border border-violet-500/20">{suspicious.length}</span>
+            <span className="text-xs text-muted-foreground">— active cert possibly impersonating brand</span>
+          </div>
+          <div className="space-y-3">{suspicious.map((item: any) => <CertCard key={item.id} item={item} />)}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1359,8 +1445,8 @@ function SocialMediaTab({ abuse, warnings, scanDomain, scanId, falsePositives, o
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <SeverityPill risk={item.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${item.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
                     <FalsePositiveButton scanId={scanId} itemType="fake_social" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
-                    <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", RISK_COLOR[item.risk] ?? RISK_COLOR.medium)}>{item.risk}</span>
                   </div>
                 </div>
                 {item.description && (
@@ -1485,6 +1571,7 @@ function MaliciousAdsTab({ ads, hasMetaToken, scanId, falsePositives = [], onFpC
                       <ExternalLink className="w-3 h-3" /> View Ad
                     </a>
                   )}
+                  <SeverityPill risk={ad.risk ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${ad.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
                   {scanId && <FalsePositiveButton scanId={scanId} itemType="malicious_ad" itemRef={adRef} existingFp={adFp} onCreated={onFpCreated} />}
                 </div>
               </div>
@@ -2072,7 +2159,7 @@ export default function BrandThreatDetailPage() {
     { id: "typosquatting",   label: "Typosquatting",   icon: <Globe className="w-3.5 h-3.5" />,      count: results.length },
     { id: "phishing",        label: "Phishing",        icon: <Fish className="w-3.5 h-3.5" />,        count: totalPhishingData, color: totalPhishingData > 0 ? "text-red-400" : undefined },
     { id: "data_leaks",      label: "Data Leaks",      icon: <Database className="w-3.5 h-3.5" />,    count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
-    { id: "suspicious_certs",label: "Susp. Certs",     icon: <Lock className="w-3.5 h-3.5" />,        count: suspCertsCount, color: suspCertsCount > 0 ? "text-violet-400" : undefined },
+    { id: "suspicious_certs",label: "Certificates",    icon: <Lock className="w-3.5 h-3.5" />,        count: suspCertsCount, color: suspCertsCount > 0 ? "text-violet-400" : undefined },
     { id: "social_media",    label: "Social Media",    icon: <AtSign className="w-3.5 h-3.5" />,      count: socialCount, color: socialCount > 0 ? "text-pink-400" : undefined },
     { id: "mobile_apps",     label: "Mobile Apps",     icon: <Smartphone className="w-3.5 h-3.5" />,  count: mobileAppsCount, color: mobileAppsCount > 0 ? "text-orange-400" : undefined },
     { id: "malicious_ads",   label: "Malicious Ads",   icon: <Megaphone className="w-3.5 h-3.5" />,   count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
@@ -2537,7 +2624,7 @@ export default function BrandThreatDetailPage() {
 
         {/* ── PHISHING tab ── */}
         {activeTab === "phishing" && (s.status === "done" || s.status === "error") && (
-          <PhishingTab phishing={phishingDetections} brandAbuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
+          <PhishingTab phishing={phishingDetections} brandAbuse={brandAbuse} confirmedResults={results.filter((r: any) => r.isPhishing)} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── DATA LEAKS tab ── */}
@@ -2873,8 +2960,12 @@ export default function BrandThreatDetailPage() {
                         <div className="px-2">
                           <RiskScoreBar score={r.riskScore} />
                         </div>
-                        {/* FP button */}
-                        <div className="flex justify-center" onClick={e => e.stopPropagation()}>
+                        {/* FP + severity */}
+                        <div className="flex flex-col justify-center items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                          <SeverityPill
+                            risk={(r.riskScore ?? 0) >= 80 ? "critical" : (r.riskScore ?? 0) >= 60 ? "high" : (r.riskScore ?? 0) >= 40 ? "medium" : "low"}
+                            onPatch={async (nr) => { await apiFetch(`/api/brand-threats/results/${r.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: nr }) }); }}
+                          />
                           <FalsePositiveButton scanId={id} itemType="permutation" itemRef={r.permutation} existingFp={existingFp} onCreated={refreshFalsePositives} />
                         </div>
                       </div>
@@ -2910,10 +3001,13 @@ export default function BrandThreatDetailPage() {
                             </div>
                             <div>
                               <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mb-2.5">RDAP / WHOIS</p>
-                              {r.whoisRegistrar || r.whoisCreated ? (
+                              {r.whoisRegistrar || r.whoisCreated || r.whoisRegistrantOrg || r.whoisExpires || r.whoisUpdated ? (
                                 <div className="space-y-1.5">
-                                  {r.whoisRegistrar && <p className="flex items-start gap-1.5"><Building2 className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" /><span className="text-muted-foreground/80">{r.whoisRegistrar.slice(0, 30)}{r.whoisRegistrar.length > 30 ? "…" : ""}</span></p>}
+                                  {r.whoisRegistrar && <p className="flex items-start gap-1.5"><Building2 className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" /><span className="text-muted-foreground/80 break-words">{r.whoisRegistrar}</span></p>}
+                                  {r.whoisRegistrantOrg && <p className="flex items-start gap-1.5"><Tag className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" /><span className="text-muted-foreground/80 break-words">{r.whoisRegistrantOrg}</span></p>}
                                   {r.whoisCreated && <p className="flex items-center gap-1.5"><Calendar className="w-3 h-3 text-muted-foreground shrink-0" /><span className="text-muted-foreground/80">Created {r.whoisCreated?.slice(0, 10)}</span></p>}
+                                  {r.whoisExpires && <p className="flex items-center gap-1.5"><Clock className="w-3 h-3 text-muted-foreground shrink-0" /><span className="text-muted-foreground/80">Expires {r.whoisExpires?.slice(0, 10)}</span></p>}
+                                  {r.whoisUpdated && <p className="flex items-center gap-1.5"><RotateCw className="w-3 h-3 text-muted-foreground shrink-0" /><span className="text-muted-foreground/80">Updated {r.whoisUpdated?.slice(0, 10)}</span></p>}
                                   {r.whoisCountry && <p className="flex items-center gap-1.5"><MapPin className="w-3 h-3 text-muted-foreground shrink-0" /><span className="text-muted-foreground/80">{r.whoisCountry}</span></p>}
                                   {r.whoisAbuseContact && <p className="flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 text-muted-foreground shrink-0" /><a href={`mailto:${r.whoisAbuseContact}`} className="text-primary hover:underline">{r.whoisAbuseContact}</a></p>}
                                   {r.whoisAgeDays !== null && r.whoisAgeDays !== undefined && (
@@ -2978,7 +3072,7 @@ export default function BrandThreatDetailPage() {
                 }
 
                 const REG_HEADER = (
-                  <div className={`grid ${COLS} items-center px-5 py-2.5 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold sticky top-0 z-10`}>
+                  <div className={`grid ${COLS} items-center px-5 py-2.5 border-b border-border bg-muted/20 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold`}>
                     <span />
                     <span>Domain</span>
                     <span className="text-center">Mutation Type</span>
@@ -3069,7 +3163,7 @@ export default function BrandThreatDetailPage() {
                           <span className="text-[10px] text-muted-foreground/50 bg-muted/40 px-2 py-0.5 rounded-full font-bold">{unregistered.length}</span>
                           <span className="text-[10px] text-muted-foreground/40 ml-1 hidden sm:inline">available to register — monitor for future squatting</span>
                         </div>
-                        <div className="grid grid-cols-[32px_minmax(0,1fr)_140px_130px_64px_64px] items-center px-5 py-2.5 border-b border-border bg-muted/10 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold sticky top-0 z-10">
+                        <div className="grid grid-cols-[32px_minmax(0,1fr)_140px_130px_64px_64px] items-center px-5 py-2.5 border-b border-border bg-muted/10 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
                           <span /><span>Domain</span>
                           <span className="text-center">Mutation Type</span>
                           <span className="text-center">IP Address</span>
@@ -3134,39 +3228,50 @@ export default function BrandThreatDetailPage() {
             </div>
 
             {/* ── Pagination ── */}
-            {totalPages > 1 && (
-              <div className="shrink-0 flex items-center justify-between px-5 py-3 border-t border-border bg-card/30">
-                <span className="text-xs text-muted-foreground">
-                  Page <span className="font-semibold text-foreground">{page + 1}</span> of <span className="font-semibold text-foreground">{totalPages}</span>
-                  <span className="text-muted-foreground/60 ml-2">(registered domains)</span>
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 px-3 text-xs">
-                    ← Previous
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-                      const p = totalPages <= 7 ? i : page < 4 ? i : page > totalPages - 5 ? totalPages - 7 + i : page - 3 + i;
-                      return (
-                        <button
-                          key={p}
-                          onClick={() => setPage(p)}
-                          className={cn(
-                            "w-7 h-7 rounded text-xs font-medium transition-all",
-                            p === page ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/60",
-                          )}
-                        >
-                          {p + 1}
-                        </button>
-                      );
-                    })}
+            {totalPages > 1 && (() => {
+              const showSet = new Set(
+                [0, 1, totalPages - 2, totalPages - 1, page - 1, page, page + 1]
+                  .filter(p => p >= 0 && p < totalPages)
+              );
+              const pageList = [...showSet].sort((a, b) => a - b);
+              const items: (number | "…")[] = [];
+              for (let i = 0; i < pageList.length; i++) {
+                if (i > 0 && pageList[i]! - pageList[i - 1]! > 1) items.push("…");
+                items.push(pageList[i]!);
+              }
+              return (
+                <div className="shrink-0 flex items-center justify-between px-5 py-3 border-t border-border bg-card/30">
+                  <span className="text-xs text-muted-foreground">
+                    Page <span className="font-semibold text-foreground">{page + 1}</span> of <span className="font-semibold text-foreground">{totalPages}</span>
+                    <span className="text-muted-foreground/60 ml-2">({filtered.length} registered domains)</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <Button variant="outline" size="sm" onClick={() => setPage(0)} disabled={page === 0} className="h-7 px-2 text-xs" title="First page">«</Button>
+                    <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 px-2.5 text-xs">‹</Button>
+                    <div className="flex items-center gap-0.5">
+                      {items.map((item, i) =>
+                        item === "…" ? (
+                          <span key={`ellipsis-${i}`} className="w-7 h-7 flex items-center justify-center text-xs text-muted-foreground/40 select-none">…</span>
+                        ) : (
+                          <button
+                            key={item}
+                            onClick={() => setPage(item as number)}
+                            className={cn(
+                              "w-7 h-7 rounded text-xs font-medium transition-all",
+                              item === page ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/60",
+                            )}
+                          >
+                            {(item as number) + 1}
+                          </button>
+                        )
+                      )}
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="h-7 px-2.5 text-xs">›</Button>
+                    <Button variant="outline" size="sm" onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} className="h-7 px-2 text-xs" title="Last page">»</Button>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="h-7 px-3 text-xs">
-                    Next →
-                  </Button>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
 

@@ -747,6 +747,7 @@ export async function runBrandThreatScan(scanId: number, domain: string, resumeF
         whoisCountry: rdap?.registrantCountry ?? undefined,
         whoisAbuseContact: rdap?.abuseContact ?? undefined,
         whoisAgeDays: rdap?.ageDays ?? undefined,
+        whoisRegistrantOrg: rdap?.registrantOrg ?? undefined,
         geoCountry: geo?.country ?? undefined,
         geoCity: geo?.city ?? undefined,
         geoAsn: geo?.asn ?? undefined,

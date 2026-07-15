@@ -767,6 +767,56 @@ router.patch("/brand-threats/false-positives/:fpId", requireAuth, async (req: Au
   res.json(rows[0]);
 });
 
+// ── PATCH /brand-threats/abuse/:id/risk ───────────────────────────────────────
+router.patch("/brand-threats/abuse/:id/risk", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const { risk } = req.body as { risk?: string };
+  if (!risk || !["critical","high","medium","low"].includes(risk)) {
+    res.status(400).json({ error: "risk must be critical | high | medium | low" }); return;
+  }
+  const [row] = await db.update(brandAbuseResultsTable)
+    .set({ risk })
+    .where(and(eq(brandAbuseResultsTable.id, id), eq(brandAbuseResultsTable.tenantId, req.user!.tenantId)))
+    .returning({ id: brandAbuseResultsTable.id, risk: brandAbuseResultsTable.risk });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
+// ── PATCH /brand-threats/results/:id/risk ─────────────────────────────────────
+router.patch("/brand-threats/results/:id/risk", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const { risk } = req.body as { risk?: string };
+  const riskToScore: Record<string, number> = { critical: 90, high: 70, medium: 45, low: 15 };
+  if (!risk || !(risk in riskToScore)) {
+    res.status(400).json({ error: "risk must be critical | high | medium | low" }); return;
+  }
+  const score = riskToScore[risk]!;
+  const [row] = await db.update(brandThreatResultsTable)
+    .set({ riskScore: score, isSuspicious: score >= 60 })
+    .where(eq(brandThreatResultsTable.id, id))
+    .returning({ id: brandThreatResultsTable.id, riskScore: brandThreatResultsTable.riskScore });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
+// ── PATCH /brand-threats/data-leaks/:id/severity ──────────────────────────────
+router.patch("/brand-threats/data-leaks/:id/severity", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const { severity } = req.body as { severity?: string };
+  if (!severity || !["critical","high","medium","low"].includes(severity)) {
+    res.status(400).json({ error: "severity must be critical | high | medium | low" }); return;
+  }
+  const [row] = await db.update(dataLeakResultsTable)
+    .set({ severity })
+    .where(and(eq(dataLeakResultsTable.id, id), eq(dataLeakResultsTable.tenantId, req.user!.tenantId)))
+    .returning({ id: dataLeakResultsTable.id, severity: dataLeakResultsTable.severity });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
 // ── GET /data-leaks (tenant-wide) ─────────────────────────────────────────────
 router.get("/data-leaks", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const results = await db.select().from(dataLeakResultsTable)

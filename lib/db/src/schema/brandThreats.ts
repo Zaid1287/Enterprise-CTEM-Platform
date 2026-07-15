@@ -62,6 +62,7 @@ export const brandThreatResultsTable = pgTable("brand_threat_results", {
   whoisCountry:    text("whois_country"),
   whoisAbuseContact: text("whois_abuse_contact"),
   whoisAgeDays:    integer("whois_age_days"),
+  whoisRegistrantOrg: text("whois_registrant_org"),
   geoCountry:      text("geo_country"),
   geoCity:         text("geo_city"),
   geoAsn:          text("geo_asn"),
@@ -158,6 +159,7 @@ export const brandAbuseResultsTable = pgTable("brand_abuse_results", {
   installCount:    text("install_count"),
   iconUrl:         text("icon_url"),
   risk:            text("risk").notNull().default("medium"),
+  certValidTo:     text("cert_valid_to"),
   isNew:           boolean("is_new").notNull().default(false),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
