@@ -18,12 +18,21 @@ import {
   ExternalLink, Loader2, ShieldCheck, ShieldX, AlertTriangle,
   RefreshCw, Info, SlidersHorizontal, Hourglass, RotateCcw,
   MessageSquare, User, Calendar, Building2, Shield, Quote,
-  ChevronDown, ChevronUp, Pencil, Plus,
+  ChevronDown, ChevronUp, Pencil, Plus, GitCommitHorizontal,
+  History,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 type FpAction = "confirm" | "reject" | "in_progress" | "reopen" | "reconfirm";
+
+interface FpTrailEntry {
+  action: string;
+  note: string | null;
+  userEmail: string | null;
+  userName: string;
+  createdAt: string;
+}
 
 interface FpFinding {
   id: number;
@@ -167,6 +176,89 @@ function ABtn({ variant, children, onClick }: { variant: string; children: React
   );
 }
 
+// ── FP Trail timeline config ───────────────────────────────────────────────────
+
+const TRAIL_CFG: Record<string, {
+  label: string; icon: React.ElementType;
+  iconBg: string; iconColor: string; connectorColor: string; noteBg: string;
+}> = {
+  submitted:    { label: "Submitted",       icon: Clock,             iconBg: "bg-amber-500/20",   iconColor: "text-amber-400",   connectorColor: "border-amber-500/30",   noteBg: "bg-amber-500/5 border-amber-500/15" },
+  in_progress:  { label: "In Progress",     icon: Hourglass,         iconBg: "bg-blue-500/20",    iconColor: "text-blue-400",    connectorColor: "border-blue-500/30",    noteBg: "bg-blue-500/5 border-blue-500/15" },
+  confirm:      { label: "Confirmed",       icon: CheckCircle2,      iconBg: "bg-emerald-500/20", iconColor: "text-emerald-400", connectorColor: "border-emerald-500/30", noteBg: "bg-emerald-500/5 border-emerald-500/15" },
+  reconfirm:    { label: "Re-confirmed",    icon: CheckCircle2,      iconBg: "bg-emerald-500/20", iconColor: "text-emerald-400", connectorColor: "border-emerald-500/30", noteBg: "bg-emerald-500/5 border-emerald-500/15" },
+  reject:       { label: "Rejected",        icon: XCircle,           iconBg: "bg-red-500/20",     iconColor: "text-red-400",     connectorColor: "border-red-500/30",     noteBg: "bg-red-500/5 border-red-500/15" },
+  reopen:       { label: "Re-opened",       icon: RotateCcw,         iconBg: "bg-amber-500/20",   iconColor: "text-amber-400",   connectorColor: "border-amber-500/30",   noteBg: "bg-amber-500/5 border-amber-500/15" },
+  note_updated: { label: "Reason Updated",  icon: Pencil,            iconBg: "bg-primary/20",     iconColor: "text-primary",     connectorColor: "border-primary/30",     noteBg: "bg-primary/5 border-primary/15" },
+};
+
+function FpTrailTimeline({ trail, isLoading }: { trail: FpTrailEntry[]; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-4 text-muted-foreground/40">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        <span className="text-xs">Loading history…</span>
+      </div>
+    );
+  }
+  if (trail.length === 0) {
+    return (
+      <div className="py-4 text-center text-xs text-muted-foreground/40 italic">
+        No review history yet
+      </div>
+    );
+  }
+  return (
+    <div className="relative space-y-0">
+      {trail.map((entry, i) => {
+        const cfg = TRAIL_CFG[entry.action] ?? {
+          label: entry.action.replace(/_/g, " "),
+          icon: GitCommitHorizontal,
+          iconBg: "bg-muted/30", iconColor: "text-muted-foreground",
+          connectorColor: "border-border/30", noteBg: "bg-muted/10 border-border/30",
+        };
+        const Icon = cfg.icon;
+        const isLast = i === trail.length - 1;
+        return (
+          <div key={i} className="flex gap-3">
+            {/* Left: icon + connector line */}
+            <div className="flex flex-col items-center flex-shrink-0">
+              <div className={cn("w-7 h-7 rounded-full flex items-center justify-center ring-2 ring-background z-10", cfg.iconBg)}>
+                <Icon className={cn("w-3.5 h-3.5", cfg.iconColor)} />
+              </div>
+              {!isLast && (
+                <div className={cn("w-0 flex-1 border-l-2 border-dashed my-1", cfg.connectorColor)} style={{ minHeight: "1.25rem" }} />
+              )}
+            </div>
+            {/* Right: content */}
+            <div className={cn("pb-4 min-w-0 flex-1", isLast && "pb-1")}>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className={cn("text-[11px] font-bold", cfg.iconColor)}>{cfg.label}</span>
+                <span className="text-[10px] text-muted-foreground/50">
+                  {new Date(entry.createdAt).toLocaleDateString("en-GB", {
+                    day: "2-digit", month: "short", year: "numeric",
+                  })}{" "}{new Date(entry.createdAt).toLocaleTimeString("en-GB", {
+                    hour: "2-digit", minute: "2-digit",
+                  })}
+                </span>
+                <span className="text-[10px] text-muted-foreground/40">
+                  by <span className="text-muted-foreground/70 font-medium">{entry.userName}</span>
+                </span>
+              </div>
+              {entry.note ? (
+                <div className={cn("mt-1 px-2.5 py-1.5 rounded-lg border text-[11px] italic text-foreground/70 leading-relaxed", cfg.noteBg)}>
+                  "{entry.note}"
+                </div>
+              ) : (
+                <p className="mt-0.5 text-[10px] text-muted-foreground/30 italic">No note recorded</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Row component ─────────────────────────────────────────────────────────────
 
 function FpRow({
@@ -178,6 +270,14 @@ function FpRow({
   onEditNote: (f: FpFinding) => void;
 }) {
   const statusCfg = FP_STATUS[f.falsePositiveStatus as keyof typeof FP_STATUS];
+
+  // Fetch the FP trail only when the row is expanded
+  const { data: trailData, isLoading: trailLoading } = useQuery<{ trail: FpTrailEntry[] }>({
+    queryKey: ["fp-trail", f.id],
+    queryFn: () => apiFetch<{ trail: FpTrailEntry[] }>(`/api/findings/${f.id}/fp-trail`),
+    enabled: expanded,
+    staleTime: 30_000,
+  });
 
   return (
     <div className={cn(
@@ -319,66 +419,63 @@ function FpRow({
 
       {/* ── Expanded detail ───────────────────────────────────────────────── */}
       {expanded && (
-        <div className="border-t border-border/40 bg-muted/10 px-5 py-4 grid grid-cols-2 gap-6">
-          {/* Full analyst reason */}
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 flex items-center gap-1.5">
-                <Quote className="w-3 h-3" /> Analyst Reason
-              </p>
-              <button
-                onClick={() => onEditNote(f)}
-                className="flex items-center gap-1 text-[10px] text-primary/60 hover:text-primary transition-colors ml-auto"
-              >
-                <Pencil className="w-3 h-3" />
-                {f.fpNote ? "Edit reason" : "Add reason"}
-              </button>
-            </div>
-            {f.fpNote ? (
-              <p className="text-sm text-foreground/80 leading-relaxed bg-card rounded-lg border border-border/50 px-4 py-3 italic">
-                "{f.fpNote}"
-              </p>
-            ) : (
-              <button
-                onClick={() => onEditNote(f)}
-                className="w-full text-left text-sm text-muted-foreground/40 italic bg-card rounded-lg border border-dashed border-border/50 px-4 py-3 hover:border-primary/30 hover:text-muted-foreground/60 transition-colors"
-              >
-                No reason provided — click to add one
-              </button>
-            )}
-          </div>
+        <div className="border-t border-border/40 bg-muted/10 px-5 py-5 grid grid-cols-2 gap-6">
 
-          {/* Submission / Review metadata */}
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 mb-2 flex items-center gap-1.5">
-              <User className="w-3 h-3" /> Submission Details
-            </p>
-            <div className="space-y-1.5 text-xs text-muted-foreground">
+          {/* Left column: full analyst reason + submission metadata */}
+          <div className="space-y-4">
+            {/* Analyst reason */}
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 flex items-center gap-1.5">
+                  <Quote className="w-3 h-3" /> Analyst Reason
+                </p>
+                <button
+                  onClick={() => onEditNote(f)}
+                  className="flex items-center gap-1 text-[10px] text-primary/60 hover:text-primary transition-colors ml-auto"
+                >
+                  <Pencil className="w-3 h-3" />
+                  {f.fpNote ? "Edit reason" : "Add reason"}
+                </button>
+              </div>
+              {f.fpNote ? (
+                <p className="text-sm text-foreground/80 leading-relaxed bg-card rounded-lg border border-border/50 px-4 py-3 italic">
+                  "{f.fpNote}"
+                </p>
+              ) : (
+                <button
+                  onClick={() => onEditNote(f)}
+                  className="w-full text-left text-sm text-muted-foreground/40 italic bg-card rounded-lg border border-dashed border-border/50 px-4 py-3 hover:border-primary/30 hover:text-muted-foreground/60 transition-colors"
+                >
+                  No reason provided — click to add one
+                </button>
+              )}
+            </div>
+
+            {/* Submission metadata */}
+            <div className="space-y-1.5 text-xs text-muted-foreground border-t border-border/30 pt-3">
               <div className="flex items-center gap-2">
-                <span className="w-24 text-muted-foreground/50 flex-shrink-0">Submitted by</span>
+                <span className="w-24 text-muted-foreground/50 flex-shrink-0 flex items-center gap-1"><User className="w-3 h-3" /> Submitted by</span>
                 <span className="text-foreground/80 font-medium">{f.fpSubmittedByName ?? "—"}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-24 text-muted-foreground/50 flex-shrink-0">Submitted at</span>
+                <span className="w-24 text-muted-foreground/50 flex-shrink-0 flex items-center gap-1"><Calendar className="w-3 h-3" /> Submitted at</span>
                 <span className="text-foreground/80">{fmtDateTime(f.fpSubmittedAt)}</span>
               </div>
-              {f.fpReviewedByName && (<>
-                <div className="flex items-center gap-2">
-                  <span className="w-24 text-muted-foreground/50 flex-shrink-0">Reviewed by</span>
-                  <span className="text-foreground/80 font-medium">{f.fpReviewedByName}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-24 text-muted-foreground/50 flex-shrink-0">Reviewed at</span>
-                  <span className="text-foreground/80">{fmtDateTime(f.fpReviewedAt)}</span>
-                </div>
-              </>)}
               {showTenant && f.tenantName && (
                 <div className="flex items-center gap-2">
-                  <span className="w-24 text-muted-foreground/50 flex-shrink-0">Client</span>
+                  <span className="w-24 text-muted-foreground/50 flex-shrink-0 flex items-center gap-1"><Building2 className="w-3 h-3" /> Client</span>
                   <span className="text-foreground/80">{f.tenantName}</span>
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Right column: full FP review trail timeline */}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 mb-3 flex items-center gap-1.5">
+              <History className="w-3 h-3" /> Review History
+            </p>
+            <FpTrailTimeline trail={trailData?.trail ?? []} isLoading={trailLoading} />
           </div>
         </div>
       )}
@@ -483,6 +580,7 @@ export default function FalsePositivesPage() {
       const msg = messages[vars.action];
       toast({ title: msg.title, description: msg.description });
       qc.invalidateQueries({ queryKey: ["false-positives"] });
+      qc.invalidateQueries({ queryKey: ["fp-trail", vars.id] });
       setReviewing(null);
       setReviewNote("");
     },
@@ -496,9 +594,10 @@ export default function FalsePositivesPage() {
         method: "PATCH",
         body: JSON.stringify({ fpNote }),
       }),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
       toast({ title: "Reason saved", description: "The analyst reason has been updated." });
       qc.invalidateQueries({ queryKey: ["false-positives"] });
+      qc.invalidateQueries({ queryKey: ["fp-trail", vars.id] });
       setEditNoteTarget(null);
       setEditNoteText("");
       setEditNoteSaving(false);

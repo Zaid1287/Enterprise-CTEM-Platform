@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { eq, and, ilike, inArray, desc, isNotNull, or, ne, sql } from "drizzle-orm";
+import { eq, and, ilike, inArray, desc, isNotNull, or, ne, sql, like, asc } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, buildRecordFilter, getEffectiveAssetIdsForTenant } from "../lib/tenantScoping";
-import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable, scanSuppressionsTable } from "@workspace/db";
+import { db, findingsTable, findingCommentsTable, assetsTable, usersTable, scanAssetResultsTable, riskScoresTable, tenantsTable, externalMemberAssetsTable, scanSuppressionsTable, auditLogsTable } from "@workspace/db";
 import {
   GetFindingParams, UpdateFindingParams, UpdateFindingBody,
   ListFindingsQueryParams, ListFindingCommentsParams,
@@ -433,8 +433,9 @@ router.patch("/findings/:findingId/fp-status", requireAuth, async (req: Authenti
   if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
 
   const now = new Date();
+  // Never overwrite the analyst's original fpNote from the reviewer action.
+  // Reviewer notes are preserved in the audit trail (audit_logs), not on the finding itself.
   const updateSet: Record<string, any> = {
-    fpNote:    note ?? null,
     updatedAt: now,
   };
 
@@ -734,16 +735,83 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
     .where(patchWhere)
     .returning();
   if (!finding) { res.status(404).json({ error: "Finding not found" }); return; }
-  await logAudit(req.user!, "update_finding", "finding", finding.id, `status: ${parsed.data.status ?? "unchanged"}`);
+
+  // Log a specific audit event for FP-related changes so the trail endpoint can surface them.
+  if (parsed.data.status === "false_positive") {
+    // Initial submission — record the analyst reason in the trail
+    await logAudit(req.user!, "finding.fp_submitted", "finding", finding.id,
+      JSON.stringify({ action: "submitted", note: updateData.fpNote ?? null }), req.ip ?? "");
+  } else if (typeof req.body.fpNote === "string" && !parsed.data.status) {
+    // Standalone note update (no status change) — record in the trail
+    await logAudit(req.user!, "finding.fp_note_updated", "finding", finding.id,
+      JSON.stringify({ action: "note_updated", note: updateData.fpNote ?? null }), req.ip ?? "");
+  } else {
+    await logAudit(req.user!, "update_finding", "finding", finding.id, `status: ${parsed.data.status ?? "unchanged"}`);
+  }
+
   res.json(toFindingResponse(finding));
 
-  // Issue 4: Recalculate risk score whenever a finding is updated (status change, etc.)
-  // Fire-and-forget — does not block the response
+  // Recalculate risk score — fire-and-forget
   if (finding.assetId) {
     finalizeScannedAssets([finding.assetId], { updateLastScannedAt: false }).catch(err =>
       logger.warn({ err, assetId: finding.assetId }, "Risk recalculation after finding update failed (non-fatal)"),
     );
   }
+});
+
+// ── GET /findings/:findingId/fp-trail ─────────────────────────────────────────
+// Returns the full audit trail of FP status changes + note edits for a finding.
+// Trail entries are sourced from audit_logs where action starts with "finding.fp_".
+router.get("/findings/:findingId/fp-trail", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const findingId = parseInt(req.params.findingId as string, 10);
+  if (isNaN(findingId)) { res.status(400).json({ error: "Invalid findingId" }); return; }
+
+  const { role, tenantId } = req.user!;
+  // Access guard: privileged roles see any finding; others scope to their tenant's findings
+  if (role !== "super_admin" && role !== "admin" && role !== "account_manager") {
+    const [f] = await db.select({ id: findingsTable.id })
+      .from(findingsTable)
+      .where(and(eq(findingsTable.id, findingId), eq(findingsTable.tenantId, tenantId)));
+    if (!f) { res.status(404).json({ error: "Finding not found" }); return; }
+  }
+
+  // Fetch all FP trail entries from audit_logs, joined with users for display name
+  const rows = await db
+    .select({
+      action:     auditLogsTable.action,
+      details:    auditLogsTable.details,
+      createdAt:  auditLogsTable.createdAt,
+      userEmail:  auditLogsTable.userEmail,
+      userId:     auditLogsTable.userId,
+      firstName:  usersTable.firstName,
+      lastName:   usersTable.lastName,
+    })
+    .from(auditLogsTable)
+    .leftJoin(usersTable, eq(auditLogsTable.userId, usersTable.id))
+    .where(and(
+      eq(auditLogsTable.resourceId, findingId),
+      like(auditLogsTable.action, "finding.fp_%"),
+    ))
+    .orderBy(asc(auditLogsTable.createdAt));
+
+  const trail = rows.map(row => {
+    let note: string | null = null;
+    const actionSlug = row.action.replace("finding.fp_", "");
+    try {
+      const d = JSON.parse(row.details ?? "{}");
+      note = d.note ?? null;
+    } catch { /* details may be plain text for older entries */ }
+    const fullName = [row.firstName, row.lastName].filter(Boolean).join(" ") || null;
+    return {
+      action:    actionSlug,
+      note,
+      userEmail: row.userEmail ?? null,
+      userName:  fullName ?? row.userEmail ?? "Unknown",
+      createdAt: row.createdAt,
+    };
+  });
+
+  res.json({ trail });
 });
 
 router.get("/findings/:findingId/comments", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
