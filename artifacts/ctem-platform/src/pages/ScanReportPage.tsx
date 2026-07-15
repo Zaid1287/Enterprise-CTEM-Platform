@@ -2747,19 +2747,8 @@ function DirFuzzTab({ dirFuzz }: { dirFuzz: any }) {
                   ))}
                 </div>
               )}
-              {/* Sample endpoints for this host */}
-              {h.isLive && (h.endpoints ?? []).filter((e: any) => e.isInteresting || ((e.source === "fuzz" || e.source === "recursive") && e.statusCode === 200)).slice(0, 5).map((e: any, j: number) => {
-                const srcMeta = DIR_SOURCE_META[e.source] ?? DIR_SOURCE_META.wayback;
-                const statusBadge = STATUS_BADGE[e.statusCode] ?? "bg-accent/40 text-muted-foreground border-border";
-                return (
-                  <div key={j} className="flex items-center gap-2 px-3 py-1.5 text-xs border-t border-border/40 bg-accent/5">
-                    <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1 py-0.5 font-mono w-10 text-center", statusBadge)}>{e.statusCode}</span>
-                    <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1 py-0.5", srcMeta.badge)}>{srcMeta.label}</span>
-                    <span className="font-mono text-foreground flex-1 truncate">{e.path}</span>
-                    <a href={e.url} target="_blank" rel="noreferrer"><ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" /></a>
-                  </div>
-                );
-              })}
+              {/* Paginated endpoint list for this host */}
+              {h.isLive && <HostEndpointList endpoints={h.endpoints ?? []} />}
             </div>
           ))}
         </div>
@@ -3056,6 +3045,92 @@ const BUCKET_STATUS_META: Record<string, { label: string; color: string }> = {
   private:         { label: "PRIVATE",           color: "bg-accent/60 text-muted-foreground border-border" },
   error:           { label: "ERROR",             color: "bg-accent/30 text-muted-foreground/60 border-border" },
 };
+
+// ── By-Host paginated endpoint list ───────────────────────────────────────────
+const HOST_PAGE_SIZE = 25;
+
+function hostEndpointFilter(e: any): boolean {
+  // isInteresting flag (any source)
+  if (e.isInteresting) return true;
+  // Any source returning 200
+  if (e.statusCode >= 200 && e.statusCode < 300) return true;
+  // Redirects (301 / 302 / 307 / 308)
+  if ([301, 302, 307, 308].includes(e.statusCode)) return true;
+  // Wayback / crawl that were archived (status stored as 200 by the archiver)
+  if ((e.source === "wayback" || e.source === "crawl") && e.statusCode === 200) return true;
+  return false;
+}
+
+function HostEndpointList({ endpoints }: { endpoints: any[] }) {
+  const [page, setPage] = useState(0);
+  const qualified = endpoints.filter(hostEndpointFilter);
+  const totalPages = Math.ceil(qualified.length / HOST_PAGE_SIZE);
+  const pageItems = qualified.slice(page * HOST_PAGE_SIZE, (page + 1) * HOST_PAGE_SIZE);
+
+  if (qualified.length === 0) {
+    return (
+      <div className="px-3 py-3 border-t border-border/40 text-center text-[11px] text-muted-foreground">
+        No qualifying endpoints (all were 404 / server-error or filtered)
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-border/40">
+      {/* Count + pagination controls */}
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/10 border-b border-border/25 flex-wrap">
+        <span className="text-[10px] text-muted-foreground flex-1">
+          Showing{" "}
+          <span className="font-semibold text-foreground">
+            {page * HOST_PAGE_SIZE + 1}–{Math.min((page + 1) * HOST_PAGE_SIZE, qualified.length)}
+          </span>{" "}
+          of{" "}
+          <span className="font-semibold text-foreground">{qualified.length.toLocaleString()}</span>{" "}
+          qualifying endpoints
+        </span>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-1">
+            <button
+              disabled={page === 0}
+              onClick={() => setPage(p => p - 1)}
+              className="text-[10px] px-2 py-0.5 border border-border rounded disabled:opacity-30 hover:bg-accent/30 transition-colors"
+            >‹ Prev</button>
+            <span className="text-[10px] text-muted-foreground tabular-nums px-1">
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              disabled={page >= totalPages - 1}
+              onClick={() => setPage(p => p + 1)}
+              className="text-[10px] px-2 py-0.5 border border-border rounded disabled:opacity-30 hover:bg-accent/30 transition-colors"
+            >Next ›</button>
+          </div>
+        )}
+      </div>
+      {/* Rows */}
+      <div className="divide-y divide-border/25 max-h-96 overflow-y-auto overscroll-contain" style={{ scrollbarWidth: "thin", scrollbarColor: "hsl(var(--border)) transparent" }}>
+        {pageItems.map((e: any, j: number) => {
+          const srcMeta = DIR_SOURCE_META[e.source] ?? DIR_SOURCE_META.wayback;
+          const statusBadge = STATUS_BADGE[e.statusCode] ?? "bg-accent/40 text-muted-foreground border-border";
+          const isRedirect = [301, 302, 307, 308].includes(e.statusCode);
+          return (
+            <div key={j} className={cn("flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent/10 transition-colors", e.isInteresting && "bg-orange-500/5")}>
+              <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1 py-0.5 font-mono w-10 text-center tabular-nums", statusBadge)}>{e.statusCode}</span>
+              <span className={cn("shrink-0 text-[10px] font-bold border rounded px-1 py-0.5", srcMeta.badge)}>{srcMeta.label}</span>
+              <span className="font-mono text-foreground flex-1 truncate">{e.path}</span>
+              {isRedirect && e.redirectTo && (
+                <span className="text-[9px] text-muted-foreground/60 truncate max-w-24 shrink-0" title={e.redirectTo}>→ {e.redirectTo}</span>
+              )}
+              {e.isInteresting && <span className="shrink-0 text-[9px] text-orange-400 font-bold">★</span>}
+              <a href={e.url} target="_blank" rel="noreferrer" className="shrink-0">
+                <ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+              </a>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // ── SSRF Variant Row (copy-to-clipboard per row) ──────────────────────────────
 function SsrfVariantRow({ index, url }: { index: number; url: string }) {
