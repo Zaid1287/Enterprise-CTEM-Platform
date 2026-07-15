@@ -18,7 +18,7 @@ import {
   ExternalLink, Loader2, ShieldCheck, ShieldX, AlertTriangle,
   RefreshCw, Info, SlidersHorizontal, Hourglass, RotateCcw,
   MessageSquare, User, Calendar, Building2, Shield, Quote,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, Pencil, Plus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -77,10 +77,10 @@ function SevBadge({ severity }: { severity: string }) {
 // ── FP Status ─────────────────────────────────────────────────────────────────
 
 const FP_STATUS = {
-  submitted:   { label: "Pending",     icon: Clock,        pill: "bg-amber-500/15 text-amber-300 border-amber-500/30",   bar: "bg-amber-500",   leftBorder: "border-l-amber-500" },
-  in_progress: { label: "In Progress", icon: Hourglass,    pill: "bg-blue-500/15 text-blue-300 border-blue-500/30",      bar: "bg-blue-500",    leftBorder: "border-l-blue-500" },
-  confirmed:   { label: "Confirmed FP",icon: CheckCircle2, pill: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", bar: "bg-emerald-500", leftBorder: "border-l-emerald-500" },
-  rejected:    { label: "Rejected",    icon: XCircle,      pill: "bg-red-500/15 text-red-300 border-red-500/30",          bar: "bg-red-500",     leftBorder: "border-l-red-500" },
+  submitted:   { label: "Pending Review", icon: Clock,        pill: "bg-amber-500/15 text-amber-300 border-amber-500/30",        leftBorder: "border-l-amber-500" },
+  in_progress: { label: "In Progress",    icon: Hourglass,    pill: "bg-blue-500/15 text-blue-300 border-blue-500/30",          leftBorder: "border-l-blue-500" },
+  confirmed:   { label: "Confirmed FP",   icon: CheckCircle2, pill: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", leftBorder: "border-l-emerald-500" },
+  rejected:    { label: "Rejected",       icon: XCircle,      pill: "bg-red-500/15 text-red-300 border-red-500/30",             leftBorder: "border-l-red-500" },
 } as const;
 
 function FpPill({ status }: { status: string }) {
@@ -114,10 +114,10 @@ const ACTION_CONFIG: Record<FpAction, {
   confirm: {
     title: "Confirm False Positive",
     description: "Confirming marks this finding as a verified false positive and removes it from the active vulnerability count.",
-    notePlaceholder: "e.g. Verified — expected behaviour in our environment. The scanner triggers on our CDN headers.",
+    notePlaceholder: "e.g. Verified — expected behaviour in our environment. Scanner triggers on our CDN headers.",
     btnLabel: "Confirm FP",
     btnClass: "bg-emerald-600 hover:bg-emerald-700 text-white",
-    warning: "The finding will be set to false_positive and removed from active tracking. Future identical findings from scans will be suppressed automatically.",
+    warning: "The finding will be set to confirmed false positive and removed from active tracking.",
   },
   reconfirm: {
     title: "Re-confirm False Positive",
@@ -136,8 +136,8 @@ const ACTION_CONFIG: Record<FpAction, {
   },
   in_progress: {
     title: "Mark as In Progress",
-    description: "Mark this FP submission as under active review. The finding stays in false_positive status.",
-    notePlaceholder: "e.g. Currently investigating with the client team. Awaiting environment confirmation.",
+    description: "Mark this FP submission as under active review.",
+    notePlaceholder: "e.g. Currently investigating with the client team.",
     btnLabel: "Mark In Progress",
     btnClass: "bg-blue-600 hover:bg-blue-700 text-white",
   },
@@ -152,7 +152,7 @@ const ACTION_CONFIG: Record<FpAction, {
 
 // ── Action Buttons ────────────────────────────────────────────────────────────
 
-const ACTION_BTN_STYLE: Record<string, string> = {
+const ACTION_BTN: Record<string, string> = {
   confirm:  "text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:border-emerald-500/50",
   reject:   "text-red-400 border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50",
   progress: "text-blue-400 border-blue-500/30 hover:bg-blue-500/10 hover:border-blue-500/50",
@@ -161,10 +161,7 @@ const ACTION_BTN_STYLE: Record<string, string> = {
 
 function ABtn({ variant, children, onClick }: { variant: string; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className={cn("flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all whitespace-nowrap", ACTION_BTN_STYLE[variant] ?? "")}
-    >
+    <button onClick={onClick} className={cn("flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all whitespace-nowrap", ACTION_BTN[variant] ?? "")}>
       {children}
     </button>
   );
@@ -173,11 +170,12 @@ function ABtn({ variant, children, onClick }: { variant: string; children: React
 // ── Row component ─────────────────────────────────────────────────────────────
 
 function FpRow({
-  f, canReview, showTenant, expanded, onExpand, onAction,
+  f, canReview, showTenant, expanded, onExpand, onAction, onEditNote,
 }: {
   f: FpFinding; canReview: boolean; showTenant: boolean;
   expanded: boolean; onExpand: () => void;
   onAction: (f: FpFinding, a: FpAction) => void;
+  onEditNote: (f: FpFinding) => void;
 }) {
   const statusCfg = FP_STATUS[f.falsePositiveStatus as keyof typeof FP_STATUS];
 
@@ -189,25 +187,23 @@ function FpRow({
     )}>
       {/* ── Main row ─────────────────────────────────────────────────────── */}
       <div
-        className="grid items-center gap-4 px-5 py-3.5 bg-card cursor-pointer select-none"
+        className="grid items-start gap-3 px-5 py-4 bg-card cursor-pointer select-none"
         style={{ gridTemplateColumns: showTenant
-          ? "minmax(0,2.5fr) minmax(0,1fr) minmax(0,1fr) 160px 160px 1fr"
-          : "minmax(0,2.5fr) minmax(0,1.2fr) 160px 160px 1fr" }}
+          ? "minmax(0,2fr) minmax(0,0.9fr) minmax(0,0.9fr) 150px 140px auto"
+          : "minmax(0,2fr) minmax(0,1fr) 150px 140px auto" }}
         onClick={onExpand}
       >
-        {/* 1. Finding title + badges */}
-        <div className="min-w-0">
+        {/* 1 — Finding title + badges + fpNote preview */}
+        <div className="min-w-0 space-y-1.5">
           <div className="flex items-start gap-2">
-            {f.fpNote && (
-              <Quote className="w-3.5 h-3.5 text-primary/40 flex-shrink-0 mt-0.5" />
-            )}
             <Link href={`/findings/${f.id}`} onClick={e => e.stopPropagation()}>
-              <span className="text-sm font-medium text-foreground hover:text-primary transition-colors cursor-pointer leading-snug line-clamp-1">
+              <span className="text-sm font-medium text-foreground hover:text-primary transition-colors cursor-pointer leading-snug line-clamp-2">
                 {f.title}
               </span>
             </Link>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+
+          <div className="flex flex-wrap items-center gap-1.5">
             <SevBadge severity={f.severity} />
             {f.cve && (
               <span className="text-[10px] font-mono text-amber-400/80 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
@@ -220,10 +216,44 @@ function FpRow({
               </span>
             )}
           </div>
+
+          {/* ── Analyst reason — ALWAYS visible inline ─────────────────── */}
+          {f.fpNote ? (
+            <div
+              className="flex items-start gap-1.5 rounded-lg bg-primary/5 border border-primary/15 px-3 py-2 mt-1"
+              onClick={e => e.stopPropagation()}
+            >
+              <Quote className="w-3 h-3 text-primary/50 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-primary/50 mb-0.5">Analyst Reason</p>
+                <p className="text-xs text-foreground/80 leading-relaxed italic line-clamp-2">
+                  {f.fpNote}
+                </p>
+                {f.fpNote.length > 120 && !expanded && (
+                  <p className="text-[10px] text-primary/50 mt-0.5">Expand to read full reason ↓</p>
+                )}
+              </div>
+              <button
+                onClick={() => onEditNote(f)}
+                className="ml-auto flex-shrink-0 p-1 rounded hover:bg-primary/10 text-primary/40 hover:text-primary/70 transition-colors"
+                title="Edit reason"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEditNote(f); }}
+              className="flex items-center gap-1.5 text-[10px] text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors mt-0.5 italic"
+            >
+              <Plus className="w-2.5 h-2.5" />
+              Add analyst reason
+            </button>
+          )}
         </div>
 
-        {/* 2. Asset */}
-        <div className="min-w-0">
+        {/* 2 — Asset */}
+        <div className="min-w-0 pt-0.5">
           <Link href={`/assets/${f.assetId}`} onClick={e => e.stopPropagation()}>
             <p className="text-xs font-medium text-foreground/80 hover:text-primary transition-colors cursor-pointer truncate">
               {f.assetName ?? f.assetValue ?? `Asset #${f.assetId}`}
@@ -234,60 +264,54 @@ function FpRow({
           )}
         </div>
 
-        {/* 3. Tenant (admin/SA only) */}
+        {/* 3 — Tenant (admin/SA) */}
         {showTenant && (
-          <div className="min-w-0">
+          <div className="min-w-0 pt-0.5">
             <p className="text-xs text-muted-foreground truncate">{f.tenantName ?? `#${f.tenantId}`}</p>
           </div>
         )}
 
-        {/* 4. FP Status */}
-        <div><FpPill status={f.falsePositiveStatus} /></div>
+        {/* 4 — FP Status */}
+        <div className="pt-0.5">
+          <FpPill status={f.falsePositiveStatus} />
+        </div>
 
-        {/* 5. Submitted */}
-        <div>
+        {/* 5 — Submitted */}
+        <div className="pt-0.5">
           <p className="text-xs text-foreground/70 truncate">{f.fpSubmittedByName ?? "—"}</p>
           <p className="text-[10px] text-muted-foreground/60 mt-0.5">{fmtDate(f.fpSubmittedAt)}</p>
         </div>
 
-        {/* 6. Actions + expand toggle */}
-        <div className="flex items-center justify-end gap-1.5">
+        {/* 6 — Actions + expand toggle */}
+        <div className="flex items-start justify-end gap-1.5 pt-0.5">
           {canReview && (
-            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-              {f.falsePositiveStatus === "submitted" && (
-                <>
-                  <ABtn variant="confirm"   onClick={() => onAction(f, "confirm")}>    <ShieldCheck className="w-3 h-3" /> Confirm   </ABtn>
-                  <ABtn variant="progress"  onClick={() => onAction(f, "in_progress")}><Hourglass   className="w-3 h-3" /> In Progress</ABtn>
-                  <ABtn variant="reject"    onClick={() => onAction(f, "reject")}>     <ShieldX     className="w-3 h-3" /> Reject     </ABtn>
-                </>
-              )}
-              {f.falsePositiveStatus === "in_progress" && (
-                <>
-                  <ABtn variant="confirm"  onClick={() => onAction(f, "confirm")}>  <ShieldCheck className="w-3 h-3" /> Confirm </ABtn>
-                  <ABtn variant="reject"   onClick={() => onAction(f, "reject")}>   <ShieldX     className="w-3 h-3" /> Reject  </ABtn>
-                  <ABtn variant="reopen"   onClick={() => onAction(f, "reopen")}>   <RotateCcw   className="w-3 h-3" /> Re-open </ABtn>
-                </>
-              )}
-              {f.falsePositiveStatus === "confirmed" && (
-                <>
-                  <ABtn variant="reopen"  onClick={() => onAction(f, "reopen")}> <RotateCcw  className="w-3 h-3" /> Re-open </ABtn>
-                  <ABtn variant="reject"  onClick={() => onAction(f, "reject")}> <XCircle    className="w-3 h-3" /> Reject  </ABtn>
-                </>
-              )}
-              {f.falsePositiveStatus === "rejected" && (
-                <>
-                  <ABtn variant="confirm" onClick={() => onAction(f, "reconfirm")}><CheckCircle2 className="w-3 h-3" /> Re-confirm</ABtn>
-                  <ABtn variant="reopen"  onClick={() => onAction(f, "reopen")}>  <RotateCcw    className="w-3 h-3" /> Re-open   </ABtn>
-                </>
-              )}
+            <div className="flex flex-wrap items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
+              {f.falsePositiveStatus === "submitted" && (<>
+                <ABtn variant="confirm"   onClick={() => onAction(f, "confirm")}><ShieldCheck className="w-3 h-3" /> Confirm</ABtn>
+                <ABtn variant="progress"  onClick={() => onAction(f, "in_progress")}><Hourglass className="w-3 h-3" /> In Progress</ABtn>
+                <ABtn variant="reject"    onClick={() => onAction(f, "reject")}><ShieldX className="w-3 h-3" /> Reject</ABtn>
+              </>)}
+              {f.falsePositiveStatus === "in_progress" && (<>
+                <ABtn variant="confirm"  onClick={() => onAction(f, "confirm")}><ShieldCheck className="w-3 h-3" /> Confirm</ABtn>
+                <ABtn variant="reject"   onClick={() => onAction(f, "reject")}><ShieldX className="w-3 h-3" /> Reject</ABtn>
+                <ABtn variant="reopen"   onClick={() => onAction(f, "reopen")}><RotateCcw className="w-3 h-3" /> Re-open</ABtn>
+              </>)}
+              {f.falsePositiveStatus === "confirmed" && (<>
+                <ABtn variant="reopen" onClick={() => onAction(f, "reopen")}><RotateCcw className="w-3 h-3" /> Re-open</ABtn>
+                <ABtn variant="reject" onClick={() => onAction(f, "reject")}><XCircle className="w-3 h-3" /> Reject</ABtn>
+              </>)}
+              {f.falsePositiveStatus === "rejected" && (<>
+                <ABtn variant="confirm" onClick={() => onAction(f, "reconfirm")}><CheckCircle2 className="w-3 h-3" /> Re-confirm</ABtn>
+                <ABtn variant="reopen"  onClick={() => onAction(f, "reopen")}><RotateCcw className="w-3 h-3" /> Re-open</ABtn>
+              </>)}
             </div>
           )}
           <Link href={`/findings/${f.id}`} onClick={e => e.stopPropagation()}>
-            <button className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground/50 hover:text-foreground transition-colors" title="Open full finding">
+            <button className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground/40 hover:text-foreground transition-colors" title="Open full finding">
               <ExternalLink className="w-3.5 h-3.5" />
             </button>
           </Link>
-          <button className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground/40 hover:text-foreground transition-colors">
+          <button className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground/30 hover:text-foreground transition-colors">
             {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
         </div>
@@ -296,54 +320,64 @@ function FpRow({
       {/* ── Expanded detail ───────────────────────────────────────────────── */}
       {expanded && (
         <div className="border-t border-border/40 bg-muted/10 px-5 py-4 grid grid-cols-2 gap-6">
-          {/* Analyst reason */}
+          {/* Full analyst reason */}
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 mb-2 flex items-center gap-1.5">
-              <Quote className="w-3 h-3" /> Analyst Reason
-            </p>
+            <div className="flex items-center gap-2 mb-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 flex items-center gap-1.5">
+                <Quote className="w-3 h-3" /> Analyst Reason
+              </p>
+              <button
+                onClick={() => onEditNote(f)}
+                className="flex items-center gap-1 text-[10px] text-primary/60 hover:text-primary transition-colors ml-auto"
+              >
+                <Pencil className="w-3 h-3" />
+                {f.fpNote ? "Edit reason" : "Add reason"}
+              </button>
+            </div>
             {f.fpNote ? (
               <p className="text-sm text-foreground/80 leading-relaxed bg-card rounded-lg border border-border/50 px-4 py-3 italic">
                 "{f.fpNote}"
               </p>
             ) : (
-              <p className="text-sm text-muted-foreground/40 italic">No reason provided.</p>
+              <button
+                onClick={() => onEditNote(f)}
+                className="w-full text-left text-sm text-muted-foreground/40 italic bg-card rounded-lg border border-dashed border-border/50 px-4 py-3 hover:border-primary/30 hover:text-muted-foreground/60 transition-colors"
+              >
+                No reason provided — click to add one
+              </button>
             )}
           </div>
 
-          {/* Review info */}
-          <div className="space-y-3">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 mb-2 flex items-center gap-1.5">
-                <User className="w-3 h-3" /> Submission Details
-              </p>
-              <div className="space-y-1.5 text-xs text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <span className="w-20 text-muted-foreground/50 flex-shrink-0">Submitted by</span>
-                  <span className="text-foreground/80 font-medium">{f.fpSubmittedByName ?? "—"}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-20 text-muted-foreground/50 flex-shrink-0">Submitted at</span>
-                  <span className="text-foreground/80">{fmtDateTime(f.fpSubmittedAt)}</span>
-                </div>
-                {f.fpReviewedByName && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <span className="w-20 text-muted-foreground/50 flex-shrink-0">Reviewed by</span>
-                      <span className="text-foreground/80 font-medium">{f.fpReviewedByName}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-20 text-muted-foreground/50 flex-shrink-0">Reviewed at</span>
-                      <span className="text-foreground/80">{fmtDateTime(f.fpReviewedAt)}</span>
-                    </div>
-                  </>
-                )}
-                {showTenant && f.tenantName && (
-                  <div className="flex items-center gap-2">
-                    <span className="w-20 text-muted-foreground/50 flex-shrink-0">Client</span>
-                    <span className="text-foreground/80">{f.tenantName}</span>
-                  </div>
-                )}
+          {/* Submission / Review metadata */}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/50 mb-2 flex items-center gap-1.5">
+              <User className="w-3 h-3" /> Submission Details
+            </p>
+            <div className="space-y-1.5 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <span className="w-24 text-muted-foreground/50 flex-shrink-0">Submitted by</span>
+                <span className="text-foreground/80 font-medium">{f.fpSubmittedByName ?? "—"}</span>
               </div>
+              <div className="flex items-center gap-2">
+                <span className="w-24 text-muted-foreground/50 flex-shrink-0">Submitted at</span>
+                <span className="text-foreground/80">{fmtDateTime(f.fpSubmittedAt)}</span>
+              </div>
+              {f.fpReviewedByName && (<>
+                <div className="flex items-center gap-2">
+                  <span className="w-24 text-muted-foreground/50 flex-shrink-0">Reviewed by</span>
+                  <span className="text-foreground/80 font-medium">{f.fpReviewedByName}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-24 text-muted-foreground/50 flex-shrink-0">Reviewed at</span>
+                  <span className="text-foreground/80">{fmtDateTime(f.fpReviewedAt)}</span>
+                </div>
+              </>)}
+              {showTenant && f.tenantName && (
+                <div className="flex items-center gap-2">
+                  <span className="w-24 text-muted-foreground/50 flex-shrink-0">Client</span>
+                  <span className="text-foreground/80">{f.tenantName}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -377,7 +411,7 @@ function StatTile({
         </div>
         {active && (
           <span className={cn("text-[9px] font-black uppercase tracking-widest py-0.5 px-1.5 rounded-md border", color.icon, color.activeRing, color.activeBg)}>
-            Filtered
+            Active
           </span>
         )}
       </div>
@@ -404,8 +438,15 @@ export default function FalsePositivesPage() {
   const [severityFilter, setSeverityFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [reviewing, setReviewing] = useState<{ finding: FpFinding; action: FpAction } | null>(null);
+
+  // Review action dialog
+  const [reviewing, setReviewing]   = useState<{ finding: FpFinding; action: FpAction } | null>(null);
   const [reviewNote, setReviewNote] = useState("");
+
+  // Edit/add analyst reason dialog
+  const [editNoteTarget, setEditNoteTarget] = useState<FpFinding | null>(null);
+  const [editNoteText, setEditNoteText]     = useState("");
+  const [editNoteSaving, setEditNoteSaving] = useState(false);
 
   const qParams = new URLSearchParams({ limit: "200" });
   if (statusFilter !== "all") qParams.set("status", statusFilter);
@@ -424,6 +465,7 @@ export default function FalsePositivesPage() {
   const confirmed  = findings.filter(f => f.falsePositiveStatus === "confirmed").length;
   const rejected   = findings.filter(f => f.falsePositiveStatus === "rejected").length;
 
+  // ── Review mutation (confirm/reject/in_progress/reopen) ──────────────────
   const reviewMut = useMutation({
     mutationFn: ({ id, action, note }: { id: number; action: FpAction; note: string }) =>
       apiFetch<{ ok: boolean }>(`/api/findings/${id}/fp-status`, {
@@ -432,22 +474,39 @@ export default function FalsePositivesPage() {
       }),
     onSuccess: (_, vars) => {
       const messages: Record<FpAction, { title: string; description: string }> = {
-        confirm:     { title: "Confirmed as false positive",     description: "Finding confirmed and closed."                        },
-        reconfirm:   { title: "Re-confirmed as false positive",  description: "Finding restored to confirmed FP."                    },
-        reject:      { title: "False positive rejected",         description: "Finding reverted to open for re-investigation."        },
-        in_progress: { title: "Marked as in progress",          description: "Finding is now under active review."                   },
-        reopen:      { title: "Re-opened for review",           description: "Finding sent back to pending review."                  },
+        confirm:     { title: "Confirmed as false positive",    description: "Finding confirmed and closed."                   },
+        reconfirm:   { title: "Re-confirmed as false positive", description: "Finding restored to confirmed FP."               },
+        reject:      { title: "False positive rejected",        description: "Finding reverted to open for re-investigation."  },
+        in_progress: { title: "Marked as in progress",         description: "Finding is now under active review."             },
+        reopen:      { title: "Re-opened for review",          description: "Finding sent back to pending review."            },
       };
       const msg = messages[vars.action];
       toast({ title: msg.title, description: msg.description });
       qc.invalidateQueries({ queryKey: ["false-positives"] });
-      qc.invalidateQueries({ queryKey: ["platform-overview"] });
-      qc.invalidateQueries({ queryKey: ["admin-overview"] });
-      qc.invalidateQueries({ queryKey: ["am-overview"] });
       setReviewing(null);
       setReviewNote("");
     },
     onError: () => toast({ title: "Review failed", description: "Could not update the finding.", variant: "destructive" }),
+  });
+
+  // ── Update fpNote mutation ────────────────────────────────────────────────
+  const updateNoteMut = useMutation({
+    mutationFn: ({ id, fpNote }: { id: number; fpNote: string }) =>
+      apiFetch(`/api/findings/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ fpNote }),
+      }),
+    onSuccess: () => {
+      toast({ title: "Reason saved", description: "The analyst reason has been updated." });
+      qc.invalidateQueries({ queryKey: ["false-positives"] });
+      setEditNoteTarget(null);
+      setEditNoteText("");
+      setEditNoteSaving(false);
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save the reason.", variant: "destructive" });
+      setEditNoteSaving(false);
+    },
   });
 
   const openReview = useCallback((finding: FpFinding, action: FpAction) => {
@@ -455,179 +514,252 @@ export default function FalsePositivesPage() {
     setReviewing({ finding, action });
   }, []);
 
+  const openEditNote = useCallback((finding: FpFinding) => {
+    setEditNoteText(finding.fpNote ?? "");
+    setEditNoteTarget(finding);
+  }, []);
+
+  const saveNote = () => {
+    if (!editNoteTarget) return;
+    setEditNoteSaving(true);
+    updateNoteMut.mutate({ id: editNoteTarget.id, fpNote: editNoteText });
+  };
+
   const clearFilters = () => { setStatusFilter("all"); setSeverityFilter("all"); setSearch(""); };
   const hasFilters = statusFilter !== "all" || severityFilter !== "all" || search !== "";
   const actionCfg = reviewing ? ACTION_CONFIG[reviewing.action] : null;
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="flex flex-col gap-5 min-h-full">
 
-      {/* ── Sticky header ────────────────────────────────────────────────── */}
-      <div className="border-b border-border/60 bg-card/50 backdrop-blur-md sticky top-0 z-10">
-        <div className="px-6 py-3.5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-              <ListChecks className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-base font-semibold tracking-tight leading-none">False Positives</h1>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-none">
-                {canReview ? "Review & manage FP submissions" : "Track your false positive submissions"}
-              </p>
-            </div>
+      {/* ── Page header — NOT sticky (Navbar above already handles the top bar) ── */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+            <ListChecks className="w-4.5 h-4.5 text-primary" />
           </div>
-          <div className="flex items-center gap-2">
-            {/* Live status summary pills */}
-            {submitted > 0 && (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                {submitted} pending
-              </span>
-            )}
-            {inProgress > 0 && (
-              <span className="text-xs font-medium text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-full">
-                {inProgress} in review
-              </span>
-            )}
-            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} className="gap-1.5 h-8 text-xs">
-              <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex-1 flex flex-col gap-5 p-6">
-
-        {/* ── Stat tiles ────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-4 gap-4">
-          <StatTile label="Pending Review" sublabel="Awaiting reviewer action" count={submitted} icon={Clock}
-            color={{ icon: "text-amber-400", iconBg: "bg-amber-500/10", activeRing: "border-amber-500/40", activeBg: "bg-amber-500/5", activeNum: "text-amber-400" }}
-            active={statusFilter === "submitted"} onClick={() => setStatusFilter(s => s === "submitted" ? "all" : "submitted")} />
-          <StatTile label="In Progress" sublabel="Under active review" count={inProgress} icon={Hourglass}
-            color={{ icon: "text-blue-400", iconBg: "bg-blue-500/10", activeRing: "border-blue-500/40", activeBg: "bg-blue-500/5", activeNum: "text-blue-400" }}
-            active={statusFilter === "in_progress"} onClick={() => setStatusFilter(s => s === "in_progress" ? "all" : "in_progress")} />
-          <StatTile label="Confirmed FP" sublabel="Verified false positives" count={confirmed} icon={CheckCircle2}
-            color={{ icon: "text-emerald-400", iconBg: "bg-emerald-500/10", activeRing: "border-emerald-500/40", activeBg: "bg-emerald-500/5", activeNum: "text-emerald-400" }}
-            active={statusFilter === "confirmed"} onClick={() => setStatusFilter(s => s === "confirmed" ? "all" : "confirmed")} />
-          <StatTile label="Rejected" sublabel="Reverted to open / not FP" count={rejected} icon={XCircle}
-            color={{ icon: "text-red-400", iconBg: "bg-red-500/10", activeRing: "border-red-500/40", activeBg: "bg-red-500/5", activeNum: "text-red-400" }}
-            active={statusFilter === "rejected"} onClick={() => setStatusFilter(s => s === "rejected" ? "all" : "rejected")} />
-        </div>
-
-        {/* ── Client info ──────────────────────────────────────────────── */}
-        {role === "client" && (
-          <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 px-5 py-3.5">
-            <Info className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
-            <p className="text-sm text-blue-300/90">
-              Mark findings as false positives from the{" "}
-              <Link href="/findings" className="underline underline-offset-2 hover:text-blue-200 font-medium">Findings page</Link>
-              . An admin or account manager will review each submission here and confirm or reject it.
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight leading-tight">False Positives</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {canReview ? "Review & manage FP submissions from your analysts" : "Track your false positive submissions"}
             </p>
           </div>
-        )}
-
-        {/* ── Filter bar ───────────────────────────────────────────────── */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            <Input className="pl-9 h-9 text-sm" placeholder="Search by title or CVE…" value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-9 w-44 gap-1.5 text-sm flex-shrink-0">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-              <SelectValue placeholder="FP Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="submitted">Pending Review</SelectItem>
-              <SelectItem value="in_progress">In Progress</SelectItem>
-              <SelectItem value="confirmed">Confirmed FP</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={severityFilter} onValueChange={setSeverityFilter}>
-            <SelectTrigger className="h-9 w-36 text-sm flex-shrink-0">
-              <SelectValue placeholder="Severity" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Severities</SelectItem>
-              <SelectItem value="critical">Critical</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="low">Low</SelectItem>
-              <SelectItem value="info">Info</SelectItem>
-            </SelectContent>
-          </Select>
-          {hasFilters && (
-            <Button variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground hover:text-foreground flex-shrink-0" onClick={clearFilters}>
-              Clear
-            </Button>
-          )}
-          <span className="text-xs text-muted-foreground/50 tabular-nums ml-auto flex-shrink-0">
-            {findings.length} result{findings.length !== 1 ? "s" : ""}
-          </span>
         </div>
-
-        {/* ── Column headers ───────────────────────────────────────────── */}
-        {!isLoading && findings.length > 0 && (
-          <div
-            className="grid items-center gap-4 px-5 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50"
-            style={{ gridTemplateColumns: showTenant
-              ? "minmax(0,2.5fr) minmax(0,1fr) minmax(0,1fr) 160px 160px 1fr"
-              : "minmax(0,2.5fr) minmax(0,1.2fr) 160px 160px 1fr" }}
-          >
-            <span>Finding</span>
-            <span>Asset</span>
-            {showTenant && <span>Client</span>}
-            <span>FP Status</span>
-            <span>Submitted By</span>
-            <span className="text-right">Actions</span>
-          </div>
-        )}
-
-        {/* ── Content ──────────────────────────────────────────────────── */}
-        {isLoading ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground py-24">
-            <Loader2 className="w-7 h-7 animate-spin opacity-40" />
-            <span className="text-sm">Loading false positive submissions…</span>
-          </div>
-        ) : findings.length === 0 ? (
-          <div className="flex-1 rounded-xl border border-dashed border-border/50 flex flex-col items-center justify-center py-24 text-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-muted/20 border border-border/30 flex items-center justify-center">
-              <ShieldCheck className="w-8 h-8 text-muted-foreground/20" />
-            </div>
-            <div>
-              <p className="text-base font-semibold text-foreground/60">No false positive submissions found</p>
-              <p className="text-sm text-muted-foreground/50 mt-1.5">
-                {hasFilters ? "Try clearing your filters to see all results" : "Mark findings as false positives from the Findings page"}
-              </p>
-            </div>
-            {hasFilters && (
-              <Button variant="outline" size="sm" onClick={clearFilters} className="gap-1.5">
-                <RefreshCw className="w-3.5 h-3.5" /> Clear filters
-              </Button>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {findings.map(f => (
-              <FpRow
-                key={f.id}
-                f={f}
-                canReview={canReview}
-                showTenant={showTenant}
-                expanded={expandedId === f.id}
-                onExpand={() => setExpandedId(expandedId === f.id ? null : f.id)}
-                onAction={openReview}
-              />
-            ))}
-          </div>
-        )}
-
+        <div className="flex items-center gap-2">
+          {submitted > 0 && (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              {submitted} pending review
+            </span>
+          )}
+          {inProgress > 0 && (
+            <span className="text-xs font-medium text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-full">
+              {inProgress} in review
+            </span>
+          )}
+          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} className="gap-1.5 h-9 text-xs">
+            <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
-      {/* ── Review dialog ────────────────────────────────────────────────── */}
+      {/* ── Stat tiles ────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-4 gap-4">
+        <StatTile label="Pending Review" sublabel="Awaiting reviewer action" count={submitted} icon={Clock}
+          color={{ icon: "text-amber-400", iconBg: "bg-amber-500/10", activeRing: "border-amber-500/40", activeBg: "bg-amber-500/5", activeNum: "text-amber-400" }}
+          active={statusFilter === "submitted"} onClick={() => setStatusFilter(s => s === "submitted" ? "all" : "submitted")} />
+        <StatTile label="In Progress" sublabel="Under active review" count={inProgress} icon={Hourglass}
+          color={{ icon: "text-blue-400", iconBg: "bg-blue-500/10", activeRing: "border-blue-500/40", activeBg: "bg-blue-500/5", activeNum: "text-blue-400" }}
+          active={statusFilter === "in_progress"} onClick={() => setStatusFilter(s => s === "in_progress" ? "all" : "in_progress")} />
+        <StatTile label="Confirmed FP" sublabel="Verified false positives" count={confirmed} icon={CheckCircle2}
+          color={{ icon: "text-emerald-400", iconBg: "bg-emerald-500/10", activeRing: "border-emerald-500/40", activeBg: "bg-emerald-500/5", activeNum: "text-emerald-400" }}
+          active={statusFilter === "confirmed"} onClick={() => setStatusFilter(s => s === "confirmed" ? "all" : "confirmed")} />
+        <StatTile label="Rejected" sublabel="Reverted to open / not FP" count={rejected} icon={XCircle}
+          color={{ icon: "text-red-400", iconBg: "bg-red-500/10", activeRing: "border-red-500/40", activeBg: "bg-red-500/5", activeNum: "text-red-400" }}
+          active={statusFilter === "rejected"} onClick={() => setStatusFilter(s => s === "rejected" ? "all" : "rejected")} />
+      </div>
+
+      {/* ── Client info banner ───────────────────────────────────────────── */}
+      {role === "client" && (
+        <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 px-5 py-3.5">
+          <Info className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
+          <p className="text-sm text-blue-300/90">
+            Mark findings as false positives from the{" "}
+            <Link href="/findings" className="underline underline-offset-2 hover:text-blue-200 font-medium">Findings page</Link>.
+            An admin or account manager will review each submission.
+          </p>
+        </div>
+      )}
+
+      {/* ── Filter bar ───────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <Input className="pl-9 h-9 text-sm" placeholder="Search by title or CVE…" value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-9 w-44 gap-1.5 text-sm flex-shrink-0">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+            <SelectValue placeholder="FP Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="submitted">Pending Review</SelectItem>
+            <SelectItem value="in_progress">In Progress</SelectItem>
+            <SelectItem value="confirmed">Confirmed FP</SelectItem>
+            <SelectItem value="rejected">Rejected</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={severityFilter} onValueChange={setSeverityFilter}>
+          <SelectTrigger className="h-9 w-36 text-sm flex-shrink-0">
+            <SelectValue placeholder="Severity" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Severities</SelectItem>
+            <SelectItem value="critical">Critical</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="info">Info</SelectItem>
+          </SelectContent>
+        </Select>
+        {hasFilters && (
+          <Button variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground hover:text-foreground flex-shrink-0" onClick={clearFilters}>
+            Clear
+          </Button>
+        )}
+        <span className="text-xs text-muted-foreground/50 tabular-nums ml-auto flex-shrink-0">
+          {findings.length} result{findings.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* ── Column headers ───────────────────────────────────────────────── */}
+      {!isLoading && findings.length > 0 && (
+        <div
+          className="grid items-center gap-3 px-5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/40"
+          style={{ gridTemplateColumns: showTenant
+            ? "minmax(0,2fr) minmax(0,0.9fr) minmax(0,0.9fr) 150px 140px auto"
+            : "minmax(0,2fr) minmax(0,1fr) 150px 140px auto" }}
+        >
+          <span>Finding / Analyst Reason</span>
+          <span>Asset</span>
+          {showTenant && <span>Client</span>}
+          <span>FP Status</span>
+          <span>Submitted By</span>
+          <span className="text-right">Actions</span>
+        </div>
+      )}
+
+      {/* ── Content ──────────────────────────────────────────────────────── */}
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center gap-3 text-muted-foreground py-24">
+          <Loader2 className="w-7 h-7 animate-spin opacity-40" />
+          <span className="text-sm">Loading false positive submissions…</span>
+        </div>
+      ) : findings.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border/50 flex flex-col items-center justify-center py-24 text-center gap-4">
+          <div className="w-16 h-16 rounded-2xl bg-muted/20 border border-border/30 flex items-center justify-center">
+            <ShieldCheck className="w-8 h-8 text-muted-foreground/20" />
+          </div>
+          <div>
+            <p className="text-base font-semibold text-foreground/60">No false positive submissions found</p>
+            <p className="text-sm text-muted-foreground/50 mt-1.5">
+              {hasFilters ? "Try clearing your filters to see all results" : "Mark findings as false positives from the Findings page"}
+            </p>
+          </div>
+          {hasFilters && (
+            <Button variant="outline" size="sm" onClick={clearFilters} className="gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5" /> Clear filters
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 pb-6">
+          {findings.map(f => (
+            <FpRow
+              key={f.id}
+              f={f}
+              canReview={canReview}
+              showTenant={showTenant}
+              expanded={expandedId === f.id}
+              onExpand={() => setExpandedId(expandedId === f.id ? null : f.id)}
+              onAction={openReview}
+              onEditNote={openEditNote}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── Edit / Add Analyst Reason dialog ─────────────────────────────── */}
+      <Dialog open={!!editNoteTarget} onOpenChange={o => { if (!o) { setEditNoteTarget(null); setEditNoteText(""); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Quote className="w-5 h-5 text-primary/60" />
+              {editNoteTarget?.fpNote ? "Edit Analyst Reason" : "Add Analyst Reason"}
+            </DialogTitle>
+            <DialogDescription className="text-sm leading-relaxed">
+              Explain why this finding is a false positive. This reason is visible to all reviewers on the False Positives page.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editNoteTarget && (
+            <div className="space-y-4 py-1">
+              {/* Finding context */}
+              <div className="rounded-xl border border-border bg-muted/20 p-3.5">
+                <p className="text-sm font-semibold leading-snug line-clamp-2">{editNoteTarget.title}</p>
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <SevBadge severity={editNoteTarget.severity} />
+                  <FpPill status={editNoteTarget.falsePositiveStatus} />
+                </div>
+              </div>
+
+              {/* Reason textarea */}
+              <div className="space-y-1.5">
+                <Label className="text-sm flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+                  Reason <span className="text-muted-foreground font-normal">(shown inline on this page)</span>
+                </Label>
+                <Textarea
+                  className="resize-none text-sm min-h-[100px]"
+                  rows={4}
+                  placeholder="e.g. This endpoint is behind authentication. The scanner detected it as open but it requires a valid session token to access any data…"
+                  value={editNoteText}
+                  onChange={e => setEditNoteText(e.target.value)}
+                  maxLength={2000}
+                  autoFocus
+                />
+                <p className="text-[10px] text-muted-foreground/40 text-right">{editNoteText.length}/2000</p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => { setEditNoteTarget(null); setEditNoteText(""); }}>
+              Cancel
+            </Button>
+            {editNoteTarget?.fpNote && (
+              <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => {
+                setEditNoteSaving(true);
+                updateNoteMut.mutate({ id: editNoteTarget.id, fpNote: "" });
+              }}>
+                Clear reason
+              </Button>
+            )}
+            <Button
+              size="sm"
+              disabled={editNoteSaving || updateNoteMut.isPending}
+              onClick={saveNote}
+              className="gap-1.5 bg-primary hover:bg-primary/90"
+            >
+              {(editNoteSaving || updateNoteMut.isPending) ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save reason"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Review action dialog ──────────────────────────────────────────── */}
       <Dialog open={!!reviewing} onOpenChange={o => { if (!o) { setReviewing(null); setReviewNote(""); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -677,7 +809,7 @@ export default function FalsePositivesPage() {
                     <span>{fmtDateTime(reviewing.finding.fpSubmittedAt)}</span>
                   </div>
                 </div>
-                {/* Analyst reason */}
+                {/* Show analyst reason inside the review dialog */}
                 {reviewing.finding.fpNote && (
                   <div className="rounded-lg border border-primary/15 bg-primary/5 px-3 py-2.5 flex items-start gap-2">
                     <Quote className="w-3.5 h-3.5 text-primary/60 flex-shrink-0 mt-0.5" />
@@ -689,11 +821,11 @@ export default function FalsePositivesPage() {
                 )}
               </div>
 
-              {/* Review note */}
+              {/* Reviewer note */}
               <div className="space-y-1.5">
                 <Label className="text-sm flex items-center gap-1.5">
                   <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
-                  Review Note <span className="text-muted-foreground font-normal">(optional)</span>
+                  Reviewer Note <span className="text-muted-foreground font-normal">(optional)</span>
                 </Label>
                 <Textarea
                   className="resize-none text-sm min-h-[80px]"
@@ -707,7 +839,6 @@ export default function FalsePositivesPage() {
                 <p className="text-[10px] text-muted-foreground/40 text-right">{reviewNote.length}/2000</p>
               </div>
 
-              {/* Warning */}
               {actionCfg?.warning && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300 leading-relaxed">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -735,7 +866,6 @@ export default function FalsePositivesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }

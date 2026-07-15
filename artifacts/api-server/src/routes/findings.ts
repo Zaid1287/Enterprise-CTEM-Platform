@@ -702,6 +702,13 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
     updateData.severity = req.body.severity;
   }
 
+  // Merge fpNote explicitly — Zod strips unknown fields so we pull it from raw req.body.
+  // Applies both when transitioning to false_positive AND when updating the note on an
+  // existing FP finding (standalone note update, no status change).
+  if (typeof req.body.fpNote === "string") {
+    updateData.fpNote = req.body.fpNote.trim() ? req.body.fpNote.trim().slice(0, 2000) : null;
+  }
+
   // Guard: Drizzle throws "No values to set" on an empty set() call.
   if (Object.keys(updateData).length === 0) {
     res.status(400).json({ error: "No valid fields to update" }); return;
@@ -714,11 +721,6 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
     updateData.fpSubmittedAt = new Date();
     updateData.fpReviewedBy = null;
     updateData.fpReviewedAt = null;
-    // Persist the analyst's reason — passed as fpNote in the request body.
-    // The Zod schema may strip unknown fields so we merge it explicitly.
-    if (typeof req.body.fpNote === "string" && req.body.fpNote.trim()) {
-      updateData.fpNote = req.body.fpNote.trim().slice(0, 2000);
-    }
   }
   // When status is changed away from false_positive, clear the FP tracking fields
   if (parsed.data.status && parsed.data.status !== "false_positive") {
