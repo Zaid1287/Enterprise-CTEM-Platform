@@ -124,9 +124,14 @@ async function runDirect(
       return;
     }
     logger.error({ err, scanId }, "Beat: inline scan failed");
+    // Mark scan+pending jobs failed regardless of current status (running or pending)
     await db.update(scansTable)
       .set({ status: "failed", completedAt: new Date() })
-      .where(eq(scansTable.id, scanId))
+      .where(and(eq(scansTable.id, scanId), inArray(scansTable.status, ["running", "pending"])))
+      .catch(() => {});
+    await db.update(scanJobsTable)
+      .set({ status: "failed" })
+      .where(and(eq(scanJobsTable.scanId, scanId), eq(scanJobsTable.status, "pending")))
       .catch(() => {});
   }
 }
@@ -942,6 +947,36 @@ async function checkQueueDepth(): Promise<void> {
   }
 }
 
+/**
+ * Periodic stuck-scan guard: any scan that has been in "running" state for
+ * more than 15 minutes with no completion is considered stuck (e.g. the
+ * pipeline crashed silently inside a setImmediate handler).  Mark it failed
+ * so the UI stops showing it as in-progress and the beat scheduler can
+ * re-schedule the next run.
+ */
+async function cancelStuckRunningScans(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000);
+    const stuck = await db
+      .select({ id: scansTable.id, tenantId: scansTable.tenantId, startedAt: scansTable.startedAt })
+      .from(scansTable)
+      .where(and(eq(scansTable.status, "running"), lt(scansTable.startedAt, cutoff)));
+    for (const scan of stuck) {
+      await db.update(scansTable)
+        .set({ status: "failed", completedAt: new Date() })
+        .where(eq(scansTable.id, scan.id))
+        .catch(() => {});
+      await db.update(scanJobsTable)
+        .set({ status: "failed" })
+        .where(and(eq(scanJobsTable.scanId, scan.id), eq(scanJobsTable.status, "pending")))
+        .catch(() => {});
+      logger.warn({ scanId: scan.id, tenantId: scan.tenantId, startedAt: scan.startedAt }, "Beat: cancelled stuck running scan (>15 min)");
+    }
+  } catch (err) {
+    logger.error({ err }, "Beat: stuck-scan cancellation error (non-fatal)");
+  }
+}
+
 async function dispatchDueScans(): Promise<void> {
   try {
     await Promise.all([
@@ -1224,6 +1259,7 @@ export async function startBeatScheduler(port = 8080): Promise<void> {
   }, 15_000);
 
   const beatPoll = async () => {
+    await cancelStuckRunningScans().catch(err => logger.error({ err }, "Beat: stuck-scan guard failed (non-fatal)"));
     await dispatchDueScans();
     await dispatchDueAiMapperSchedules().catch(err => logger.error({ err }, "Beat: AI Mapper schedule dispatch failed (non-fatal)"));
     await recoverStaleAiMapperScans().catch(err => logger.error({ err }, "Beat: AI Mapper orphan recovery failed (non-fatal)"));
