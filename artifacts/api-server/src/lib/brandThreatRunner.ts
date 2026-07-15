@@ -1533,16 +1533,29 @@ const WATCHDOG_POLL_INTERVAL_MS  = 5  * 60 * 1000; // 5 minutes
 const WATCHDOG_STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
- * One-time startup enrichment: finds completed scans whose live_count is 0
- * (because dnstwist's internal DNS resolver was blocked at scan time) and
- * re-resolves every result row using Node.js dns, then recalculates the
- * scan-level live_count / registered_count / phishing_risk fields.
+ * Startup enrichment that runs three passes over brand threat scan data:
+ *
+ * Phase A — DNS backfill: finds "done" scans whose live_count is 0 (because
+ * dnstwist's internal DNS resolver was blocked at scan time) and re-resolves
+ * every result row using Node.js dns, then recalculates liveCount / registeredCount
+ * / phishingRisk.
+ *
+ * Phase B — Phishing checks: for every "done" scan that now has live domains
+ * (liveCount > 0) but whose phishingCount is still 0, runs PhishTank /
+ * abuse.ch feed checks against the live permutations and updates phishingCount
+ * (including any lookalike-domain brandAbuse entries that count as phishing
+ * infrastructure).
+ *
+ * Phase C — Auto-rescan: for every "error" scan that has permutations in the
+ * scan record but zero brand_threat_results rows (i.e. the scan crashed before
+ * writing results), triggers a fresh rescan automatically.
  *
  * Runs entirely in the background — never blocks startup.
  */
 export async function enrichStaleScans(): Promise<void> {
   try {
-    // Find "done" scans that produced permutations but recorded no live domains
+
+    // ── Phase A: DNS enrichment for done scans with liveCount = 0 ─────────────
     const staleScans = await db
       .select({
         id:                brandThreatScansTable.id,
@@ -1561,145 +1574,278 @@ export async function enrichStaleScans(): Promise<void> {
         ),
       );
 
-    if (staleScans.length === 0) {
-      logger.info("Brand threat enrichment: no stale scans found — nothing to do");
-      return;
-    }
+    if (staleScans.length > 0) {
+      logger.info({ count: staleScans.length }, "Brand threat enrichment: Phase A — DNS backfill starting");
 
-    logger.info({ count: staleScans.length }, "Brand threat enrichment: starting DNS backfill for stale scans");
-
-    for (const scan of staleScans) {
-      try {
-        logger.info({ scanId: scan.id, domain: scan.domain }, "Brand threat enrichment: enriching scan");
-
-        // Fetch all result rows for this scan that have no A record
-        const emptyRows = await db
-          .select({
-            id:              brandThreatResultsTable.id,
-            permutation:     brandThreatResultsTable.permutation,
-            fuzzer:          brandThreatResultsTable.fuzzer,
-            vtMalicious:     brandThreatResultsTable.vtMalicious,
-            vtSuspicious:    brandThreatResultsTable.vtSuspicious,
-            isPhishing:      brandThreatResultsTable.isPhishing,
-            phishingSource:  brandThreatResultsTable.phishingSource,
-            whoisAgeDays:    brandThreatResultsTable.whoisAgeDays,
-            geoCountry:      brandThreatResultsTable.geoCountry,
-          })
-          .from(brandThreatResultsTable)
-          .where(
-            and(
+      for (const scan of staleScans) {
+        try {
+          const emptyRows = await db
+            .select({
+              id:              brandThreatResultsTable.id,
+              permutation:     brandThreatResultsTable.permutation,
+              fuzzer:          brandThreatResultsTable.fuzzer,
+              vtMalicious:     brandThreatResultsTable.vtMalicious,
+              vtSuspicious:    brandThreatResultsTable.vtSuspicious,
+              isPhishing:      brandThreatResultsTable.isPhishing,
+              phishingSource:  brandThreatResultsTable.phishingSource,
+              whoisAgeDays:    brandThreatResultsTable.whoisAgeDays,
+              geoCountry:      brandThreatResultsTable.geoCountry,
+            })
+            .from(brandThreatResultsTable)
+            .where(and(
               eq(brandThreatResultsTable.scanId, scan.id),
               isNull(brandThreatResultsTable.dnsA),
               isNull(brandThreatResultsTable.archivedAt),
-            ),
-          );
+            ));
 
-        if (emptyRows.length === 0) {
-          logger.info({ scanId: scan.id }, "Brand threat enrichment: no empty-DNS rows for scan — skipping");
-          continue;
-        }
-
-        logger.info({ scanId: scan.id, domain: scan.domain, rowCount: emptyRows.length },
-          "Brand threat enrichment: resolving DNS for empty rows");
-
-        // Run DNS resolution with 20 concurrent workers
-        const queue = [...emptyRows];
-        async function enrichWorker() {
-          while (queue.length > 0) {
-            const row = queue.shift();
-            if (!row) break;
-
-            const resolved = await checkDNSFull(row.permutation);
-
-            // Only update rows where DNS actually resolved — skip still-empty ones
-            if (resolved.dnsA.length === 0 && resolved.dnsAaaa.length === 0 &&
-                resolved.dnsMx.length === 0 && resolved.dnsNs.length === 0) {
-              continue;
-            }
-
-            const registrationStatus =
-              resolved.dnsA.length > 0  ? "active" :
-              resolved.dnsNs.length > 0 ? "parked" :
-              resolved.dnsMx.length > 0 ? "registered" :
-              "unregistered";
-
-            const riskScore = computeRisk(
-              resolved.dnsA,
-              resolved.dnsMx,
-              resolved.dnsNs,
-              row.fuzzer ?? "original",
-              row.vtMalicious ?? 0,
-              row.vtSuspicious ?? 0,
-              row.isPhishing ?? false,
-              row.phishingSource ?? null,
-              row.whoisAgeDays ?? null,
-              row.geoCountry ?? null,
-              null,  // geoCountryCode not stored in DB — omit
-              [],    // cdnRanges not needed for enrichment pass
-            );
-
-            await db
-              .update(brandThreatResultsTable)
-              .set({
-                dnsA:               resolved.dnsA.length   ? resolved.dnsA   : undefined,
-                dnsAaaa:            resolved.dnsAaaa.length ? resolved.dnsAaaa : undefined,
-                dnsMx:              resolved.dnsMx.length   ? resolved.dnsMx   : undefined,
-                dnsNs:              resolved.dnsNs.length   ? resolved.dnsNs   : undefined,
-                registrationStatus,
-                riskScore,
-                isSuspicious:       riskScore >= 60,
-              })
-              .where(eq(brandThreatResultsTable.id, row.id));
+          if (emptyRows.length === 0) {
+            logger.info({ scanId: scan.id }, "Brand threat enrichment: Phase A — no empty-DNS rows, skipping");
+            continue;
           }
+
+          logger.info({ scanId: scan.id, domain: scan.domain, rowCount: emptyRows.length },
+            "Brand threat enrichment: Phase A — resolving DNS for empty rows");
+
+          const dnsQueue = [...emptyRows];
+          async function dnsWorker() {
+            while (dnsQueue.length > 0) {
+              const row = dnsQueue.shift();
+              if (!row) break;
+              const resolved = await checkDNSFull(row.permutation);
+              if (resolved.dnsA.length === 0 && resolved.dnsAaaa.length === 0 &&
+                  resolved.dnsMx.length === 0 && resolved.dnsNs.length === 0) continue;
+
+              const registrationStatus =
+                resolved.dnsA.length > 0  ? "active"     :
+                resolved.dnsNs.length > 0 ? "parked"     :
+                resolved.dnsMx.length > 0 ? "registered" : "unregistered";
+
+              const riskScore = computeRisk(
+                resolved.dnsA, resolved.dnsMx, resolved.dnsNs,
+                row.fuzzer ?? "original", row.vtMalicious ?? 0, row.vtSuspicious ?? 0,
+                row.isPhishing ?? false, row.phishingSource ?? null,
+                row.whoisAgeDays ?? null, row.geoCountry ?? null, null, [],
+              );
+
+              await db.update(brandThreatResultsTable)
+                .set({
+                  dnsA:               resolved.dnsA.length    ? resolved.dnsA    : undefined,
+                  dnsAaaa:            resolved.dnsAaaa.length  ? resolved.dnsAaaa : undefined,
+                  dnsMx:              resolved.dnsMx.length    ? resolved.dnsMx   : undefined,
+                  dnsNs:              resolved.dnsNs.length    ? resolved.dnsNs   : undefined,
+                  registrationStatus, riskScore,
+                  isSuspicious: riskScore >= 60,
+                })
+                .where(eq(brandThreatResultsTable.id, row.id));
+            }
+          }
+          await Promise.all(Array.from({ length: 20 }, () => dnsWorker()));
+
+          const updatedRows = await db
+            .select({ dnsA: brandThreatResultsTable.dnsA, dnsMx: brandThreatResultsTable.dnsMx })
+            .from(brandThreatResultsTable)
+            .where(and(eq(brandThreatResultsTable.scanId, scan.id), isNull(brandThreatResultsTable.archivedAt)));
+
+          const newLiveCount       = updatedRows.filter(r => r.dnsA && r.dnsA.length > 0).length;
+          const newRegisteredCount = updatedRows.filter(r =>
+            (r.dnsA && r.dnsA.length > 0) || (r.dnsMx && r.dnsMx.length > 0)).length;
+          const storedPhishing     = scan.phishingCount ?? 0;
+          const phishingRisk =
+            storedPhishing > 5 || newLiveCount > 20 ? "critical" :
+            storedPhishing > 2 || newLiveCount > 10 ? "high"     :
+            newLiveCount > 3                         ? "medium"   : "low";
+
+          await db.update(brandThreatScansTable)
+            .set({ liveCount: newLiveCount, registeredCount: newRegisteredCount, phishingRisk })
+            .where(eq(brandThreatScansTable.id, scan.id));
+
+          logger.info({ scanId: scan.id, domain: scan.domain, newLiveCount, newRegisteredCount, phishingRisk },
+            "Brand threat enrichment: Phase A — scan updated");
+        } catch (scanErr) {
+          logger.warn({ err: scanErr, scanId: scan.id }, "Brand threat enrichment: Phase A — failed for scan, skipping");
         }
-
-        await Promise.all(Array.from({ length: 20 }, () => enrichWorker()));
-
-        // Recount from DB now that rows are updated
-        const updatedRows = await db
-          .select({
-            dnsA:       brandThreatResultsTable.dnsA,
-            dnsMx:      brandThreatResultsTable.dnsMx,
-            isPhishing: brandThreatResultsTable.isPhishing,
-          })
-          .from(brandThreatResultsTable)
-          .where(
-            and(
-              eq(brandThreatResultsTable.scanId, scan.id),
-              isNull(brandThreatResultsTable.archivedAt),
-            ),
-          );
-
-        const newLiveCount       = updatedRows.filter(r => r.dnsA  && r.dnsA.length  > 0).length;
-        const newRegisteredCount = updatedRows.filter(r =>
-          (r.dnsA && r.dnsA.length > 0) || (r.dnsMx && r.dnsMx.length > 0),
-        ).length;
-        const phishingCount      = scan.phishingCount ?? 0;
-
-        const phishingRisk =
-          phishingCount > 5 || newLiveCount > 20 ? "critical" :
-          phishingCount > 2 || newLiveCount > 10 ? "high" :
-          newLiveCount > 3 ? "medium" : "low";
-
-        await db
-          .update(brandThreatScansTable)
-          .set({
-            liveCount:       newLiveCount,
-            registeredCount: newRegisteredCount,
-            phishingRisk,
-          })
-          .where(eq(brandThreatScansTable.id, scan.id));
-
-        logger.info(
-          { scanId: scan.id, domain: scan.domain, newLiveCount, newRegisteredCount, phishingRisk },
-          "Brand threat enrichment: scan updated",
-        );
-      } catch (scanErr) {
-        logger.warn({ err: scanErr, scanId: scan.id }, "Brand threat enrichment: failed for scan — skipping");
       }
+    } else {
+      logger.info("Brand threat enrichment: Phase A — no stale scans found");
     }
 
-    logger.info({ count: staleScans.length }, "Brand threat enrichment: completed");
+    // ── Phase B: Phishing checks for live scans whose phishingCount is still 0 ─
+    // These are scans where liveCount > 0 but runPhishingChecks() never ran
+    // for the live domains (because they were all dnsA=null during the original
+    // scan). Also updates phishingCount to include lookalike-domain brandAbuse entries.
+    const scansForPhishCheck = await db
+      .select({
+        id:       brandThreatScansTable.id,
+        tenantId: brandThreatScansTable.tenantId,
+        domain:   brandThreatScansTable.domain,
+      })
+      .from(brandThreatScansTable)
+      .where(and(
+        eq(brandThreatScansTable.status, "done"),
+        gt(brandThreatScansTable.liveCount, 0),
+        eq(brandThreatScansTable.phishingCount, 0),
+      ));
+
+    if (scansForPhishCheck.length > 0) {
+      logger.info({ count: scansForPhishCheck.length }, "Brand threat enrichment: Phase B — phishing checks starting");
+
+      for (const scan of scansForPhishCheck) {
+        try {
+          // Fetch live result rows (dnsA IS NOT NULL means at least one IP resolved)
+          const liveRows = await db
+            .select({ id: brandThreatResultsTable.id, permutation: brandThreatResultsTable.permutation })
+            .from(brandThreatResultsTable)
+            .where(and(
+              eq(brandThreatResultsTable.scanId, scan.id),
+              isNotNull(brandThreatResultsTable.dnsA),
+              isNull(brandThreatResultsTable.archivedAt),
+            ));
+
+          const phishingInserts: typeof phishingDetectionsTable.$inferInsert[] = [];
+          const PHISH_CONCURRENCY = 5;
+          const phishQueue = [...liveRows];
+
+          async function phishWorker() {
+            while (phishQueue.length > 0) {
+              const row = phishQueue.shift();
+              if (!row) break;
+
+              // PhishTank / OpenPhish check
+              const feedResult = await checkPhishingFeed(row.permutation).catch(() => null);
+              if (feedResult?.isPhishing) {
+                phishingInserts.push({
+                  tenantId: scan.tenantId,
+                  scanId:   scan.id,
+                  url:      `http://${row.permutation}`,
+                  source:   feedResult.source ?? "PhishTank",
+                  verified: true,
+                  targetBrand: scan.domain,
+                  threatType:  "SOCIAL_ENGINEERING",
+                  submittedAt: new Date().toISOString(),
+                });
+                await db.update(brandThreatResultsTable)
+                  .set({ isPhishing: true, phishingSource: feedResult.source ?? "PhishTank" })
+                  .where(eq(brandThreatResultsTable.id, row.id));
+              }
+
+              // abuse.ch URLhaus + ThreatFox check
+              const abuseHits = await queryAbuseChFeeds(row.permutation).catch(() => []);
+              for (const hit of abuseHits) {
+                phishingInserts.push({
+                  tenantId: scan.tenantId,
+                  scanId:   scan.id,
+                  url:      hit.url,
+                  source:   hit.source,
+                  verified: true,
+                  targetBrand: scan.domain,
+                  threatType:  hit.threat.toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
+                  submittedAt: hit.addedAt ?? new Date().toISOString(),
+                });
+              }
+            }
+          }
+          await Promise.all(Array.from({ length: PHISH_CONCURRENCY }, () => phishWorker()));
+
+          // Insert confirmed phishing detections (if any)
+          if (phishingInserts.length > 0) {
+            for (let i = 0; i < phishingInserts.length; i += 50) {
+              await db.insert(phishingDetectionsTable).values(phishingInserts.slice(i, i + 50));
+            }
+            logger.info({ scanId: scan.id, domain: scan.domain, count: phishingInserts.length },
+              "Brand threat enrichment: Phase B — phishing detections inserted");
+          }
+
+          // Count lookalike-domain brandAbuse entries — these represent live domains that
+          // impersonate the brand and count toward the phishing threat picture
+          const lookalikeDomains = await db
+            .select({ id: brandAbuseResultsTable.id })
+            .from(brandAbuseResultsTable)
+            .where(and(
+              eq(brandAbuseResultsTable.scanId, scan.id),
+              eq(brandAbuseResultsTable.type, "lookalike_domain"),
+            ));
+
+          const newPhishingCount = phishingInserts.length + lookalikeDomains.length;
+          if (newPhishingCount > 0) {
+            // Recompute phishingRisk with updated phishing count
+            const [scanRow] = await db
+              .select({ liveCount: brandThreatScansTable.liveCount })
+              .from(brandThreatScansTable)
+              .where(eq(brandThreatScansTable.id, scan.id));
+            const liveCount = scanRow?.liveCount ?? 0;
+            const phishingRisk =
+              newPhishingCount > 5 || liveCount > 20 ? "critical" :
+              newPhishingCount > 2 || liveCount > 10 ? "high"     :
+              liveCount > 3                           ? "medium"   : "low";
+
+            await db.update(brandThreatScansTable)
+              .set({ phishingCount: newPhishingCount, phishingRisk })
+              .where(eq(brandThreatScansTable.id, scan.id));
+            logger.info({ scanId: scan.id, domain: scan.domain, newPhishingCount, phishingRisk },
+              "Brand threat enrichment: Phase B — phishingCount updated");
+          } else {
+            logger.info({ scanId: scan.id, domain: scan.domain },
+              "Brand threat enrichment: Phase B — no phishing found (correct: not in feeds)");
+          }
+        } catch (scanErr) {
+          logger.warn({ err: scanErr, scanId: scan.id }, "Brand threat enrichment: Phase B — failed for scan, skipping");
+        }
+      }
+    } else {
+      logger.info("Brand threat enrichment: Phase B — no live scans need phishing checks");
+    }
+
+    // ── Phase C: Auto-rescan error scans that have permutations but no results ─
+    // This happens when the scan was killed mid-run (e.g. server restart) before
+    // Phase 3 (bulk INSERT brand_threat_results). The permutation count is stored
+    // on the scan record but no rows were ever written.
+    const errorScans = await db
+      .select({
+        id:       brandThreatScansTable.id,
+        tenantId: brandThreatScansTable.tenantId,
+        domain:   brandThreatScansTable.domain,
+      })
+      .from(brandThreatScansTable)
+      .where(and(
+        eq(brandThreatScansTable.status, "error"),
+        gt(brandThreatScansTable.totalPermutations, 0),
+      ));
+
+    let autoRescanned = 0;
+    for (const scan of errorScans) {
+      try {
+        // Check if any ACTIVE (non-archived) brand_threat_results rows exist.
+        // Archived rows from a previous scan run don't count — those were
+        // preserved for history but aren't shown to the user.
+        const [firstResult] = await db
+          .select({ id: brandThreatResultsTable.id })
+          .from(brandThreatResultsTable)
+          .where(and(
+            eq(brandThreatResultsTable.scanId, scan.id),
+            isNull(brandThreatResultsTable.archivedAt),
+          ))
+          .limit(1);
+
+        if (!firstResult) {
+          // No results — trigger a fresh rescan automatically
+          logger.info({ scanId: scan.id, domain: scan.domain },
+            "Brand threat enrichment: Phase C — auto-rescanning error scan with no results");
+          await triggerBrandThreatScan(scan.tenantId, scan.domain);
+          autoRescanned++;
+          // Brief pause between triggers to avoid flooding the scan queue
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      } catch (scanErr) {
+        logger.warn({ err: scanErr, scanId: scan.id }, "Brand threat enrichment: Phase C — failed for scan, skipping");
+      }
+    }
+    if (autoRescanned > 0) {
+      logger.info({ count: autoRescanned }, "Brand threat enrichment: Phase C — auto-rescanned error scans");
+    } else {
+      logger.info("Brand threat enrichment: Phase C — no error scans need rescanning");
+    }
+
+    logger.info("Brand threat enrichment: all phases completed");
   } catch (err) {
     logger.warn({ err }, "Brand threat enrichment: failed (non-fatal)");
   }
