@@ -382,96 +382,52 @@ function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], o
   }
 
   return (
-    <div className="p-5 space-y-6">
-      {phishing.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Fish className="w-4 h-4 text-red-400" />
-            <span className="font-semibold">{phishing.length} confirmed phishing detection{phishing.length !== 1 ? "s" : ""}</span>
-            <span className="text-xs text-muted-foreground">— verified by threat feeds</span>
-          </div>
-          {phishing.map((p: any) => {
-            const pRef = p.url ?? String(p.id);
-            const pFp = falsePositives.find(fp => fp.item_type === "phishing" && fp.item_ref === pRef);
-            return (
-            <div key={p.id} className={cn("bg-card border border-red-500/20 rounded-xl p-4 space-y-2", pFp?.status === "confirmed" && "opacity-50")}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                  <span className="font-mono text-sm text-red-300 truncate">{p.url}</span>
-                  {p.isNew && (
-                    <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
-                      New
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">
-                    {p.source}
-                  </span>
-                  {scanId && <FalsePositiveButton scanId={scanId} itemType="phishing" itemRef={pRef} existingFp={pFp} onCreated={onFpCreated} />}
-                </div>
-              </div>
-              <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-                {p.targetBrand && <span><span className="font-medium text-foreground/70">Target:</span> {p.targetBrand}</span>}
-                {p.threatType && <span><span className="font-medium text-foreground/70">Type:</span> {p.threatType.replace(/_/g, " ")}</span>}
-                {p.submittedAt && <span><span className="font-medium text-foreground/70">Detected:</span> {formatDate(p.submittedAt)}</span>}
-                {p.verified && <span className="text-green-400 flex items-center gap-0.5"><CheckCircle2 className="w-3 h-3" /> Verified</span>}
-              </div>
-              <div className="flex items-center gap-2">
-                <a href={`https://www.virustotal.com/gui/url/${btoa(p.url)}`} target="_blank" rel="noopener noreferrer"
-                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                  <ExternalLink className="w-3 h-3" /> VirusTotal
-                </a>
-                <a href={`https://phishtank.org/phish_search.php?valid=y&active=y&Search=Search&q=${encodeURIComponent(p.url)}`} target="_blank" rel="noopener noreferrer"
-                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                  <ExternalLink className="w-3 h-3" /> PhishTank
-                </a>
-              </div>
-            </div>
-          ); })}
-        </div>
-      )}
+    <div className="p-5 space-y-8">
 
-      {lookalikeLive.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-orange-400" />
-            <span className="font-semibold text-orange-300">{lookalikeLive.length} live lookalike domain{lookalikeLive.length !== 1 ? "s" : ""}</span>
-            <span className="text-xs text-muted-foreground">— confirmed DNS A record, potential phishing infrastructure</span>
-          </div>
-          <div className="text-xs text-muted-foreground bg-orange-500/5 border border-orange-500/15 rounded-lg px-3 py-2">
-            These domains resolved to real IP addresses during the scan. They mimic your brand and may be used for phishing campaigns.
-            Check VirusTotal and abuse.ch for current threat classification.
-          </div>
-          {lookalikeLive.map((a: any) => {
-            const aRef = a.url ?? a.title ?? String(a.id);
-            const aFp = falsePositives.find(fp => fp.item_type === "lookalike_phishing" && fp.item_ref === aRef);
-            return (
-            <div key={a.id ?? a.url} className={cn("bg-card border border-orange-500/20 rounded-xl p-4 space-y-2", aFp?.status === "confirmed" && "opacity-50")}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <AlertTriangle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-                  <span className="font-mono text-sm text-orange-300 truncate">{(a.url ?? "").replace(/^https?:\/\//, "")}</span>
-                  {a.isNew && (
-                    <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
-                      New
+      {/* ── Section 1: Active Lookalike Domains ── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 pb-1 border-b border-border">
+          <span className="text-[10px] font-bold bg-orange-500/15 text-orange-400 border border-orange-500/25 px-2 py-0.5 rounded-full uppercase tracking-wider">Section 1</span>
+          <AlertTriangle className="w-4 h-4 text-orange-400" />
+          <span className="font-semibold text-orange-300">Active Lookalike Domains</span>
+          <span className="text-[10px] text-orange-400/70 bg-orange-500/10 px-2 py-0.5 rounded-full font-bold border border-orange-500/20">{lookalikeLive.length}</span>
+          <span className="text-xs text-muted-foreground">— live DNS, potential phishing infrastructure</span>
+        </div>
+
+        {lookalikeLive.length > 0 ? (
+          <>
+            <div className="text-xs text-muted-foreground bg-orange-500/5 border border-orange-500/15 rounded-lg px-3 py-2">
+              These domains resolved to real IP addresses during the scan. They mimic your brand and may be used for phishing campaigns.
+              Check VirusTotal and abuse.ch for current threat classification.
+            </div>
+            {lookalikeLive.map((a: any) => {
+              const aRef = a.url ?? a.title ?? String(a.id);
+              const aFp = falsePositives.find(fp => fp.item_type === "lookalike_phishing" && fp.item_ref === aRef);
+              return (
+              <div key={a.id ?? a.url} className={cn("bg-card border border-orange-500/20 rounded-xl p-4 space-y-2", aFp?.status === "confirmed" && "opacity-50")}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AlertTriangle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                    <span className="font-mono text-sm text-orange-300 truncate">{(a.url ?? "").replace(/^https?:\/\//, "")}</span>
+                    {a.isNew && (
+                      <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
+                        New
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full font-semibold">
+                      Live Domain
                     </span>
-                  )}
+                    {scanId && <FalsePositiveButton scanId={scanId} itemType="lookalike_phishing" itemRef={aRef} existingFp={aFp} onCreated={onFpCreated} />}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full font-semibold">
-                    Live Domain
-                  </span>
-                  {scanId && <FalsePositiveButton scanId={scanId} itemType="lookalike_phishing" itemRef={aRef} existingFp={aFp} onCreated={onFpCreated} />}
-                </div>
-              </div>
-              {a.description && (
-                <p className="text-xs text-muted-foreground">{a.description}</p>
-              )}
-              {a.evidenceSnippet && (
-                <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1">{a.evidenceSnippet}</p>
-              )}
+                {a.description && (
+                  <p className="text-xs text-muted-foreground">{a.description}</p>
+                )}
+                {a.evidenceSnippet && (
+                  <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1">{a.evidenceSnippet}</p>
+                )}
               <div className="flex items-center gap-2">
                 <a href={`https://www.virustotal.com/gui/domain/${(a.url ?? "").replace(/^https?:\/\//, "").split("/")[0]}`} target="_blank" rel="noopener noreferrer"
                   className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
@@ -487,9 +443,77 @@ function PhishingTab({ phishing, brandAbuse = [], scanId, falsePositives = [], o
                 </a>
               </div>
             </div>
-          ); })}
+            ); })}
+          </>
+        ) : (
+          <div className="flex items-center gap-2.5 py-4 text-sm text-green-400/70">
+            <CheckCircle2 className="w-4 h-4 shrink-0" /> No active lookalike domains detected
+          </div>
+        )}
+      </div>
+
+      {/* ── Section 2: Confirmed Phishing Domains ── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 pb-1 border-b border-border">
+          <span className="text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/25 px-2 py-0.5 rounded-full uppercase tracking-wider">Section 2</span>
+          <Fish className="w-4 h-4 text-red-400" />
+          <span className="font-semibold">Confirmed Phishing Domains</span>
+          <span className="text-[10px] text-red-400/70 bg-red-500/10 px-2 py-0.5 rounded-full font-bold border border-red-500/20">{phishing.length}</span>
+          <span className="text-xs text-muted-foreground">— verified by threat intelligence feeds</span>
         </div>
-      )}
+
+        {phishing.length > 0 ? (
+          <>
+            <div className="text-xs text-muted-foreground bg-red-500/5 border border-red-500/15 rounded-lg px-3 py-2">
+              Confirmed by PhishTank, OpenPhish, Google Safe Browsing, or abuse.ch as active phishing infrastructure targeting this brand.
+            </div>
+            {phishing.map((p: any) => {
+              const pRef = p.url ?? String(p.id);
+              const pFp = falsePositives.find(fp => fp.item_type === "phishing" && fp.item_ref === pRef);
+              return (
+              <div key={p.id} className={cn("bg-card border border-red-500/20 rounded-xl p-4 space-y-2", pFp?.status === "confirmed" && "opacity-50")}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                    <span className="font-mono text-sm text-red-300 truncate">{p.url}</span>
+                    {p.isNew && (
+                      <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
+                        New
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">
+                      {p.source}
+                    </span>
+                    {scanId && <FalsePositiveButton scanId={scanId} itemType="phishing" itemRef={pRef} existingFp={pFp} onCreated={onFpCreated} />}
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                  {p.targetBrand && <span><span className="font-medium text-foreground/70">Target:</span> {p.targetBrand}</span>}
+                  {p.threatType && <span><span className="font-medium text-foreground/70">Type:</span> {p.threatType.replace(/_/g, " ")}</span>}
+                  {p.submittedAt && <span><span className="font-medium text-foreground/70">Detected:</span> {formatDate(p.submittedAt)}</span>}
+                  {p.verified && <span className="text-green-400 flex items-center gap-0.5"><CheckCircle2 className="w-3 h-3" /> Verified</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <a href={`https://www.virustotal.com/gui/url/${btoa(p.url)}`} target="_blank" rel="noopener noreferrer"
+                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                    <ExternalLink className="w-3 h-3" /> VirusTotal
+                  </a>
+                  <a href={`https://phishtank.org/phish_search.php?valid=y&active=y&Search=Search&q=${encodeURIComponent(p.url)}`} target="_blank" rel="noopener noreferrer"
+                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                    <ExternalLink className="w-3 h-3" /> PhishTank
+                  </a>
+                </div>
+              </div>
+            ); })}
+          </>
+        ) : (
+          <div className="flex items-center gap-2.5 py-4 text-sm text-green-400/70">
+            <Shield className="w-4 h-4 shrink-0" /> No confirmed phishing domains found in threat feeds
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2045,7 +2069,7 @@ export default function BrandThreatDetailPage() {
   const socialCount     = brandAbuse.filter((a: any) => a.type === "fake_social").length;
 
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
-    { id: "typosquatting",   label: "Typosquatting",   icon: <Globe className="w-3.5 h-3.5" />,      count: results.length + lookalikeDomains.length },
+    { id: "typosquatting",   label: "Typosquatting",   icon: <Globe className="w-3.5 h-3.5" />,      count: results.length },
     { id: "phishing",        label: "Phishing",        icon: <Fish className="w-3.5 h-3.5" />,        count: totalPhishingData, color: totalPhishingData > 0 ? "text-red-400" : undefined },
     { id: "data_leaks",      label: "Data Leaks",      icon: <Database className="w-3.5 h-3.5" />,    count: dataLeaks.length, color: dataLeaks.length > 0 ? "text-orange-400" : undefined },
     { id: "suspicious_certs",label: "Susp. Certs",     icon: <Lock className="w-3.5 h-3.5" />,        count: suspCertsCount, color: suspCertsCount > 0 ? "text-violet-400" : undefined },
@@ -2058,7 +2082,7 @@ export default function BrandThreatDetailPage() {
   ];
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col">
       {/* ── Hero header ────────────────────────────────────────────────────── */}
       <div className="bg-gradient-to-r from-card via-card to-background border-b border-border px-6 py-5 shrink-0">
         <div className="flex items-center gap-3 mb-1">
@@ -2476,7 +2500,7 @@ export default function BrandThreatDetailPage() {
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       {(s.status === "done" || s.status === "error") && (
         <div className="px-6 pt-4 shrink-0">
-          <div className="overflow-x-auto scrollbar-none">
+          <div className="overflow-x-auto pb-1">
             <div className="flex items-center gap-1 bg-muted/30 rounded-xl p-1 w-max min-w-full">
               {TABS.map(tab => (
                 <button
@@ -2509,60 +2533,46 @@ export default function BrandThreatDetailPage() {
       )}
 
       {/* ── Tab content ─────────────────────────────────────────────────────── */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div>
 
         {/* ── PHISHING tab ── */}
         {activeTab === "phishing" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <PhishingTab phishing={phishingDetections} brandAbuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
-          </div>
+          <PhishingTab phishing={phishingDetections} brandAbuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── DATA LEAKS tab ── */}
         {activeTab === "data_leaks" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <DataLeaksTab leaks={dataLeaks} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
-          </div>
+          <DataLeaksTab leaks={dataLeaks} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── SUSPICIOUS CERTS tab ── */}
         {activeTab === "suspicious_certs" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <SuspiciousCertsTab abuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
-          </div>
+          <SuspiciousCertsTab abuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── SOCIAL MEDIA tab ── */}
         {activeTab === "social_media" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <SocialMediaTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanDomain={s.domain} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
-          </div>
+          <SocialMediaTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanDomain={s.domain} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── MOBILE APPS tab ── */}
         {activeTab === "mobile_apps" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <MobileAppsTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
-          </div>
+          <MobileAppsTab abuse={brandAbuse} warnings={Array.isArray(s.scanWarnings) ? (s.scanWarnings as ScanWarning[]) : undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── MALICIOUS ADS tab ── */}
         {activeTab === "malicious_ads" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
-          </div>
+          <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── TAKEDOWNS tab ── */}
         {activeTab === "takedowns" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <TakedownsTab scanId={Number(id)} scanDomain={s.domain} results={results} />
-          </div>
+          <TakedownsTab scanId={Number(id)} scanDomain={s.domain} results={results} />
         )}
 
         {/* ── FAVICON CLONES tab ── */}
         {activeTab === "favicon_clones" && (
-          <div className="h-full overflow-y-auto p-6 space-y-6">
+          <div className="p-6 space-y-6">
             {/* Favicon identity card */}
             {s.faviconMd5 ? (
               <>
@@ -2677,14 +2687,12 @@ export default function BrandThreatDetailPage() {
 
         {/* ── SUBDOMAINS tab ── */}
         {activeTab === "subdomains" && (s.status === "done" || s.status === "error") && (
-          <div className="h-full overflow-y-auto">
-            <SubdomainsTab subdomains={pipelineSubdomains} pipelineScanId={s.pipelineScanId as number} scanDomain={s.domain} subdomainThreats={(s as any).subdomainThreats ?? []} />
-          </div>
+          <SubdomainsTab subdomains={pipelineSubdomains} pipelineScanId={s.pipelineScanId as number} scanDomain={s.domain} subdomainThreats={(s as any).subdomainThreats ?? []} />
         )}
 
         {/* ── TYPOSQUATTING tab ── */}
         {(activeTab === "typosquatting" || (s.status !== "done" && s.status !== "error")) && results.length > 0 && (
-          <div className="flex flex-col h-full overflow-hidden">
+          <div className="flex flex-col">
 
             {/* ── Top filter toolbar ── */}
             <div className="shrink-0 border-b border-border bg-card/30">
@@ -2768,8 +2776,8 @@ export default function BrandThreatDetailPage() {
               </div>
             </div>
 
-            {/* ── Results area — single scroll ── */}
-            <div className="flex-1 overflow-y-auto">
+            {/* ── Results area ── */}
+            <div>
               {(() => {
                 const registered = filtered.filter((r: any) =>
                   r.registrationStatus === "registered" ||
@@ -2989,47 +2997,16 @@ export default function BrandThreatDetailPage() {
 
                 return (
                   <div>
-                    {/* ── Active Threats (score ≥ 70) + Lookalike Domains ── */}
+                    {/* ── Active Threats (score ≥ 70) ── */}
                     <div>
                       <div className="px-5 py-3 bg-red-500/[0.04] border-b border-red-500/15 flex items-center gap-2.5">
                         <div className="w-2 h-2 rounded-full bg-red-400 shrink-0 shadow-[0_0_6px_rgba(248,113,113,0.6)]" />
                         <span className="text-xs font-bold text-red-400 uppercase tracking-wider">Active Threats</span>
                         <span className="text-[10px] text-red-400/70 bg-red-500/10 px-2 py-0.5 rounded-full font-bold border border-red-500/20">
-                          {activeThreats.length + lookalikeDomains.length}
+                          {activeThreats.length}
                         </span>
-                        <span className="text-[10px] text-muted-foreground/60 ml-1 hidden sm:inline">risk score ≥ 70 or confirmed lookalike</span>
+                        <span className="text-[10px] text-muted-foreground/60 ml-1 hidden sm:inline">risk score ≥ 70</span>
                       </div>
-
-                      {/* Lookalike domains */}
-                      {lookalikeDomains.length > 0 && (
-                        <div>
-                          {lookalikeDomains.map((ld: any) => {
-                            const ldRef = ld.url ?? ld.title ?? String(ld.id);
-                            const ldFp = falsePositives.find(fp => fp.item_type === "lookalike_domain" && fp.item_ref === ldRef);
-                            return (
-                              <div key={`ld-${ld.id}`} className={cn("flex items-center gap-3 px-5 py-3.5 bg-orange-500/[0.04] border-b border-border/50 hover:bg-orange-500/[0.07] transition-colors", ldFp?.status === "confirmed" && "opacity-50")}>
-                                <Globe className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-                                <span className="flex-1 text-sm font-mono text-orange-300 truncate min-w-0">{ld.title ?? ld.url}</span>
-                                <span className="text-[9px] font-bold bg-orange-500/15 text-orange-400 border border-orange-500/25 px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">
-                                  Lookalike
-                                </span>
-                                {ld.description && (
-                                  <span className="text-[11px] text-muted-foreground/50 max-w-[200px] truncate hidden lg:block">{ld.description}</span>
-                                )}
-                                <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize shrink-0",
-                                  ld.risk === "critical" ? "text-red-400 bg-red-500/10 border-red-500/20" :
-                                  ld.risk === "high"     ? "text-orange-400 bg-orange-500/10 border-orange-500/20" :
-                                  ld.risk === "medium"   ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/20" :
-                                                           "text-green-400 bg-green-500/10 border-green-500/20"
-                                )}>{ld.risk ?? "high"}</span>
-                                <div onClick={e => e.stopPropagation()}>
-                                  <FalsePositiveButton scanId={id} itemType="lookalike_domain" itemId={ld.id} itemRef={ldRef} existingFp={ldFp} onCreated={refreshFalsePositives} />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
 
                       {activeThreats.length > 0 ? (
                         <>
@@ -3038,11 +3015,11 @@ export default function BrandThreatDetailPage() {
                             {activeThreats.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((r: any) => <PermRow key={r.id} r={r} />)}
                           </div>
                         </>
-                      ) : lookalikeDomains.length === 0 ? (
+                      ) : (
                         <div className="flex items-center gap-2.5 px-5 py-5 text-sm text-green-400/70">
                           <CheckCircle2 className="w-4 h-4 shrink-0" /> No active threats found — good signal
                         </div>
-                      ) : null}
+                      )}
                     </div>
 
                     {/* ── Under Watch (score 40–69) ── */}
