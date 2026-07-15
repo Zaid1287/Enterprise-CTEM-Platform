@@ -12,7 +12,7 @@ import {
   Terminal, Clock, CheckCircle2, XCircle, RefreshCw, ExternalLink,
   ArrowRight, ToggleLeft, ToggleRight, Eye, Download, RotateCcw, FileText,
   Zap, Cpu, Network, Globe, Shield, Search, Wifi, Pencil, ChevronLeft, ChevronRight as ChevronRightIcon,
-  ArrowUpCircle, Code2, FileCode, Tag,
+  ArrowUpCircle, Code2, FileCode, Tag, Loader2,
 } from "lucide-react";
 import { apiFetch } from "@/lib/apiFetch";
 import { Button } from "@/components/ui/button";
@@ -94,6 +94,8 @@ export default function SecurityToolsPage() {
   const [localPipeline, setLocalPipeline] = useState<any[]>([]);
   const [seedingDefaults, setSeedingDefaults] = useState(false);
   const [showRunScan, setShowRunScan] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updateCheckStatus, setUpdateCheckStatus] = useState<{ lastChecked: string | null; githubTokenConfigured: boolean } | null>(null);
   const qc = useQueryClient();
   const [, navigate] = useLocation();
 
@@ -307,6 +309,34 @@ export default function SecurityToolsPage() {
     qc.invalidateQueries({ queryKey: getGetToolPipelineQueryKey() });
     setPipelineDirty(false);
     setLocalPipeline([]);
+  };
+
+  // Fetch update-check status once on mount
+  useEffect(() => {
+    apiFetch<{ lastChecked: string | null; githubTokenConfigured: boolean }>("/api/tools/update-check-status")
+      .then(d => setUpdateCheckStatus(d))
+      .catch(() => {});
+  }, []);
+
+  const handleCheckUpdates = async () => {
+    setCheckingUpdates(true);
+    try {
+      const result = await apiFetch<{ started: boolean; message: string }>("/api/tools/check-updates", { method: "POST" });
+      toast({ title: "Update check started", description: result.message });
+      // Poll for completion — the background job takes ~1 min for 40+ repos
+      // Refresh the tool list and status after a short delay
+      setTimeout(async () => {
+        qc.invalidateQueries({ queryKey: ["listSecurityTools"] });
+        try {
+          const status = await apiFetch<{ lastChecked: string | null; githubTokenConfigured: boolean }>("/api/tools/update-check-status");
+          setUpdateCheckStatus(status);
+        } catch { /* ignore */ }
+        setCheckingUpdates(false);
+      }, 8000);
+    } catch (e: any) {
+      toast({ title: "Check failed", description: e?.message ?? "Could not reach GitHub", variant: "destructive" });
+      setCheckingUpdates(false);
+    }
   };
 
   const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
@@ -654,6 +684,36 @@ export default function SecurityToolsPage() {
       {/* ── Tool Library ── */}
       {tab === "tools" && (
         <div className="space-y-2">
+          {/* Check Updates bar */}
+          {tools.length > 0 && (
+            <div className="flex items-center justify-between bg-card border border-border rounded-xl px-4 py-2.5 gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <RefreshCw className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="text-xs text-muted-foreground">
+                  {updateCheckStatus?.lastChecked
+                    ? `Last update check: ${updateCheckStatus.lastChecked.startsWith(new Date().toISOString().slice(0,10)) ? "today" : updateCheckStatus.lastChecked.slice(0,10)}`
+                    : "No update check run yet"}
+                </span>
+                {!updateCheckStatus?.githubTokenConfigured && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-400 border-amber-500/25 shrink-0">
+                    No GITHUB_TOKEN — rate limited to 60 req/hr
+                  </span>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCheckUpdates}
+                disabled={checkingUpdates}
+                className="shrink-0 h-7 text-xs"
+              >
+                {checkingUpdates
+                  ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Checking…</>
+                  : <><RefreshCw className="w-3 h-3 mr-1.5" />Check Updates Now</>
+                }
+              </Button>
+            </div>
+          )}
           {toolsLoading && [...Array(3)].map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
           {!toolsLoading && tools.length === 0 && (
             <div className="bg-card border border-border rounded-xl p-8 text-center">

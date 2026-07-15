@@ -2,7 +2,7 @@ import { Router } from "express";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable, alertsTable } from "@workspace/db";
+import { db, securityToolsTable, toolPipelineStepsTable, toolRunsTable, assetsTable, alertsTable, platformSettingsTable } from "@workspace/db";
 import { getPlatformTenantId } from "../lib/seedPlatform";
 import {
   CreateSecurityToolBody, GetSecurityToolParams,
@@ -15,6 +15,7 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, requireRole, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
+import { logger } from "../lib/logger";
 
 const router = Router();
 router.use(denyExternalMembers);
@@ -323,6 +324,27 @@ router.post("/tools", requireAuth, requireRole("admin", "super_admin"), async (r
     ...tool,
     installCommand: tool.installCommand, updateCommand: tool.updateCommand, outputFormat: tool.outputFormat,
     createdAt: tool.createdAt.toISOString(),
+  });
+});
+
+// ── Manual tool update check (fire-and-forget — returns immediately) ───────────
+router.post("/tools/check-updates", requireAuth, requireRole("admin", "super_admin"), async (_req, res): Promise<void> => {
+  const { runToolUpdateCheckNow } = await import("../workers/beatScheduler");
+  // Kick off in background so the HTTP response returns immediately
+  setImmediate(() => {
+    runToolUpdateCheckNow().catch((err) =>
+      logger.error({ err }, "Manual tool update check failed"),
+    );
+  });
+  res.json({ started: true, message: "Update check started in background — results will appear in the Tool Library shortly." });
+});
+
+// ── Last update-check timestamp ────────────────────────────────────────────────
+router.get("/tools/update-check-status", requireAuth, async (_req, res): Promise<void> => {
+  const [row] = await db.select().from(platformSettingsTable).where(eq(platformSettingsTable.key, "tool_update_last_checked")).limit(1);
+  res.json({
+    lastChecked: row?.value ?? null,
+    githubTokenConfigured: Boolean(process.env["GITHUB_TOKEN"]),
   });
 });
 

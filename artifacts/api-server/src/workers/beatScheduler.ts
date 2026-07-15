@@ -12,7 +12,7 @@ import { db, assetsTable, scansTable, scanJobsTable, scanSchedulesTable, brandWa
 import { runShadowItDiscovery } from "../lib/shadowItCorrelation";
 import { and, eq, sql, lt, lte, isNotNull, isNull, ne, desc, inArray } from "drizzle-orm";
 import { getScanQueue } from "../queues/scanQueue";
-import { fetchLatestVersion } from "../lib/githubVersionChecker";
+import { fetchLatestVersion, detectInstalledVersion } from "../lib/githubVersionChecker";
 import { pushSseEvent } from "../lib/sseManager";
 
 let _port = 8080;
@@ -819,18 +819,38 @@ async function dispatchToolUpdateCheck(): Promise<void> {
       const now = new Date();
 
       for (const tool of toolGroup) {
+        // Normalize stored versions the same way (strip leading 'v') for comparison
+        const prevLatest   = tool.latestVersion  ? tool.latestVersion.replace(/^v/i, "")  : null;
+
+        // Try to detect installed version from binary if not already recorded
+        let installedVer = tool.currentVersion ? tool.currentVersion.replace(/^v/i, "") : null;
+        if (!installedVer) {
+          try {
+            const raw = await detectInstalledVersion(tool.name);
+            if (raw) {
+              const match = raw.match(/(\d+\.\d+[\.\d]*)/);
+              if (match?.[1]) {
+                installedVer = match[1];
+                await db.update(securityToolsTable)
+                  .set({ currentVersion: installedVer })
+                  .where(eq(securityToolsTable.id, tool.id));
+              }
+            }
+          } catch { /* non-fatal */ }
+        }
+
         await db
           .update(securityToolsTable)
           .set({ latestVersion, toolUpdateCheckedAt: now })
           .where(eq(securityToolsTable.id, tool.id));
 
-        // Normalize stored versions the same way (strip leading 'v') for comparison
-        const prevLatest   = tool.latestVersion  ? tool.latestVersion.replace(/^v/i, "")  : null;
-        const installedVer = tool.currentVersion ? tool.currentVersion.replace(/^v/i, "") : null;
+        // First-ever check for this tool: set baseline without alerting.
+        // Only alert on subsequent checks when the version actually changes.
+        if (!prevLatest) continue;
 
         // Skip if nothing changed from last known latest
         if (latestVersion === prevLatest) continue;
-        // Skip if user has already installed this version
+        // Skip if already at this version
         if (installedVer && installedVer === latestVersion) continue;
 
         const alertTitle  = `Tool update available: ${tool.name} ${latestVersion}`;
@@ -880,6 +900,137 @@ async function dispatchToolUpdateCheck(): Promise<void> {
     logger.info({ urlsChecked: checked }, "Beat: tool update check complete");
   } catch (err) {
     logger.error({ err }, "Beat: tool update check failed");
+  } finally {
+    _toolUpdateCheckRunning = false;
+  }
+}
+
+/**
+ * Public entry point — called by the manual "Check Now" endpoint.
+ * Bypasses the daily gate so updates can be fetched on demand.
+ */
+export async function runToolUpdateCheckNow(): Promise<{ checked: number; message: string }> {
+  if (_toolUpdateCheckRunning) {
+    return { checked: 0, message: "Check already in progress — try again in a moment." };
+  }
+
+  const SETTING_KEY = "tool_update_last_checked";
+  const todayStr = new Date().toISOString().slice(0, 10);
+  _toolUpdateCheckRunning = true;
+
+  let checked = 0;
+
+  try {
+    await db
+      .insert(platformSettingsTable)
+      .values({ key: SETTING_KEY, value: `${todayStr}:running`, label: "Tool Update Last Checked", category: "system" })
+      .onConflictDoUpdate({ target: platformSettingsTable.key, set: { value: `${todayStr}:running` } });
+
+    const tools = await db
+      .select({
+        id:             securityToolsTable.id,
+        tenantId:       securityToolsTable.tenantId,
+        name:           securityToolsTable.name,
+        githubUrl:      securityToolsTable.githubUrl,
+        currentVersion: securityToolsTable.currentVersion,
+        latestVersion:  securityToolsTable.latestVersion,
+        updateCommand:  securityToolsTable.updateCommand,
+      })
+      .from(securityToolsTable);
+
+    const urlToTools = new Map<string, typeof tools>();
+    for (const tool of tools) {
+      if (!tool.githubUrl) continue;
+      const arr = urlToTools.get(tool.githubUrl) ?? [];
+      arr.push(tool);
+      urlToTools.set(tool.githubUrl, arr);
+    }
+
+    for (const [githubUrl, toolGroup] of urlToTools) {
+      if (checked > 0) await new Promise((r) => setTimeout(r, 800));
+      checked++;
+
+      const latestVersion = await fetchLatestVersion(githubUrl);
+      if (!latestVersion) continue;
+
+      const now = new Date();
+
+      for (const tool of toolGroup) {
+        const prevLatest   = tool.latestVersion  ? tool.latestVersion.replace(/^v/i, "")  : null;
+
+        let installedVer = tool.currentVersion ? tool.currentVersion.replace(/^v/i, "") : null;
+        if (!installedVer) {
+          try {
+            const raw = await detectInstalledVersion(tool.name);
+            if (raw) {
+              const match = raw.match(/(\d+\.\d+[\.\d]*)/);
+              if (match?.[1]) {
+                installedVer = match[1];
+                await db.update(securityToolsTable)
+                  .set({ currentVersion: installedVer })
+                  .where(eq(securityToolsTable.id, tool.id));
+              }
+            }
+          } catch { /* non-fatal */ }
+        }
+
+        await db
+          .update(securityToolsTable)
+          .set({ latestVersion, toolUpdateCheckedAt: now })
+          .where(eq(securityToolsTable.id, tool.id));
+
+        // First-ever check for this tool: set baseline without alerting
+        if (!prevLatest) continue;
+        // Skip if no change
+        if (latestVersion === prevLatest) continue;
+        // Skip if installed version already matches latest
+        if (installedVer && installedVer === latestVersion) continue;
+
+        const alertTitle  = `Tool update available: ${tool.name} ${latestVersion}`;
+        const releasesUrl = `${githubUrl.replace(/\.git$/, "")}/releases/latest`;
+
+        const [existing] = await db
+          .select({ id: alertsTable.id })
+          .from(alertsTable)
+          .where(and(
+            eq(alertsTable.tenantId, tool.tenantId),
+            eq(alertsTable.type, "tool_update"),
+            eq(alertsTable.isRead, false),
+            eq(alertsTable.title, alertTitle),
+          ))
+          .limit(1);
+
+        if (existing) continue;
+
+        const [alert] = await db.insert(alertsTable).values({
+          tenantId:  tool.tenantId,
+          title:     alertTitle,
+          message:   `A new version of ${tool.name} is available (${latestVersion}).${installedVer ? ` Installed: ${installedVer}.` : ""} View release notes at ${releasesUrl}${tool.updateCommand ? ` — or run: ${tool.updateCommand}` : ""}.`,
+          type:      "tool_update",
+          severity:  "medium",
+        }).returning();
+
+        if (alert) {
+          pushSseEvent(tool.tenantId, "new-alert", {
+            id: alert.id, title: alert.title, message: alert.message,
+            type: alert.type, severity: alert.severity, isRead: false,
+            createdAt: alert.createdAt.toISOString(),
+          });
+        }
+
+        logger.info({ toolName: tool.name, latestVersion, tenantId: tool.tenantId }, "Tool update (manual check): alert created");
+      }
+    }
+
+    await db
+      .insert(platformSettingsTable)
+      .values({ key: SETTING_KEY, value: todayStr, label: "Tool Update Last Checked", category: "system" })
+      .onConflictDoUpdate({ target: platformSettingsTable.key, set: { value: todayStr } });
+
+    return { checked, message: `Checked ${checked} unique repos against GitHub. Results saved.` };
+  } catch (err) {
+    logger.error({ err }, "Manual tool update check failed");
+    throw err;
   } finally {
     _toolUpdateCheckRunning = false;
   }
