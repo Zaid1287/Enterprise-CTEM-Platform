@@ -10,7 +10,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox, Brain, Sparkles, RefreshCw, X } from "lucide-react";
+import { Plus, Bell, BellOff, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox, Brain, Sparkles, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,21 @@ import { getToken } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const INBOX_PAGE_SIZE   = 20;
 const ARCHIVE_PAGE_SIZE = 20;
+
+function buildPageRange(current: number, total: number): (number | "…")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const delta = 2;
+  const left  = Math.max(2, current - delta);
+  const right = Math.min(total - 1, current + delta);
+  const pages: (number | "…")[] = [1];
+  if (left > 2)       pages.push("…");
+  for (let p = left; p <= right; p++) pages.push(p);
+  if (right < total - 1) pages.push("…");
+  pages.push(total);
+  return pages;
+}
 
 function AlertTypeIcon({ type, className }: { type: string; className?: string }) {
   const cls = className ?? "w-4 h-4 shrink-0";
@@ -73,6 +87,7 @@ export default function AlertsPage() {
   const [severityFilter, setSeverityFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
+  const [inboxPage,   setInboxPage]   = useState(0);
   const [archivePage, setArchivePage] = useState(0);
   const { user } = useAuth();
   const [showCreateRule, setShowCreateRule] = useState(false);
@@ -241,6 +256,8 @@ export default function AlertsPage() {
     .filter((a: any) => !severityFilter || a.severity === severityFilter)
     .filter((a: any) => !typeFilter    || a.type     === typeFilter);
 
+  const inboxTotalPages  = Math.max(1, Math.ceil(filteredUnread.length  / INBOX_PAGE_SIZE));
+  const inboxPaged       = filteredUnread.slice(inboxPage   * INBOX_PAGE_SIZE,   (inboxPage   + 1) * INBOX_PAGE_SIZE);
   const archiveTotalPages = Math.max(1, Math.ceil(filteredArchive.length / ARCHIVE_PAGE_SIZE));
   const archivePaged = filteredArchive.slice(archivePage * ARCHIVE_PAGE_SIZE, (archivePage + 1) * ARCHIVE_PAGE_SIZE);
 
@@ -250,6 +267,7 @@ export default function AlertsPage() {
     setSeverityFilter("");
     setTypeFilter("");
     setTenantFilter(null);
+    setInboxPage(0);
     setArchivePage(0);
   };
 
@@ -366,7 +384,7 @@ export default function AlertsPage() {
 
           {isLoading && [...Array(4)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
 
-          {!isLoading && filteredUnread.map((alert: any) => (
+          {!isLoading && inboxPaged.map((alert: any) => (
             <div
               key={alert.id}
               className="bg-card border border-primary/30 rounded-xl p-4 transition-all hover:border-primary/50 hover:bg-accent/10 group"
@@ -483,6 +501,42 @@ export default function AlertsPage() {
               Inbox is clear — no unread alerts.
             </div>
           )}
+
+          {/* Inbox smart pagination */}
+          {inboxTotalPages > 1 && (
+            <div className="flex flex-col items-center gap-2 pt-2">
+              <p className="text-xs text-muted-foreground">
+                Page {inboxPage + 1} of {inboxTotalPages} · {filteredUnread.length} alert{filteredUnread.length !== 1 ? "s" : ""}
+              </p>
+              <div className="flex items-center gap-1 flex-wrap justify-center">
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage === 0} onClick={() => setInboxPage(0)} title="First page">
+                  <ChevronsLeft className="w-3.5 h-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage === 0} onClick={() => setInboxPage(p => p - 1)} title="Previous page">
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </Button>
+                {buildPageRange(inboxPage + 1, inboxTotalPages).map((p, i) =>
+                  p === "…" ? (
+                    <span key={`ellipsis-${i}`} className="w-7 text-center text-xs text-muted-foreground select-none">…</span>
+                  ) : (
+                    <Button
+                      key={p}
+                      variant={inboxPage + 1 === p ? "default" : "outline"}
+                      size="icon"
+                      className="h-7 w-7 text-xs"
+                      onClick={() => setInboxPage((p as number) - 1)}
+                    >{p}</Button>
+                  )
+                )}
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage >= inboxTotalPages - 1} onClick={() => setInboxPage(p => p + 1)} title="Next page">
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage >= inboxTotalPages - 1} onClick={() => setInboxPage(inboxTotalPages - 1)} title="Last page">
+                  <ChevronsRight className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         {/* ── Archive — read alerts with pagination ────────────── */}
@@ -531,21 +585,37 @@ export default function AlertsPage() {
           )}
 
           {archiveTotalPages > 1 && (
-            <div className="flex items-center justify-between pt-1">
+            <div className="flex flex-col items-center gap-2 pt-2">
               <p className="text-xs text-muted-foreground">
-                Page {archivePage + 1} of {archiveTotalPages}
+                Page {archivePage + 1} of {archiveTotalPages} · {filteredArchive.length} alert{filteredArchive.length !== 1 ? "s" : ""}
+                {hasActiveFilters ? " (filtered)" : ""}
               </p>
-              <div className="flex gap-1">
-                <Button
-                  variant="outline" size="sm" className="h-7 text-xs"
-                  disabled={archivePage === 0}
-                  onClick={() => setArchivePage(p => p - 1)}
-                >← Prev</Button>
-                <Button
-                  variant="outline" size="sm" className="h-7 text-xs"
-                  disabled={archivePage >= archiveTotalPages - 1}
-                  onClick={() => setArchivePage(p => p + 1)}
-                >Next →</Button>
+              <div className="flex items-center gap-1 flex-wrap justify-center">
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage === 0} onClick={() => setArchivePage(0)} title="First page">
+                  <ChevronsLeft className="w-3.5 h-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage === 0} onClick={() => setArchivePage(p => p - 1)} title="Previous page">
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </Button>
+                {buildPageRange(archivePage + 1, archiveTotalPages).map((p, i) =>
+                  p === "…" ? (
+                    <span key={`ellipsis-${i}`} className="w-7 text-center text-xs text-muted-foreground select-none">…</span>
+                  ) : (
+                    <Button
+                      key={p}
+                      variant={archivePage + 1 === p ? "default" : "outline"}
+                      size="icon"
+                      className="h-7 w-7 text-xs"
+                      onClick={() => setArchivePage((p as number) - 1)}
+                    >{p}</Button>
+                  )
+                )}
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage >= archiveTotalPages - 1} onClick={() => setArchivePage(p => p + 1)} title="Next page">
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage >= archiveTotalPages - 1} onClick={() => setArchivePage(archiveTotalPages - 1)} title="Last page">
+                  <ChevronsRight className="w-3.5 h-3.5" />
+                </Button>
               </div>
             </div>
           )}
