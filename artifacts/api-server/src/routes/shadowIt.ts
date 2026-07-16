@@ -219,9 +219,11 @@ router.patch("/shadow-it/assets/:id/triage", requireRole("manager", "admin", "su
   const tenantId = req.user!.tenantId;
   const id = pid(req, "id");
   if (id < 0) { res.status(400).json({ error: "Invalid id" }); return; }
-  const { status, reviewNote } = req.body as { status?: string; reviewNote?: string };
-  const valid = ["new", "under_review", "approved", "remediated", "false_positive"];
-  if (status && !valid.includes(status)) { res.status(400).json({ error: `Invalid status` }); return; }
+  const { status, reviewNote, riskLevel } = req.body as { status?: string; reviewNote?: string; riskLevel?: string };
+  const validStatus = ["new", "under_review", "approved", "remediated", "false_positive"];
+  const validRisk   = ["critical", "high", "medium", "low", "info"];
+  if (status && !validStatus.includes(status)) { res.status(400).json({ error: `Invalid status` }); return; }
+  if (riskLevel && !validRisk.includes(riskLevel)) { res.status(400).json({ error: `Invalid riskLevel` }); return; }
   try {
     const [existing] = await db.select({ id: shadowItAssetsTable.id }).from(shadowItAssetsTable)
       .where(and(eq(shadowItAssetsTable.id, id), eq(shadowItAssetsTable.tenantId, tenantId)));
@@ -230,12 +232,13 @@ router.patch("/shadow-it/assets/:id/triage", requireRole("manager", "admin", "su
       .set({
         ...(status ? { status } : {}),
         ...(reviewNote !== undefined ? { reviewNote } : {}),
+        ...(riskLevel ? { riskLevel } : {}),
         ...(status && status !== "new" ? { reviewedBy: req.user!.userId, reviewedAt: new Date() } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(shadowItAssetsTable.id, id), eq(shadowItAssetsTable.tenantId, tenantId)))
       .returning();
-    await logAudit(req.user! as any, "shadow_it.triage", "shadow_it_asset", id, JSON.stringify({ status, reviewNote }));
+    await logAudit(req.user! as any, "shadow_it.triage", "shadow_it_asset", id, JSON.stringify({ status, reviewNote, riskLevel }));
     res.json(updated);
   } catch (err) {
     logger.error({ err }, "PATCH /shadow-it/assets/:id/triage failed");
