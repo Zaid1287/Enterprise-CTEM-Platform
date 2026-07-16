@@ -1413,14 +1413,30 @@ router.post("/tprm/questionnaire-templates", requireAuth, requireTprm, async (re
 });
 
 router.patch("/tprm/questionnaire-templates/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { tenantId } = req.user!;
+  const { tenantId, role } = req.user!;
   const id = parseInt(req.params.id as string);
-  const { name, description, category, questions } = req.body;
+  const { name, description, category, questions, isActive } = req.body;
+
+  // super_admin can edit global templates; regular users can only edit their own
+  const [existing] = await db.select({ id: tprmQuestionnaireTemplatesTable.id, isGlobal: tprmQuestionnaireTemplatesTable.isGlobal, tenantId: tprmQuestionnaireTemplatesTable.tenantId })
+    .from(tprmQuestionnaireTemplatesTable)
+    .where(eq(tprmQuestionnaireTemplatesTable.id, id));
+
+  if (!existing) { res.status(404).json({ error: "Template not found" }); return; }
+  if (existing.isGlobal && role !== "super_admin") { res.status(403).json({ error: "Only super_admin can edit global templates" }); return; }
+  if (!existing.isGlobal && existing.tenantId !== tenantId) { res.status(404).json({ error: "Template not found" }); return; }
+
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (name        !== undefined) updates.name        = name;
+  if (description !== undefined) updates.description = description;
+  if (category    !== undefined) updates.category    = category;
+  if (questions   !== undefined) updates.questions   = questions;
+  if (isActive    !== undefined) updates.isActive    = isActive;
+
   const [row] = await db.update(tprmQuestionnaireTemplatesTable)
-    .set({ name, description, category, questions, updatedAt: new Date() })
-    .where(and(eq(tprmQuestionnaireTemplatesTable.id, id), eq(tprmQuestionnaireTemplatesTable.tenantId, tenantId)))
+    .set(updates)
+    .where(eq(tprmQuestionnaireTemplatesTable.id, id))
     .returning();
-  if (!row) { res.status(404).json({ error: "Template not found" }); return; }
   res.json(row);
 });
 

@@ -211,6 +211,7 @@ export const tprmQuestionnaireTemplatesTable = pgTable("tprm_questionnaire_templ
   category:    text("category").notNull().default("security"),
   questions:   jsonb("questions").notNull().default([]),
   isGlobal:    boolean("is_global").notNull().default(false),
+  isActive:    boolean("is_active").notNull().default(true),
   createdBy:   integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
