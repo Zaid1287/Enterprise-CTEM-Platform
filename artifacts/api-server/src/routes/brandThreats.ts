@@ -91,43 +91,47 @@ async function enrichScanList(scans: ReturnType<typeof toScanResponse>[]) {
   const ids = scans.map(s => s.id);
 
   const [abuseRows, riskRows, phishRows] = await Promise.all([
-    db.execute(sql`
-      SELECT scan_id,
-        COUNT(CASE WHEN type IN ('rogue_app','apk_distribution_link','rogue_mobile_app') THEN 1 END)::int AS mobile_app_count,
-        COUNT(CASE WHEN type IN ('impersonating_handle','social_handle_found','fake_social') THEN 1 END)::int AS social_media_count,
-        COUNT(CASE WHEN type = 'suspicious_certificate' THEN 1 END)::int AS certificate_count
-      FROM brand_abuse_results
-      WHERE scan_id = ANY(${ids})
-      GROUP BY scan_id
-    `),
-    db.execute(sql`
-      SELECT scan_id, COUNT(*)::int AS high_risk_count
-      FROM brand_threat_results
-      WHERE scan_id = ANY(${ids}) AND risk_score >= 60 AND archived_at IS NULL
-      GROUP BY scan_id
-    `),
-    db.execute(sql`
-      SELECT scan_id, COUNT(*)::int AS confirmed_phishing_count
-      FROM phishing_detections
-      WHERE scan_id = ANY(${ids}) AND verified = true
-      GROUP BY scan_id
-    `),
+    db.select({
+      scanId:          brandAbuseResultsTable.scanId,
+      mobileAppCount:  sql<number>`COUNT(CASE WHEN ${brandAbuseResultsTable.type} IN ('rogue_app','apk_distribution_link','rogue_mobile_app') THEN 1 END)::int`,
+      socialMediaCount: sql<number>`COUNT(CASE WHEN ${brandAbuseResultsTable.type} IN ('impersonating_handle','social_handle_found','fake_social') THEN 1 END)::int`,
+      certificateCount: sql<number>`COUNT(CASE WHEN ${brandAbuseResultsTable.type} = 'suspicious_certificate' THEN 1 END)::int`,
+    })
+    .from(brandAbuseResultsTable)
+    .where(inArray(brandAbuseResultsTable.scanId, ids))
+    .groupBy(brandAbuseResultsTable.scanId),
+
+    db.select({
+      scanId:       brandThreatResultsTable.scanId,
+      highRiskCount: sql<number>`COUNT(*)::int`,
+    })
+    .from(brandThreatResultsTable)
+    .where(and(inArray(brandThreatResultsTable.scanId, ids), sql`${brandThreatResultsTable.riskScore} >= 60`, isNull(brandThreatResultsTable.archivedAt)))
+    .groupBy(brandThreatResultsTable.scanId),
+
+    db.select({
+      scanId:                 phishingDetectionsTable.scanId,
+      confirmedPhishingCount: sql<number>`COUNT(*)::int`,
+    })
+    .from(phishingDetectionsTable)
+    .where(and(inArray(phishingDetectionsTable.scanId, ids), eq(phishingDetectionsTable.verified, true)))
+    .groupBy(phishingDetectionsTable.scanId),
   ]);
 
-  const abuseMap = new Map<number, { mobile_app_count: number; social_media_count: number; certificate_count: number }>();
-  for (const r of abuseRows.rows as any[]) abuseMap.set(Number(r.scan_id), r);
+  const abuseMap = new Map<number, { mobileAppCount: number; socialMediaCount: number; certificateCount: number }>();
+  for (const r of abuseRows) abuseMap.set(r.scanId!, r);
   const riskMap  = new Map<number, number>();
-  for (const r of riskRows.rows as any[])  riskMap.set(Number(r.scan_id), Number(r.high_risk_count));
+  for (const r of riskRows)  riskMap.set(r.scanId!, r.highRiskCount);
   const phishMap = new Map<number, number>();
-  for (const r of phishRows.rows as any[]) phishMap.set(Number(r.scan_id), Number(r.confirmed_phishing_count));
+  for (const r of phishRows) phishMap.set(r.scanId!, r.confirmedPhishingCount);
 
   return scans.map(s => ({
     ...s,
     highRiskCount:           riskMap.get(s.id)  ?? 0,
     confirmedPhishingCount:  phishMap.get(s.id) ?? 0,
-    mobileAppCount:          abuseMap.get(s.id)?.mobile_app_count    ?? 0,
-    socialMediaCount:        abuseMap.get(s.id)?.social_media_count  ?? 0,
-    certificateCount:        abuseMap.get(s.id)?.certificate_count   ?? 0,
+    mobileAppCount:          abuseMap.get(s.id)?.mobileAppCount    ?? 0,
+    socialMediaCount:        abuseMap.get(s.id)?.socialMediaCount  ?? 0,
+    certificateCount:        abuseMap.get(s.id)?.certificateCount  ?? 0,
   }));
 }
 
