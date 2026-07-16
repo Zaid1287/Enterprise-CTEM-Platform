@@ -851,15 +851,51 @@ async function checkDNSLookalikePatterns(keyword: string, out: WatchlistScanResu
         const domain = `${p}${tld}`;
         try {
           const addrs = await resolver.resolve4(domain).catch(() => null);
-          if (addrs?.length) {
+          if (!addrs?.length) return;
+
+          // Check URLhaus for confirmed malicious/phishing status
+          let isConfirmedPhishing = false;
+          let phishingSource = "";
+          let urlhausUrls: Array<{ url: string; url_status: string; tags: string[] }> = [];
+          try {
+            const uhRes = await orchestratedFetch("https://urlhaus-api.abuse.ch/v1/host/", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: `host=${encodeURIComponent(domain)}`,
+              signal: AbortSignal.timeout(5_000),
+            });
+            if (uhRes.ok) {
+              const uhData = await uhRes.json() as { query_status?: string; urls?: Array<{ url: string; url_status: string; tags: string[] }> };
+              if (uhData.query_status === "ismalware") {
+                isConfirmedPhishing = true;
+                phishingSource = "URLhaus/abuse.ch";
+                urlhausUrls = (uhData.urls ?? []).slice(0, 3);
+              }
+            }
+          } catch { /* ignore feed check failures — domain still gets reported as lookalike */ }
+
+          if (isConfirmedPhishing) {
+            const urlList = urlhausUrls.map(u => u.url).join(", ");
+            out.push({
+              type: "phishing_domain_confirmed",
+              category: "brand_abuse",
+              platform: phishingSource,
+              url: `http://${domain}`,
+              title: `Confirmed phishing domain: ${domain}`,
+              description: `Domain "${domain}" (IPs: ${addrs.join(", ")}) is confirmed as active malware/phishing infrastructure by ${phishingSource}. Keyword: "${keyword}". Known malicious URLs: ${urlList || "see URLhaus"}`,
+              evidenceSnippet: `Domain: ${domain} | A records: ${addrs.join(", ")} | Confirmed by: ${phishingSource} | Malicious URLs: ${urlList || "N/A"}`,
+              severity: "critical",
+              risk: "critical",
+            });
+          } else {
             out.push({
               type: "lookalike_domain",
               category: "brand_abuse",
               platform: "DNS",
               url: `http://${domain}`,
               title: `Live lookalike domain: ${domain}`,
-              description: `Domain "${domain}" is live (resolves to ${addrs.join(", ")}) and contains the keyword "${keyword}". This may be a phishing, scam, or impersonation site.`,
-              evidenceSnippet: `Domain: ${domain} | A records: ${addrs.join(", ")} | Keyword: ${keyword}`,
+              description: `Domain "${domain}" is live (resolves to ${addrs.join(", ")}) and contains the keyword "${keyword}". This may be a phishing, scam, or impersonation site. Not yet confirmed in URLhaus — manual review recommended.`,
+              evidenceSnippet: `Domain: ${domain} | A records: ${addrs.join(", ")} | Keyword: ${keyword} | URLhaus: clean`,
               severity: "high",
               risk: "high",
             });

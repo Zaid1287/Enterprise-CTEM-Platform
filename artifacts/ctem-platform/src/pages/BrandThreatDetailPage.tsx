@@ -533,7 +533,8 @@ function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId,
   onFpCreated?: () => void;
 }) {
   const lookalikeLive = brandAbuse.filter((a: any) => a.type === "lookalike_domain");
-  const hasData = phishing.length > 0 || lookalikeLive.length > 0;
+  const confirmedFromAbuse = brandAbuse.filter((a: any) => a.type === "phishing_domain_confirmed");
+  const hasData = phishing.length > 0 || lookalikeLive.length > 0 || confirmedFromAbuse.length > 0;
 
   if (!hasData) {
     return (
@@ -625,15 +626,44 @@ function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId,
         <div className="flex items-center gap-2 pb-1 border-b border-border">
           <Fish className="w-4 h-4 text-red-400" />
           <span className="font-semibold">Confirmed Phishing Domains</span>
-          <span className="text-[10px] text-red-400/70 bg-red-500/10 px-2 py-0.5 rounded-full font-bold border border-red-500/20">{phishing.length + confirmedResults.length}</span>
+          <span className="text-[10px] text-red-400/70 bg-red-500/10 px-2 py-0.5 rounded-full font-bold border border-red-500/20">{phishing.length + confirmedResults.length + confirmedFromAbuse.length}</span>
           <span className="text-xs text-muted-foreground">— verified by threat intelligence feeds</span>
         </div>
 
-        {(phishing.length > 0 || confirmedResults.length > 0) ? (
+        {(phishing.length > 0 || confirmedResults.length > 0 || confirmedFromAbuse.length > 0) ? (
           <>
             <div className="text-xs text-muted-foreground bg-red-500/5 border border-red-500/15 rounded-lg px-3 py-2">
-              Confirmed by PhishTank, OpenPhish, Google Safe Browsing, or abuse.ch as active phishing infrastructure targeting this brand.
+              Confirmed by PhishTank, OpenPhish, Google Safe Browsing, URLhaus/abuse.ch, or other threat intelligence feeds as active phishing or malware infrastructure.
             </div>
+            {/* URLhaus-confirmed domains from keyword scan lookalike check */}
+            {confirmedFromAbuse.map((a: any) => {
+              const aRef = a.url ?? a.title ?? String(a.id);
+              const aFp = falsePositives.find(fp => fp.item_type === "phishing_domain_confirmed" && fp.item_ref === aRef);
+              const domain = (a.url ?? "").replace(/^https?:\/\//, "").split("/")[0];
+              return (
+                <div key={`cpa-${a.id}`} className={cn("bg-card border border-red-500/25 rounded-xl p-4 space-y-2", aFp?.status === "confirmed" && "opacity-50")}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      <span className="font-mono text-sm text-red-300 truncate">{domain}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <SeverityPill risk="critical" onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${a.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+                      <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full font-semibold">{a.platform ?? "URLhaus"}</span>
+                      <TakedownButton prefill={{ type: "phishing", targetUrl: a.url ?? "", targetDomain: domain, title: `Confirmed Phishing: ${domain}`, description: a.description ?? undefined, priority: "critical" }} />
+                      {scanId && <FalsePositiveButton scanId={scanId} itemType="phishing_domain_confirmed" itemRef={aRef} existingFp={aFp} onCreated={onFpCreated} />}
+                    </div>
+                  </div>
+                  {a.description && <p className="text-xs text-muted-foreground">{a.description}</p>}
+                  {a.evidenceSnippet && <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1">{a.evidenceSnippet}</p>}
+                  <div className="flex items-center gap-2">
+                    <a href={`https://urlhaus.abuse.ch/browse.php?search=${encodeURIComponent(domain)}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"><ExternalLink className="w-3 h-3" /> URLhaus</a>
+                    <a href={`https://www.virustotal.com/gui/domain/${domain}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"><ExternalLink className="w-3 h-3" /> VirusTotal</a>
+                    <a href={`https://phishtank.org/phish_search.php?q=${encodeURIComponent(domain)}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"><ExternalLink className="w-3 h-3" /> PhishTank</a>
+                  </div>
+                </div>
+              );
+            })}
             {confirmedResults.map((r: any) => {
               const rRef = r.permutation ?? String(r.id);
               const rFp = falsePositives.find(fp => fp.item_type === "permutation" && fp.item_ref === rRef);
@@ -2133,11 +2163,40 @@ const WATCHLIST_TYPE_META: Record<string, { icon: React.ReactNode; label: string
 const FREQ_LABEL: Record<string, string> = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function WatchlistDetailTab({ items, scanDomain }: { items: any[]; scanDomain: string }) {
+function WatchlistDetailTab({
+  items,
+  scanDomain,
+  brandAbuse = [],
+  dataLeaks = [],
+  adMonitoringResults = [],
+  watchlistItemType,
+  watchlistItemValue,
+}: {
+  items: any[];
+  scanDomain: string;
+  brandAbuse?: any[];
+  dataLeaks?: any[];
+  adMonitoringResults?: any[];
+  watchlistItemType?: string;
+  watchlistItemValue?: string;
+}) {
   const [, navigate] = useLocation();
   const normalizedScanDomain = scanDomain?.toLowerCase().replace(/^www\./, "") ?? "";
 
-  if (items.length === 0) {
+  // Group findings from current scan by category
+  const lookalikeDomains = brandAbuse.filter((a: any) => a.type === "lookalike_domain");
+  const confirmedPhishing = brandAbuse.filter((a: any) => a.type === "phishing_domain_confirmed");
+  const SOCIAL_FINDING_TYPES = ["fake_social","social_handle_found","impersonating_handle","intelx_mention","google_dork_mention","social_mention","negative_social_mention","youtube_mention","negative_youtube_mention","brand_mention","negative_brand_mention","keyword_dork_result","osint_reference"];
+  const socialFindings = brandAbuse.filter((a: any) => SOCIAL_FINDING_TYPES.includes(a.type));
+  const suspCerts = brandAbuse.filter((a: any) => a.type === "suspicious_certificate");
+  const realAds = adMonitoringResults.filter((a: any) => !!a.adId || !!a.adTitle);
+  const adPivotLinks = adMonitoringResults.filter((a: any) => !a.adId && !a.adTitle);
+
+  const hasScanFindings = lookalikeDomains.length > 0 || confirmedPhishing.length > 0 ||
+    socialFindings.length > 0 || dataLeaks.length > 0 || adMonitoringResults.length > 0 || suspCerts.length > 0;
+  const isWatchlistScan = !!watchlistItemType;
+
+  if (items.length === 0 && !hasScanFindings) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center">
         <BookmarkCheck className="w-10 h-10 text-muted-foreground/20 mb-3" />
@@ -2156,168 +2215,305 @@ function WatchlistDetailTab({ items, scanDomain }: { items: any[]; scanDomain: s
   }
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <h2 className="text-sm font-semibold">Watchlist Items</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            All monitored brand assets — keywords, domains, social handles and more. Items marked{" "}
-            <span className="text-blue-400 font-medium">This Scan</span> are matched to the current scan domain.
-          </p>
-        </div>
-        <span className="text-xs text-muted-foreground bg-muted/40 border border-border px-2.5 py-1 rounded-full">
-          {items.length} item{items.length !== 1 ? "s" : ""}
-        </span>
-      </div>
+    <div className="space-y-6">
 
-      {/* Items grid */}
-      <div className="space-y-3">
-        {items.map((item: any) => {
-          const meta = WATCHLIST_TYPE_META[item.type] ?? WATCHLIST_TYPE_META["keyword"]!;
-          const isThisScan = item.type === "domain" &&
-            item.value.toLowerCase().replace(/^www\./, "") === normalizedScanDomain;
-          const prev = item.prevScanSummary as Record<string, number> | null;
+      {/* ── SCAN FINDINGS section (only for watchlist item scans) ── */}
+      {isWatchlistScan && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 pb-1 border-b border-border">
+            <ShieldAlert className="w-4 h-4 text-primary" />
+            <span className="font-semibold text-sm">
+              Findings for{" "}
+              <span className="font-mono text-primary">{watchlistItemValue ?? "this item"}</span>
+            </span>
+            <span className="text-[10px] bg-primary/10 border border-primary/20 text-primary px-2 py-0.5 rounded-full font-semibold capitalize">
+              {watchlistItemType}
+            </span>
+            {!hasScanFindings && (
+              <span className="text-xs text-muted-foreground ml-1">— no findings from this scan</span>
+            )}
+          </div>
 
-          let scheduleLabel = "—";
-          if (item.frequency === "daily") {
-            scheduleLabel = item.scanTime ? `Daily at ${item.scanTime}` : "Daily";
-          } else if (item.frequency === "weekly") {
-            const dayName = item.dayOfWeek !== null && item.dayOfWeek !== undefined ? DAY_NAMES[item.dayOfWeek] ?? "" : "";
-            scheduleLabel = `Weekly${dayName ? ` · ${dayName}` : ""}${item.scanTime ? ` at ${item.scanTime}` : ""}`;
-          } else if (item.frequency === "monthly") {
-            scheduleLabel = `Monthly${item.dayOfMonth ? ` · day ${item.dayOfMonth}` : ""}${item.scanTime ? ` at ${item.scanTime}` : ""}`;
-          }
+          {!hasScanFindings && (
+            <div className="flex items-center gap-2.5 py-6 text-sm text-green-400/80 bg-green-500/5 border border-green-500/15 rounded-xl px-4">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              No threats detected in this scan. All checked sources returned clean results.
+            </div>
+          )}
 
-          const hasPrevDelta = prev && Object.keys(prev).length > 0 && Object.values(prev).some(v => (v as number) !== 0);
-
-          return (
-            <div
-              key={item.id}
-              className={cn(
-                "rounded-xl border p-4 transition-colors",
-                isThisScan
-                  ? "border-blue-500/25 bg-blue-500/5"
-                  : "border-border bg-background/40",
-              )}
-            >
-              <div className="flex items-start gap-3">
-                {/* Type icon */}
-                <div className={cn(
-                  "w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 mt-0.5",
-                  isThisScan ? "bg-blue-500/10 border-blue-500/25" : "bg-muted/40 border-border",
-                  meta.color,
-                )}>
-                  {meta.icon}
-                </div>
-
-                {/* Main content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {meta.label}
-                    </span>
-                    {isThisScan && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">
-                        <Shield className="w-2.5 h-2.5" /> This Scan
-                      </span>
-                    )}
-                    {item.lastScanId && (
-                      <a
-                        href={`/brand-threats/${item.lastScanId}`}
-                        className="inline-flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors"
-                      >
-                        <ExternalLink className="w-2.5 h-2.5" /> Last scan
-                      </a>
-                    )}
+          {/* ── Confirmed Phishing ── */}
+          {confirmedPhishing.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Fish className="w-3.5 h-3.5 text-red-400" />
+                <span className="text-xs font-semibold text-red-300">Confirmed Phishing Domains</span>
+                <span className="text-[10px] bg-red-500/10 border border-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full font-bold">{confirmedPhishing.length}</span>
+              </div>
+              {confirmedPhishing.map((a: any) => {
+                const domain = (a.url ?? "").replace(/^https?:\/\//, "").split("/")[0];
+                return (
+                  <div key={`cp-${a.id}`} className="bg-card border border-red-500/25 rounded-xl p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Fish className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                        <span className="font-mono text-sm text-red-300 truncate">{domain}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded-full font-semibold">{a.platform ?? "URLhaus"}</span>
+                        <TakedownButton prefill={{ type: "phishing", targetUrl: a.url ?? "", targetDomain: domain, title: `Confirmed Phishing: ${domain}`, priority: "critical" }} />
+                      </div>
+                    </div>
+                    {a.description && <p className="text-xs text-muted-foreground">{a.description}</p>}
+                    {a.evidenceSnippet && <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1">{a.evidenceSnippet}</p>}
+                    <div className="flex gap-2">
+                      <a href={`https://urlhaus.abuse.ch/browse.php?search=${encodeURIComponent(domain)}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"><ExternalLink className="w-3 h-3" />URLhaus</a>
+                      <a href={`https://www.virustotal.com/gui/domain/${domain}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"><ExternalLink className="w-3 h-3" />VirusTotal</a>
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
 
-                  <p className="text-sm font-mono font-semibold mt-0.5 truncate">{item.value}</p>
+          {/* ── Live Lookalike Domains ── */}
+          {lookalikeDomains.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
+                <span className="text-xs font-semibold text-orange-300">Live Lookalike Domains</span>
+                <span className="text-[10px] bg-orange-500/10 border border-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded-full font-bold">{lookalikeDomains.length}</span>
+              </div>
+              {lookalikeDomains.map((a: any) => {
+                const domain = (a.url ?? "").replace(/^https?:\/\//, "").split("/")[0];
+                return (
+                  <div key={`ld-${a.id}`} className="bg-card border border-orange-500/20 rounded-xl p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <AlertTriangle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                        <span className="font-mono text-sm text-orange-300 truncate">{domain}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-1.5 py-0.5 rounded-full font-semibold">Live Domain</span>
+                        <TakedownButton prefill={{ type: "phishing", targetUrl: a.url ?? "", targetDomain: domain, title: `Lookalike Domain: ${domain}`, priority: "high" }} />
+                      </div>
+                    </div>
+                    {a.evidenceSnippet && <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1">{a.evidenceSnippet}</p>}
+                    {a.description && <p className="text-xs text-muted-foreground">{a.description}</p>}
+                    <div className="flex gap-2">
+                      <a href={`https://www.virustotal.com/gui/domain/${domain}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"><ExternalLink className="w-3 h-3" />VirusTotal</a>
+                      <a href={`https://urlhaus.abuse.ch/browse.php?search=${encodeURIComponent(domain)}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"><ExternalLink className="w-3 h-3" />URLhaus</a>
+                      <a href={`https://web.archive.org/web/*/${a.url ?? ""}`} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"><ExternalLink className="w-3 h-3" />Wayback</a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
-                  {item.notes && (
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.notes}</p>
+          {/* ── Social Media & Brand Abuse ── */}
+          {socialFindings.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <AtSign className="w-3.5 h-3.5 text-pink-400" />
+                <span className="text-xs font-semibold text-pink-300">Social Media & Brand Mentions</span>
+                <span className="text-[10px] bg-pink-500/10 border border-pink-500/20 text-pink-400 px-1.5 py-0.5 rounded-full font-bold">{socialFindings.length}</span>
+              </div>
+              {socialFindings.map((a: any) => (
+                <div key={`sf-${a.id}`} className="bg-card border border-border rounded-xl p-3 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px] bg-pink-500/10 text-pink-400 border border-pink-500/20 px-1.5 py-0.5 rounded-full font-semibold shrink-0">{a.platform ?? a.type}</span>
+                      <span className="text-sm font-medium truncate">{a.title}</span>
+                    </div>
+                    <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border font-semibold shrink-0 capitalize", a.risk === "high" || a.risk === "critical" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-yellow-500/10 text-yellow-400 border-yellow-500/20")}>{a.risk ?? a.severity ?? "medium"}</span>
+                  </div>
+                  {a.description && <p className="text-xs text-muted-foreground line-clamp-2">{a.description}</p>}
+                  {a.evidenceSnippet && <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1 line-clamp-2">{a.evidenceSnippet}</p>}
+                  {a.url && (
+                    <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate">
+                      <ExternalLink className="w-3 h-3 shrink-0" />{a.url}
+                    </a>
                   )}
+                </div>
+              ))}
+            </div>
+          )}
 
-                  {/* Schedule + timing row */}
-                  <div className="flex items-center gap-4 mt-2 flex-wrap">
-                    {item.frequency && (
-                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                        <Clock className="w-3 h-3" />
-                        {FREQ_LABEL[item.frequency] ?? item.frequency}
-                        {scheduleLabel !== FREQ_LABEL[item.frequency] && (
-                          <span className="text-muted-foreground/60 ml-0.5">· {item.scanTime}{item.dayOfWeek !== null && item.dayOfWeek !== undefined ? ` ${DAY_NAMES[item.dayOfWeek] ?? ""}` : ""}{item.dayOfMonth ? ` day ${item.dayOfMonth}` : ""}</span>
-                        )}
-                      </span>
-                    )}
-                    {item.lastScanAt && (
-                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                        <RotateCw className="w-3 h-3" />
-                        Last: {formatDate(item.lastScanAt)}
-                      </span>
-                    )}
-                    {item.nextScanAt && (
-                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                        <Calendar className="w-3 h-3" />
-                        Next: {formatDate(item.nextScanAt)}
-                      </span>
-                    )}
-                    {!item.frequency && !item.lastScanAt && (
-                      <span className="text-[11px] text-muted-foreground/50">No schedule · manual scan only</span>
-                    )}
+          {/* ── Data Leaks ── */}
+          {dataLeaks.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Database className="w-3.5 h-3.5 text-orange-400" />
+                <span className="text-xs font-semibold text-orange-300">Data Leaks & Breaches</span>
+                <span className="text-[10px] bg-orange-500/10 border border-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded-full font-bold">{dataLeaks.length}</span>
+              </div>
+              {dataLeaks.map((l: any) => (
+                <div key={`dl-${l.id}`} className="bg-card border border-orange-500/20 rounded-xl p-3 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-1.5 py-0.5 rounded-full font-semibold shrink-0">{l.source ?? l.type}</span>
+                      <span className="text-sm font-medium truncate">{l.title}</span>
+                    </div>
+                    <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border font-semibold shrink-0 capitalize", l.risk === "critical" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20")}>{l.risk ?? l.severity ?? "medium"}</span>
                   </div>
+                  {l.description && <p className="text-xs text-muted-foreground line-clamp-2">{l.description}</p>}
+                  {l.evidenceSnippet && <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1 line-clamp-2">{l.evidenceSnippet}</p>}
+                  {l.url && (
+                    <a href={l.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate">
+                      <ExternalLink className="w-3 h-3 shrink-0" />{l.url}
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
-                  {/* Previous scan delta — new threat count from isNew-flagged results */}
-                  {prev && typeof prev.newThreatCount === "number" && (
-                    <div className="mt-2 flex items-center gap-2 flex-wrap">
-                      {prev.newThreatCount > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-blue-500/10 border-blue-500/20 text-blue-400">
-                          +{prev.newThreatCount} new {prev.newThreatCount === 1 ? "domain" : "domains"} since last scan
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-green-500/10 border-green-500/20 text-green-400">
-                          No new domains since last scan
+          {/* ── Ad Monitoring ── */}
+          {adMonitoringResults.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Megaphone className="w-3.5 h-3.5 text-violet-400" />
+                <span className="text-xs font-semibold text-violet-300">Ad Monitoring</span>
+                <span className="text-[10px] bg-violet-500/10 border border-violet-500/20 text-violet-400 px-1.5 py-0.5 rounded-full font-bold">{adMonitoringResults.length}</span>
+              </div>
+              {realAds.map((a: any) => (
+                <div key={`ad-${a.id}`} className="bg-card border border-violet-500/20 rounded-xl p-3 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20 px-1.5 py-0.5 rounded-full font-semibold shrink-0">{a.platform}</span>
+                      <span className="text-sm font-medium truncate">{a.adTitle ?? a.adSponsor ?? a.searchTerm}</span>
+                    </div>
+                    <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border font-semibold shrink-0 capitalize", a.risk === "high" || a.risk === "critical" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-violet-500/10 text-violet-400 border-violet-500/20")}>{a.risk ?? "medium"}</span>
+                  </div>
+                  {a.adText && <p className="text-xs text-muted-foreground line-clamp-2">{a.adText}</p>}
+                  {a.adSponsor && <p className="text-xs text-muted-foreground">Sponsor: <span className="font-medium text-foreground/70">{a.adSponsor}</span></p>}
+                  {a.adUrl && (
+                    <a href={a.adUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate">
+                      <ExternalLink className="w-3 h-3 shrink-0" />{a.adUrl}
+                    </a>
+                  )}
+                </div>
+              ))}
+              {adPivotLinks.map((a: any, i: number) => (
+                <div key={`ap-${a.id ?? i}`} className="bg-muted/20 border border-border rounded-xl p-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] bg-muted text-muted-foreground border border-border px-1.5 py-0.5 rounded-full font-semibold shrink-0">{a.platform}</span>
+                    <span className="text-xs text-muted-foreground truncate">Manual review — {a.searchTerm ?? a.notes ?? "search link available"}</span>
+                  </div>
+                  {a.searchUrl && (
+                    <a href={a.searchUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline shrink-0 flex items-center gap-1">
+                      <ExternalLink className="w-3 h-3" />Search
+                    </a>
+                  )}
+                </div>
+              ))}
+              {suspCerts.length > 0 && (
+                <div className="flex items-center gap-2 py-2 px-3 bg-violet-500/5 border border-violet-500/15 rounded-lg text-xs text-muted-foreground">
+                  <Lock className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                  {suspCerts.length} suspicious certificate{suspCerts.length !== 1 ? "s" : ""} found — see{" "}
+                  <span className="text-violet-400 font-medium">Certificates</span> tab for details.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ALL MONITORED ITEMS section ── */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BookmarkCheck className="w-4 h-4 text-blue-400" />
+            <span className="text-sm font-semibold">All Monitored Items</span>
+            <span className="text-xs text-muted-foreground bg-muted/40 border border-border px-2 py-0.5 rounded-full">{items.length}</span>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          All brand assets under continuous monitoring. Each item is scanned on its own schedule and generates separate findings.
+        </p>
+
+        <div className="space-y-2">
+          {items.map((item: any) => {
+            const meta = WATCHLIST_TYPE_META[item.type] ?? WATCHLIST_TYPE_META["keyword"]!;
+            const isThisScan = item.type === "domain" &&
+              item.value.toLowerCase().replace(/^www\./, "") === normalizedScanDomain;
+            const isCurrentItem = watchlistItemType && item.type === watchlistItemType && item.value === watchlistItemValue;
+            const prev = item.prevScanSummary as Record<string, number> | null;
+
+            return (
+              <div
+                key={item.id}
+                className={cn(
+                  "rounded-xl border p-3 transition-colors",
+                  isCurrentItem
+                    ? "border-primary/30 bg-primary/5"
+                    : isThisScan
+                    ? "border-blue-500/25 bg-blue-500/5"
+                    : "border-border bg-background/40",
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "w-7 h-7 rounded-lg border flex items-center justify-center shrink-0",
+                    isCurrentItem ? "bg-primary/10 border-primary/25" : isThisScan ? "bg-blue-500/10 border-blue-500/25" : "bg-muted/40 border-border",
+                    meta.color,
+                  )}>
+                    {meta.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{meta.label}</span>
+                      {isCurrentItem && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-primary/10 border border-primary/20 text-primary">This Scan</span>
+                      )}
+                      {isThisScan && !isCurrentItem && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">This Domain</span>
+                      )}
+                    </div>
+                    <p className="text-xs font-mono font-semibold mt-0.5 truncate">{item.value}</p>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      {item.lastScanAt && (
+                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <RotateCw className="w-2.5 h-2.5" />Last: {formatDate(item.lastScanAt)}
                         </span>
                       )}
-                      {[
-                        { key: "liveCount",          label: "live" },
-                        { key: "phishingCount",      label: "phishing" },
-                        { key: "dataLeakCount",      label: "data leaks" },
-                        { key: "brandAbuseCount",    label: "brand abuse" },
-                        { key: "adMonitoringCount",  label: "mal. ads" },
-                      ].map(({ key, label }) => {
-                        const current = prev[key] as number | undefined;
-                        if (current === undefined || current === 0) return null;
-                        const isIncrease = current > 0;
-                        return (
-                          <span key={key} className={cn(
-                            "inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border",
-                            isIncrease
-                              ? "bg-red-500/10 border-red-500/20 text-red-400"
-                              : "bg-green-500/10 border-green-500/20 text-green-400",
-                          )}>
-                            {isIncrease ? "+" : ""}{current} {label}
-                          </span>
-                        );
-                      })}
+                      {item.frequency && (
+                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <Clock className="w-2.5 h-2.5" />{FREQ_LABEL[item.frequency] ?? item.frequency}
+                        </span>
+                      )}
+                      {/* Scan finding counts */}
+                      {prev && (
+                        <>
+                          {(prev.brandAbuseCount ?? 0) > 0 && <span className="text-[10px] text-pink-400 font-medium">{prev.brandAbuseCount} abuse</span>}
+                          {(prev.dataLeakCount ?? 0) > 0 && <span className="text-[10px] text-orange-400 font-medium">{prev.dataLeakCount} leaks</span>}
+                          {(prev.adMonitoringCount ?? 0) > 0 && <span className="text-[10px] text-violet-400 font-medium">{prev.adMonitoringCount} ads</span>}
+                        </>
+                      )}
                     </div>
+                  </div>
+                  {item.lastScanId && (
+                    <a
+                      href={`/brand-threats/${item.lastScanId}`}
+                      className="shrink-0 text-[11px] text-primary/70 hover:text-primary transition-colors flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />View Intel
+                    </a>
                   )}
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      {/* Footer note */}
-      <div className="mt-4 rounded-xl border border-border bg-muted/20 px-4 py-3 flex items-start gap-2">
-        <Info className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          Watchlist items are scanned on their configured schedule. Each completed scan updates the{" "}
-          <strong>Last Scan</strong> timestamp and computes a delta against the previous scan result, shown as change badges above.
-          Manage items and schedules from the{" "}
-          <button onClick={() => navigate("/brand-threats")} className="text-primary hover:underline">Brand Threats</button>{" "}
-          Watchlist tab.
-        </p>
+        <div className="mt-2 rounded-xl border border-border bg-muted/20 px-4 py-3 flex items-start gap-2">
+          <Info className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Manage watchlist items and configure scan schedules from the{" "}
+            <button onClick={() => navigate("/brand-threats")} className="text-primary hover:underline">Brand Threats</button>{" "}
+            Watchlist tab.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -2415,7 +2611,19 @@ export default function BrandThreatDetailPage() {
     if (itemType === "email") {
       bestTab = "data_leaks";
     } else if (itemType === "keyword") {
-      bestTab = "data_leaks";
+      // Pick the most relevant tab based on what data the scan actually produced
+      const abuseItems: any[] = (s as any).brandAbuse ?? [];
+      const adItems: any[] = (s as any).adMonitoringResults ?? [];
+      const leakItems: any[] = (s as any).dataLeaks ?? [];
+      const hasLookalike = abuseItems.some((a: any) => a.type === "lookalike_domain" || a.type === "phishing_domain_confirmed");
+      const hasSocial = abuseItems.some((a: any) => ["youtube_mention", "negative_youtube_mention", "brand_mention", "negative_brand_mention", "keyword_dork_result", "osint_reference", "social_mention", "negative_social_mention"].includes(a.type));
+      const hasRealAds = adItems.some((a: any) => !!a.adId);
+      const hasLeaks = leakItems.length > 0;
+      if (hasLookalike) bestTab = "phishing";
+      else if (hasRealAds) bestTab = "malicious_ads";
+      else if (hasSocial) bestTab = "social_media";
+      else if (hasLeaks) bestTab = "data_leaks";
+      else bestTab = "social_media";
     } else if (itemType === "social_handle") {
       bestTab = "social_media";
     } else if (itemType === "mobile_app") {
@@ -2471,10 +2679,10 @@ export default function BrandThreatDetailPage() {
   const suspResults    = results.filter((r: any) => r.isSuspicious);
   const phishResults   = results.filter((r: any) => r.isPhishing);
   const lookalikeDomains = brandAbuse.filter((a: any) => a.type === "lookalike_domain");
+  const confirmedPhishingFromAbuse = brandAbuse.filter((a: any) => a.type === "phishing_domain_confirmed");
   const totalLiveDomains = liveResults.length + lookalikeDomains.length;
-  // Phishing tab count: confirmed phishing feed results + permutation results flagged isPhishing
-  // (lookalikeDomains are brand_abuse rows shown in Typosquatting tab, NOT the Phishing tab)
-  const totalPhishingData = phishingDetections.length + phishResults.length;
+  // Phishing tab count: confirmed phishing from feeds + permutations flagged isPhishing + lookalike live domains + URLhaus-confirmed domains
+  const totalPhishingData = phishingDetections.length + phishResults.length + lookalikeDomains.length + confirmedPhishingFromAbuse.length;
   const risk        = RISK_META[s.phishingRisk] ?? RISK_META.low;
 
   const chartData = Object.entries(fuzzerBreakdown)
@@ -3098,7 +3306,15 @@ export default function BrandThreatDetailPage() {
         {/* ── WATCHLIST tab ── */}
         {activeTab === "watchlist" && (
           <div className="p-5">
-            <WatchlistDetailTab items={allWatchlistItems} scanDomain={s.domain ?? ""} />
+            <WatchlistDetailTab
+              items={allWatchlistItems}
+              scanDomain={s.domain ?? ""}
+              brandAbuse={brandAbuse}
+              dataLeaks={dataLeaks}
+              adMonitoringResults={adMonitoringResults}
+              watchlistItemType={s.watchlistItemType ?? undefined}
+              watchlistItemValue={s.watchlistItemValue ?? undefined}
+            />
           </div>
         )}
 
