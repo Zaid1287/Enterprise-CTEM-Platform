@@ -96,7 +96,7 @@ function SeverityPill({ risk: initialRisk, onPatch }: { risk: string; onPatch: (
 }
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "mobile_apps" | "suspicious_certs" | "social_media" | "malicious_ads" | "takedowns" | "favicon_clones" | "subdomains";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "mobile_apps" | "suspicious_certs" | "social_media" | "malicious_ads" | "logo_brand" | "takedowns" | "favicon_clones" | "subdomains";
 
 interface FalsePositive {
   id: number;
@@ -1271,7 +1271,8 @@ function MobileAppsTab({ abuse, warnings, scanId, falsePositives, onFpCreated }:
   abuse: any[]; warnings?: ScanWarning[]; scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
 }) {
   const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
-  const appItems = abuse.filter(r => r.type === "rogue_app");
+  const MOBILE_TYPES = ["rogue_app", "apk_distribution_link", "official_app_found", "official_ios_app", "similar_app_same_dev", "official_app_on_apkpure", "fake_app"];
+  const appItems = abuse.filter(r => MOBILE_TYPES.includes(r.type));
   const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "rogue_app").map(fp => [fp.item_ref, fp]));
 
   const RISK_COLOR: Record<string, string> = {
@@ -1517,7 +1518,8 @@ function SocialMediaTab({ abuse, warnings, scanDomain, scanId, falsePositives, o
   abuse: any[]; warnings?: ScanWarning[]; scanDomain?: string;
   scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
 }) {
-  const socialItems = abuse.filter(r => r.type === "fake_social");
+  const SOCIAL_TYPES = ["fake_social", "social_handle_found", "impersonating_handle"];
+  const socialItems = abuse.filter(r => SOCIAL_TYPES.includes(r.type));
   const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "fake_social").map(fp => [fp.item_ref, fp]));
   const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
 
@@ -1564,7 +1566,9 @@ function SocialMediaTab({ abuse, warnings, scanDomain, scanId, falsePositives, o
 
       {socialItems.length > 0 && (
         <div className="space-y-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Detected Impersonating Accounts</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            {socialItems.some(i => i.type === "social_handle_found") ? "Detected Social Profiles" : "Detected Impersonating Accounts"}
+          </p>
           {socialItems.map((item: any) => {
             const ref = item.url ?? item.title ?? String(item.id);
             const fp = fpMap.get(ref);
@@ -1607,6 +1611,114 @@ function SocialMediaTab({ abuse, warnings, scanDomain, scanId, falsePositives, o
 
       {/* Manual platform monitor — always shown */}
       <SocialPlatformMonitor scanDomain={scanDomain} />
+    </div>
+  );
+}
+
+function LogoBrandTab({ abuse, scanId, falsePositives, onFpCreated }: {
+  abuse: any[]; scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
+}) {
+  const LOGO_TYPES = ["logo_accessible", "logo_unreachable", "logo_fetch_error", "reverse_image_search", "logo_web_reference", "meta_ad_library_search", "google_ads_transparency_search"];
+  const items = abuse.filter(r => LOGO_TYPES.includes(r.type));
+  const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "logo_abuse").map(fp => [fp.item_ref, fp]));
+
+  const TYPE_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+    logo_accessible:              { label: "Logo Accessible",         color: "text-blue-400",   icon: <CheckCircle className="w-3.5 h-3.5" /> },
+    logo_unreachable:             { label: "Logo Unreachable",        color: "text-orange-400", icon: <AlertCircle className="w-3.5 h-3.5" /> },
+    logo_fetch_error:             { label: "Logo Fetch Error",        color: "text-red-400",    icon: <XCircle className="w-3.5 h-3.5" /> },
+    reverse_image_search:         { label: "Reverse Image Search",    color: "text-cyan-400",   icon: <Search className="w-3.5 h-3.5" /> },
+    logo_web_reference:           { label: "Web Reference",           color: "text-yellow-400", icon: <ExternalLink className="w-3.5 h-3.5" /> },
+    meta_ad_library_search:       { label: "Meta Ads Library",        color: "text-blue-400",   icon: <Megaphone className="w-3.5 h-3.5" /> },
+    google_ads_transparency_search: { label: "Google Ads Transparency", color: "text-green-400", icon: <Search className="w-3.5 h-3.5" /> },
+  };
+
+  if (!items.length) {
+    return (
+      <div className="p-6 flex flex-col items-center justify-center py-20 text-center">
+        <Tag className="w-10 h-10 text-green-400/40 mb-3" />
+        <p className="text-base font-semibold text-green-400">No logo or brand abuse findings</p>
+        <p className="text-sm text-muted-foreground mt-1">No logo accessibility issues or unauthorized brand references found.</p>
+      </div>
+    );
+  }
+
+  const reverseSearchItems = items.filter(r => r.type === "reverse_image_search");
+  const adLibraryItems     = items.filter(r => r.type === "meta_ad_library_search" || r.type === "google_ads_transparency_search");
+  const logoStatusItems    = items.filter(r => ["logo_accessible", "logo_unreachable", "logo_fetch_error"].includes(r.type));
+  const webRefItems        = items.filter(r => r.type === "logo_web_reference");
+
+  function ItemCard({ item }: { item: any }) {
+    const ref = item.url ?? item.title ?? String(item.id);
+    const fp = fpMap.get(ref);
+    const meta = TYPE_META[item.type] ?? { label: item.type, color: "text-muted-foreground", icon: <Tag className="w-3.5 h-3.5" /> };
+    return (
+      <div className={cn("bg-card border rounded-xl p-4 space-y-2", fp?.status === "confirmed" ? "border-green-500/20 opacity-60" : "border-border")}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+            <span className={meta.color}>{meta.icon}</span>
+            <span className="text-sm font-medium truncate">{item.title ?? item.url ?? meta.label}</span>
+            <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium border", meta.color, "bg-current/5 border-current/20")}>{meta.label}</span>
+            {item.isNew && <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0">New</span>}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <SeverityPill risk={item.risk ?? "low"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/abuse/${item.id}/risk`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ risk: r }) }); }} />
+            <FalsePositiveButton scanId={scanId} itemType="logo_abuse" itemId={item.id} itemRef={ref} existingFp={fp} onCreated={onFpCreated} />
+          </div>
+        </div>
+        {item.description && <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{item.description}</p>}
+        {item.evidenceSnippet && <p className="text-[11px] font-mono bg-muted/30 rounded-lg px-3 py-1.5 text-muted-foreground/70 whitespace-pre-wrap">{item.evidenceSnippet}</p>}
+        {item.url && (
+          <a href={item.url} target="_blank" rel="noopener noreferrer"
+            className="ml-5 text-[11px] text-primary hover:text-primary/80 transition-colors flex items-center gap-1 w-fit">
+            <ExternalLink className="w-3 h-3" /> Open in browser
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-5 space-y-6">
+      <div className="flex items-center gap-2">
+        <Tag className="w-4 h-4 text-cyan-400" />
+        <span className="font-semibold">{items.length} logo &amp; brand intelligence finding{items.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {logoStatusItems.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border pb-1.5">Logo Status</p>
+          {logoStatusItems.map((item: any) => <ItemCard key={item.id} item={item} />)}
+        </div>
+      )}
+
+      {reverseSearchItems.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border pb-1.5">Reverse Image Search</p>
+          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-300/80">
+            <Search className="w-3.5 h-3.5 inline mr-1.5 text-cyan-400" />
+            Use these search engines to find unauthorized copies of your logo across the web, social media, and ad networks.
+          </div>
+          {reverseSearchItems.map((item: any) => <ItemCard key={item.id} item={item} />)}
+        </div>
+      )}
+
+      {adLibraryItems.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border pb-1.5">Ad Library Checks</p>
+          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-300/80">
+            <Megaphone className="w-3.5 h-3.5 inline mr-1.5 text-blue-400" />
+            Search ad libraries to find unauthorized advertisers using your brand, logo, or trademarks. Requires manual review — click the search links below.
+          </div>
+          {adLibraryItems.map((item: any) => <ItemCard key={item.id} item={item} />)}
+        </div>
+      )}
+
+      {webRefItems.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border pb-1.5">Web References to Brand Logo</p>
+          {webRefItems.map((item: any) => <ItemCard key={item.id} item={item} />)}
+        </div>
+      )}
     </div>
   );
 }
@@ -2251,7 +2363,7 @@ export default function BrandThreatDetailPage() {
     } else if (itemType === "mobile_app") {
       bestTab = "mobile_apps";
     } else if (itemType === "logo_url") {
-      bestTab = s.faviconMd5 ? "favicon_clones" : "typosquatting";
+      bestTab = "logo_brand";
     }
     if (bestTab) {
       setActiveTab(bestTab);
@@ -2302,7 +2414,9 @@ export default function BrandThreatDetailPage() {
   const phishResults   = results.filter((r: any) => r.isPhishing);
   const lookalikeDomains = brandAbuse.filter((a: any) => a.type === "lookalike_domain");
   const totalLiveDomains = liveResults.length + lookalikeDomains.length;
-  const totalPhishingData = phishingDetections.length + lookalikeDomains.length;
+  // Phishing tab count: confirmed phishing feed results + permutation results flagged isPhishing
+  // (lookalikeDomains are brand_abuse rows shown in Typosquatting tab, NOT the Phishing tab)
+  const totalPhishingData = phishingDetections.length + phishResults.length;
   const risk        = RISK_META[s.phishingRisk] ?? RISK_META.low;
 
   const chartData = Object.entries(fuzzerBreakdown)
@@ -2322,9 +2436,14 @@ export default function BrandThreatDetailPage() {
     ? (s.pipelineSubdomains as PipelineSubdomain[])
     : [];
 
-  const mobileAppsCount = brandAbuse.filter((a: any) => a.type === "rogue_app").length;
+  const MOBILE_TYPES = ["rogue_app", "apk_distribution_link", "official_app_found", "official_ios_app", "similar_app_same_dev", "official_app_on_apkpure", "fake_app"];
+  const SOCIAL_TYPES = ["fake_social", "social_handle_found", "impersonating_handle"];
+  const LOGO_TYPES   = ["logo_accessible", "logo_unreachable", "logo_fetch_error", "reverse_image_search", "logo_web_reference", "meta_ad_library_search", "google_ads_transparency_search"];
+
+  const mobileAppsCount = brandAbuse.filter((a: any) => MOBILE_TYPES.includes(a.type)).length;
   const suspCertsCount  = brandAbuse.filter((a: any) => a.type === "suspicious_certificate").length;
-  const socialCount     = brandAbuse.filter((a: any) => a.type === "fake_social").length;
+  const socialCount     = brandAbuse.filter((a: any) => SOCIAL_TYPES.includes(a.type)).length;
+  const logoCount       = brandAbuse.filter((a: any) => LOGO_TYPES.includes(a.type)).length;
 
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
     { id: "typosquatting",   label: "Typosquatting",   icon: <Globe className="w-3.5 h-3.5" />,      count: results.length },
@@ -2334,6 +2453,7 @@ export default function BrandThreatDetailPage() {
     { id: "social_media",    label: "Social Media",    icon: <AtSign className="w-3.5 h-3.5" />,      count: socialCount, color: socialCount > 0 ? "text-pink-400" : undefined },
     { id: "mobile_apps",     label: "Mobile Apps",     icon: <Smartphone className="w-3.5 h-3.5" />,  count: mobileAppsCount, color: mobileAppsCount > 0 ? "text-orange-400" : undefined },
     { id: "malicious_ads",   label: "Malicious Ads",   icon: <Megaphone className="w-3.5 h-3.5" />,   count: adMonitoringResults.length, color: adMonitoringResults.length > 0 ? "text-violet-400" : undefined },
+    ...(logoCount > 0 ? [{ id: "logo_brand" as TabMode, label: "Logo & Brand", icon: <Tag className="w-3.5 h-3.5" />, count: logoCount, color: "text-cyan-400" }] : []),
     ...(hasFaviconData ? [{ id: "favicon_clones" as TabMode, label: "Favicon Clones", icon: <Fingerprint className="w-3.5 h-3.5" />, count: shodanCloneCount, color: shodanCloneCount > 0 ? "text-violet-400" : undefined }] : []),
     ...(pipelineSubdomains.length > 0 ? [{ id: "subdomains" as TabMode, label: "Subdomains", icon: <Server className="w-3.5 h-3.5" />, count: pipelineSubdomains.length, color: "text-blue-400" }] : []),
     { id: "takedowns",       label: "Takedowns",       icon: <Shield className="w-3.5 h-3.5" /> },
@@ -2901,6 +3021,11 @@ export default function BrandThreatDetailPage() {
         {/* ── MALICIOUS ADS tab ── */}
         {activeTab === "malicious_ads" && (s.status === "done" || s.status === "error") && (
           <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
+        )}
+
+        {/* ── LOGO & BRAND tab ── */}
+        {activeTab === "logo_brand" && (s.status === "done" || s.status === "error") && (
+          <LogoBrandTab abuse={brandAbuse} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── TAKEDOWNS tab ── */}
