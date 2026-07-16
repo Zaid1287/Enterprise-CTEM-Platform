@@ -215,16 +215,19 @@ router.get("/threat-intel/dashboard", requireAuth, async (req: AuthenticatedRequ
       }));
 
     // Most targeted CVEs — CVE IDs appearing in tenant correlations
+    // matched_cves stores objects like {cveId, cvss, isKev, ...} — extract cveId field
     const mostTargetedCvesResult = await db.execute(sql`
       SELECT
-        elem AS cve_id,
+        elem->>'cveId' AS cve_id,
         COUNT(DISTINCT c.asset_id)::int AS hit_count,
         COUNT(*)::int AS match_count
       FROM ti_asset_correlations c,
-      jsonb_array_elements_text(c.matched_cves) elem
+      jsonb_array_elements(c.matched_cves) elem
       WHERE c.tenant_id = ${scopeTenantId}
         AND jsonb_array_length(c.matched_cves) > 0
-      GROUP BY elem
+        AND elem->>'cveId' IS NOT NULL
+        AND elem->>'cveId' != ''
+      GROUP BY elem->>'cveId'
       ORDER BY hit_count DESC, match_count DESC
       LIMIT 10
     `);

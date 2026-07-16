@@ -84,10 +84,11 @@ export default function ThreatIntelDashboardPage() {
     ? `${BASE}/api/threat-intel/dashboard?tenantId=${tenantFilter}`
     : `${BASE}/api/threat-intel/dashboard`;
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["ti-dashboard", tenantFilter],
     queryFn: () => apiFetch<any>(dashUrl),
     staleTime: 60_000,
+    retry: 1,
   });
 
   const { data: feedData, refetch: refetchFeeds } = useQuery({
@@ -207,6 +208,25 @@ export default function ThreatIntelDashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Error state */}
+      {isError && (
+        <div className="flex items-center gap-3 p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400">
+          <XCircle className="w-5 h-5 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold">Failed to load dashboard data</p>
+            <p className="text-xs text-red-400/70 mt-0.5">
+              {(error as any)?.message ?? "An unexpected error occurred. Try refreshing."}
+            </p>
+          </div>
+          <button
+            onClick={() => refetch()}
+            className="ml-auto text-xs px-3 py-1.5 rounded-lg border border-red-500/30 hover:bg-red-500/10 transition-colors shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Stat grid */}
       {isLoading ? (
@@ -364,7 +384,10 @@ export default function ThreatIntelDashboardPage() {
               {recentCorrelations.map((c: any) => {
                 const actors: any[] = Array.isArray(c.matchedActors) ? c.matchedActors : [];
                 const iocs: any[] = Array.isArray(c.matchedIocs) ? c.matchedIocs : [];
-                const cves: string[] = Array.isArray(c.matchedCves) ? c.matchedCves : [];
+                // matchedCves stores MatchedCve objects {cveId, cvss, ...} — extract the cveId string
+                const cves: string[] = Array.isArray(c.matchedCves)
+                  ? c.matchedCves.map((item: any) => typeof item === "string" ? item : (item?.cveId ?? "")).filter(Boolean)
+                  : [];
                 return (
                   <div key={c.id} className="border border-border/50 rounded-lg p-2.5 hover:bg-muted/20 transition-colors">
                     <div className="flex items-start justify-between gap-2">
