@@ -504,10 +504,11 @@ router.get("/tprm/vendors/timeline", requireAuth, requireTprm, async (req: Authe
     for (let w = 7; w >= 0; w--) {
       const weekEnd = new Date(now.getTime() - w * 7 * 86400000);
       const label   = weekEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const vidArr = sql`ARRAY[${sql.join(vendorIds.map(id => sql`${id}`), sql`, `)}]::int[]`;
       const [assetRow, issueRow, vendorRow] = await Promise.all([
-        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_assets WHERE vendor_id = ANY(${vendorIds}::int[]) AND created_at <= ${weekEnd}`),
-        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_findings WHERE vendor_id = ANY(${vendorIds}::int[]) AND created_at <= ${weekEnd} AND status = 'open'`),
-        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendors WHERE id = ANY(${vendorIds}::int[]) AND created_at <= ${weekEnd}`),
+        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_assets WHERE vendor_id = ANY(${vidArr}) AND created_at <= ${weekEnd}`),
+        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_findings WHERE vendor_id = ANY(${vidArr}) AND created_at <= ${weekEnd} AND status = 'open'`),
+        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendors WHERE id = ANY(${vidArr}) AND created_at <= ${weekEnd}`),
       ]);
       weeks.push({
         label,
@@ -517,9 +518,10 @@ router.get("/tprm/vendors/timeline", requireAuth, requireTprm, async (req: Authe
       });
     }
 
+    const vidArrTop = sql`ARRAY[${sql.join(vendorIds.map(id => sql`${id}`), sql`, `)}]::int[]`;
     const topTypeRows = await db.execute(sql`
       SELECT asset_type, count(*)::int AS c FROM tprm_vendor_assets
-      WHERE vendor_id = ANY(${vendorIds}::int[])
+      WHERE vendor_id = ANY(${vidArrTop})
       GROUP BY asset_type ORDER BY c DESC LIMIT 5
     `);
     const topAssetTypes = (topTypeRows.rows as any[]).map(r => ({ type: r.asset_type, count: Number(r.c) }));
@@ -1060,7 +1062,7 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
           SELECT DISTINCT ON (vendor_id) vendor_id, overall_score, network_score, dns_score, web_app_score,
             email_score, cloud_score, tls_score, info_leak_score, reputation_score, dark_web_mentions, calculated_at
           FROM tprm_vendor_risk_scores
-          WHERE vendor_id = ANY(${vendorIds}::int[])
+          WHERE vendor_id = ANY(ARRAY[${sql.join(vendorIds.map(id => sql`${id}`), sql`, `)}]::int[])
           ORDER BY vendor_id, calculated_at DESC
         `),
         // 2nd latest score per vendor for score delta
@@ -1069,7 +1071,7 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
             SELECT vendor_id, overall_score, calculated_at,
               ROW_NUMBER() OVER (PARTITION BY vendor_id ORDER BY calculated_at DESC) AS rn
             FROM tprm_vendor_risk_scores
-            WHERE vendor_id = ANY(${vendorIds}::int[])
+            WHERE vendor_id = ANY(ARRAY[${sql.join(vendorIds.map(id => sql`${id}`), sql`, `)}]::int[])
           ) t WHERE rn = 2
         `),
       ]);
