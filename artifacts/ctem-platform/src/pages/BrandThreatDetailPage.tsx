@@ -11,7 +11,7 @@ import {
   MapPin, Building2, Calendar, Shield, Info, Lock, Plus, Trash2,
   TrendingUp, Megaphone, History, BookmarkCheck, Clock, AtSign,
   Tag, Smartphone, RotateCw, Ban, CheckCircle, AlertCircle, Send,
-  Twitter, Facebook, Instagram, Youtube, Linkedin, Flag,
+  Twitter, Facebook, Instagram, Youtube, Linkedin, Flag, Key,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -736,57 +736,115 @@ function PhishingTab({ phishing, brandAbuse = [], confirmedResults = [], scanId,
   );
 }
 
+// Types that represent informational/reference cards, not actual findings
+const LEAK_INFO_TYPES = new Set(["osint_reference", "email_rep_clean", "mx_record_found", "no_breach_found"]);
+// Types that represent actual breach/exposure findings (shown prominently)
+const LEAK_FINDING_TYPES = new Set([
+  "email_breach", "email_in_breach_db", "email_credentials_leaked", "email_in_paste_dump",
+  "email_paste_hit", "email_in_paste", "email_web_exposure", "email_paste_mention",
+  "email_malicious_activity", "intelx_credentials", "intelx_paste", "intelx_darkweb",
+]);
+
+const SOURCE_ICON: Record<string, { label: string; color: string }> = {
+  "HaveIBeenPwned": { label: "HIBP", color: "text-red-400" },
+  "EmailRep.io":    { label: "EmailRep", color: "text-orange-400" },
+  "Pastebin Dump Search": { label: "PasteDump", color: "text-yellow-400" },
+  "LeakCheck.io":   { label: "LeakCheck", color: "text-orange-400" },
+  "IntelX":         { label: "IntelX", color: "text-violet-400" },
+  "IntelX-DarkWeb": { label: "IntelX DarkWeb", color: "text-red-400" },
+  "IntelX-Paste":   { label: "IntelX Paste", color: "text-orange-400" },
+  "IntelX-Credentials": { label: "IntelX Creds", color: "text-red-500" },
+  "Reddit":         { label: "Reddit", color: "text-orange-400" },
+  "DNS Validation": { label: "DNS", color: "text-blue-400" },
+  "HIBP (No Key)":  { label: "HIBP", color: "text-muted-foreground" },
+  "Paste Site":     { label: "Paste Site", color: "text-yellow-400" },
+  "Web Exposure":   { label: "Web", color: "text-blue-400" },
+};
+
 function DataLeaksTab({ leaks, scanId, falsePositives = [], onFpCreated }: {
   leaks: any[];
   scanId?: number;
   falsePositives?: any[];
   onFpCreated?: () => void;
 }) {
+  // Separate actual findings from informational cards
+  const findings = leaks.filter(l => !LEAK_INFO_TYPES.has(l.type ?? ""));
+  const infoCards = leaks.filter(l => LEAK_INFO_TYPES.has(l.type ?? ""));
+
+  // Sources used (for the header)
+  const sourcesUsed = Array.from(new Set(leaks.map(l => l.source ?? l.platform).filter(Boolean)));
+
+  const SEV_META: Record<string, { color: string; bg: string; border: string }> = {
+    critical: { color: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/20" },
+    high:     { color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
+    medium:   { color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" },
+    low:      { color: "text-green-400", bg: "bg-green-500/10", border: "border-green-500/20" },
+    info:     { color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
+  };
+
   if (!leaks.length) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <Shield className="w-10 h-10 text-green-400/40 mb-3" />
         <p className="text-base font-semibold text-green-400">No data breaches found</p>
         <p className="text-sm text-muted-foreground mt-1">
-          HIBP (Have I Been Pwned) found no known data breaches associated with this domain.
+          Automatic breach checks (EmailRep.io, Pastebin Dump Search, Reddit) found no known exposures.
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Add an HIBP API key in Platform Settings for the most comprehensive check.
         </p>
       </div>
     );
   }
-  const SEV_META: Record<string, { color: string; bg: string; border: string }> = {
-    critical: { color: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/20" },
-    high:     { color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
-    medium:   { color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" },
-    low:      { color: "text-green-400", bg: "bg-green-500/10", border: "border-green-500/20" },
-  };
+
   return (
     <div className="p-5 space-y-4">
-      <div className="flex items-center gap-2 mb-4">
-        <Database className="w-4 h-4 text-orange-400" />
-        <span className="font-semibold">{leaks.length} data breach record{leaks.length !== 1 ? "s" : ""}</span>
-        <span className="text-xs text-muted-foreground">— sourced from HIBP (Have I Been Pwned)</span>
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <Database className="w-4 h-4 text-orange-400 shrink-0" />
+        <span className="font-semibold">
+          {findings.length > 0
+            ? `${findings.length} breach/exposure finding${findings.length !== 1 ? "s" : ""}`
+            : "No active exposures detected"}
+        </span>
+        {sourcesUsed.length > 0 && (
+          <span className="text-xs text-muted-foreground">
+            — checked: {sourcesUsed.slice(0, 5).join(", ")}
+          </span>
+        )}
       </div>
-      {leaks.map((leak: any) => {
-        const sev = SEV_META[leak.severity] ?? SEV_META.low;
+
+      {/* Actual findings */}
+      {findings.map((leak: any) => {
+        const sev = SEV_META[leak.severity] ?? SEV_META.info;
         const dataClasses: string[] = Array.isArray(leak.exposedData) ? leak.exposedData : [];
         const lRef = leak.title ?? String(leak.id);
         const lFp = falsePositives.find(fp => fp.item_type === "data_leak" && fp.item_ref === lRef);
+        const srcMeta = SOURCE_ICON[leak.source ?? leak.platform ?? ""] ?? null;
         return (
           <div key={leak.id} className={cn("bg-card border rounded-xl p-4 space-y-3", sev.border, lFp?.status === "confirmed" && "opacity-50")}>
             <div className="flex items-start justify-between gap-2">
-              <div>
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <Database className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                   <span className="font-semibold text-sm">{leak.title}</span>
                   <SeverityPill risk={leak.severity ?? "medium"} onPatch={async (r) => { await apiFetch(`/api/brand-threats/data-leaks/${leak.id}/severity`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ severity: r }) }); }} />
+                  {srcMeta && (
+                    <span className={cn("text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-muted/40", srcMeta.color, "border-current/30")}>
+                      {srcMeta.label}
+                    </span>
+                  )}
                   {leak.isNew && (
                     <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
                       New
                     </span>
                   )}
                 </div>
-                {leak.domainMatch && (
-                  <p className="text-[11px] text-muted-foreground mt-0.5 ml-5">Domain: {leak.domainMatch}</p>
+                {(leak.domainMatch || leak.emailMatch) && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5 ml-5">
+                    {leak.emailMatch && <>Email: {leak.emailMatch}</>}
+                    {leak.domainMatch && <> | Domain: {leak.domainMatch}</>}
+                  </p>
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -795,12 +853,15 @@ function DataLeaksTab({ leaks, scanId, falsePositives = [], onFpCreated }: {
                     <Calendar className="w-3 h-3" /> {leak.breachDate}
                   </span>
                 )}
-                <TakedownButton prefill={{ type: "other", targetUrl: leak.url ?? leak.domainMatch ? `https://${leak.domainMatch}` : "", title: `Data Breach: ${leak.title}`, description: leak.description ?? undefined, priority: leak.severity === "critical" || leak.severity === "high" ? leak.severity : "medium" }} />
+                <TakedownButton prefill={{ type: "other", targetUrl: leak.url ?? (leak.domainMatch ? `https://${leak.domainMatch}` : ""), title: `Data Breach: ${leak.title}`, description: leak.description ?? undefined, priority: leak.severity === "critical" || leak.severity === "high" ? leak.severity : "medium" }} />
                 {scanId && <FalsePositiveButton scanId={scanId} itemType="data_leak" itemRef={lRef} existingFp={lFp} onCreated={onFpCreated} />}
               </div>
             </div>
             {leak.description && (
               <p className="text-xs text-muted-foreground/80 leading-relaxed ml-5">{leak.description}</p>
+            )}
+            {leak.evidenceSnippet && (
+              <p className="text-[10px] font-mono text-muted-foreground/60 bg-muted/30 rounded px-2 py-1 ml-5 truncate">{leak.evidenceSnippet}</p>
             )}
             {dataClasses.length > 0 && (
               <div className="ml-5">
@@ -818,13 +879,45 @@ function DataLeaksTab({ leaks, scanId, falsePositives = [], onFpCreated }: {
               <div className="ml-5">
                 <a href={leak.url} target="_blank" rel="noopener noreferrer"
                   className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 w-fit">
-                  <ExternalLink className="w-3 h-3" /> View on HIBP
+                  <ExternalLink className="w-3 h-3" /> View source →
                 </a>
               </div>
             )}
           </div>
         );
       })}
+
+      {/* Informational / status cards (clean results, HIBP upsell, DNS info) — collapsed at bottom */}
+      {infoCards.length > 0 && (
+        <div className="mt-4 space-y-2">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Scan Status & Additional Info</p>
+          {infoCards.map((leak: any) => {
+            const isHibpRef = leak.type === "osint_reference";
+            return (
+              <div key={leak.id ?? leak.title} className={cn(
+                "bg-muted/20 border rounded-lg p-3 flex items-start gap-3",
+                isHibpRef ? "border-blue-500/20" : "border-border/50"
+              )}>
+                {isHibpRef
+                  ? <Key className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />
+                  : <Shield className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
+                }
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground/80">{leak.title}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{leak.description}</p>
+                  {leak.url && (
+                    <a href={leak.url} target="_blank" rel="noopener noreferrer"
+                      className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 mt-1 w-fit">
+                      <ExternalLink className="w-3 h-3" />
+                      {isHibpRef ? "Configure HIBP in Platform Settings →" : "View →"}
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

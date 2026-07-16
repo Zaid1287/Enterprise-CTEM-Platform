@@ -261,25 +261,29 @@ export async function scanEmailOSINT(
     opts.hibpKey ? checkHIBP(email, opts.hibpKey, results) : Promise.resolve(),
     checkEmailDomainMX(domain, email, results),
     searchRedditForEmail(email, results),
-    checkLeakCheck(email, results),
+    checkEmailRepIO(email, results),
+    checkPastebinDump(email, results),
     opts.googleSearchKey && opts.googleSearchCx
       ? googleDorkEmail(email, opts.googleSearchKey, opts.googleSearchCx, results)
       : Promise.resolve(),
   ]);
 
-  // Always include a manual OSINT reference card
-  results.push({
-    type: "osint_reference",
-    category: "data_leak",
-    platform: "OSINT Tools",
-    url: `https://haveibeenpwned.com/account/${encodeURIComponent(email)}`,
-    title: `Manual OSINT: verify ${email}`,
-    description: `Manual verification: check ${email} on HaveIBeenPwned, Dehashed, and IntelX for additional breach records. Click the link to check HIBP directly.`,
-    evidenceSnippet: `Email: ${email} | Domain: ${domain} | HIBP: haveibeenpwned.com/account/${encodeURIComponent(email)}`,
-    severity: "info",
-    risk: "low",
-    emailMatch: email,
-  });
+  // Only add the supplementary reference card when HIBP key is not configured
+  // (i.e. we couldn't do the full authoritative HIBP check)
+  if (!opts.hibpKey) {
+    results.push({
+      type: "osint_reference",
+      category: "data_leak",
+      platform: "HIBP (No Key)",
+      url: `https://haveibeenpwned.com/account/${encodeURIComponent(email)}`,
+      title: `Add HIBP key for full breach history: ${email}`,
+      description: `HaveIBeenPwned has the most comprehensive breach database (14 billion records). Configure a free HIBP API key in Platform Settings → Brand Threat Intelligence to enable full automatic breach checking. The checks above (EmailRep, Pastebin Dump Search, Reddit) ran automatically.`,
+      evidenceSnippet: `Email: ${email} | Free sources: EmailRep.io, PastebinDump, Reddit | Premium: HIBP requires API key (~$3.50/month)`,
+      severity: "info",
+      risk: "low",
+      emailMatch: email,
+    });
+  }
 
   return results;
 }
@@ -402,33 +406,146 @@ async function searchRedditForEmail(email: string, out: WatchlistScanResult[]): 
   } catch { /* ignore */ }
 }
 
-async function checkLeakCheck(email: string, out: WatchlistScanResult[]): Promise<void> {
+/**
+ * checkEmailRepIO — emailrep.io free API (no key required, up to 10 req/day).
+ * Returns breach status, credential leak flag, spam lists, and reputation score.
+ * API: GET https://emailrep.io/{email}
+ */
+async function checkEmailRepIO(email: string, out: WatchlistScanResult[]): Promise<void> {
   try {
     const res = await orchestratedFetch(
-      `https://leakcheck.io/api/public?check=${encodeURIComponent(email)}`,
+      `https://emailrep.io/${encodeURIComponent(email)}`,
       {
-        headers: { "User-Agent": "SentinelwareCTEM/1.0" },
-        signal: AbortSignal.timeout(10_000),
+        headers: { "User-Agent": "SentinelwareCTEM/1.0", Accept: "application/json" },
+        signal: AbortSignal.timeout(12_000),
       },
     );
     if (!res.ok) return;
     const data = await res.json() as any;
-    if (data?.found === true || (data?.sources && data.sources.length > 0)) {
-      const sources: string[] = data.sources ?? [];
+    const details = data?.details ?? {};
+    const reputation: string = data?.reputation ?? "none";
+    const suspicious: boolean = data?.suspicious === true;
+
+    // Credentials leaked — highest priority finding
+    if (details.credentials_leaked === true) {
+      const recent = details.credentials_leaked_recent === true;
+      out.push({
+        type: "email_credentials_leaked",
+        category: "data_leak",
+        platform: "EmailRep.io",
+        url: `https://emailrep.io/${encodeURIComponent(email)}`,
+        title: `Credentials leaked: ${email}${recent ? " (recent breach)" : ""}`,
+        description: `EmailRep.io confirms credentials for ${email} have been exposed in data breaches. ${recent ? "A RECENT leak was detected — password change is urgent." : "Immediate password change recommended."} Reputation: ${reputation}. ${details.spam_lists ? `Found on ${details.spam_lists} spam list(s).` : ""}`,
+        evidenceSnippet: `Credentials leaked: yes | Recent: ${recent} | Reputation: ${reputation} | Spam lists: ${details.spam_lists ?? 0}`,
+        severity: recent ? "critical" : "high",
+        risk: recent ? "critical" : "high",
+        emailMatch: email,
+      });
+    } else if (details.data_breach === true) {
+      // Data breach (email appeared in breach even if no credentials confirmed)
       out.push({
         type: "email_in_breach_db",
         category: "data_leak",
-        platform: "LeakCheck.io",
-        url: `https://leakcheck.io/?q=${encodeURIComponent(email)}`,
-        title: `Email in leaked databases: ${email}`,
-        description: `LeakCheck.io confirms ${email} appears in ${sources.length > 0 ? `${sources.length} known breach source(s)` : "leaked credential databases"}. Immediate password change recommended. Sources: ${sources.join(", ") || "undisclosed (premium detail)"}`,
-        evidenceSnippet: `Sources: ${sources.join(", ") || "undisclosed"} | Email: ${email}`,
-        severity: "critical",
-        risk: "critical",
+        platform: "EmailRep.io",
+        url: `https://emailrep.io/${encodeURIComponent(email)}`,
+        title: `Email found in data breach: ${email}`,
+        description: `EmailRep.io reports ${email} has appeared in data breaches. Credential exposure cannot be ruled out. Reputation: ${reputation}.`,
+        evidenceSnippet: `Data breach: yes | Credentials confirmed: no | Reputation: ${reputation}`,
+        severity: "medium",
+        risk: "medium",
+        emailMatch: email,
+      });
+    } else if (suspicious && details.malicious_activity === true) {
+      out.push({
+        type: "email_malicious_activity",
+        category: "data_leak",
+        platform: "EmailRep.io",
+        url: `https://emailrep.io/${encodeURIComponent(email)}`,
+        title: `Suspicious email — malicious activity reported: ${email}`,
+        description: `EmailRep.io flagged ${email} as suspicious with reported malicious activity. This email may be used in phishing or spam campaigns. Reputation: ${reputation}.`,
+        evidenceSnippet: `Suspicious: yes | Malicious activity: yes | Reputation: ${reputation}`,
+        severity: "high",
+        risk: "high",
+        emailMatch: email,
+      });
+    } else if (reputation !== "none") {
+      // No breaches found — report the clean result
+      out.push({
+        type: "email_rep_clean",
+        category: "data_leak",
+        platform: "EmailRep.io",
+        url: `https://emailrep.io/${encodeURIComponent(email)}`,
+        title: `EmailRep.io: no breach detected — ${email}`,
+        description: `EmailRep.io found no credential leaks or data breaches for ${email}. Email reputation: ${reputation}. ${details.spam_lists ? `Appears on ${details.spam_lists} spam list(s).` : "Not flagged on spam lists."} First seen: ${details.first_seen ?? "unknown"}.`,
+        evidenceSnippet: `Credentials leaked: no | Data breach: no | Reputation: ${reputation} | Suspicious: ${suspicious}`,
+        severity: "info",
+        risk: "low",
         emailMatch: email,
       });
     }
-  } catch { /* ignore — LeakCheck rate limits aggressively */ }
+  } catch (err: any) {
+    logger.debug({ err: String(err) }, "EmailRep.io check error");
+  }
+}
+
+/**
+ * checkPastebinDump — searches psbdmp.ws (free public Pastebin archive search).
+ * Finds paste dumps containing the email address.
+ * API: GET https://psbdmp.ws/api/v3/search/{email}
+ */
+async function checkPastebinDump(email: string, out: WatchlistScanResult[]): Promise<void> {
+  try {
+    const res = await orchestratedFetch(
+      `https://psbdmp.ws/api/v3/search/${encodeURIComponent(email)}`,
+      {
+        headers: { "User-Agent": "SentinelwareCTEM/1.0", Accept: "application/json" },
+        signal: AbortSignal.timeout(12_000),
+      },
+    );
+    if (!res.ok) return;
+    const data = await res.json() as any;
+    const pastes: any[] = Array.isArray(data?.data) ? data.data : [];
+    if (pastes.length === 0) return;
+
+    const count = data?.count ?? pastes.length;
+    const topPastes = pastes.slice(0, 5);
+
+    // Summary finding
+    out.push({
+      type: "email_in_paste_dump",
+      category: "data_leak",
+      platform: "Pastebin Dump Search",
+      url: `https://psbdmp.ws/search/${encodeURIComponent(email)}`,
+      title: `Email found in ${count} paste dump${count !== 1 ? "s" : ""}: ${email}`,
+      description: `psbdmp.ws (Pastebin archive) found ${count} paste(s) containing ${email}. Paste dumps often contain leaked credential lists, combolists, and data breach exports. Immediate password change recommended.`,
+      evidenceSnippet: `Paste count: ${count} | IDs: ${topPastes.map((p: any) => p.id ?? "?").join(", ")} | Source: psbdmp.ws`,
+      severity: count > 5 ? "critical" : "high",
+      risk: count > 5 ? "critical" : "high",
+      emailMatch: email,
+    });
+
+    // Individual paste cards (up to 3)
+    for (const paste of topPastes.slice(0, 3)) {
+      const pasteId = paste.id ?? paste.key;
+      if (!pasteId) continue;
+      const snippet = (paste.text ?? paste.content ?? "").slice(0, 200);
+      const tags: string[] = Array.isArray(paste.tags) ? paste.tags : [];
+      out.push({
+        type: "email_paste_hit",
+        category: "data_leak",
+        platform: "Pastebin Dump Search",
+        url: `https://pastebin.com/${pasteId}`,
+        title: `Paste dump hit: ${email} in paste ${pasteId}`,
+        description: `${email} appears in pastebin paste ${pasteId}${tags.length ? ` (tags: ${tags.join(", ")})` : ""}. ${snippet ? `Snippet: ${snippet}` : "Paste content not available."}`,
+        evidenceSnippet: `Paste ID: ${pasteId} | Tags: ${tags.join(", ") || "none"} | Time: ${paste.time ?? "unknown"}`,
+        severity: "high",
+        risk: "high",
+        emailMatch: email,
+      });
+    }
+  } catch (err: any) {
+    logger.debug({ err: String(err) }, "Pastebin dump search error");
+  }
 }
 
 async function googleDorkEmail(
