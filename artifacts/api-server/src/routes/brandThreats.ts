@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, desc, inArray, isNull, isNotNull } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db,
@@ -86,12 +86,56 @@ function toScanResponse(s: typeof brandThreatScansTable.$inferSelect) {
   };
 }
 
+async function enrichScanList(scans: ReturnType<typeof toScanResponse>[]) {
+  if (scans.length === 0) return scans;
+  const ids = scans.map(s => s.id);
+
+  const [abuseRows, riskRows, phishRows] = await Promise.all([
+    db.execute(sql`
+      SELECT scan_id,
+        COUNT(CASE WHEN type IN ('rogue_app','apk_distribution_link','rogue_mobile_app') THEN 1 END)::int AS mobile_app_count,
+        COUNT(CASE WHEN type IN ('impersonating_handle','social_handle_found','fake_social') THEN 1 END)::int AS social_media_count,
+        COUNT(CASE WHEN type = 'suspicious_certificate' THEN 1 END)::int AS certificate_count
+      FROM brand_abuse_results
+      WHERE scan_id = ANY(${ids})
+      GROUP BY scan_id
+    `),
+    db.execute(sql`
+      SELECT scan_id, COUNT(*)::int AS high_risk_count
+      FROM brand_threat_results
+      WHERE scan_id = ANY(${ids}) AND risk_score >= 60 AND archived_at IS NULL
+      GROUP BY scan_id
+    `),
+    db.execute(sql`
+      SELECT scan_id, COUNT(*)::int AS confirmed_phishing_count
+      FROM phishing_detections
+      WHERE scan_id = ANY(${ids}) AND verified = true
+      GROUP BY scan_id
+    `),
+  ]);
+
+  const abuseMap = new Map<number, { mobile_app_count: number; social_media_count: number; certificate_count: number }>();
+  for (const r of abuseRows.rows as any[]) abuseMap.set(Number(r.scan_id), r);
+  const riskMap  = new Map<number, number>();
+  for (const r of riskRows.rows as any[])  riskMap.set(Number(r.scan_id), Number(r.high_risk_count));
+  const phishMap = new Map<number, number>();
+  for (const r of phishRows.rows as any[]) phishMap.set(Number(r.scan_id), Number(r.confirmed_phishing_count));
+
+  return scans.map(s => ({
+    ...s,
+    highRiskCount:           riskMap.get(s.id)  ?? 0,
+    confirmedPhishingCount:  phishMap.get(s.id) ?? 0,
+    mobileAppCount:          abuseMap.get(s.id)?.mobile_app_count    ?? 0,
+    socialMediaCount:        abuseMap.get(s.id)?.social_media_count  ?? 0,
+    certificateCount:        abuseMap.get(s.id)?.certificate_count   ?? 0,
+  }));
+}
+
 // ── GET /brand-threats ────────────────────────────────────────────────────────
 router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const role = req.user!.role;
   let btWhere;
   if (role === "super_admin") {
-    // SA sees ALL brand threats across every tenant — no tenant restriction
     btWhere = undefined;
   } else if (role === "account_manager") {
     const ids = await getAmClientTenantIds(req.user!.userId);
@@ -112,9 +156,8 @@ router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res)
     const allScans = await db.select().from(brandThreatScansTable)
       .where(eq(brandThreatScansTable.tenantId, req.user!.tenantId))
       .orderBy(desc(brandThreatScansTable.createdAt));
-    res.json(allScans
-      .filter(s => assignedDomains.has(s.domain.toLowerCase().replace(/^www\./, "")))
-      .map(toScanResponse));
+    const filtered = allScans.filter(s => assignedDomains.has(s.domain.toLowerCase().replace(/^www\./, ""))).map(toScanResponse);
+    res.json(await enrichScanList(filtered));
     return;
   } else {
     btWhere = eq(brandThreatScansTable.tenantId, req.user!.tenantId);
@@ -122,7 +165,7 @@ router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res)
   const scans = await db.select().from(brandThreatScansTable)
     .where(btWhere)
     .orderBy(desc(brandThreatScansTable.createdAt));
-  res.json(scans.map(toScanResponse));
+  res.json(await enrichScanList(scans.map(toScanResponse)));
 });
 
 // ── POST /brand-threats ───────────────────────────────────────────────────────
