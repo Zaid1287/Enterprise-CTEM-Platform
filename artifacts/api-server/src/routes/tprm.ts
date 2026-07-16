@@ -506,7 +506,7 @@ router.get("/tprm/vendors/timeline", requireAuth, requireTprm, async (req: Authe
       const label   = weekEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       const vidArr = sql`ARRAY[${sql.join(vendorIds.map(id => sql`${id}`), sql`, `)}]::int[]`;
       const [assetRow, issueRow, vendorRow] = await Promise.all([
-        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_assets WHERE vendor_id = ANY(${vidArr}) AND created_at <= ${weekEnd}`),
+        db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_assets WHERE vendor_id = ANY(${vidArr}) AND discovered_at <= ${weekEnd}`),
         db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendor_findings WHERE vendor_id = ANY(${vidArr}) AND created_at <= ${weekEnd} AND status = 'open'`),
         db.execute(sql`SELECT count(*)::int AS c FROM tprm_vendors WHERE id = ANY(${vidArr}) AND created_at <= ${weekEnd}`),
       ]);
@@ -1041,7 +1041,7 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
 
     const vendorIds = allVendors.map(v => v.id);
     let digitalExposure = { credentialLeaks: 0, docsExposed: 0, darkWebMentions: 0, brandMentions: 0, employeeDataExposed: 0, credentialOnForum: 0 };
-    let infraCoverage = { misconfiguredCloud: 0, secretsInApps: 0, misconfiguredDns: 0, sslIssues: 0, exposedServices: 0 };
+    let infraCoverage = { misconfiguredCloud: 0, subdomains: 0, mobileApps: 0, webApps: 0 };
     let assetCounts = { domains: 0, subdomains: 0, ipAddresses: 0, webApps: 0, mobileApps: 0 };
     let activeDataLeaks = 0;
     let activeSecurityRisks = 0;
@@ -1085,11 +1085,10 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
       }
       if (assetCounts.domains === 0) assetCounts.domains = totalVendors;
 
-      infraCoverage.sslIssues          = findings.filter(f => f.category === "tls").length;
-      infraCoverage.misconfiguredDns   = findings.filter(f => f.category === "email" || f.category === "dns").length;
-      infraCoverage.exposedServices    = findings.filter(f => f.category === "network").length;
-      infraCoverage.secretsInApps      = findings.filter(f => f.category === "info_leak" || f.category === "sensitive-file").length;
       infraCoverage.misconfiguredCloud = findings.filter(f => f.category === "cloud").length;
+      infraCoverage.subdomains         = assetCounts.subdomains;
+      infraCoverage.mobileApps         = assetCounts.mobileApps;
+      infraCoverage.webApps            = assetCounts.webApps;
 
       digitalExposure.credentialLeaks    = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".env") || f.title?.includes("credential") || f.title?.includes("secret"))).length;
       digitalExposure.docsExposed        = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".git") || f.title?.includes("config"))).length;
