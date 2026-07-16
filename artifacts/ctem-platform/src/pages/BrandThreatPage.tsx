@@ -11,7 +11,7 @@ import {
   TrendingUp, Activity, Search, ChevronRight, Fish, Database, Target,
   BookmarkCheck, Tag, Mail, Smartphone, AtSign, Link, CalendarClock,
   RotateCw, Edit2, Check, X, LockKeyhole, Megaphone, Image,
-  LayoutGrid, Table2, ArrowUpRight, Award, MonitorSmartphone, MessageSquare,
+  ArrowUpRight, Award, MonitorSmartphone, MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
@@ -1210,7 +1210,7 @@ function WatchlistSection() {
   const scheduledCount = items.filter((i: any) => i.frequency && i.frequency !== "none").length;
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-5">
+    <div className="px-6 py-5">
       <div className="w-full">
         <div className="flex items-center justify-between mb-5">
           <div>
@@ -1552,7 +1552,7 @@ function SchedulesSection() {
   const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-5">
+    <div className="px-6 py-5">
       <div className="w-full">
         <div className="flex items-center justify-between mb-5">
           <div>
@@ -1755,172 +1755,6 @@ function SchedulesSection() {
   );
 }
 
-// ── Scan Table (full 13-column breakdown per scan) ────────────────────────────
-type ScanTableCol = {
-  key: string; label: string; icon: React.ReactNode;
-  value: (s: any) => number;
-  color: (v: number) => string;
-  bg: (v: number) => string;
-};
-
-const SCAN_TABLE_COLS: ScanTableCol[] = [
-  { key: "permutations",       label: "Permutations",       icon: <TrendingUp className="w-3 h-3" />,       value: s => s.totalPermutations ?? 0,          color: v => v > 0 ? "text-blue-400"   : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-blue-500/10"   : "" },
-  { key: "live",               label: "Live",               icon: <Activity className="w-3 h-3" />,         value: s => s.liveCount ?? 0,                  color: v => v > 0 ? "text-red-400"    : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-red-500/10"    : "" },
-  { key: "registered",         label: "Registered",         icon: <Globe className="w-3 h-3" />,            value: s => s.registeredCount ?? 0,            color: v => v > 0 ? "text-orange-400" : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-orange-500/10" : "" },
-  { key: "high_risk",          label: "High Risk",          icon: <AlertTriangle className="w-3 h-3" />,    value: s => s.highRiskCount ?? 0,              color: v => v > 0 ? "text-red-500"    : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-red-500/15"    : "" },
-  { key: "phishing",           label: "Phishing",           icon: <Fish className="w-3 h-3" />,             value: s => s.phishingCount ?? 0,              color: v => v > 0 ? "text-red-400"    : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-red-500/10"    : "" },
-  { key: "conf_phishing",      label: "Conf. Phishing",     icon: <ShieldAlert className="w-3 h-3" />,      value: s => s.confirmedPhishingCount ?? 0,     color: v => v > 0 ? "text-red-600"    : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-red-600/15"    : "" },
-  { key: "brand_abuse",        label: "Brand Abuse",        icon: <Target className="w-3 h-3" />,           value: s => s.brandAbuseCount ?? 0,            color: v => v > 0 ? "text-yellow-400" : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-yellow-500/10" : "" },
-  { key: "malicious_ads",      label: "Malicious Ads",      icon: <Megaphone className="w-3 h-3" />,        value: s => s.adMonitoringCount ?? 0,          color: v => v > 0 ? "text-violet-400" : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-violet-500/10" : "" },
-  { key: "mobile_apps",        label: "Mobile Apps",        icon: <MonitorSmartphone className="w-3 h-3" />, value: s => s.mobileAppCount ?? 0,            color: v => v > 0 ? "text-cyan-400"   : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-cyan-500/10"   : "" },
-  { key: "social_media",       label: "Social Media",       icon: <MessageSquare className="w-3 h-3" />,    value: s => s.socialMediaCount ?? 0,           color: v => v > 0 ? "text-pink-400"   : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-pink-500/10"   : "" },
-  { key: "certificates",       label: "Certificates",       icon: <Award className="w-3 h-3" />,            value: s => s.certificateCount ?? 0,           color: v => v > 0 ? "text-emerald-400": "text-muted-foreground/40",  bg: v => v > 0 ? "bg-emerald-500/10": "" },
-  { key: "leaks",              label: "Leaks",              icon: <Database className="w-3 h-3" />,         value: s => s.dataLeakCount ?? 0,              color: v => v > 0 ? "text-yellow-500" : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-yellow-500/10" : "" },
-  { key: "live_domains",       label: "Live Domains",       icon: <Globe className="w-3 h-3" />,            value: s => s.liveCount ?? 0,                  color: v => v > 0 ? "text-green-400"  : "text-muted-foreground/40",  bg: v => v > 0 ? "bg-green-500/10"  : "" },
-];
-
-function ScanTable({ scans, onView, onDelete, onRetry, deletingId, retryingId }: {
-  scans: any[];
-  onView: (id: number) => void;
-  onDelete: (id: number) => void;
-  onRetry: (id: number) => void;
-  deletingId: number | null;
-  retryingId: number | null;
-}) {
-  if (scans.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-        No scans found
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto rounded-xl border border-border bg-card">
-      <table className="w-full text-sm border-collapse" style={{ minWidth: 1400 }}>
-        <thead>
-          <tr className="border-b border-border bg-muted/30">
-            <th className="sticky left-0 z-10 bg-muted/60 backdrop-blur-sm text-left px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap border-r border-border min-w-[200px]">
-              Domain / Asset
-            </th>
-            <th className="px-3 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap text-center min-w-[72px]">
-              Status
-            </th>
-            {SCAN_TABLE_COLS.map(col => (
-              <th key={col.key} className="px-3 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap text-center min-w-[96px]">
-                <span className="flex items-center justify-center gap-1">
-                  {col.icon} {col.label}
-                </span>
-              </th>
-            ))}
-            <th className="px-3 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap text-right min-w-[100px]">
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {scans.map((scan: any, idx: number) => {
-            const status = STATUS_CONFIG[scan.status] ?? STATUS_CONFIG.pending;
-            const isDone = scan.status === "done";
-            const isActive = scan.status === "running" || scan.status === "pending";
-            const risk = RISK_META[scan.phishingRisk] ?? RISK_META.low;
-            return (
-              <tr
-                key={scan.id}
-                className={cn(
-                  "border-b border-border/50 transition-colors cursor-pointer group",
-                  idx % 2 === 0 ? "bg-background/40" : "bg-card",
-                  "hover:bg-primary/5",
-                )}
-                onClick={() => onView(scan.id)}
-              >
-                {/* Domain column — sticky */}
-                <td className="sticky left-0 z-10 bg-inherit border-r border-border/50 px-4 py-3 whitespace-nowrap group-hover:bg-primary/5">
-                  <div className="flex items-center gap-2.5">
-                    {isDone && scan.phishingRisk && (
-                      <div className={cn("w-2 h-2 rounded-full shrink-0", risk.dot)} />
-                    )}
-                    {isActive && (
-                      <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
-                    )}
-                    {!isDone && !isActive && (
-                      <div className="w-2 h-2 rounded-full bg-muted-foreground/30 shrink-0" />
-                    )}
-                    <div className="min-w-0">
-                      <p className="font-mono text-[13px] font-semibold truncate max-w-[180px]">
-                        {scan.watchlistItemValue ?? scan.domain}
-                      </p>
-                      {scan.lastScannedAt && (
-                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                          {formatDate(scan.lastScannedAt)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </td>
-
-                {/* Status */}
-                <td className="px-3 py-3 text-center whitespace-nowrap">
-                  <span className={cn("flex items-center justify-center gap-1 text-[11px] font-medium", status.color)}>
-                    {status.icon}
-                    {status.label}
-                  </span>
-                </td>
-
-                {/* 13 metric columns */}
-                {SCAN_TABLE_COLS.map(col => {
-                  const v = col.value(scan);
-                  return (
-                    <td key={col.key} className="px-3 py-3 text-center whitespace-nowrap">
-                      <span className={cn(
-                        "inline-flex items-center justify-center min-w-[36px] h-6 rounded-md text-[12px] font-bold tabular-nums px-2",
-                        v > 0 ? col.bg(v) : "",
-                        col.color(v),
-                      )}>
-                        {v}
-                      </span>
-                    </td>
-                  );
-                })}
-
-                {/* Actions */}
-                <td className="px-3 py-3 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                  <div className="flex items-center justify-end gap-1">
-                    <button
-                      onClick={() => onView(scan.id)}
-                      className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-                      title="View details"
-                    >
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                    </button>
-                    {(scan.status === "error") && (
-                      <button
-                        onClick={() => onRetry(scan.id)}
-                        disabled={retryingId === scan.id}
-                        className="p-1.5 rounded-md text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors disabled:opacity-40"
-                        title="Retry scan"
-                      >
-                        {retryingId === scan.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCw className="w-3.5 h-3.5" />}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => onDelete(scan.id)}
-                      disabled={deletingId === scan.id}
-                      className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
-                      title="Delete scan"
-                    >
-                      {deletingId === scan.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 export default function BrandThreatPage() {
   const [, navigate] = useLocation();
@@ -1931,7 +1765,6 @@ export default function BrandThreatPage() {
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"scans" | "watchlist" | "schedules">("scans");
-  const [scanView, setScanView] = useState<"grid" | "table">("grid");
 
   const { data: scans, isLoading, refetch } = useListBrandThreats({
     query: { queryKey: getListBrandThreatsQueryKey(), staleTime: 0, refetchInterval: (query: any) => {
@@ -1991,100 +1824,110 @@ export default function BrandThreatPage() {
   const activeScans   = scanList.filter((s: any) => s.status === "running" || s.status === "pending").length;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* ── Top hero bar ──────────────────────────────────────────────── */}
-      <div className="bg-gradient-to-r from-card via-card to-background border-b border-border px-6 py-5">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-              <ShieldAlert className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight">Brand Threat Intelligence</h1>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Typosquatting · Phishing detection · Data leaks · Brand abuse · CT monitoring
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Tab switcher */}
-            <div className="flex items-center gap-1 bg-muted/30 rounded-lg p-1 mr-1">
-              <button
-                onClick={() => setActiveTab("scans")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                  activeTab === "scans" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <ShieldAlert className="w-3.5 h-3.5" /> Scans
-              </button>
-              <button
-                onClick={() => setActiveTab("watchlist")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                  activeTab === "watchlist" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <BookmarkCheck className="w-3.5 h-3.5" /> Watchlist
-              </button>
-              <button
-                onClick={() => setActiveTab("schedules")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                  activeTab === "schedules" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <CalendarClock className="w-3.5 h-3.5" /> Schedules
-              </button>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-              Refresh
-            </Button>
-            {activeTab === "scans" && (
-              <Button size="sm" onClick={() => setShowModal(true)} className="h-8">
-                <Plus className="w-3.5 h-3.5 mr-1.5" />
-                New Scan
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* Stat strip */}
-        {scanList.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
-            <div className="flex items-center gap-3 bg-background/60 border border-border rounded-xl px-4 py-3">
-              <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Domains Scanned</p>
-                <p className="text-xl font-bold leading-tight">{new Set(scanList.map((s: any) => s.domain)).size}</p>
+    <div className="p-6 space-y-5">
+      {/* ── Hero card ─────────────────────────────────────────────────── */}
+      <div className="rounded-xl bg-card border border-border/50 overflow-hidden">
+        <div className="h-1 bg-gradient-to-r from-red-500 via-rose-500 to-orange-500" />
+        <div className="px-6 py-5">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                <ShieldAlert className="w-5 h-5 text-red-500" />
               </div>
-            </div>
-            <div className="flex items-center gap-3 bg-background/60 border border-red-500/20 rounded-xl px-4 py-3">
-              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
               <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Live Threats</p>
-                <p className={cn("text-xl font-bold leading-tight", totalLive > 0 ? "text-red-400" : "")}>{totalLive}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 bg-background/60 border border-orange-500/20 rounded-xl px-4 py-3">
-              <Fish className="w-4 h-4 text-orange-400 shrink-0" />
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Phishing Detected</p>
-                <p className={cn("text-xl font-bold leading-tight", totalPhishing > 0 ? "text-orange-400" : "")}>{totalPhishing}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 bg-background/60 border border-yellow-500/20 rounded-xl px-4 py-3">
-              <Database className="w-4 h-4 text-yellow-400 shrink-0" />
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Data Leaks</p>
-                <p className={cn("text-xl font-bold leading-tight", totalLeaks > 0 ? "text-yellow-400" : "")}>
-                  {totalLeaks}
+                <h1 className="text-xl font-bold tracking-tight">Brand Threat Intelligence</h1>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Typosquatting · Phishing detection · Data leaks · Brand abuse · CT monitoring
                 </p>
               </div>
             </div>
+            <div className="flex items-center gap-2">
+              {/* Tab switcher */}
+              <div className="flex items-center gap-1 bg-muted/30 rounded-lg p-1 mr-1">
+                <button
+                  onClick={() => setActiveTab("scans")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                    activeTab === "scans" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" /> Scans
+                </button>
+                <button
+                  onClick={() => setActiveTab("watchlist")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                    activeTab === "watchlist" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <BookmarkCheck className="w-3.5 h-3.5" /> Watchlist
+                </button>
+                <button
+                  onClick={() => setActiveTab("schedules")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                    activeTab === "schedules" ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <CalendarClock className="w-3.5 h-3.5" /> Schedules
+                </button>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => refetch()} className="h-8">
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                Refresh
+              </Button>
+              {activeTab === "scans" && (
+                <Button size="sm" onClick={() => setShowModal(true)} className="h-8">
+                  <Plus className="w-3.5 h-3.5 mr-1.5" />
+                  New Scan
+                </Button>
+              )}
+            </div>
           </div>
-        )}
+
+          {/* KPI strip — always visible once there are scans */}
+          {scanList.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+              <div className="flex items-center gap-3 bg-background/60 border border-border rounded-xl px-4 py-3">
+                <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Domains Scanned</p>
+                  <p className="text-xl font-bold leading-tight">{new Set(scanList.map((s: any) => s.domain)).size}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 bg-background/60 border border-red-500/20 rounded-xl px-4 py-3">
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Live Threats</p>
+                  <p className={cn("text-xl font-bold leading-tight", totalLive > 0 ? "text-red-400" : "")}>{totalLive}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 bg-background/60 border border-orange-500/20 rounded-xl px-4 py-3">
+                <Fish className="w-4 h-4 text-orange-400 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Phishing Detected</p>
+                  <p className={cn("text-xl font-bold leading-tight", totalPhishing > 0 ? "text-orange-400" : "")}>{totalPhishing}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 bg-background/60 border border-yellow-500/20 rounded-xl px-4 py-3">
+                <Database className="w-4 h-4 text-yellow-400 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Data Leaks</p>
+                  <p className={cn("text-xl font-bold leading-tight", totalLeaks > 0 ? "text-yellow-400" : "")}>
+                    {totalLeaks}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Active scans badge */}
+          {activeScans > 0 && (
+            <div className="flex items-center gap-2 mt-3 text-xs text-blue-400">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {activeScans} scan{activeScans !== 1 ? "s" : ""} running
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Watchlist tab content ──────────────────────────────────────── */}
@@ -2095,104 +1938,76 @@ export default function BrandThreatPage() {
 
       {/* ── Scans tab content ──────────────────────────────────────────── */}
       {activeTab === "scans" && (
-      <div className="flex-1 overflow-y-auto px-6 py-5">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : scanList.length === 0 ? (
-          /* ── Empty state ── */
-          <div className="flex flex-col items-center justify-center h-96 text-center">
-            <div className="relative mb-6">
-              <div className="w-20 h-20 rounded-2xl bg-primary/5 border border-primary/10 flex items-center justify-center">
-                <ShieldAlert className="w-9 h-9 text-primary/40" />
-              </div>
-              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center">
-                <Plus className="w-3.5 h-3.5 text-muted-foreground" />
-              </div>
+        <div className="space-y-4">
+          {isLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
-            <h2 className="text-base font-semibold mb-1">No brand threat scans yet</h2>
-            <p className="text-sm text-muted-foreground max-w-md mb-6">
-              Start a scan to detect domains impersonating your brand via typosquatting, homoglyph substitution,
-              TLD swaps, and other deception techniques.
-            </p>
-            <Button onClick={() => setShowModal(true)}>
-              <Shield className="w-4 h-4 mr-2" />
-              Run First Scan
-            </Button>
-            <p className="text-xs text-muted-foreground/50 mt-3">
-              Scans also auto-trigger when you run an Asset or Domain Scan
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* Toolbar */}
-            <div className="flex items-center gap-3 mb-5">
-              <div className="relative flex-1 max-w-xs">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="Filter by domain…"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="w-full bg-background border border-border rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                />
-              </div>
-              <span className="text-xs text-muted-foreground">
-                {filtered.length} scan{filtered.length !== 1 ? "s" : ""}
-              </span>
-              <div className="ml-auto flex items-center gap-1 bg-muted/30 rounded-lg p-1">
-                <button
-                  onClick={() => setScanView("grid")}
-                  className={cn("p-1.5 rounded-md transition-all", scanView === "grid" ? "bg-card shadow-sm border border-border text-foreground" : "text-muted-foreground hover:text-foreground")}
-                  title="Card view"
-                >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setScanView("table")}
-                  className={cn("p-1.5 rounded-md transition-all", scanView === "table" ? "bg-card shadow-sm border border-border text-foreground" : "text-muted-foreground hover:text-foreground")}
-                  title="Table view"
-                >
-                  <Table2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {scanView === "grid" ? (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {filtered.map((scan: any) => (
-                    <ScanCard
-                      key={scan.id}
-                      scan={scan}
-                      onDelete={handleDelete}
-                      onView={id => navigate(`/brand-threats/${id}`)}
-                      onRetry={handleRetry}
-                      deleting={deletingId === scan.id}
-                      retrying={retryingId === scan.id}
-                    />
-                  ))}
+          ) : scanList.length === 0 ? (
+            /* ── Empty state ── */
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="relative mb-6">
+                <div className="w-20 h-20 rounded-2xl bg-red-500/5 border border-red-500/10 flex items-center justify-center">
+                  <ShieldAlert className="w-9 h-9 text-red-500/40" />
                 </div>
-                {filtered.length === 0 && (
-                  <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-                    No scans match "{search}"
-                  </div>
-                )}
-              </>
-            ) : (
-              <ScanTable
-                scans={filtered}
-                onView={id => navigate(`/brand-threats/${id}`)}
-                onDelete={handleDelete}
-                onRetry={handleRetry}
-                deletingId={deletingId}
-                retryingId={retryingId}
-              />
-            )}
-          </>
-        )}
-      </div>
+                <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center">
+                  <Plus className="w-3.5 h-3.5 text-muted-foreground" />
+                </div>
+              </div>
+              <h2 className="text-base font-semibold mb-1">No brand threat scans yet</h2>
+              <p className="text-sm text-muted-foreground max-w-md mb-6">
+                Start a scan to detect domains impersonating your brand via typosquatting, homoglyph substitution,
+                TLD swaps, and other deception techniques.
+              </p>
+              <Button onClick={() => setShowModal(true)}>
+                <Shield className="w-4 h-4 mr-2" />
+                Run First Scan
+              </Button>
+              <p className="text-xs text-muted-foreground/50 mt-3">
+                Scans also auto-trigger when you run an Asset or Domain Scan
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Toolbar */}
+              <div className="flex items-center gap-3">
+                <div className="relative flex-1 max-w-xs">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="Filter by domain…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="w-full bg-background border border-border rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {filtered.length} scan{filtered.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+
+              {/* Card grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {filtered.map((scan: any) => (
+                  <ScanCard
+                    key={scan.id}
+                    scan={scan}
+                    onDelete={handleDelete}
+                    onView={id => navigate(`/brand-threats/${id}`)}
+                    onRetry={handleRetry}
+                    deleting={deletingId === scan.id}
+                    retrying={retryingId === scan.id}
+                  />
+                ))}
+              </div>
+              {filtered.length === 0 && (
+                <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+                  No scans match "{search}"
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
 
       {showModal && (
