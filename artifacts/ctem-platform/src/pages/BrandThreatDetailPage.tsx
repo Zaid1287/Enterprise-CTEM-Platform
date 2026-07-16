@@ -96,7 +96,7 @@ function SeverityPill({ risk: initialRisk, onPatch }: { risk: string; onPatch: (
 }
 
 type FilterMode = "all" | "live" | "mx" | "suspicious" | "phishing";
-type TabMode = "typosquatting" | "phishing" | "data_leaks" | "mobile_apps" | "suspicious_certs" | "social_media" | "malicious_ads" | "logo_brand" | "takedowns" | "favicon_clones" | "subdomains";
+type TabMode = "typosquatting" | "phishing" | "data_leaks" | "mobile_apps" | "suspicious_certs" | "social_media" | "malicious_ads" | "logo_brand" | "takedowns" | "favicon_clones" | "subdomains" | "watchlist";
 
 interface FalsePositive {
   id: number;
@@ -1271,7 +1271,7 @@ function MobileAppsTab({ abuse, warnings, scanId, falsePositives, onFpCreated }:
   abuse: any[]; warnings?: ScanWarning[]; scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
 }) {
   const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
-  const MOBILE_TYPES = ["rogue_app", "apk_distribution_link", "official_app_found", "official_ios_app", "similar_app_same_dev", "official_app_on_apkpure", "fake_app"];
+  const MOBILE_TYPES = ["rogue_app", "apk_distribution_link", "official_app_found", "official_ios_app", "similar_app_same_dev", "official_app_on_apkpure", "fake_app", "official_app_not_found"];
   const appItems = abuse.filter(r => MOBILE_TYPES.includes(r.type));
   const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "rogue_app").map(fp => [fp.item_ref, fp]));
 
@@ -1518,7 +1518,7 @@ function SocialMediaTab({ abuse, warnings, scanDomain, scanId, falsePositives, o
   abuse: any[]; warnings?: ScanWarning[]; scanDomain?: string;
   scanId: number; falsePositives: FalsePositive[]; onFpCreated: () => void;
 }) {
-  const SOCIAL_TYPES = ["fake_social", "social_handle_found", "impersonating_handle"];
+  const SOCIAL_TYPES = ["fake_social", "social_handle_found", "impersonating_handle", "intelx_mention", "google_dork_mention", "social_mention", "negative_social_mention", "youtube_mention", "negative_youtube_mention", "brand_mention", "negative_brand_mention", "keyword_dork_result", "osint_reference"];
   const socialItems = abuse.filter(r => SOCIAL_TYPES.includes(r.type));
   const fpMap = new Map(falsePositives.filter(fp => fp.item_type === "fake_social").map(fp => [fp.item_ref, fp]));
   const activeWarnings = warnings?.filter(w => w.code === "rate_limited") ?? [];
@@ -1730,8 +1730,9 @@ const AD_RISK_META: Record<string, { label: string; color: string; bg: string; b
   low:      { label: "Low",      color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30" },
 };
 
-function MaliciousAdsTab({ ads, hasMetaToken, scanId, falsePositives = [], onFpCreated }: {
+function MaliciousAdsTab({ ads, adLibraryLinks = [], hasMetaToken, scanId, falsePositives = [], onFpCreated }: {
   ads: any[];
+  adLibraryLinks?: any[];
   hasMetaToken?: boolean;
   scanId?: number;
   falsePositives?: any[];
@@ -1740,23 +1741,60 @@ function MaliciousAdsTab({ ads, hasMetaToken, scanId, falsePositives = [], onFpC
   const highRisk = ads.filter((a: any) => a.risk === "critical" || a.risk === "high").length;
   if (ads.length === 0) {
     return (
-      <div className="p-10 text-center space-y-3">
-        <Megaphone className="w-8 h-8 text-muted-foreground/30 mx-auto" />
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">No suspicious ad activity detected</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">
-            {hasMetaToken === false ? (
-              <>
-                A Meta Ads access token is required to monitor the ad library.{" "}
-                <a href="/settings/platform" className="text-blue-400 hover:underline">
-                  Configure it in Platform Settings → Brand Intelligence.
-                </a>
-              </>
-            ) : (
-              "No brand-impersonating ads were found in the Meta Ads Library for this brand."
-            )}
-          </p>
+      <div className="p-6 space-y-4">
+        <div className="p-6 text-center space-y-3">
+          <Megaphone className="w-8 h-8 text-muted-foreground/30 mx-auto" />
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">No suspicious ad activity detected</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              {hasMetaToken === false ? (
+                <>
+                  A Meta Ads access token is required to monitor the ad library.{" "}
+                  <a href="/settings/platform" className="text-blue-400 hover:underline">
+                    Configure it in Platform Settings → Brand Intelligence.
+                  </a>
+                </>
+              ) : (
+                "No brand-impersonating ads were found in the Meta Ads Library for this brand."
+              )}
+            </p>
+          </div>
         </div>
+        {adLibraryLinks.length > 0 && (
+          <div className="border border-border rounded-xl p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ad Library Search Links</span>
+              <span className="text-[10px] text-muted-foreground/60 ml-1">— manual review required</span>
+            </div>
+            <p className="text-xs text-muted-foreground/70">
+              Use these links to manually search ad libraries for brand-impersonating ads. Connect a Meta Ads API token to enable automated detection.
+            </p>
+            <div className="space-y-2">
+              {adLibraryLinks.map((link: any, i: number) => {
+                const isMeta = link.type === "meta_ad_library_search";
+                return (
+                  <a
+                    key={i}
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-border bg-muted/30 hover:bg-muted/60 transition-colors group"
+                  >
+                    <div className={cn("w-6 h-6 rounded-md flex items-center justify-center shrink-0", isMeta ? "bg-blue-500/10" : "bg-green-500/10")}>
+                      <Megaphone className={cn("w-3.5 h-3.5", isMeta ? "text-blue-400" : "text-green-400")} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{link.title ?? (isMeta ? "Meta Ad Library" : "Google Ads Transparency")}</p>
+                      {link.description && <p className="text-[11px] text-muted-foreground/70 truncate">{link.description}</p>}
+                    </div>
+                    <ExternalLink className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0 transition-colors" />
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2436,14 +2474,17 @@ export default function BrandThreatDetailPage() {
     ? (s.pipelineSubdomains as PipelineSubdomain[])
     : [];
 
-  const MOBILE_TYPES = ["rogue_app", "apk_distribution_link", "official_app_found", "official_ios_app", "similar_app_same_dev", "official_app_on_apkpure", "fake_app"];
-  const SOCIAL_TYPES = ["fake_social", "social_handle_found", "impersonating_handle"];
+  const MOBILE_TYPES = ["rogue_app", "apk_distribution_link", "official_app_found", "official_ios_app", "similar_app_same_dev", "official_app_on_apkpure", "fake_app", "official_app_not_found"];
+  const SOCIAL_TYPES = ["fake_social", "social_handle_found", "impersonating_handle", "intelx_mention", "google_dork_mention", "social_mention", "negative_social_mention", "youtube_mention", "negative_youtube_mention", "brand_mention", "negative_brand_mention", "keyword_dork_result", "osint_reference"];
   const LOGO_TYPES   = ["logo_accessible", "logo_unreachable", "logo_fetch_error", "reverse_image_search", "logo_web_reference", "meta_ad_library_search", "google_ads_transparency_search"];
+  const AD_LIBRARY_TYPES = ["meta_ad_library_search", "google_ads_transparency_search"];
 
-  const mobileAppsCount = brandAbuse.filter((a: any) => MOBILE_TYPES.includes(a.type)).length;
-  const suspCertsCount  = brandAbuse.filter((a: any) => a.type === "suspicious_certificate").length;
-  const socialCount     = brandAbuse.filter((a: any) => SOCIAL_TYPES.includes(a.type)).length;
-  const logoCount       = brandAbuse.filter((a: any) => LOGO_TYPES.includes(a.type)).length;
+  const mobileAppsCount   = brandAbuse.filter((a: any) => MOBILE_TYPES.includes(a.type)).length;
+  const suspCertsCount    = brandAbuse.filter((a: any) => a.type === "suspicious_certificate").length;
+  const socialCount       = brandAbuse.filter((a: any) => SOCIAL_TYPES.includes(a.type)).length;
+  const logoCount         = brandAbuse.filter((a: any) => LOGO_TYPES.includes(a.type)).length;
+  const adLibraryLinks    = brandAbuse.filter((a: any) => AD_LIBRARY_TYPES.includes(a.type));
+  const watchlistCount    = allWatchlistItems.length;
 
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
     { id: "typosquatting",   label: "Typosquatting",   icon: <Globe className="w-3.5 h-3.5" />,      count: results.length },
@@ -2456,6 +2497,7 @@ export default function BrandThreatDetailPage() {
     ...(logoCount > 0 ? [{ id: "logo_brand" as TabMode, label: "Logo & Brand", icon: <Tag className="w-3.5 h-3.5" />, count: logoCount, color: "text-cyan-400" }] : []),
     ...(hasFaviconData ? [{ id: "favicon_clones" as TabMode, label: "Favicon Clones", icon: <Fingerprint className="w-3.5 h-3.5" />, count: shodanCloneCount, color: shodanCloneCount > 0 ? "text-violet-400" : undefined }] : []),
     ...(pipelineSubdomains.length > 0 ? [{ id: "subdomains" as TabMode, label: "Subdomains", icon: <Server className="w-3.5 h-3.5" />, count: pipelineSubdomains.length, color: "text-blue-400" }] : []),
+    { id: "watchlist",       label: "Watchlist",       icon: <BookmarkCheck className="w-3.5 h-3.5" />, count: watchlistCount, color: watchlistCount > 0 ? "text-blue-400" : undefined },
     { id: "takedowns",       label: "Takedowns",       icon: <Shield className="w-3.5 h-3.5" /> },
   ];
 
@@ -2934,7 +2976,7 @@ export default function BrandThreatDetailPage() {
               email: "Results appear in the Data Leaks tab.",
               social_handle: "Results appear in the Social Media and Data Leaks tabs.",
               mobile_app: "Results appear in the Mobile Apps tab.",
-              logo_url: "Results appear in the Favicon Clones tab.",
+              logo_url: "Results appear in the Logo & Brand and Malicious Ads tabs.",
             };
             const label = typeLabel[s.watchlistItemType] ?? s.watchlistItemType;
             const colorClass = typeColor[s.watchlistItemType] ?? "border-border bg-muted/30 text-muted-foreground";
@@ -3020,7 +3062,7 @@ export default function BrandThreatDetailPage() {
 
         {/* ── MALICIOUS ADS tab ── */}
         {activeTab === "malicious_ads" && (s.status === "done" || s.status === "error") && (
-          <MaliciousAdsTab ads={adMonitoringResults} hasMetaToken={s.metaAdsChecked ?? undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
+          <MaliciousAdsTab ads={adMonitoringResults} adLibraryLinks={adLibraryLinks} hasMetaToken={s.metaAdsChecked ?? undefined} scanId={id} falsePositives={falsePositives} onFpCreated={refreshFalsePositives} />
         )}
 
         {/* ── LOGO & BRAND tab ── */}
@@ -3031,6 +3073,13 @@ export default function BrandThreatDetailPage() {
         {/* ── TAKEDOWNS tab ── */}
         {activeTab === "takedowns" && (s.status === "done" || s.status === "error") && (
           <TakedownsTab scanId={Number(id)} scanDomain={s.domain} results={results} />
+        )}
+
+        {/* ── WATCHLIST tab ── */}
+        {activeTab === "watchlist" && (
+          <div className="p-5">
+            <WatchlistDetailTab items={allWatchlistItems} scanDomain={s.domain ?? ""} />
+          </div>
         )}
 
         {/* ── FAVICON CLONES tab ── */}
