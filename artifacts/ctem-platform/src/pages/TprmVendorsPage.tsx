@@ -100,6 +100,9 @@ export default function TprmVendorsPage() {
   const [bulkScanning, setBulkScanning] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Inline inherent risk editing
+  const [updatingRiskId, setUpdatingRiskId] = useState<number | null>(null);
+
   const [showAdd, setShowAdd]   = useState(false);
   const [domain, setDomain]     = useState("");
   const [enriching, setEnriching] = useState(false);
@@ -263,6 +266,26 @@ export default function TprmVendorsPage() {
       toast({ title: "Delete failed", description: err?.error ?? err?.message ?? "Unknown error", variant: "destructive" });
     }
     setDeletingId(null);
+  };
+
+  const handleInherentRiskChange = async (e: React.MouseEvent | React.ChangeEvent, vendorId: number, newRisk: string) => {
+    if ("stopPropagation" in e) e.stopPropagation();
+    if (updatingRiskId === vendorId) return;
+    setUpdatingRiskId(vendorId);
+    try {
+      const updated = await apiFetch<Vendor>(`/api/tprm/vendors/${vendorId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ inherentRisk: newRisk }),
+      });
+      setVendors(prev => prev.map(v => v.id === vendorId
+        ? { ...v, inherentRisk: updated.inherentRisk, riskScore: updated.riskScore, riskGrade: updated.riskGrade }
+        : v
+      ));
+      toast({ title: "Inherent Risk Updated", description: `Risk changed to ${newRisk} — score recalculated to ${updated.riskScore}` });
+    } catch {
+      toast({ title: "Update failed", variant: "destructive" });
+    }
+    setUpdatingRiskId(null);
   };
 
   const typeLabel = (t: string) => VENDOR_TYPES.find(v => v.value === t)?.label ?? t.replace(/_/g, " ");
@@ -515,10 +538,25 @@ export default function TprmVendorsPage() {
                     </td>
                     <td className="px-4 py-2.5"><Badge variant="outline" className="text-[10px]">{typeLabel(v.type)}</Badge></td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{v.industry ?? "—"}</td>
-                    <td className="px-4 py-2.5">
-                      {v.inherentRisk ? (
-                        <Badge variant="outline" className={`text-[10px] ${v.inherentRisk === "critical" ? "border-red-500/40 text-red-400" : v.inherentRisk === "high" ? "border-orange-500/40 text-orange-400" : v.inherentRisk === "medium" ? "border-yellow-500/40 text-yellow-400" : "border-green-500/40 text-green-400"}`}>{v.inherentRisk}</Badge>
-                      ) : "—"}
+                    <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
+                      {updatingRiskId === v.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                      ) : (
+                        <select
+                          value={v.inherentRisk ?? "medium"}
+                          onChange={e => handleInherentRiskChange(e, v.id, e.target.value)}
+                          className={`text-[11px] font-medium rounded px-2 py-0.5 border cursor-pointer bg-transparent focus:outline-none focus:ring-1 focus:ring-ring
+                            ${v.inherentRisk === "critical" ? "border-red-500/40 text-red-400 focus:ring-red-500/40"
+                            : v.inherentRisk === "high"     ? "border-orange-500/40 text-orange-400 focus:ring-orange-500/40"
+                            : v.inherentRisk === "medium"   ? "border-yellow-500/40 text-yellow-400 focus:ring-yellow-500/40"
+                            : "border-green-500/40 text-green-400 focus:ring-green-500/40"}`}
+                        >
+                          <option value="critical" className="bg-background text-red-400">Critical</option>
+                          <option value="high"     className="bg-background text-orange-400">High</option>
+                          <option value="medium"   className="bg-background text-yellow-400">Medium</option>
+                          <option value="low"      className="bg-background text-green-400">Low</option>
+                        </select>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground capitalize">{v.scanFrequency === "daily" ? "Daily" : v.scanFrequency ?? "—"}</td>
                     <td className="px-4 py-2.5">{gradeBadge(v.riskGrade)}</td>

@@ -701,11 +701,63 @@ router.patch("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authenti
   try {
     const existing = await resolveVendorForRole(vendorId, req);
     if (!existing) { res.status(404).json({ error: "Vendor not found" }); return; }
+
+    // If inherentRisk is changing, recalculate the risk score immediately.
+    // Use the vendor's last technical score as the base, then apply an
+    // inherent-risk adjustment: critical=−15, high=−8, medium=0, low=+5.
+    const changingInherentRisk = req.body.inherentRisk !== undefined && req.body.inherentRisk !== existing.inherentRisk;
+    if (changingInherentRisk) {
+      const newInherentRisk: string = req.body.inherentRisk;
+      const adjustment: Record<string, number> = { critical: -15, high: -8, medium: 0, low: 5 };
+      const delta = adjustment[newInherentRisk] ?? 0;
+
+      // Fetch last saved technical score (from risk score history if available)
+      const [lastScore] = await db
+        .select({ overallScore: tprmVendorRiskScoresTable.overallScore })
+        .from(tprmVendorRiskScoresTable)
+        .where(and(eq(tprmVendorRiskScoresTable.vendorId, vendorId), eq(tprmVendorRiskScoresTable.tenantId, existing.tenantId)))
+        .orderBy(desc(tprmVendorRiskScoresTable.calculatedAt))
+        .limit(1);
+
+      // Base = last technical score or current riskScore (default 50 for never-scanned vendors)
+      const baseScore = lastScore?.overallScore ?? existing.riskScore ?? 50;
+      const newScore  = Math.max(0, Math.min(100, baseScore + delta));
+
+      let newGrade = "F";
+      if      (newScore >= 90) newGrade = "A+";
+      else if (newScore >= 80) newGrade = "A";
+      else if (newScore >= 70) newGrade = "B";
+      else if (newScore >= 60) newGrade = "C";
+      else if (newScore >= 50) newGrade = "D";
+
+      updates.riskScore = newScore;
+      updates.riskGrade = newGrade;
+
+      // Persist a new risk-score history entry so the timeline chart reflects the change
+      await db.insert(tprmVendorRiskScoresTable).values({
+        vendorId,
+        tenantId:        existing.tenantId,
+        overallScore:    newScore,
+        networkScore:    lastScore?.overallScore ?? 50,
+        dnsScore:        0,
+        webAppScore:     0,
+        emailScore:      0,
+        tlsScore:        0,
+        endpointScore:   0,
+        cloudScore:      0,
+        appSecScore:     0,
+        reputationScore: 0,
+        infoLeakScore:   0,
+        darkWebMentions: 0,
+        calculatedAt:    new Date(),
+      });
+    }
+
     const [vendor] = await db.update(tprmVendorsTable).set(updates)
       .where(eq(tprmVendorsTable.id, vendorId))
       .returning();
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-    await logAudit(req.user!, "tprm_vendor_updated", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName, domain: vendor.domain }), req.ip ?? "");
+    await logAudit(req.user!, "tprm_vendor_updated", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName, domain: vendor.domain, inherentRisk: vendor.inherentRisk }), req.ip ?? "");
     res.json(vendor);
   } catch (err) {
     logger.error({ err }, "TPRM update vendor error");
