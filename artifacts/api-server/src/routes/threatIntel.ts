@@ -341,18 +341,68 @@ router.get("/threat-intel/iocs/:id", requireAuth, async (req: AuthenticatedReque
 
 router.post("/threat-intel/iocs", requireAuth, async (req: AuthenticatedRequest, res) => {
   if (!requireAdminOrSA(req, res)) return;
-  const { type, value, source, tlp, confidence, severity, tags, description } = req.body;
+  const {
+    type, value, source, sourceUrl, tlp, confidence, severity, tags, description,
+    threatScore, firstSeen, lastSeen, expiresAt, country, asn,
+    malwareFamilies, threatActors, campaigns, exploitationStatus, isActive,
+  } = req.body;
   if (!type || !value || !source) { res.status(400).json({ error: "type, value, source required" }); return; }
-  const [row] = await db.insert(tiIocsTable).values({ type, value, source, tlp: tlp ?? "white", confidence: confidence ?? 50, severity: severity ?? "medium", tags: tags ?? [], description }).returning();
+  const [row] = await db.insert(tiIocsTable).values({
+    type, value,
+    source: source ?? "manual",
+    sourceUrl: sourceUrl ?? null,
+    tlp: tlp ?? "white",
+    confidence: confidence != null ? Number(confidence) : 50,
+    severity: severity ?? "medium",
+    tags: Array.isArray(tags) ? tags : [],
+    description: description ?? null,
+    threatScore: threatScore != null ? Number(threatScore) : 0,
+    firstSeen: firstSeen ? new Date(firstSeen) : new Date(),
+    lastSeen: lastSeen ? new Date(lastSeen) : new Date(),
+    expiresAt: expiresAt ? new Date(expiresAt) : null,
+    country: country ?? null,
+    asn: asn ?? null,
+    malwareFamilies: Array.isArray(malwareFamilies) ? malwareFamilies : [],
+    threatActors: Array.isArray(threatActors) ? threatActors : [],
+    campaigns: Array.isArray(campaigns) ? campaigns : [],
+    exploitationStatus: exploitationStatus ?? "unknown",
+    isActive: isActive !== undefined ? Boolean(isActive) : true,
+  }).returning();
   await logAudit(req.user!, "ti_ioc_created", "ti_ioc", row.id, JSON.stringify({ type, value }), req.ip ?? "");
   res.status(201).json(row);
 });
 
 router.patch("/threat-intel/iocs/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
   if (!requireAdminOrSA(req, res)) return;
-  const { type, value, source, tlp, confidence, severity, tags, description, isActive } = req.body;
-  const [row] = await db.update(tiIocsTable).set({ type, value, source, tlp, confidence, severity, tags, description, isActive, lastSeen: new Date() }).where(eq(tiIocsTable.id, Number(req.params.id))).returning();
+  const {
+    type, value, source, sourceUrl, tlp, confidence, severity, tags, description, isActive,
+    threatScore, firstSeen, lastSeen, expiresAt, country, asn,
+    malwareFamilies, threatActors, campaigns, exploitationStatus,
+  } = req.body;
+  const patch: Record<string, unknown> = { lastSeen: new Date() };
+  if (type !== undefined)               patch.type = type;
+  if (value !== undefined)              patch.value = value;
+  if (source !== undefined)             patch.source = source;
+  if (sourceUrl !== undefined)          patch.sourceUrl = sourceUrl;
+  if (tlp !== undefined)                patch.tlp = tlp;
+  if (confidence !== undefined)         patch.confidence = Number(confidence);
+  if (severity !== undefined)           patch.severity = severity;
+  if (tags !== undefined)               patch.tags = Array.isArray(tags) ? tags : [];
+  if (description !== undefined)        patch.description = description;
+  if (isActive !== undefined)           patch.isActive = Boolean(isActive);
+  if (threatScore !== undefined)        patch.threatScore = Number(threatScore);
+  if (firstSeen !== undefined)          patch.firstSeen = firstSeen ? new Date(firstSeen) : new Date();
+  if (lastSeen !== undefined)           patch.lastSeen = lastSeen ? new Date(lastSeen) : new Date();
+  if (expiresAt !== undefined)          patch.expiresAt = expiresAt ? new Date(expiresAt) : null;
+  if (country !== undefined)            patch.country = country;
+  if (asn !== undefined)                patch.asn = asn;
+  if (malwareFamilies !== undefined)    patch.malwareFamilies = Array.isArray(malwareFamilies) ? malwareFamilies : [];
+  if (threatActors !== undefined)       patch.threatActors = Array.isArray(threatActors) ? threatActors : [];
+  if (campaigns !== undefined)          patch.campaigns = Array.isArray(campaigns) ? campaigns : [];
+  if (exploitationStatus !== undefined) patch.exploitationStatus = exploitationStatus;
+  const [row] = await db.update(tiIocsTable).set(patch as any).where(eq(tiIocsTable.id, Number(req.params.id))).returning();
   if (!row) { res.status(404).json({ error: "IOC not found" }); return; }
+  await logAudit(req.user!, "ti_ioc_updated", "ti_ioc", row.id, JSON.stringify({ severity, isActive }), req.ip ?? "");
   res.json(row);
 });
 
