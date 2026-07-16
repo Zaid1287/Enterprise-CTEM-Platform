@@ -90,10 +90,31 @@ async function enrichScanList(scans: ReturnType<typeof toScanResponse>[]) {
   if (scans.length === 0) return scans;
   const ids = scans.map(s => s.id);
 
-  const [abuseRows, riskRows, phishRows] = await Promise.all([
+  // Run all 5 finding-table queries in parallel for speed
+  const [threatRows, abuseRows, leakRows, adRows, phishFeedRows] = await Promise.all([
+    // brand_threat_results: compute every permutation-based metric live
+    // (scan-table aggregate columns are stale for most scans)
     db.select({
-      scanId:          brandAbuseResultsTable.scanId,
-      mobileAppCount:  sql<number>`COUNT(CASE WHEN ${brandAbuseResultsTable.type} IN ('rogue_app','apk_distribution_link','rogue_mobile_app') THEN 1 END)::int`,
+      scanId:               brandThreatResultsTable.scanId,
+      totalPermutations:    sql<number>`COUNT(*)::int`,
+      liveCount:            sql<number>`COUNT(CASE WHEN ${brandThreatResultsTable.dnsA} IS NOT NULL THEN 1 END)::int`,
+      // registration_status uses 'active'/'parked' (not 'registered')
+      registeredCount:      sql<number>`COUNT(CASE WHEN ${brandThreatResultsTable.registrationStatus} IN ('active','parked') THEN 1 END)::int`,
+      // isSuspicious = generic brand threat / suspicious domain signal
+      phishingCount:        sql<number>`COUNT(CASE WHEN ${brandThreatResultsTable.isSuspicious} = true THEN 1 END)::int`,
+      // isPhishing = explicitly confirmed phishing from feed
+      confirmedPhishingCount: sql<number>`COUNT(CASE WHEN ${brandThreatResultsTable.isPhishing} = true THEN 1 END)::int`,
+      highRiskCount:        sql<number>`COUNT(CASE WHEN ${brandThreatResultsTable.riskScore} >= 60 THEN 1 END)::int`,
+    })
+    .from(brandThreatResultsTable)
+    .where(and(inArray(brandThreatResultsTable.scanId, ids), isNull(brandThreatResultsTable.archivedAt)))
+    .groupBy(brandThreatResultsTable.scanId),
+
+    // brand_abuse_results: total + type breakdown (mobile / social / certs)
+    db.select({
+      scanId:           brandAbuseResultsTable.scanId,
+      brandAbuseCount:  sql<number>`COUNT(*)::int`,
+      mobileAppCount:   sql<number>`COUNT(CASE WHEN ${brandAbuseResultsTable.type} IN ('rogue_app','apk_distribution_link','rogue_mobile_app') THEN 1 END)::int`,
       socialMediaCount: sql<number>`COUNT(CASE WHEN ${brandAbuseResultsTable.type} IN ('impersonating_handle','social_handle_found','fake_social') THEN 1 END)::int`,
       certificateCount: sql<number>`COUNT(CASE WHEN ${brandAbuseResultsTable.type} = 'suspicious_certificate' THEN 1 END)::int`,
     })
@@ -101,38 +122,70 @@ async function enrichScanList(scans: ReturnType<typeof toScanResponse>[]) {
     .where(inArray(brandAbuseResultsTable.scanId, ids))
     .groupBy(brandAbuseResultsTable.scanId),
 
+    // data_leak_results
     db.select({
-      scanId:       brandThreatResultsTable.scanId,
-      highRiskCount: sql<number>`COUNT(*)::int`,
+      scanId:    dataLeakResultsTable.scanId,
+      leakCount: sql<number>`COUNT(*)::int`,
     })
-    .from(brandThreatResultsTable)
-    .where(and(inArray(brandThreatResultsTable.scanId, ids), sql`${brandThreatResultsTable.riskScore} >= 60`, isNull(brandThreatResultsTable.archivedAt)))
-    .groupBy(brandThreatResultsTable.scanId),
+    .from(dataLeakResultsTable)
+    .where(inArray(dataLeakResultsTable.scanId, ids))
+    .groupBy(dataLeakResultsTable.scanId),
 
+    // ad_monitoring_results
     db.select({
-      scanId:                 phishingDetectionsTable.scanId,
-      confirmedPhishingCount: sql<number>`COUNT(*)::int`,
+      scanId:  adMonitoringResultsTable.scanId,
+      adCount: sql<number>`COUNT(*)::int`,
+    })
+    .from(adMonitoringResultsTable)
+    .where(inArray(adMonitoringResultsTable.scanId, ids))
+    .groupBy(adMonitoringResultsTable.scanId),
+
+    // phishing_detections: verified external-feed phishing (adds to confirmedPhishingCount)
+    db.select({
+      scanId:           phishingDetectionsTable.scanId,
+      feedPhishCount:   sql<number>`COUNT(*)::int`,
     })
     .from(phishingDetectionsTable)
     .where(and(inArray(phishingDetectionsTable.scanId, ids), eq(phishingDetectionsTable.verified, true)))
     .groupBy(phishingDetectionsTable.scanId),
   ]);
 
-  const abuseMap = new Map<number, { mobileAppCount: number; socialMediaCount: number; certificateCount: number }>();
-  for (const r of abuseRows) abuseMap.set(r.scanId!, r);
-  const riskMap  = new Map<number, number>();
-  for (const r of riskRows)  riskMap.set(r.scanId!, r.highRiskCount);
-  const phishMap = new Map<number, number>();
-  for (const r of phishRows) phishMap.set(r.scanId!, r.confirmedPhishingCount);
+  const threatMap = new Map<number, typeof threatRows[0]>();
+  for (const r of threatRows) threatMap.set(r.scanId!, r);
+  const abuseMap  = new Map<number, typeof abuseRows[0]>();
+  for (const r of abuseRows)  abuseMap.set(r.scanId!, r);
+  const leakMap   = new Map<number, number>();
+  for (const r of leakRows)   leakMap.set(r.scanId!, r.leakCount);
+  const adMap     = new Map<number, number>();
+  for (const r of adRows)     adMap.set(r.scanId!, r.adCount);
+  const feedMap   = new Map<number, number>();
+  for (const r of phishFeedRows) feedMap.set(r.scanId!, r.feedPhishCount);
 
-  return scans.map(s => ({
-    ...s,
-    highRiskCount:           riskMap.get(s.id)  ?? 0,
-    confirmedPhishingCount:  phishMap.get(s.id) ?? 0,
-    mobileAppCount:          abuseMap.get(s.id)?.mobileAppCount    ?? 0,
-    socialMediaCount:        abuseMap.get(s.id)?.socialMediaCount  ?? 0,
-    certificateCount:        abuseMap.get(s.id)?.certificateCount  ?? 0,
-  }));
+  return scans.map(s => {
+    const t = threatMap.get(s.id);
+    const a = abuseMap.get(s.id);
+    // Permutations: prefer live count from brand_threat_results;
+    // fall back to stored value for watchlist scans (no permutation results)
+    const permutations = t && t.totalPermutations > 0 ? t.totalPermutations : (s.totalPermutations ?? 0);
+    return {
+      ...s,
+      // Override stale scan-table aggregates with live counts from finding tables
+      totalPermutations:      permutations,
+      liveCount:              t?.liveCount              ?? s.liveCount,
+      registeredCount:        t?.registeredCount        ?? s.registeredCount,
+      phishingCount:          t?.phishingCount          ?? s.phishingCount,
+      brandAbuseCount:        a?.brandAbuseCount        ?? s.brandAbuseCount,
+      adMonitoringCount:      adMap.get(s.id)           ?? s.adMonitoringCount,
+      dataLeakCount:          leakMap.get(s.id)         ?? s.dataLeakCount,
+      // Enriched fields — computed fresh every time
+      highRiskCount:          t?.highRiskCount          ?? 0,
+      // combine isPhishing (brand_threat_results) + verified feed (phishing_detections)
+      confirmedPhishingCount: (t?.confirmedPhishingCount ?? 0) + (feedMap.get(s.id) ?? 0),
+      mobileAppCount:         a?.mobileAppCount         ?? 0,
+      socialMediaCount:       a?.socialMediaCount       ?? 0,
+      certificateCount:       a?.certificateCount       ?? 0,
+    };
+  });
 }
 
 // ── GET /brand-threats ────────────────────────────────────────────────────────
