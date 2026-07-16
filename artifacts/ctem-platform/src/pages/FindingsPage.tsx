@@ -1481,6 +1481,9 @@ export default function FindingsPage() {
                         {f.isKev && (
                           <span className="text-[9px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-bold shrink-0 mt-0.5">KEV</span>
                         )}
+                        {typeof f.evidence === "string" && f.evidence.startsWith("btw:") && (
+                          <span className="text-[9px] bg-violet-500/15 text-violet-400 border border-violet-500/30 px-1.5 py-0.5 rounded font-bold shrink-0 mt-0.5 uppercase tracking-wide">Brand Intel</span>
+                        )}
                         <DeltaBadge f={f} />
                         <span className="font-medium text-foreground line-clamp-2 text-xs leading-snug">{f.title}</span>
                       </div>

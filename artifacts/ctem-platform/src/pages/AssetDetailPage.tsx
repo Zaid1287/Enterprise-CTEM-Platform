@@ -789,16 +789,24 @@ export default function AssetDetailPage() {
               )}
             </div>
             <div className="space-y-2">
-              {paged.map((f: any) => (
-                <div key={f.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
-                  <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", severityBgColor(f.severity))}>{f.severity}</span>
-                  <Link href={`/findings/${f.id}`}>
-                    <span className="text-sm text-primary hover:underline cursor-pointer flex-1 line-clamp-1">{f.title}</span>
-                  </Link>
-                  {f.isKev && <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-bold">KEV</span>}
-                  <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", statusBadgeClass(f.status))}>{capitalize(f.status)}</span>
-                </div>
-              ))}
+              {paged.map((f: any) => {
+                const isBrandIntel = typeof f.evidence === "string" && f.evidence.startsWith("btw:");
+                return (
+                  <div key={f.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
+                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", severityBgColor(f.severity))}>{f.severity}</span>
+                    <Link href={`/findings/${f.id}`}>
+                      <span className="text-sm text-primary hover:underline cursor-pointer flex-1 line-clamp-1">{f.title}</span>
+                    </Link>
+                    {isBrandIntel && (
+                      <span className="text-[9px] font-bold bg-violet-500/15 text-violet-400 border border-violet-500/30 px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0">
+                        Brand Intel
+                      </span>
+                    )}
+                    {f.isKev && <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-bold shrink-0">KEV</span>}
+                    <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium shrink-0", statusBadgeClass(f.status))}>{capitalize(f.status)}</span>
+                  </div>
+                );
+              })}
               {allF.length === 0 && (
                 <p className="text-sm text-muted-foreground">No findings for this asset.</p>
               )}

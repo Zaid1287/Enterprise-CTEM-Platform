@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, desc, inArray, isNull, isNotNull, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull, isNotNull, sql, like } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db,
@@ -11,6 +11,7 @@ import {
   assetsTable,
   brandThreatSchedulesTable,
   scanAssetResultsTable,
+  findingsTable,
 } from "@workspace/db";
 import { requireAuth, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
 import { triggerBrandThreatScan, detectSubdomainThreats, type SubdomainThreat } from "../lib/brandThreatRunner";
@@ -907,6 +908,118 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
         }));
         for (let i = 0; i < inserts.length; i += 50) await db.insert(amTable).values(inserts.slice(i, i + 50));
         adMonitoringCount += adRows.length;
+      }
+
+      // ── 4. Mirror actionable findings into the asset findingsTable ─────────
+      // If this watchlist item is linked to an asset (item.assetId set), write
+      // each meaningful finding into the core findings table so they appear in
+      // the asset detail page alongside regular scan findings.
+      if (item.assetId) {
+        const SKIP_TYPES = new Set([
+          "osint_reference", "email_rep_clean", "mx_record_found", "no_breach_found",
+          "no_mx_record", "no_breach_found",
+        ]);
+        const SKIP_SEVERITIES = new Set(["info"]);
+
+        // Build the dedup prefix: btw:{watchlistItemId}:
+        const evidencePrefix = `btw:${item.id}:`;
+
+        // Load existing brand-intel findings for this asset+item
+        const existing = await db
+          .select({ id: findingsTable.id, evidence: findingsTable.evidence, status: findingsTable.status })
+          .from(findingsTable)
+          .where(and(
+            eq(findingsTable.tenantId, tenantId),
+            eq(findingsTable.assetId, item.assetId),
+            like(findingsTable.evidence, `${evidencePrefix}%`),
+          ));
+
+        // Map fingerprint → existing finding id
+        const existingMap = new Map<string, number>(
+          existing.map(f => {
+            const fp = (f.evidence ?? "").slice(evidencePrefix.length);
+            return [fp, f.id];
+          }),
+        );
+
+        const allResults = [...leakRows, ...abuseRows, ...adRows];
+        const toInsert: typeof findingsTable.$inferInsert[] = [];
+        const toMarkSeen: number[] = [];
+        const seenFingerprints = new Set<string>();
+
+        for (const r of allResults) {
+          if (SKIP_TYPES.has(r.type)) continue;
+          if (SKIP_SEVERITIES.has(r.severity)) continue;
+
+          // Simple fingerprint: first 60 chars of title, url-encoded
+          const raw = `${r.type}:${r.title.slice(0, 60)}`;
+          const fp = Buffer.from(raw).toString("base64url").slice(0, 40);
+          if (seenFingerprints.has(fp)) continue;
+          seenFingerprints.add(fp);
+
+          if (existingMap.has(fp)) {
+            toMarkSeen.push(existingMap.get(fp)!);
+          } else {
+            const categoryLabel =
+              r.category === "data_leak" ? "Data Leak"
+              : r.category === "brand_abuse" ? "Brand Abuse"
+              : "Ad Intelligence";
+
+            const itemLabel = `${item.type.replace(/_/g, " ")}: ${item.value}`;
+
+            toInsert.push({
+              tenantId,
+              assetId: item.assetId,
+              scanId: null,
+              title: r.title,
+              description: [
+                r.description,
+                `\n\nSource: Brand Intelligence — ${categoryLabel} | Watchlist item: ${itemLabel}`,
+              ].join(""),
+              severity: r.severity,
+              status: "open",
+              evidence: `${evidencePrefix}${fp}`,
+              remediation: `Review in Brand Threat Intelligence → Watchlist → ${itemLabel}. Brand threat scan ID: ${scanId}.`,
+              lastSeenAt: new Date(),
+              firstSeenScanId: null,
+            } as any);
+          }
+        }
+
+        // Insert new findings in batches
+        if (toInsert.length) {
+          for (let i = 0; i < toInsert.length; i += 50) {
+            await db.insert(findingsTable).values(toInsert.slice(i, i + 50));
+          }
+        }
+
+        // Update lastSeenAt on existing findings that re-appeared
+        if (toMarkSeen.length) {
+          await db.update(findingsTable)
+            .set({ lastSeenAt: new Date(), status: "open" } as any)
+            .where(and(
+              eq(findingsTable.tenantId, tenantId),
+              inArray(findingsTable.id, toMarkSeen),
+            ));
+        }
+
+        // Mark findings that disappeared from this scan as auto-mitigated
+        const allExistingIds = Array.from(existingMap.values());
+        const vanishedIds = allExistingIds.filter(id => !toMarkSeen.includes(id));
+        if (vanishedIds.length) {
+          await db.update(findingsTable)
+            .set({ status: "mitigated" } as any)
+            .where(and(
+              eq(findingsTable.tenantId, tenantId),
+              inArray(findingsTable.id, vanishedIds),
+              eq(findingsTable.status, "open"),
+            ));
+        }
+
+        logger.info(
+          { scanId, assetId: item.assetId, inserted: toInsert.length, updated: toMarkSeen.length, vanished: vanishedIds.length },
+          "Brand intel findings mirrored to asset findings table",
+        );
       }
 
       // Mark scan done
