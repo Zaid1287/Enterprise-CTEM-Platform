@@ -1127,7 +1127,7 @@ router.get("/tprm/vendors/:id/assets", requireAuth, requireTprm, async (req: Aut
 // ── Supply Chain ──────────────────────────────────────────────────────────────
 
 router.get("/tprm/supply-chain", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
-  const { nodeType, riskLevel, vendorId, page = "1", limit = "100" } = req.query as Record<string, string>;
+  const { nodeType, riskLevel, vendorId, page = "1", limit = "20" } = req.query as Record<string, string>;
   const offset = (parseInt(page) - 1) * parseInt(limit);
   try {
     const scopeTenantIds = await getVendorScopeTenantIds(req);
@@ -1137,7 +1137,32 @@ router.get("/tprm/supply-chain", requireAuth, requireTprm, async (req: Authentic
     if (riskLevel) conds.push(eq(tprmSupplyChainNodesTable.riskLevel, riskLevel));
     if (vendorId)  conds.push(eq(tprmSupplyChainNodesTable.vendorId, parseInt(vendorId)));
     const [rows, [countRow]] = await Promise.all([
-      db.select().from(tprmSupplyChainNodesTable).where(and(...conds)).orderBy(desc(tprmSupplyChainNodesTable.discoveredAt)).limit(parseInt(limit)).offset(offset),
+      db.select({
+        id:            tprmSupplyChainNodesTable.id,
+        name:          tprmSupplyChainNodesTable.name,
+        version:       tprmSupplyChainNodesTable.version,
+        nodeType:      tprmSupplyChainNodesTable.nodeType,
+        cpe:           tprmSupplyChainNodesTable.cpe,
+        purl:          tprmSupplyChainNodesTable.purl,
+        license:       tprmSupplyChainNodesTable.license,
+        supplier:      tprmSupplyChainNodesTable.supplier,
+        riskLevel:     tprmSupplyChainNodesTable.riskLevel,
+        vulnerabilities: tprmSupplyChainNodesTable.vulnerabilities,
+        parentNodeId:  tprmSupplyChainNodesTable.parentNodeId,
+        depth:         tprmSupplyChainNodesTable.depth,
+        sbomUploadId:  tprmSupplyChainNodesTable.sbomUploadId,
+        vendorId:      tprmSupplyChainNodesTable.vendorId,
+        tenantId:      tprmSupplyChainNodesTable.tenantId,
+        discoveredAt:  tprmSupplyChainNodesTable.discoveredAt,
+        // Fallback: if component has no explicit supplier, show the parent vendor name
+        vendorName:    tprmVendorsTable.companyName,
+      })
+      .from(tprmSupplyChainNodesTable)
+      .leftJoin(tprmVendorsTable, eq(tprmSupplyChainNodesTable.vendorId, tprmVendorsTable.id))
+      .where(and(...conds))
+      .orderBy(desc(tprmSupplyChainNodesTable.discoveredAt))
+      .limit(parseInt(limit))
+      .offset(offset),
       db.select({ count: sql<number>`count(*)::int` }).from(tprmSupplyChainNodesTable).where(and(...conds)),
     ]);
     res.json({ nodes: rows, total: countRow?.count ?? 0 });
@@ -1145,6 +1170,29 @@ router.get("/tprm/supply-chain", requireAuth, requireTprm, async (req: Authentic
     logger.error({ err }, "TPRM supply-chain list error");
     res.status(500).json({ error: "Failed to list supply chain" });
   }
+});
+
+// ── Update supply-chain node risk level ───────────────────────────────────────
+router.patch("/tprm/supply-chain/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const nodeId = parseInt(req.params.id as string);
+  const { riskLevel } = req.body as { riskLevel: string };
+
+  if (!riskLevel || !["critical", "high", "medium", "low"].includes(riskLevel)) {
+    res.status(400).json({ error: "riskLevel must be critical, high, medium or low" }); return;
+  }
+
+  const scopeTenantIds = await getVendorScopeTenantIds(req);
+  const tenantCond = scopeTenantIds.length > 0
+    ? inArray(tprmSupplyChainNodesTable.tenantId, scopeTenantIds)
+    : sql`false`;
+
+  const [updated] = await db.update(tprmSupplyChainNodesTable)
+    .set({ riskLevel })
+    .where(and(eq(tprmSupplyChainNodesTable.id, nodeId), tenantCond))
+    .returning({ id: tprmSupplyChainNodesTable.id, riskLevel: tprmSupplyChainNodesTable.riskLevel });
+
+  if (!updated) { res.status(404).json({ error: "Node not found" }); return; }
+  res.json({ ok: true, id: updated.id, riskLevel: updated.riskLevel });
 });
 
 router.get("/tprm/supply-chain/stats", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
