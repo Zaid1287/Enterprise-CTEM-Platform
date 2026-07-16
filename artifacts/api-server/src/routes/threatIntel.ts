@@ -455,14 +455,40 @@ router.get("/threat-intel/actors/:id", requireAuth, async (req: AuthenticatedReq
 
 router.post("/threat-intel/actors", requireAuth, async (req: AuthenticatedRequest, res) => {
   if (!requireAdminOrSA(req, res)) return;
-  const { name, aliases, country, motivation, description, targetIndustries, targetCountries, source } = req.body;
+  const {
+    name, aliases, country, motivation, description, overview, executiveSummary,
+    targetIndustries, targetCountries, source, firstSeen, lastSeen,
+    sophistication, resourceLevel, isActive, riskScore, confidenceScore,
+    mitreId, mitreUrl, killChain, detectionRules, mitigation, referenceUrls,
+  } = req.body;
   if (!name) { res.status(400).json({ error: "name required" }); return; }
   try {
     const [row] = await db.insert(tiThreatActorsTable).values({
-      name, aliases: aliases ?? [], country, motivation, description,
-      targetIndustries: targetIndustries ?? [], targetCountries: targetCountries ?? [],
+      name,
+      aliases: Array.isArray(aliases) ? aliases : [],
+      country: country ?? null,
+      motivation: motivation ?? null,
+      description: description ?? null,
+      overview: overview ?? null,
+      executiveSummary: executiveSummary ?? null,
+      targetIndustries: Array.isArray(targetIndustries) ? targetIndustries : [],
+      targetCountries: Array.isArray(targetCountries) ? targetCountries : [],
       source: source ?? "manual",
+      firstSeen: firstSeen ?? null,
+      lastSeen: lastSeen ?? null,
+      sophistication: sophistication ?? null,
+      resourceLevel: resourceLevel ?? null,
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+      riskScore: riskScore != null ? Number(riskScore) : 0,
+      confidenceScore: confidenceScore != null ? Number(confidenceScore) : 0,
+      mitreId: mitreId ?? null,
+      mitreUrl: mitreUrl ?? null,
+      killChain: Array.isArray(killChain) ? killChain : [],
+      detectionRules: Array.isArray(detectionRules) ? detectionRules : [],
+      mitigation: mitigation ?? null,
+      referenceUrls: Array.isArray(referenceUrls) ? referenceUrls : [],
     }).returning();
+    await logAudit(req.user!, "ti_actor_created", "ti_actor", row.id, JSON.stringify({ name }), req.ip ?? "");
     res.status(201).json({ actor: row });
   } catch (err: any) {
     if (err?.code === "23505") {
