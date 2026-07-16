@@ -33,6 +33,18 @@ export interface WatchlistScanResult {
   breachDate?: string | null;
   emailMatch?: string;
   domainMatch?: string;
+  // Ad-specific fields (populated for real Meta Ads results)
+  adId?: string | null;
+  adType?: string | null;
+  advertiserName?: string | null;
+  advertiserPage?: string | null;
+  impressions?: string | null;
+  spend?: string | null;
+  currency?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  snapshotUrl?: string | null;
+  deliveryCountries?: string[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -463,14 +475,18 @@ async function googleDorkEmail(
 export async function scanLogoOSINT(
   logoUrl: string,
   brandName: string,
-  opts: { googleSearchKey?: string | null; googleSearchCx?: string | null } = {},
+  opts: {
+    googleSearchKey?: string | null;
+    googleSearchCx?: string | null;
+    metaAdsToken?: string | null;
+  } = {},
 ): Promise<WatchlistScanResult[]> {
   const results: WatchlistScanResult[] = [];
 
   await Promise.allSettled([
     analyzeLogoMetadata(logoUrl, brandName, results),
-    checkMetaAdLibrary(brandName, results),
-    checkGoogleAdsTransparency(brandName, results),
+    checkMetaAdLibrary(brandName, results, opts.metaAdsToken ?? null),
+    checkGoogleAdsTransparency(brandName, results, opts.googleSearchKey ?? null, opts.googleSearchCx ?? null),
     addReverseSearchLinks(logoUrl, brandName, results),
     checkCertsForBrand(brandName.toLowerCase().replace(/\s+/g, ""), results, "brand"),
     opts.googleSearchKey && opts.googleSearchCx
@@ -536,7 +552,65 @@ async function analyzeLogoMetadata(logoUrl: string, brandName: string, out: Watc
   }
 }
 
-async function checkMetaAdLibrary(brandName: string, out: WatchlistScanResult[]): Promise<void> {
+async function checkMetaAdLibrary(brandName: string, out: WatchlistScanResult[], accessToken: string | null): Promise<void> {
+  // With a real access token: call the Meta Ads Library Graph API and return actual ad findings
+  if (accessToken) {
+    try {
+      const { scanMetaAds } = await import("./metaAdsClient");
+      const ads = await scanMetaAds(brandName, brandName.toLowerCase().replace(/\s+/g, ""), accessToken);
+      if (ads.length > 0) {
+        for (const ad of ads) {
+          out.push({
+            type: "meta_ad_finding",
+            category: "ad_monitoring",
+            platform: "Meta Ads Library",
+            url: ad.snapshotUrl ?? `https://www.facebook.com/ads/library/?q=${encodeURIComponent(brandName)}`,
+            title: ad.title ?? `Meta Ad by ${ad.advertiserName ?? "Unknown Advertiser"}`,
+            description: [
+              ad.body ? `Ad copy: ${ad.body}` : null,
+              ad.advertiserName ? `Advertiser: ${ad.advertiserName}` : null,
+              ad.impressions ? `Impressions: ${ad.impressions}` : null,
+              ad.spend && ad.currency ? `Spend: ${ad.spend} ${ad.currency}` : null,
+              ad.startDate ? `Running since: ${ad.startDate}` : null,
+            ].filter(Boolean).join(" | ") || `Active Meta ad using "${brandName}" branding detected via Meta Ads Library API.`,
+            evidenceSnippet: `Ad ID: ${ad.adId} | Advertiser: ${ad.advertiserName ?? "Unknown"} | Risk: ${ad.risk}`,
+            severity: ad.risk === "critical" ? "critical" : ad.risk === "high" ? "high" : "medium",
+            risk: ad.risk,
+            adId: ad.adId,
+            adType: ad.adType,
+            advertiserName: ad.advertiserName,
+            advertiserPage: ad.advertiserPage,
+            impressions: ad.impressions,
+            spend: ad.spend,
+            currency: ad.currency,
+            startDate: ad.startDate,
+            endDate: ad.endDate,
+            snapshotUrl: ad.snapshotUrl,
+            deliveryCountries: ad.deliveryCountries,
+          });
+        }
+        logger.info({ brandName, count: ads.length }, "Meta Ads Library: real findings returned");
+        return;
+      }
+      // API returned 0 results — brand not found in ads, add informational result
+      out.push({
+        type: "meta_ad_library_search",
+        category: "ad_monitoring",
+        platform: "Meta Ads Library",
+        url: `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&q=${encodeURIComponent(brandName)}&search_type=keyword_unordered`,
+        title: `No active Meta ads found for "${brandName}"`,
+        description: `The Meta Ads Library API returned 0 active or inactive ads matching "${brandName}". This indicates no advertisers are currently running ads impersonating this brand on Facebook/Instagram.`,
+        evidenceSnippet: `Brand: ${brandName} | API queried | Result: 0 ads found`,
+        severity: "info",
+        risk: "low",
+      });
+      return;
+    } catch (err) {
+      logger.warn({ err, brandName }, "Meta Ads API call failed in logo OSINT, falling back to search link");
+    }
+  }
+
+  // No token or API error: provide a manual search link
   const searchUrl = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&q=${encodeURIComponent(brandName)}&search_type=keyword_unordered`;
   out.push({
     type: "meta_ad_library_search",
@@ -544,14 +618,57 @@ async function checkMetaAdLibrary(brandName: string, out: WatchlistScanResult[])
     platform: "Meta Ads Library",
     url: searchUrl,
     title: `Meta Ads Library: search "${brandName}"`,
-    description: `Manual review required: Open the Meta Ads Library to find all active and inactive ads using "${brandName}" branding. Unauthorized advertisers may be using your logo or brand identity.`,
-    evidenceSnippet: `Brand: ${brandName} | Search URL: ${searchUrl}`,
+    description: `No Meta Ads API token configured. Open the link to manually search the Meta Ads Library for ads using "${brandName}" branding. Configure a Meta Ads access token in Platform Settings → Brand Intelligence to enable automated scanning.`,
+    evidenceSnippet: `Brand: ${brandName} | Manual review URL: ${searchUrl}`,
     severity: "info",
     risk: "low",
   });
 }
 
-async function checkGoogleAdsTransparency(brandName: string, out: WatchlistScanResult[]): Promise<void> {
+async function checkGoogleAdsTransparency(
+  brandName: string,
+  out: WatchlistScanResult[],
+  googleSearchKey: string | null,
+  googleSearchCx: string | null,
+): Promise<void> {
+  // With Google Custom Search keys: find pages referencing this brand in advertising context
+  if (googleSearchKey && googleSearchCx) {
+    try {
+      const queries = [
+        `"${brandName}" (advertisement OR sponsored OR "ads by") -site:${brandName.toLowerCase().replace(/\s+/g, "")}.com`,
+        `site:adstransparency.google.com "${brandName}"`,
+      ];
+      let foundAny = false;
+      for (const q of queries) {
+        const res = await orchestratedFetch(
+          `https://www.googleapis.com/customsearch/v1?key=${googleSearchKey}&cx=${googleSearchCx}&q=${encodeURIComponent(q)}&num=5`,
+          { signal: AbortSignal.timeout(8_000) },
+        );
+        if (!res.ok) continue;
+        const data = await res.json() as any;
+        for (const item of ((data.items ?? []) as any[])) {
+          const isAdTransparency = (item.link ?? "").includes("adstransparency.google.com");
+          out.push({
+            type: "google_ads_finding",
+            category: "ad_monitoring",
+            platform: "Google Ads",
+            url: item.link,
+            title: (item.title ?? "").slice(0, 100) || `Google Ad reference: ${brandName}`,
+            description: `Google search found "${brandName}" in an advertising context at ${item.displayLink ?? item.link}. ${(item.snippet ?? "").slice(0, 200)}`,
+            evidenceSnippet: `Query: "${q}" | Source: ${item.displayLink ?? item.link}`,
+            severity: isAdTransparency ? "high" : "medium",
+            risk: isAdTransparency ? "high" : "medium",
+          });
+          foundAny = true;
+        }
+      }
+      if (foundAny) return;
+    } catch (err) {
+      logger.warn({ err, brandName }, "Google Ads Transparency search failed, falling back to manual link");
+    }
+  }
+
+  // Fallback: manual review link
   const searchUrl = `https://adstransparency.google.com/advertiser/search?query=${encodeURIComponent(brandName)}&region=anywhere`;
   out.push({
     type: "google_ads_transparency_search",
@@ -559,7 +676,9 @@ async function checkGoogleAdsTransparency(brandName: string, out: WatchlistScanR
     platform: "Google Ads Transparency",
     url: searchUrl,
     title: `Google Ads Transparency: "${brandName}"`,
-    description: `Manual review required: Check Google Ads Transparency Center for advertisers using "${brandName}" as an advertiser name or in ad content. Look for unauthorized use of your brand.`,
+    description: googleSearchKey
+      ? `Google Custom Search found no ads referencing "${brandName}". Open the link for manual review of the Google Ads Transparency Center.`
+      : `No Google Search API key configured. Open the link to manually check Google Ads Transparency Center for advertisers using "${brandName}". Configure Google Search API keys in Platform Settings to enable automated scanning.`,
     evidenceSnippet: `Brand: ${brandName} | Review URL: ${searchUrl}`,
     severity: "info",
     risk: "low",
@@ -630,14 +749,15 @@ export async function scanKeywordOSINT(
     googleSearchKey?: string | null;
     googleSearchCx?: string | null;
     youtubeKey?: string | null;
+    metaAdsToken?: string | null;
   } = {},
 ): Promise<WatchlistScanResult[]> {
   const results: WatchlistScanResult[] = [];
 
   await Promise.allSettled([
     searchRedditForKeyword(keyword, results),
-    checkMetaAdLibrary(keyword, results),
-    checkGoogleAdsTransparency(keyword, results),
+    checkMetaAdLibrary(keyword, results, opts.metaAdsToken ?? null),
+    checkGoogleAdsTransparency(keyword, results, opts.googleSearchKey ?? null, opts.googleSearchCx ?? null),
     checkCertsForBrand(keyword.toLowerCase().replace(/\s+/g, ""), results, "keyword"),
     checkDNSLookalikePatterns(keyword, results),
     opts.googleSearchKey && opts.googleSearchCx

@@ -763,12 +763,13 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
         adMonitoringResultsTable: amTable,
       } = await import("@workspace/db");
 
-      const [intelxKey, hibpKey, googleSearchKey, googleSearchCx, youtubeKey] = await Promise.all([
+      const [intelxKey, hibpKey, googleSearchKey, googleSearchCx, youtubeKey, metaAdsToken] = await Promise.all([
         getPlatformSetting("intelx_api_key").catch(() => null),
         getPlatformSetting("hibp_api_key").catch(() => null),
         getPlatformSetting("google_search_api_key").catch(() => null),
         getPlatformSetting("google_search_cx").catch(() => null),
         getPlatformSetting("youtube_api_key").catch(() => null),
+        getPlatformSetting("meta_ads_access_token").catch(() => null),
       ]);
 
       let dataLeakCount = 0;
@@ -836,9 +837,9 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
             return url.pathname.split("/").filter(Boolean).pop()?.replace(/\.[^.]+$/, "")?.replace(/[_-]/g, " ") ?? "brand";
           } catch { return "brand"; }
         })();
-        watchlistResults = await scanLogoOSINT(item.value, brandName, { googleSearchKey, googleSearchCx }).catch(() => []);
+        watchlistResults = await scanLogoOSINT(item.value, brandName, { googleSearchKey, googleSearchCx, metaAdsToken }).catch(() => []);
       } else if (item.type === "keyword") {
-        watchlistResults = await scanKeywordOSINT(item.value, { googleSearchKey, googleSearchCx, youtubeKey }).catch(() => []);
+        watchlistResults = await scanKeywordOSINT(item.value, { googleSearchKey, googleSearchCx, youtubeKey, metaAdsToken }).catch(() => []);
       } else if (item.type === "mobile_app") {
         watchlistResults = await scanMobileAppOSINT(item.value, { googleSearchKey, googleSearchCx }).catch(() => []);
       }
@@ -888,9 +889,20 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
           tenantId,
           scanId,
           platform: r.platform ?? "Unknown",
+          adId: r.adId ?? undefined,
+          adType: r.adType ?? undefined,
           title: r.title,
           body: r.description,
+          advertiserName: r.advertiserName ?? undefined,
+          advertiserPage: r.advertiserPage ?? undefined,
+          impressions: r.impressions ?? undefined,
+          spend: r.spend ?? undefined,
+          currency: r.currency ?? undefined,
+          startDate: r.startDate ?? undefined,
+          endDate: r.endDate ?? undefined,
+          deliveryCountries: r.deliveryCountries ?? undefined,
           sourceUrl: r.url ?? undefined,
+          snapshotUrl: r.snapshotUrl ?? undefined,
           risk: r.risk,
         }));
         for (let i = 0; i < inserts.length; i += 50) await db.insert(amTable).values(inserts.slice(i, i + 50));

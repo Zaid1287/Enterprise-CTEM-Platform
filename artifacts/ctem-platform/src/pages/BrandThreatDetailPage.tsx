@@ -1738,8 +1738,57 @@ function MaliciousAdsTab({ ads, adLibraryLinks = [], hasMetaToken, scanId, false
   falsePositives?: any[];
   onFpCreated?: () => void;
 }) {
-  const highRisk = ads.filter((a: any) => a.risk === "critical" || a.risk === "high").length;
-  if (ads.length === 0) {
+  // Pivot links: entries with no adId and platform is a manual-search placeholder
+  const PIVOT_PLATFORMS = ["Meta Ads Library", "Google Ads Transparency"];
+  const pivotLinks = ads.filter((a: any) => !a.adId && PIVOT_PLATFORMS.includes(a.platform ?? ""));
+  const realAds    = ads.filter((a: any) => !(!a.adId && PIVOT_PLATFORMS.includes(a.platform ?? "")));
+  const highRisk = realAds.filter((a: any) => a.risk === "critical" || a.risk === "high").length;
+  const allPivotLinks = [...pivotLinks, ...adLibraryLinks];
+
+  function PivotLinksSection({ links }: { links: any[] }) {
+    if (!links.length) return null;
+    return (
+      <div className="border border-border rounded-xl p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Manual Search Links</span>
+          <span className="text-[10px] text-muted-foreground/60 ml-1">— open to review ad libraries</span>
+        </div>
+        <p className="text-xs text-muted-foreground/70">
+          {!hasMetaToken
+            ? "Configure a Meta Ads access token in Platform Settings → Brand Intelligence to enable automated ad detection."
+            : "Additional manual search links for ad library review."}
+        </p>
+        <div className="space-y-2">
+          {links.map((link: any, i: number) => {
+            const isMeta = (link.platform ?? "").includes("Meta");
+            const url = link.url ?? link.sourceUrl;
+            if (!url) return null;
+            return (
+              <a
+                key={i}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-border bg-muted/30 hover:bg-muted/60 transition-colors group"
+              >
+                <div className={cn("w-6 h-6 rounded-md flex items-center justify-center shrink-0", isMeta ? "bg-blue-500/10" : "bg-green-500/10")}>
+                  <Megaphone className={cn("w-3.5 h-3.5", isMeta ? "text-blue-400" : "text-green-400")} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{link.title ?? (isMeta ? "Meta Ads Library" : "Google Ads Transparency")}</p>
+                  {link.body && <p className="text-[11px] text-muted-foreground/70 truncate">{link.body}</p>}
+                </div>
+                <ExternalLink className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0 transition-colors" />
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (realAds.length === 0) {
     return (
       <div className="p-6 space-y-4">
         <div className="p-6 text-center space-y-3">
@@ -1749,71 +1798,41 @@ function MaliciousAdsTab({ ads, adLibraryLinks = [], hasMetaToken, scanId, false
             <p className="text-xs text-muted-foreground/60 mt-1">
               {hasMetaToken === false ? (
                 <>
-                  A Meta Ads access token is required to monitor the ad library.{" "}
+                  A Meta Ads access token is required to automatically monitor the ad library.{" "}
                   <a href="/settings/platform" className="text-blue-400 hover:underline">
                     Configure it in Platform Settings → Brand Intelligence.
                   </a>
                 </>
               ) : (
-                "No brand-impersonating ads were found in the Meta Ads Library for this brand."
+                "No brand-impersonating ads were found via the Meta Ads Library API or Google Ads search for this brand."
               )}
             </p>
           </div>
         </div>
-        {adLibraryLinks.length > 0 && (
-          <div className="border border-border rounded-xl p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ad Library Search Links</span>
-              <span className="text-[10px] text-muted-foreground/60 ml-1">— manual review required</span>
-            </div>
-            <p className="text-xs text-muted-foreground/70">
-              Use these links to manually search ad libraries for brand-impersonating ads. Connect a Meta Ads API token to enable automated detection.
-            </p>
-            <div className="space-y-2">
-              {adLibraryLinks.map((link: any, i: number) => {
-                const isMeta = link.type === "meta_ad_library_search";
-                return (
-                  <a
-                    key={i}
-                    href={link.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-border bg-muted/30 hover:bg-muted/60 transition-colors group"
-                  >
-                    <div className={cn("w-6 h-6 rounded-md flex items-center justify-center shrink-0", isMeta ? "bg-blue-500/10" : "bg-green-500/10")}>
-                      <Megaphone className={cn("w-3.5 h-3.5", isMeta ? "text-blue-400" : "text-green-400")} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate">{link.title ?? (isMeta ? "Meta Ad Library" : "Google Ads Transparency")}</p>
-                      {link.description && <p className="text-[11px] text-muted-foreground/70 truncate">{link.description}</p>}
-                    </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0 transition-colors" />
-                  </a>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <PivotLinksSection links={allPivotLinks} />
       </div>
     );
   }
+
+  const platforms = [...new Set(realAds.map((a: any) => a.platform).filter(Boolean))];
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-sm font-semibold">Malicious Ad Monitoring</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {ads.length} suspicious ad{ads.length !== 1 ? "s" : ""} detected via Meta Ads Library
+            {realAds.length} suspicious ad{realAds.length !== 1 ? "s" : ""} detected
+            {platforms.length > 0 && <span className="ml-1">via {platforms.join(" & ")}</span>}
             {highRisk > 0 && <span className="ml-1 text-red-400 font-medium">— {highRisk} high/critical risk</span>}
           </p>
         </div>
         <span className="text-xs px-2.5 py-1 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium">
-          Meta Ads Library
+          {platforms.length === 1 ? platforms[0] : "Ad Libraries"}
         </span>
       </div>
       <div className="space-y-3">
-        {ads.map((ad: any, i: number) => {
+        {realAds.map((ad: any, i: number) => {
           const risk = AD_RISK_META[ad.risk as string] ?? AD_RISK_META.medium;
           const adRef = String(ad.id ?? ad.adId ?? i);
           const adFp = falsePositives.find(fp => fp.item_type === "malicious_ad" && fp.item_ref === adRef);
@@ -1904,6 +1923,7 @@ function MaliciousAdsTab({ ads, adLibraryLinks = [], hasMetaToken, scanId, false
           );
         })}
       </div>
+      <PivotLinksSection links={allPivotLinks} />
     </div>
   );
 }
