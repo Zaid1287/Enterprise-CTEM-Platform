@@ -496,6 +496,9 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
     ? computeWatchlistNextScanAt(frequency, undefined, scanTime, dayOfWeek, dayOfMonth)
     : null;
 
+  const rawAssetId = req.body?.assetId != null ? parseInt(String(req.body.assetId), 10) : null;
+  const assetId = rawAssetId && !isNaN(rawAssetId) ? rawAssetId : null;
+
   const [item] = await db.insert(brandWatchlistItemsTable).values({
     tenantId: req.user!.tenantId,
     type,
@@ -506,7 +509,8 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
     dayOfWeek: !isNaN(dayOfWeek!) ? dayOfWeek : null,
     dayOfMonth: !isNaN(dayOfMonth!) ? dayOfMonth : null,
     nextScanAt,
-  }).returning();
+    assetId,
+  } as any).returning();
 
   res.status(201).json(toWatchlistResponse(item!));
 });
@@ -536,6 +540,10 @@ router.patch("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedReque
     updates.type = t;
   }
   if (req.body?.notes !== undefined) updates.notes = String(req.body.notes).trim() || null;
+  if (req.body?.assetId !== undefined) {
+    const rawAid = req.body.assetId != null ? parseInt(String(req.body.assetId), 10) : null;
+    (updates as any).assetId = rawAid && !isNaN(rawAid) ? rawAid : null;
+  }
 
   // Schedule fields
   if (req.body?.scanTime !== undefined) updates.scanTime = req.body.scanTime ? String(req.body.scanTime) : null;
@@ -615,20 +623,11 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
   }
 
   // ── Non-domain types: create a dedicated brand_threat_scans record ──────────
-  // Derive a display domain from the item value
-  let displayDomain = item.value;
-  if (item.type === "email") {
-    displayDomain = item.value.includes("@") ? item.value.split("@")[1] ?? item.value : item.value;
-  } else if (item.type === "social_handle") {
-    displayDomain = item.value.replace(/^@/, "");
-  } else if (item.type === "logo_url") {
-    try { displayDomain = new URL(item.value.startsWith("http") ? item.value : `https://${item.value}`).hostname; } catch { /* keep as-is */ }
-  }
-
-  // Create the scan record
+  // Store the ACTUAL item value as the domain field — no lossy derivation.
+  // (domain col is NOT NULL so we must store something; item.value is the correct identifier)
   const [newScan] = await db.insert(brandThreatScansTable).values({
     tenantId,
-    domain: displayDomain,
+    domain: item.value,    // raw value: the email, handle, keyword, logo URL, or package ID
     status: "running",
     progress: 5,
     watchlistItemId: item.id,
@@ -651,45 +650,62 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
     try {
       const { getPlatformSetting } = await import("../routes/platformSettings");
       const { intelxSearch, intelxTypeToBucket } = await import("../lib/intelxClient");
-      const { scanBrandAbuse } = await import("../lib/brandAbuseScanner");
-      const { dataLeakResultsTable: dlTable, brandAbuseResultsTable: baTable } = await import("@workspace/db");
+      const {
+        scanSocialHandleOSINT,
+        scanEmailOSINT,
+        scanLogoOSINT,
+        scanKeywordOSINT,
+        scanMobileAppOSINT,
+      } = await import("../lib/watchlistScanner");
+      const {
+        dataLeakResultsTable: dlTable,
+        brandAbuseResultsTable: baTable,
+        adMonitoringResultsTable: amTable,
+      } = await import("@workspace/db");
 
-      const intelxKey = await getPlatformSetting("intelx_api_key").catch(() => null);
-      const youtubeKey = await getPlatformSetting("youtube_api_key").catch(() => null);
+      const [intelxKey, hibpKey, googleSearchKey, googleSearchCx, youtubeKey] = await Promise.all([
+        getPlatformSetting("intelx_api_key").catch(() => null),
+        getPlatformSetting("hibp_api_key").catch(() => null),
+        getPlatformSetting("google_search_api_key").catch(() => null),
+        getPlatformSetting("google_search_cx").catch(() => null),
+        getPlatformSetting("youtube_api_key").catch(() => null),
+      ]);
 
       let dataLeakCount = 0;
       let brandAbuseCount = 0;
+      let adMonitoringCount = 0;
 
-      // IntelX for keyword / email / social_handle
-      if (intelxKey && ["keyword", "email", "social_handle"].includes(item.type)) {
-        const results = await intelxSearch(item.value, intelxKey, 20).catch(() => null);
-        if (results?.length) {
+      // ── 1. IntelX (email / keyword / social_handle / logo) ───────────────
+      if (intelxKey && ["email", "keyword", "social_handle", "logo_url"].includes(item.type)) {
+        const intelxQuery = item.type === "logo_url"
+          ? (item.notes ?? item.value)   // use brand name from notes for logo searches
+          : item.value;
+        const ixResults = await intelxSearch(intelxQuery, intelxKey, 50).catch(() => null);
+        if (ixResults?.length) {
           const leakInserts: typeof dlTable.$inferInsert[] = [];
           const abuseInserts: typeof baTable.$inferInsert[] = [];
-          for (const r of results) {
+          for (const r of ixResults) {
             const bucket = intelxTypeToBucket(r.type);
             const url = r.storageid ? `https://intelx.io/?did=${encodeURIComponent(r.storageid)}` : "https://intelx.io";
-            const isBrandAbuse = ["forum", "reddit", "twitter", "linkedin", "documents"].includes(bucket);
-            if (isBrandAbuse) {
+            const isSocial = ["forum", "reddit", "twitter", "linkedin", "documents"].includes(bucket);
+            if (isSocial) {
               abuseInserts.push({
-                tenantId,
-                scanId,
-                type: "fake_social",
-                platform: bucket.charAt(0).toUpperCase() + bucket.slice(1),
+                tenantId, scanId,
+                type: "intelx_mention",
+                platform: `IntelX / ${bucket.charAt(0).toUpperCase() + bucket.slice(1)}`,
                 url,
                 title: r.name || `IntelX ${bucket} mention`,
-                description: r.preview ?? `Watchlist "${item.value}" mention found in ${bucket} via IntelX`,
+                description: r.preview ?? `"${item.value}" found in ${bucket} data via IntelX`,
                 evidenceSnippet: r.preview ?? undefined,
                 risk: "medium",
               });
             } else {
               leakInserts.push({
-                tenantId,
-                scanId,
-                source: bucket === "darkweb" ? "IntelX-DarkWeb" : bucket === "pastes" ? "IntelX-Paste" : "IntelX",
-                title: r.name || "IntelX match",
+                tenantId, scanId,
+                source: bucket === "darkweb" ? "IntelX-DarkWeb" : bucket === "pastes" ? "IntelX-Paste" : bucket === "credential" ? "IntelX-Credentials" : "IntelX",
+                title: r.name || "IntelX data leak match",
                 breachDate: r.date ? r.date.slice(0, 10) : null,
-                description: r.preview ?? `Watchlist item "${item.value}" found in dark/deep web via IntelX`,
+                description: r.preview ?? `"${item.value}" found in ${bucket} data via IntelX`,
                 domainMatch: item.type === "email" ? undefined : item.value,
                 emailMatch: item.type === "email" ? item.value : undefined,
                 severity: bucket === "darkweb" ? "critical" : bucket === "credential" ? "high" : "medium",
@@ -697,42 +713,88 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
               });
             }
           }
-          if (leakInserts.length) {
-            for (let i = 0; i < leakInserts.length; i += 50) {
-              await db.insert(dlTable).values(leakInserts.slice(i, i + 50));
-            }
-            dataLeakCount += leakInserts.length;
-          }
-          if (abuseInserts.length) {
-            for (let i = 0; i < abuseInserts.length; i += 50) {
-              await db.insert(baTable).values(abuseInserts.slice(i, i + 50));
-            }
-            brandAbuseCount += abuseInserts.length;
-          }
+          for (let i = 0; i < leakInserts.length; i += 50) await db.insert(dlTable).values(leakInserts.slice(i, i + 50));
+          for (let i = 0; i < abuseInserts.length; i += 50) await db.insert(baTable).values(abuseInserts.slice(i, i + 50));
+          dataLeakCount  += leakInserts.length;
+          brandAbuseCount += abuseInserts.length;
         }
       }
 
-      // brandAbuse scanner for social_handle + mobile_app
-      if (item.type === "social_handle" || item.type === "mobile_app") {
-        const brandName = item.value.replace(/^@/, "");
-        const handles = item.type === "social_handle" ? [item.value] : [];
-        const abuseData = await scanBrandAbuse(brandName, "", handles, youtubeKey ?? undefined).catch(() => ({ results: [], warnings: [] }));
-        if (abuseData.results.length) {
-          await db.insert(baTable).values(
-            abuseData.results.map((a: any) => ({
-              tenantId,
-              scanId,
-              type: a.type,
-              platform: a.platform ?? undefined,
-              url: a.url ?? undefined,
-              title: a.title ?? undefined,
-              description: a.description ?? undefined,
-              evidenceSnippet: a.evidenceSnippet ?? undefined,
-              risk: a.risk,
-            })),
-          );
-          brandAbuseCount += abuseData.results.length;
-        }
+      // ── 2. Type-specific OSINT scanners ─────────────────────────────────
+      type WR = Awaited<ReturnType<typeof scanSocialHandleOSINT>>;
+      let watchlistResults: WR = [];
+
+      if (item.type === "social_handle") {
+        watchlistResults = await scanSocialHandleOSINT(item.value, { googleSearchKey, googleSearchCx }).catch(() => []);
+      } else if (item.type === "email") {
+        watchlistResults = await scanEmailOSINT(item.value, { hibpKey, googleSearchKey, googleSearchCx }).catch(() => []);
+      } else if (item.type === "logo_url") {
+        // Use notes field as brand name if provided; otherwise derive from item value
+        const brandName = item.notes?.trim() || (() => {
+          try {
+            const url = new URL(item.value.startsWith("http") ? item.value : `https://${item.value}`);
+            return url.pathname.split("/").filter(Boolean).pop()?.replace(/\.[^.]+$/, "")?.replace(/[_-]/g, " ") ?? "brand";
+          } catch { return "brand"; }
+        })();
+        watchlistResults = await scanLogoOSINT(item.value, brandName, { googleSearchKey, googleSearchCx }).catch(() => []);
+      } else if (item.type === "keyword") {
+        watchlistResults = await scanKeywordOSINT(item.value, { googleSearchKey, googleSearchCx, youtubeKey }).catch(() => []);
+      } else if (item.type === "mobile_app") {
+        watchlistResults = await scanMobileAppOSINT(item.value, { googleSearchKey, googleSearchCx }).catch(() => []);
+      }
+
+      // ── 3. Insert watchlist results into appropriate tables ──────────────
+      const leakRows  = watchlistResults.filter(r => r.category === "data_leak");
+      const abuseRows = watchlistResults.filter(r => r.category === "brand_abuse");
+      const adRows    = watchlistResults.filter(r => r.category === "ad_monitoring");
+
+      if (leakRows.length) {
+        const inserts: typeof dlTable.$inferInsert[] = leakRows.map(r => ({
+          tenantId,
+          scanId,
+          source: r.source ?? r.platform ?? "OSINT",
+          title: r.title,
+          breachDate: r.breachDate ?? null,
+          description: r.description,
+          domainMatch: r.domainMatch ?? undefined,
+          emailMatch: r.emailMatch ?? undefined,
+          severity: r.severity,
+          url: r.url ?? undefined,
+        }));
+        for (let i = 0; i < inserts.length; i += 50) await db.insert(dlTable).values(inserts.slice(i, i + 50));
+        dataLeakCount += leakRows.length;
+      }
+
+      if (abuseRows.length) {
+        const inserts: typeof baTable.$inferInsert[] = abuseRows.map(r => ({
+          tenantId,
+          scanId,
+          type: r.type,
+          platform: r.platform ?? undefined,
+          url: r.url ?? undefined,
+          title: r.title,
+          description: r.description,
+          evidenceSnippet: r.evidenceSnippet ?? undefined,
+          risk: r.risk,
+          installCount: r.installCount ?? undefined,
+          iconUrl: r.iconUrl ?? undefined,
+        }));
+        for (let i = 0; i < inserts.length; i += 50) await db.insert(baTable).values(inserts.slice(i, i + 50));
+        brandAbuseCount += abuseRows.length;
+      }
+
+      if (adRows.length) {
+        const inserts: typeof amTable.$inferInsert[] = adRows.map(r => ({
+          tenantId,
+          scanId,
+          platform: r.platform ?? "Unknown",
+          title: r.title,
+          body: r.description,
+          sourceUrl: r.url ?? undefined,
+          risk: r.risk,
+        }));
+        for (let i = 0; i < inserts.length; i += 50) await db.insert(amTable).values(inserts.slice(i, i + 50));
+        adMonitoringCount += adRows.length;
       }
 
       // Mark scan done
@@ -744,10 +806,14 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
           lastScannedAt: new Date(),
           dataLeakCount,
           brandAbuseCount,
+          adMonitoringCount,
         } as any)
         .where(eq(brandThreatScansTable.id, scanId));
 
-      logger.info({ scanId, itemId: item.id, type: item.type, dataLeakCount, brandAbuseCount }, "Watchlist intel scan completed");
+      logger.info(
+        { scanId, itemId: item.id, type: item.type, dataLeakCount, brandAbuseCount, adMonitoringCount },
+        "Watchlist intel scan completed",
+      );
     } catch (err) {
       logger.error({ err, scanId, itemId: item.id }, "Watchlist intel scan failed");
       await db.update(brandThreatScansTable)

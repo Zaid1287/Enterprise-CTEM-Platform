@@ -944,8 +944,8 @@ function normalizeDomain(v: string): string {
   return (v ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!.trim();
 }
 
-/** Per-type: extract the domain that will actually be sent to POST /brand-threats */
-function extractScanDomain(item: { type: string; value: string }): { domain: string | null; error?: string } {
+/** Per-type: extract the domain (domain/url types) or describe the OSINT scan target */
+function extractScanDomain(item: { type: string; value: string }): { domain: string | null; osintLabel?: string; error?: string } {
   const v = (item.value ?? "").trim();
   switch (item.type) {
     case "domain":
@@ -953,31 +953,30 @@ function extractScanDomain(item: { type: string; value: string }): { domain: str
       const d = normalizeDomain(v);
       return d && /\.[a-z]{2,}$/i.test(d) ? { domain: d } : { domain: null, error: "Invalid domain — expected format: example.com" };
     }
-    case "url":
-    case "logo_url": {
+    case "url": {
       const d = normalizeDomain(v);
       return d && /\.[a-z]{2,}$/i.test(d) ? { domain: d } : { domain: null, error: "Could not extract a valid domain from this URL" };
     }
+    case "logo_url": {
+      if (!v.startsWith("http")) return { domain: null, error: "Logo URL must start with http:// or https://" };
+      return { domain: null, osintLabel: `Logo OSINT: ad library search, reverse image search, cert transparency` };
+    }
     case "email": {
-      const atIdx = v.indexOf("@");
-      if (atIdx === -1) return { domain: null, error: "Invalid email — expected format: user@example.com" };
-      const d = normalizeDomain(v.slice(atIdx + 1));
-      return d && /\.[a-z]{2,}$/i.test(d) ? { domain: d } : { domain: null, error: "Could not extract a valid domain from this email address" };
+      if (!v.includes("@")) return { domain: null, error: "Invalid email — expected format: user@example.com" };
+      return { domain: null, osintLabel: `Email OSINT: breach lookup (HIBP), paste search, MX validation` };
     }
     case "social_handle": {
-      const handle = v.replace(/^@+/, "").toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "").trim();
-      if (!handle) return { domain: null, error: "Invalid social handle — enter the handle without special characters" };
-      return { domain: handle.includes(".") ? handle : `${handle}.com` };
+      const handle = v.replace(/^@+/, "").trim();
+      if (!handle) return { domain: null, error: "Enter the handle without @ prefix (e.g. mybrand)" };
+      return { domain: null, osintLabel: `Social OSINT: check @${handle} across 10+ platforms + impersonation variants` };
     }
     case "keyword": {
-      const kw = v.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "").trim();
-      if (!kw) return { domain: null, error: "Invalid keyword — use letters, numbers, or hyphens" };
-      return { domain: kw.includes(".") ? kw : `${kw}.com` };
+      if (!v) return { domain: null, error: "Keyword cannot be empty" };
+      return { domain: null, osintLabel: `Keyword OSINT: Reddit, ads library, cert transparency, DNS lookalikes` };
     }
     case "mobile_app": {
-      const name = v.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9]/g, "").trim();
-      if (!name) return { domain: null, error: "Invalid app name" };
-      return { domain: name.includes(".") ? name : `${name}.com` };
+      if (!v) return { domain: null, error: "Enter package ID or app name" };
+      return { domain: null, osintLabel: `App OSINT: Google Play direct lookup + app store abuse search` };
     }
     case "ip":
       return { domain: null, error: "IP addresses are correlated against scan results — add the associated domain to run a brand threat scan" };
@@ -988,14 +987,14 @@ function extractScanDomain(item: { type: string; value: string }): { domain: str
 
 /** Per-type input guidance for the Add Item form */
 const TYPE_HINTS: Record<string, { placeholder: string; hint: string }> = {
-  domain:        { placeholder: "e.g. sentinelwares.com",                    hint: "Root domain — scanned for typosquatting & phishing threats" },
-  subdomain:     { placeholder: "e.g. app.sentinelwares.com",                hint: "Subdomain — root domain is extracted and scanned" },
-  url:           { placeholder: "e.g. https://sentinelwares.com/login",      hint: "Any URL — the host domain is extracted and scanned" },
-  keyword:       { placeholder: "e.g. sentinelware",                         hint: 'Brand keyword — scanned as "sentinelware.com" for impersonation' },
-  email:         { placeholder: "e.g. support@sentinelwares.com",            hint: "Email — the domain part is scanned for phishing & data breaches" },
-  social_handle: { placeholder: "e.g. @sentinelwares or sentinelwares",      hint: 'Handle — scanned as "sentinelwares.com" + searches for fake accounts' },
-  mobile_app:    { placeholder: "e.g. Sentinelware Security",                hint: "App name — scanned as brand domain + searches app stores for fakes" },
-  logo_url:      { placeholder: "e.g. https://sentinelwares.com/logo.png",   hint: "Logo URL — host domain monitored for lookalike sites" },
+  domain:        { placeholder: "e.g. sentinelwares.com",                    hint: "Root domain — typosquatting, phishing detection, cert monitoring" },
+  subdomain:     { placeholder: "e.g. app.sentinelwares.com",                hint: "Subdomain — root domain extracted and scanned for threats" },
+  url:           { placeholder: "e.g. https://sentinelwares.com/login",      hint: "Any URL — host domain scanned for typosquatting & phishing" },
+  keyword:       { placeholder: "e.g. sentinelware",                         hint: "Brand keyword — OSINT: Reddit, ad libraries, DNS lookalikes, cert transparency" },
+  email:         { placeholder: "e.g. support@sentinelwares.com",            hint: "Email — OSINT: breach lookup (HIBP), paste search, MX validation" },
+  social_handle: { placeholder: "e.g. @sentinelwares or sentinelwares",      hint: "Social handle — OSINT: platform existence check + impersonation variants" },
+  mobile_app:    { placeholder: "e.g. com.sentinelware.app or app name",     hint: "Package ID or app name — OSINT: Google Play/App Store abuse search" },
+  logo_url:      { placeholder: "e.g. https://sentinelwares.com/logo.png",   hint: "Logo URL — OSINT: ad library search, reverse image search, cert transparency" },
   ip:            { placeholder: "e.g. 1.2.3.4",                              hint: "IP — correlated with typosquatting A records (no direct scan)" },
 };
 
@@ -1030,8 +1029,9 @@ function WatchlistSection() {
   }
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1 });
+  const [form, setForm] = useState({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, assetId: null as number | null });
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const { data: watchlistAssets = [] } = useListAssets({}, { query: { queryKey: ["assets", "watchlist-form"], staleTime: 60_000 } });
 
   async function fetchItems() {
     setLoading(true);
@@ -1063,12 +1063,13 @@ function WatchlistSection() {
           scanTime: form.frequency !== "none" ? form.scanTime : null,
           dayOfWeek: form.frequency === "weekly" ? form.dayOfWeek : null,
           dayOfMonth: form.frequency === "monthly" ? form.dayOfMonth : null,
+          assetId: form.assetId ?? null,
         }),
       });
       if (!res.ok) throw new Error("Failed");
       toast({ title: "Watchlist item added" });
       setShowForm(false);
-      setForm({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1 });
+      setForm({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, assetId: null });
       void fetchItems();
     } catch {
       toast({ title: "Failed to add watchlist item", variant: "destructive" });
@@ -1119,9 +1120,9 @@ function WatchlistSection() {
       navigate(`/brand-threats/${latest.id}`);
       return;
     }
-    const { domain, error } = extractScanDomain(item);
-    if (!domain) {
-      toast({ title: error ?? "This item cannot be scanned directly", variant: "destructive" });
+    const { error } = extractScanDomain(item);
+    if (error) {
+      toast({ title: error, variant: "destructive" });
       return;
     }
     await handleRunScan(item);
@@ -1225,7 +1226,7 @@ function WatchlistSection() {
                 />
               </div>
             </div>
-            {/* Per-type hint + derived domain preview */}
+            {/* Per-type hint + scan preview */}
             {form.value.trim() && (() => {
               if (form.type === "ip") {
                 return (
@@ -1235,12 +1236,20 @@ function WatchlistSection() {
                   </p>
                 );
               }
-              const { domain, error } = extractScanDomain({ type: form.type, value: form.value });
+              const { domain, osintLabel, error } = extractScanDomain({ type: form.type, value: form.value });
               if (domain) {
                 return (
                   <p className="text-[11px] text-emerald-400/80 flex items-center gap-1.5 -mt-1">
                     <Zap className="w-3 h-3 shrink-0" />
                     Will scan: <span className="font-mono font-medium">{domain}</span>
+                  </p>
+                );
+              }
+              if (osintLabel) {
+                return (
+                  <p className="text-[11px] text-blue-400/80 flex items-center gap-1.5 -mt-1">
+                    <Zap className="w-3 h-3 shrink-0" />
+                    {osintLabel}
                   </p>
                 );
               }
@@ -1310,14 +1319,29 @@ function WatchlistSection() {
                 </div>
               </div>
             )}
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Description</label>
-              <input
-                value={form.notes}
-                onChange={e => setForm(v => ({ ...v, notes: e.target.value }))}
-                placeholder="Optional context for this watchlist item"
-                className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Description</label>
+                <input
+                  value={form.notes}
+                  onChange={e => setForm(v => ({ ...v, notes: e.target.value }))}
+                  placeholder="Optional context for this watchlist item"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Link to Asset <span className="text-muted-foreground/50">(optional)</span></label>
+                <select
+                  value={form.assetId ?? ""}
+                  onChange={e => setForm(v => ({ ...v, assetId: e.target.value ? parseInt(e.target.value, 10) : null }))}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+                >
+                  <option value="">— None —</option>
+                  {(watchlistAssets as any[]).map((a: any) => (
+                    <option key={a.id} value={a.id}>{a.name ?? a.domain ?? a.value ?? `Asset #${a.id}`} ({a.type})</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex gap-2 justify-end">
               <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>

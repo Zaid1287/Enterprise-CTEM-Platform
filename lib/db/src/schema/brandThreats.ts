@@ -101,6 +101,8 @@ export const brandWatchlistItemsTable = pgTable("brand_watchlist_items", {
   lastScanAt:      timestamp("last_scan_at", { withTimezone: true }),
   lastScanId:      integer("last_scan_id").references(() => brandThreatScansTable.id, { onDelete: "set null" }),
   prevScanSummary: jsonb("prev_scan_summary"),
+  // Optional link to an existing asset in the platform
+  assetId:         integer("asset_id"),
   createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
