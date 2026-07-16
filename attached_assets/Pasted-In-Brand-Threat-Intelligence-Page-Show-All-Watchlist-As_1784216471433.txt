@@ -1,0 +1,34 @@
+In Brand Threat Intelligence Page:
+
+Show All Watchlist Assets Findings In Assigned Asset Detail Page Instead Of Create Extra Entries Of Each Watchlist Assets. Maybe You Can Create Watchlist Tab And Show All The Finding There. E.g. If assets mobile app, social handle, email, logo url, keyword, domain & social handle watchlist is assigned to Deltin, show all this in Deltin Detail Findings Page.
+
+For Logo Scan Watchlist Assets:
+
+I See 2 Findings In Brand Abuse. But Dont See Any In Detail Report Of This.: Find the issue & bug & fix it. I need it working 100%.
+I See 2 Malicious Ads But It Shows Only Meta Ads Library: search "Deltin" & Google Ads Transparency: "Deltin". There is no actual finding and links. I need actual finding and links of this.: Find the issue & bug & fix it. I need it working 100%.
+For Keywords Watchlist Assets:
+I See 1 Live Domain But No Actual Finding In Detail.: Find the issue & bug & fix it. I need it working 100%.
+I See 1 Findings In Brand Abuse. But Dont See Any In Detail Report Of This.: Find the issue & bug & fix it. I need it working 100%.
+I See 2 Malicious Ads But It Shows Only Meta Ads Library: search "Deltin" & Google Ads Transparency: "Deltin". There is no actual finding and links. I need actual finding and links of this.: Find the issue & bug & fix it. I need it working 100%.
+1 Confirmed Phishing but under Confirmed Phishing Domains there is no results.: Find the issue & bug & fix it. I need it working 100%.
+For Email Scan Watchlist Assets:
+I See Data Breaches but it is asking me to do manually. I want it to check automatically and find all the breach online.: Find the issue & bug & fix it. I need it working 100%.
+For Social Media Scan:
+I See 22 Findings In Brand Abuse. But Dont See Any In Detail Report Of This.: Find the issue & bug & fix it. I need it working 100%.
+I also need to implement google dorking to go little deeper and find everything about the social media, including, tags, likes, comments, etc.: Find the issue & bug & fix it. I need it working 100%.
+For Mobile App Scan:
+I See 3 Findings In Brand Abuse. But Dont See Any In Detail Report Of This.: Find the issue & bug & fix it. I need it working 100%.
+Find the issue & bug & fix it. I need it working 100%.
+
+Make Sure All The Issues Are Fixed & Working 100%.
+
+Ask questions if required.
+
+All the flow should be real and not stimulated.
+
+All data should be real and no dumy or stimulated data should be there.
+
+Once Completed, Check If All Issues are been fixed & Confirm If These Are Fixed & Implemented And Working 100%..
+
+Tell Me What Is Implemented & What Is Not & Why?
+

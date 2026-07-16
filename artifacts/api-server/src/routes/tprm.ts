@@ -20,6 +20,7 @@ import {
   tenantsTable,
   platformSettingsTable,
   alertsTable,
+  assetsTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, or, ilike, sql, ne, lte, inArray, isNull } from "drizzle-orm";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth";
@@ -154,11 +155,17 @@ router.patch("/tprm/client/:tenantId/module", requireAuth, async (req: Authentic
 router.get("/tprm/admin/global-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
   if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const { page = "1", limit = "20", search = "" } = req.query as Record<string, string>;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
   try {
-    const vendors = await db.select().from(tprmVendorsTable)
-      .where(eq(tprmVendorsTable.isGlobal, true))
-      .orderBy(asc(tprmVendorsTable.companyName));
-    res.json(vendors);
+    const searchCond = search
+      ? and(eq(tprmVendorsTable.isGlobal, true), or(ilike(tprmVendorsTable.companyName, `%${search}%`), ilike(tprmVendorsTable.domain, `%${search}%`)))
+      : eq(tprmVendorsTable.isGlobal, true);
+    const [vendors, [countRow]] = await Promise.all([
+      db.select().from(tprmVendorsTable).where(searchCond).orderBy(asc(tprmVendorsTable.companyName)).limit(parseInt(limit)).offset(offset),
+      db.select({ count: sql<number>`count(*)::int` }).from(tprmVendorsTable).where(searchCond),
+    ]);
+    res.json({ vendors, total: countRow?.count ?? 0 });
   } catch (err) {
     logger.error({ err }, "TPRM admin global-vendors GET error");
     res.status(500).json({ error: "Failed to fetch global vendors" });
@@ -234,34 +241,113 @@ router.delete("/tprm/admin/global-vendors/:id", requireAuth, async (req: Authent
   }
 });
 
-// ── Admin: cross-tenant all vendors (super_admin only) ─────────────────────────
+// ── Admin: cross-tenant all vendors (admin / super_admin) — paginated ──────────
 
 router.get("/tprm/admin/all-vendors", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { role } = req.user!;
   if (role !== "super_admin" && role !== "admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const { page = "1", limit = "20", search = "" } = req.query as Record<string, string>;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
   try {
-    const vendors = await db
-      .select({
-        id:          tprmVendorsTable.id,
-        companyName: tprmVendorsTable.companyName,
-        domain:      tprmVendorsTable.domain,
-        type:        tprmVendorsTable.type,
-        status:      tprmVendorsTable.status,
-        riskScore:   tprmVendorsTable.riskScore,
-        riskGrade:   tprmVendorsTable.riskGrade,
-        isGlobal:    tprmVendorsTable.isGlobal,
-        tenantId:    tprmVendorsTable.tenantId,
-        tenantName:  tenantsTable.name,
-        lastScannedAt: tprmVendorsTable.lastScannedAt,
-      })
-      .from(tprmVendorsTable)
-      .leftJoin(tenantsTable, eq(tprmVendorsTable.tenantId, tenantsTable.id))
-      .orderBy(desc(tprmVendorsTable.updatedAt));
-    res.json(vendors);
+    const searchCond = search
+      ? or(ilike(tprmVendorsTable.companyName, `%${search}%`), ilike(tprmVendorsTable.domain, `%${search}%`))
+      : undefined;
+    const [vendors, [countRow]] = await Promise.all([
+      db.select({
+          id:          tprmVendorsTable.id,
+          companyName: tprmVendorsTable.companyName,
+          domain:      tprmVendorsTable.domain,
+          type:        tprmVendorsTable.type,
+          status:      tprmVendorsTable.status,
+          riskScore:   tprmVendorsTable.riskScore,
+          riskGrade:   tprmVendorsTable.riskGrade,
+          isGlobal:    tprmVendorsTable.isGlobal,
+          tenantId:    tprmVendorsTable.tenantId,
+          tenantName:  tenantsTable.name,
+          lastScannedAt: tprmVendorsTable.lastScannedAt,
+        })
+        .from(tprmVendorsTable)
+        .leftJoin(tenantsTable, eq(tprmVendorsTable.tenantId, tenantsTable.id))
+        .where(searchCond)
+        .orderBy(desc(tprmVendorsTable.updatedAt))
+        .limit(parseInt(limit))
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)::int` }).from(tprmVendorsTable).where(searchCond),
+    ]);
+    res.json({ vendors, total: countRow?.count ?? 0 });
   } catch (err) {
     logger.error({ err }, "TPRM admin all-vendors error");
     res.status(500).json({ error: "Failed to fetch vendors" });
   }
+});
+
+// ── Admin: global vendor library — paginated ───────────────────────────────────
+// NOTE: the existing GET /tprm/admin/global-vendors is replaced by adding pagination
+
+// ── Admin: asset inventory with TPRM status ────────────────────────────────────
+
+router.get("/tprm/admin/assets", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role, tenantId: callerTenantId } = req.user!;
+  if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const { page = "1", limit = "20", search = "", verified = "" } = req.query as Record<string, string>;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  try {
+    const conds: any[] = [];
+    if (search) conds.push(or(ilike(assetsTable.name, `%${search}%`), ilike(assetsTable.value, `%${search}%`)));
+    if (verified === "true")  conds.push(eq(assetsTable.verificationStatus, "verified"));
+    if (verified === "false") conds.push(ne(assetsTable.verificationStatus, "verified"));
+
+    const whereClause = conds.length > 0 ? and(...conds) : undefined;
+
+    const [rows, [countRow]] = await Promise.all([
+      db.select({
+          id:                 assetsTable.id,
+          tenantId:           assetsTable.tenantId,
+          tenantName:         tenantsTable.name,
+          name:               assetsTable.name,
+          type:               assetsTable.type,
+          value:              assetsTable.value,
+          verificationStatus: assetsTable.verificationStatus,
+          isTprmEnabled:      assetsTable.isTprmEnabled,
+          riskLevel:          assetsTable.riskLevel,
+          isActive:           assetsTable.isActive,
+          createdAt:          assetsTable.createdAt,
+        })
+        .from(assetsTable)
+        .leftJoin(tenantsTable, eq(assetsTable.tenantId, tenantsTable.id))
+        .where(whereClause)
+        .orderBy(desc(assetsTable.createdAt))
+        .limit(parseInt(limit))
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)::int` }).from(assetsTable).where(whereClause),
+    ]);
+    res.json({ assets: rows, total: countRow?.count ?? 0 });
+  } catch (err) {
+    logger.error({ err }, "TPRM admin assets error");
+    res.status(500).json({ error: "Failed to fetch assets" });
+  }
+});
+
+router.patch("/tprm/admin/assets/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.user!;
+  if (role !== "admin" && role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const assetId = parseInt(req.params.id as string);
+  const { isTprmEnabled } = req.body as { isTprmEnabled: boolean };
+  if (typeof isTprmEnabled !== "boolean") { res.status(400).json({ error: "isTprmEnabled (boolean) is required" }); return; }
+
+  const [asset] = await db.select({ id: assetsTable.id, verificationStatus: assetsTable.verificationStatus })
+    .from(assetsTable).where(eq(assetsTable.id, assetId));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+  if (isTprmEnabled && asset.verificationStatus !== "verified") {
+    res.status(400).json({ error: "TPRM can only be enabled for verified assets" }); return;
+  }
+
+  const [updated] = await db.update(assetsTable)
+    .set({ isTprmEnabled, updatedAt: new Date() })
+    .where(eq(assetsTable.id, assetId))
+    .returning({ id: assetsTable.id, isTprmEnabled: assetsTable.isTprmEnabled, verificationStatus: assetsTable.verificationStatus });
+  res.json(updated);
 });
 
 // ── Admin overview ─────────────────────────────────────────────────────────────
