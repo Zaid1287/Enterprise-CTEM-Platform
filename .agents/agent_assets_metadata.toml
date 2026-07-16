@@ -18,3 +18,9 @@ id = "md8UHUekV9DSDRxCUyftk"
 uri = "file://.canvas/assets/sentinelware-architecture.zip"
 type = "unspecified"
 title = "Sentinelware — Full CTEM Architecture Diagram (HTML)"
+
+[[outputs]]
+id = "qSxrqfuCjVfApp5oMBG-6"
+uri = "file://artifacts/ctem-platform/public/sentinelware-hld.zip"
+type = "unspecified"
+title = "Sentinelware HLD — Architecture & Flow Diagrams"

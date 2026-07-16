@@ -1,0 +1,1515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sentinelware CTEM — High-Level Design Document</title>
+<style>
+  :root {
+    --orange: #f97316;
+    --orange-light: #fed7aa;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --green: #22c55e;
+    --purple: #a855f7;
+    --teal: #14b8a6;
+    --slate: #64748b;
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #293548;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 14px;
+  }
+  @media print {
+    body { background: #fff; color: #1e293b; font-size: 11px; }
+    .page-break { page-break-before: always; }
+    .no-print { display: none; }
+  }
+  .container { max-width: 1280px; margin: 0 auto; padding: 0 32px; }
+
+  /* Cover */
+  .cover {
+    background: linear-gradient(135deg, #0f172a 0%, #1e1a3a 40%, #0f172a 100%);
+    border-bottom: 2px solid var(--orange);
+    padding: 60px 0 50px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .cover::before {
+    content: '';
+    position: absolute;
+    top: -200px; left: -200px;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(249,115,22,0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .cover-logo {
+    display: inline-flex; align-items: center; gap: 12px;
+    margin-bottom: 28px;
+  }
+  .cover-icon {
+    width: 52px; height: 52px;
+    background: linear-gradient(135deg, var(--orange), #dc2626);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cover-icon svg { width: 28px; height: 28px; fill: white; }
+  .cover-brand { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+  .cover-brand span { color: var(--orange); }
+  .cover h1 { font-size: 42px; font-weight: 900; letter-spacing: -1px; margin-bottom: 12px; }
+  .cover h1 em { color: var(--orange); font-style: normal; }
+  .cover-sub { font-size: 18px; color: var(--muted); margin-bottom: 40px; }
+  .cover-meta {
+    display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;
+  }
+  .cover-meta-item { text-align: center; }
+  .cover-meta-item .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); }
+  .cover-meta-item .value { font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px; }
+
+  /* Nav / TOC */
+  .toc { background: var(--surface); border-bottom: 1px solid var(--border); padding: 20px 0; }
+  .toc-inner { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: center; }
+  .toc-inner strong { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  .toc a { color: var(--orange); text-decoration: none; font-size: 12px; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Sections */
+  section { padding: 48px 0; border-bottom: 1px solid var(--border); }
+  section:last-child { border-bottom: none; }
+  .section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  .section-num {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--orange), #dc2626);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 13px; color: white; flex-shrink: 0;
+  }
+  h2 { font-size: 24px; font-weight: 800; letter-spacing: -0.3px; }
+  h3 { font-size: 16px; font-weight: 700; margin: 24px 0 12px; color: var(--text); }
+  h4 { font-size: 13px; font-weight: 600; margin: 16px 0 8px; color: var(--orange); }
+  p { color: var(--muted); margin-bottom: 12px; }
+  ul { color: var(--muted); padding-left: 20px; }
+  ul li { margin-bottom: 4px; }
+  strong { color: var(--text); }
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 11px;
+    color: var(--orange-light);
+  }
+
+  /* Diagram boxes */
+  .diagram { margin: 24px 0; border-radius: 12px; overflow: hidden; }
+  .diagram-title {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    padding: 8px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    border-radius: 12px 12px 0 0;
+  }
+  .diagram svg { display: block; width: 100%; }
+  .diagram-body {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0 0 12px 12px;
+    padding: 24px;
+  }
+
+  /* Cards grid */
+  .cards { display: grid; gap: 16px; }
+  .cards.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .cards.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .cards.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .card.accent-orange { border-top: 3px solid var(--orange); }
+  .card.accent-blue   { border-top: 3px solid var(--blue); }
+  .card.accent-green  { border-top: 3px solid var(--green); }
+  .card.accent-purple { border-top: 3px solid var(--purple); }
+  .card.accent-teal   { border-top: 3px solid var(--teal); }
+  .card.accent-red    { border-top: 3px solid var(--red); }
+  .card-icon { font-size: 20px; margin-bottom: 8px; }
+  .card h4 { margin: 0 0 8px; font-size: 13px; color: var(--text); }
+  .card p { font-size: 12px; margin: 0; }
+  .card ul { font-size: 12px; }
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 999px;
+    margin-right: 4px;
+    margin-bottom: 4px;
+  }
+  .badge-orange { background: rgba(249,115,22,0.2); color: var(--orange); }
+  .badge-blue   { background: rgba(59,130,246,0.2); color: #60a5fa; }
+  .badge-green  { background: rgba(34,197,94,0.2);  color: #4ade80; }
+  .badge-purple { background: rgba(168,85,247,0.2); color: #c084fc; }
+  .badge-red    { background: rgba(239,68,68,0.2);  color: #f87171; }
+  .badge-teal   { background: rgba(20,184,166,0.2); color: #2dd4bf; }
+  .badge-slate  { background: rgba(100,116,139,0.2);color: var(--muted); }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 16px 0; }
+  th { background: var(--surface2); color: var(--muted); font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 7px 12px; border: 1px solid var(--border); color: var(--muted); vertical-align: top; }
+  td strong { color: var(--text); }
+  tr:hover td { background: var(--surface2); }
+
+  /* Phase bars */
+  .phase-grid { display: flex; flex-direction: column; gap: 10px; }
+  .phase-row { display: flex; gap: 10px; align-items: flex-start; }
+  .phase-label {
+    width: 80px; flex-shrink: 0;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--muted);
+    padding-top: 6px;
+  }
+  .phase-items { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+  .phase-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .phase-item.red    { border-left: 3px solid var(--red);    background: rgba(239,68,68,0.05); }
+  .phase-item.orange { border-left: 3px solid var(--orange); background: rgba(249,115,22,0.05); }
+  .phase-item.blue   { border-left: 3px solid var(--blue);   background: rgba(59,130,246,0.05); }
+  .phase-item.green  { border-left: 3px solid var(--green);  background: rgba(34,197,94,0.05); }
+  .phase-item.purple { border-left: 3px solid var(--purple); background: rgba(168,85,247,0.05); }
+  .phase-item.teal   { border-left: 3px solid var(--teal);   background: rgba(20,184,166,0.05); }
+
+  /* Flow arrow */
+  .flow { display: flex; flex-direction: column; gap: 0; align-items: stretch; }
+  .flow-node {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 16px;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12px; font-weight: 500; color: var(--text);
+  }
+  .flow-node .flow-icon { font-size: 16px; }
+  .flow-node.primary { border-color: var(--orange); background: rgba(249,115,22,0.08); }
+  .flow-node.secondary { border-color: var(--blue); background: rgba(59,130,246,0.06); }
+  .flow-node.success { border-color: var(--green); background: rgba(34,197,94,0.06); }
+  .flow-arrow {
+    text-align: center; color: var(--muted); font-size: 18px;
+    line-height: 1.2; padding: 2px 0;
+  }
+  .flow-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 6px 0; }
+  .flow-split .flow-node { justify-content: center; text-align: center; font-size: 11px; flex-direction: column; padding: 10px; gap: 4px; }
+
+  /* Security tier */
+  .security-tier {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .security-tier-label {
+    background: var(--surface2);
+    padding: 6px 14px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+  }
+  .security-tier-content {
+    padding: 10px 14px;
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+
+  /* Module status */
+  .status-done { color: var(--green); font-weight: 700; }
+  .status-partial { color: var(--orange); font-weight: 700; }
+  .status-planned { color: var(--slate); font-weight: 700; }
+
+  /* Monorepo tree */
+  .tree {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+  .tree .dir { color: var(--blue); font-weight: 600; }
+  .tree .file { color: var(--text); }
+  .tree .comment { color: #475569; font-style: italic; }
+
+  /* Print btn */
+  .print-btn {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--orange);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(249,115,22,0.4);
+    display: flex; align-items: center; gap: 8px;
+    z-index: 100;
+  }
+  .print-btn:hover { background: #ea6c0a; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ COVER -->
+<div class="cover">
+  <div class="container">
+    <div class="cover-logo">
+      <div class="cover-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7l-9-5z"/></svg>
+      </div>
+      <div class="cover-brand">Sentinel<span>ware</span></div>
+    </div>
+    <h1>High-Level <em>Design</em> Document</h1>
+    <p class="cover-sub">Enterprise Continuous Threat Exposure Management (CTEM) Platform</p>
+    <div class="cover-meta">
+      <div class="cover-meta-item"><div class="label">Version</div><div class="value">2.0</div></div>
+      <div class="cover-meta-item"><div class="label">Date</div><div class="value">July 2026</div></div>
+      <div class="cover-meta-item"><div class="label">Classification</div><div class="value">Confidential</div></div>
+      <div class="cover-meta-item"><div class="label">Type</div><div class="value">Architecture HLD</div></div>
+      <div class="cover-meta-item"><div class="label">Status</div><div class="value">Production</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <div class="container">
+    <div class="toc-inner">
+      <strong>Contents:</strong>
+      <a href="#s1">1. Executive Summary</a>
+      <a href="#s2">2. System Architecture</a>
+      <a href="#s3">3. Request Flow</a>
+      <a href="#s4">4. Authentication</a>
+      <a href="#s5">5. Scan Pipeline</a>
+      <a href="#s6">6. Modules</a>
+      <a href="#s7">7. Background Workers</a>
+      <a href="#s8">8. Database Schema</a>
+      <a href="#s9">9. API Surface</a>
+      <a href="#s10">10. Security</a>
+      <a href="#s11">11. Tech Stack</a>
+      <a href="#s12">12. Monorepo</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ 1. EXECUTIVE SUMMARY -->
+<section id="s1">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">1</div>
+    <h2>Executive Summary</h2>
+  </div>
+  <p>
+    <strong>Sentinelware</strong> is an enterprise-grade, multi-tenant <strong>Continuous Threat Exposure Management (CTEM)</strong> platform
+    delivered as a SaaS product. It unifies External Attack Surface Management (EASM), Cyber Asset Attack Surface Management (CAASM),
+    Vulnerability Management, Exposure Management, Compliance Management, Risk Prioritization, Shadow IT Discovery, Brand Threat Intelligence,
+    and an AI Security Copilot into a single cohesive product.
+  </p>
+
+  <div class="cards cols-4" style="margin-top:24px;">
+    <div class="card accent-orange">
+      <div class="card-icon">🛡️</div>
+      <h4>EASM</h4>
+      <p>External attack surface enumeration — subdomains, ports, technologies, endpoints, secrets.</p>
+    </div>
+    <div class="card accent-blue">
+      <div class="card-icon">📦</div>
+      <h4>CAASM</h4>
+      <p>Complete cyber asset inventory with grouping, tagging, risk scoring, and business impact.</p>
+    </div>
+    <div class="card accent-red">
+      <div class="card-icon">🔍</div>
+      <h4>Vulnerability Mgmt</h4>
+      <p>CVE findings enriched with CVSS, EPSS, KEV, and CISA Known Exploited Vulnerabilities.</p>
+    </div>
+    <div class="card accent-green">
+      <div class="card-icon">📋</div>
+      <h4>Compliance</h4>
+      <p>ISO 27001, SOC 2, PCI DSS, HIPAA, CIS Controls — gap analysis, evidence management.</p>
+    </div>
+    <div class="card accent-purple">
+      <div class="card-icon">🤖</div>
+      <h4>AI Copilot</h4>
+      <p>GPT-4o-mini powered explanations, remediation guides, and executive summaries.</p>
+    </div>
+    <div class="card accent-teal">
+      <div class="card-icon">👁️</div>
+      <h4>Shadow IT</h4>
+      <p>Discovers rogue assets, SaaS apps, OAuth grants outside your registered inventory.</p>
+    </div>
+    <div class="card accent-orange">
+      <div class="card-icon">🎯</div>
+      <h4>Brand Threats</h4>
+      <p>Typosquatting detection, phishing domain monitoring, impersonation alerts.</p>
+    </div>
+    <div class="card accent-blue">
+      <div class="card-icon">📊</div>
+      <h4>Risk Scoring</h4>
+      <p>Multi-factor risk engine: CVSS + EPSS + KEV + criticality + exposure + business impact.</p>
+    </div>
+  </div>
+
+  <h3>Deployment Model</h3>
+  <p>
+    The platform is deployed as a multi-tenant SaaS on Replit infrastructure with a PostgreSQL primary database.
+    Each tenant is strictly isolated via JWT-scoped queries and PostgreSQL Row Level Security (RLS).
+    The system supports <strong>four user roles</strong>: <code>super_admin</code>, <code>admin</code>, <code>manager</code>, and <code>client</code>.
+  </p>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 2. SYSTEM ARCHITECTURE -->
+<section id="s2">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">2</div>
+    <h2>System Architecture</h2>
+  </div>
+
+  <div class="diagram">
+    <div class="diagram-title">High-Level Architecture — Layered View</div>
+    <div class="diagram-body">
+      <svg viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg" style="font-family:system-ui,sans-serif;">
+        <defs>
+          <marker id="arr" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+            <path d="M0,0 L0,8 L8,4 z" fill="#64748b"/>
+          </marker>
+          <marker id="arr-orange" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+            <path d="M0,0 L0,8 L8,4 z" fill="#f97316"/>
+          </marker>
+        </defs>
+
+        <!-- Background layers -->
+        <!-- Layer 1: Client -->
+        <rect x="10" y="10" width="880" height="80" rx="10" fill="#1e293b" stroke="#334155"/>
+        <text x="24" y="28" fill="#94a3b8" font-size="9" font-weight="700" letter-spacing="1" text-transform="uppercase">CLIENT LAYER</text>
+        <rect x="30" y="34" width="200" height="44" rx="8" fill="#293548" stroke="#475569"/>
+        <text x="130" y="54" fill="#f1f5f9" font-size="11" font-weight="600" text-anchor="middle">React 19 SPA</text>
+        <text x="130" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">Vite · TypeScript · Tailwind</text>
+        <rect x="250" y="34" width="160" height="44" rx="8" fill="#293548" stroke="#475569"/>
+        <text x="330" y="54" fill="#f1f5f9" font-size="11" font-weight="600" text-anchor="middle">TanStack Query</text>
+        <text x="330" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">Server state + caching</text>
+        <rect x="430" y="34" width="150" height="44" rx="8" fill="#293548" stroke="#475569"/>
+        <text x="505" y="54" fill="#f1f5f9" font-size="11" font-weight="600" text-anchor="middle">Zustand</text>
+        <text x="505" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">Auth state · JWT token</text>
+        <rect x="600" y="34" width="150" height="44" rx="8" fill="#293548" stroke="#475569"/>
+        <text x="675" y="54" fill="#f1f5f9" font-size="11" font-weight="600" text-anchor="middle">Wouter · D3 · Recharts</text>
+        <text x="675" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">Routing · Graphs · Charts</text>
+        <rect x="770" y="34" width="110" height="44" rx="8" fill="#293548" stroke="#475569"/>
+        <text x="825" y="54" fill="#f1f5f9" font-size="11" font-weight="600" text-anchor="middle">Orval</text>
+        <text x="825" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">Auto-generated hooks</text>
+
+        <!-- Proxy arrow -->
+        <line x1="450" y1="90" x2="450" y2="118" stroke="#f97316" stroke-width="2" marker-end="url(#arr-orange)"/>
+        <text x="460" y="108" fill="#f97316" font-size="9">Replit Proxy (mTLS)</text>
+
+        <!-- Layer 2: Proxy -->
+        <rect x="10" y="118" width="880" height="50" rx="10" fill="#1a2234" stroke="#334155"/>
+        <text x="24" y="135" fill="#94a3b8" font-size="9" font-weight="700" letter-spacing="1">PROXY &amp; ROUTING LAYER</text>
+        <rect x="120" y="132" width="280" height="26" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="260" y="149" fill="#94a3b8" font-size="10" text-anchor="middle">/* → React Vite Frontend (port 23203)</text>
+        <rect x="430" y="132" width="280" height="26" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="570" y="149" fill="#94a3b8" font-size="10" text-anchor="middle">/api/* → Express API Server (port 8080)</text>
+
+        <!-- API Server -->
+        <rect x="10" y="182" width="555" height="200" rx="10" fill="#1e293b" stroke="#334155"/>
+        <text x="24" y="200" fill="#94a3b8" font-size="9" font-weight="700" letter-spacing="1">API SERVER — Express 5 + Node.js 24</text>
+
+        <!-- Middleware stack -->
+        <rect x="30" y="208" width="160" height="162" rx="8" fill="#1a2234" stroke="#475569"/>
+        <text x="110" y="224" fill="#94a3b8" font-size="9" font-weight="700" text-anchor="middle">MIDDLEWARE STACK</text>
+        <rect x="38" y="228" width="144" height="20" rx="4" fill="#293548" stroke="#334155"/>
+        <text x="110" y="242" fill="#64748b" font-size="9" text-anchor="middle">Helmet (secure headers)</text>
+        <rect x="38" y="252" width="144" height="20" rx="4" fill="#293548" stroke="#334155"/>
+        <text x="110" y="266" fill="#64748b" font-size="9" text-anchor="middle">CORS + express.json()</text>
+        <rect x="38" y="276" width="144" height="20" rx="4" fill="#293548" stroke="#334155"/>
+        <text x="110" y="290" fill="#64748b" font-size="9" text-anchor="middle">Auth rate limiter 20/15min</text>
+        <rect x="38" y="300" width="144" height="20" rx="4" fill="#293548" stroke="#334155"/>
+        <text x="110" y="314" fill="#64748b" font-size="9" text-anchor="middle">Global limiter 200/15min</text>
+        <rect x="38" y="324" width="144" height="20" rx="4" fill="#f97316" stroke="#f97316" opacity="0.9"/>
+        <text x="110" y="338" fill="white" font-size="9" font-weight="700" text-anchor="middle">requireAuth (JWT verify)</text>
+        <rect x="38" y="348" width="144" height="20" rx="4" fill="#293548" stroke="#334155"/>
+        <text x="110" y="362" fill="#64748b" font-size="9" text-anchor="middle">requireRole (RBAC)</text>
+
+        <!-- Routes -->
+        <rect x="210" y="208" width="340" height="162" rx="8" fill="#1a2234" stroke="#475569"/>
+        <text x="380" y="224" fill="#94a3b8" font-size="9" font-weight="700" text-anchor="middle">ROUTE MODULES (30+ files)</text>
+        <text x="222" y="244" fill="#64748b" font-size="9">auth · assets · asset-groups · scans</text>
+        <text x="222" y="258" fill="#64748b" font-size="9">findings · discovery · compliance · risk</text>
+        <text x="222" y="272" fill="#64748b" font-size="9">alerts · alert-rules · reports · tools</text>
+        <text x="222" y="286" fill="#64748b" font-size="9">brand-threats · takedowns · shadow-it</text>
+        <text x="222" y="300" fill="#64748b" font-size="9">users · tenants · invitations · ai</text>
+        <text x="222" y="314" fill="#64748b" font-size="9">graph · dashboard · audit-logs · search</text>
+        <text x="222" y="328" fill="#64748b" font-size="9">platform-settings · stripe · tprm</text>
+        <text x="222" y="342" fill="#64748b" font-size="9">ai-mapper · idp-sync · network-scan</text>
+        <text x="222" y="356" fill="#64748b" font-size="9">pipeline-scans · scan-schedules · queues</text>
+
+        <!-- Worker block -->
+        <rect x="585" y="182" width="305" height="200" rx="10" fill="#1e293b" stroke="#334155"/>
+        <text x="599" y="200" fill="#94a3b8" font-size="9" font-weight="700" letter-spacing="1">BACKGROUND WORKERS</text>
+        <rect x="603" y="208" width="270" height="40" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="738" y="224" fill="#f1f5f9" font-size="10" font-weight="600" text-anchor="middle">beatScheduler.ts</text>
+        <text x="738" y="238" fill="#64748b" font-size="9" text-anchor="middle">60s poll · dispatch scan schedules</text>
+        <rect x="603" y="258" width="130" height="40" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="668" y="274" fill="#f1f5f9" font-size="10" font-weight="600" text-anchor="middle">scanWorker.ts</text>
+        <text x="668" y="288" fill="#64748b" font-size="9" text-anchor="middle">BullMQ · 5 concurrent</text>
+        <rect x="743" y="258" width="130" height="40" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="808" y="274" fill="#f1f5f9" font-size="10" font-weight="600" text-anchor="middle">alertWorker.ts</text>
+        <text x="808" y="288" fill="#64748b" font-size="9" text-anchor="middle">Notifications dispatch</text>
+        <rect x="603" y="308" width="270" height="62" rx="6" fill="#1a2234" stroke="#475569"/>
+        <text x="738" y="323" fill="#94a3b8" font-size="9" font-weight="700" text-anchor="middle">SCAN PIPELINE (pipelineScans.ts)</text>
+        <text x="613" y="340" fill="#64748b" font-size="9">Phase 1: Passive Discovery</text>
+        <text x="613" y="352" fill="#64748b" font-size="9">Phase 2: Port + SSL + HTTP Probing</text>
+        <text x="613" y="364" fill="#64748b" font-size="9">Phase 3: Tech + Screenshot + Dir Fuzz</text>
+
+        <!-- DB -->
+        <rect x="200" y="400" width="500" height="108" rx="10" fill="#1e293b" stroke="#334155"/>
+        <text x="214" y="418" fill="#94a3b8" font-size="9" font-weight="700" letter-spacing="1">DATA LAYER — PostgreSQL (Drizzle ORM)</text>
+        <rect x="220" y="424" width="100" height="32" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="270" y="438" fill="#f1f5f9" font-size="9" font-weight="600" text-anchor="middle">Core Tables</text>
+        <text x="270" y="450" fill="#64748b" font-size="8" text-anchor="middle">tenants · users · sessions</text>
+        <rect x="330" y="424" width="100" height="32" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="380" y="438" fill="#f1f5f9" font-size="9" font-weight="600" text-anchor="middle">Asset Tables</text>
+        <text x="380" y="450" fill="#64748b" font-size="8" text-anchor="middle">assets · groups · tech</text>
+        <rect x="440" y="424" width="100" height="32" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="490" y="438" fill="#f1f5f9" font-size="9" font-weight="600" text-anchor="middle">Scan Tables</text>
+        <text x="490" y="450" fill="#64748b" font-size="8" text-anchor="middle">scans · findings · jobs</text>
+        <rect x="550" y="424" width="120" height="32" rx="6" fill="#293548" stroke="#475569"/>
+        <text x="610" y="438" fill="#f1f5f9" font-size="9" font-weight="600" text-anchor="middle">Security Tables</text>
+        <text x="610" y="450" fill="#64748b" font-size="8" text-anchor="middle">compliance · risk · alerts</text>
+        <text x="450" y="488" fill="#94a3b8" font-size="9" text-anchor="middle">Row Level Security (RLS) · Immutable Audit Log · tsvector Full-Text Search</text>
+        <text x="450" y="500" fill="#94a3b8" font-size="9" text-anchor="middle">brand_threats · shadow_it · tprm · ai_mapper · platform_settings</text>
+
+        <!-- Connector lines -->
+        <line x1="282" y1="370" x2="282" y2="400" stroke="#334155" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#arr)"/>
+        <line x1="450" y1="382" x2="450" y2="400" stroke="#334155" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#arr)"/>
+        <line x1="737" y1="382" x2="680" y2="400" stroke="#334155" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#arr)"/>
+      </svg>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 3. REQUEST FLOW -->
+<section id="s3">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">3</div>
+    <h2>Request Flow</h2>
+  </div>
+
+  <div class="cards cols-2">
+    <div>
+      <h3>Browser → API Request Flow</h3>
+      <div class="flow">
+        <div class="flow-node primary"><span class="flow-icon">🌐</span> Browser (React SPA) — sends <code>Authorization: Bearer &lt;JWT&gt;</code></div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🔀</span> Replit Reverse Proxy (localhost:80, mTLS)</div>
+        <div class="flow-arrow">↓  path-based routing</div>
+        <div class="flow-node secondary"><span class="flow-icon">⚡</span> Express 5 API Server (port 8080)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🪖</span> Helmet — secure HTTP response headers</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🔒</span> CORS + express.json() body parser</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">⏱️</span> Rate Limiters (auth: 20/15min · global: 200/15min)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node primary"><span class="flow-icon">🔑</span> requireAuth — JWT verify → extracts {userId, tenantId, role}</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🛣️</span> Route Handler — business logic</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node secondary"><span class="flow-icon">🗄️</span> Drizzle ORM — WHERE tenant_id = req.user.tenantId</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node success"><span class="flow-icon">✅</span> JSON Response → TanStack Query cache update</div>
+      </div>
+    </div>
+    <div>
+      <h3>Frontend Architecture Flow</h3>
+      <div class="flow">
+        <div class="flow-node primary"><span class="flow-icon">📱</span> Wouter Router — client-side routing (30+ routes)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🔐</span> ProtectedRoute — checks Zustand isAuthenticated</div>
+        <div class="flow-arrow">↓  redirect /login if not authed</div>
+        <div class="flow-node secondary"><span class="flow-icon">📄</span> Page Component renders</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🎣</span> Orval-generated hooks (useQuery / useMutation)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🌐</span> apiFetch — injects Bearer token from sessionStorage</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node secondary"><span class="flow-icon">📡</span> /api/* route via Replit proxy</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node success"><span class="flow-icon">💾</span> TanStack Query cache (staleTime: 20s, refetch: 30s)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🎨</span> ShadCN UI + Tailwind v4 — rendered output</div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 4. AUTHENTICATION -->
+<section id="s4">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">4</div>
+    <h2>Authentication &amp; Authorization</h2>
+  </div>
+
+  <div class="cards cols-2">
+    <div>
+      <h3>Auth Flow</h3>
+      <div class="flow">
+        <div class="flow-node"><span class="flow-icon">📝</span> POST /api/auth/login (email + password)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🔐</span> bcrypt.compare() — password verify</div>
+        <div class="flow-arrow">↓  optional 2FA check</div>
+        <div class="flow-node"><span class="flow-icon">📧</span> TOTP / Email OTP (2FA enabled users)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node primary"><span class="flow-icon">🎫</span> Issue JWT access token (15 min TTL)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">🔄</span> Issue refresh token (7 days, stored in DB + SHA256 hash)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node secondary"><span class="flow-icon">💾</span> Client stores access token in sessionStorage</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node"><span class="flow-icon">📤</span> Every API request: Authorization: Bearer &lt;token&gt;</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node success"><span class="flow-icon">🔑</span> requireAuth extracts { userId, tenantId, role }</div>
+      </div>
+    </div>
+    <div>
+      <h3>RBAC Model</h3>
+      <table>
+        <thead><tr><th>Role</th><th>Scope</th><th>Key Permissions</th></tr></thead>
+        <tbody>
+          <tr><td><strong>super_admin</strong></td><td>All tenants</td><td>Full platform control, tenant management, queue monitor</td></tr>
+          <tr><td><strong>admin</strong></td><td>Own tenant</td><td>All CRUD, user management, platform settings</td></tr>
+          <tr><td><strong>manager</strong></td><td>Own tenant</td><td>Triage, scan ops, alert rules, reports</td></tr>
+          <tr><td><strong>client</strong></td><td>Assigned assets only</td><td>View findings, compliance, reports (read-heavy)</td></tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:20px;">Token Lifecycle</h3>
+      <ul>
+        <li><strong>Access token:</strong> JWT, 15-min TTL, signed with <code>SESSION_SECRET</code>, stateless</li>
+        <li><strong>Refresh token:</strong> random UUID, 7-day TTL, stored as SHA256 hash in <code>sessions</code> table</li>
+        <li><strong>Session revocation:</strong> DELETE /auth/sessions/:id removes DB record</li>
+        <li><strong>2FA:</strong> email OTP flow — enable → confirm → required on next login</li>
+        <li><strong>Avatar:</strong> multipart upload, stored as base64 in users table</li>
+        <li><strong>Password reset:</strong> time-limited token via email link</li>
+      </ul>
+
+      <h3>Multi-Tenant Isolation</h3>
+      <ul>
+        <li>Every DB query scoped: <code>WHERE tenant_id = req.user.tenantId</code></li>
+        <li>PostgreSQL RLS policies enforce isolation at DB level</li>
+        <li>Audit log is immutable — DB trigger blocks UPDATE/DELETE</li>
+        <li>super_admin cross-tenant access goes through <code>getPrivilegedTenantIds()</code></li>
+      </ul>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 5. SCAN PIPELINE -->
+<section id="s5">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">5</div>
+    <h2>Scan Pipeline Architecture</h2>
+  </div>
+  <p>The pipeline executes in five sequential phases with parallel tasks within each phase. Each phase enriches a shared context object that flows through the pipeline.</p>
+
+  <div class="diagram">
+    <div class="diagram-title">5-Phase Scan Pipeline — pipelineScans.ts</div>
+    <div class="diagram-body">
+      <div class="phase-grid">
+        <div class="phase-row">
+          <div class="phase-label">TRIGGER</div>
+          <div class="phase-items">
+            <div class="phase-item blue">POST /api/pipeline-run (manual)</div>
+            <div class="phase-item blue">beatScheduler.ts (schedule-based)</div>
+            <div class="phase-item blue">Asset frequency dispatch (daily/weekly)</div>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">ENQUEUE</div>
+          <div class="phase-items">
+            <div class="phase-item teal">enqueueAndRun(assetId, scanId, tenantId)</div>
+            <div class="phase-item teal">Duplicate prevention check</div>
+            <div class="phase-item teal">MAX_CONCURRENT=2 · MAX_PARALLEL=1</div>
+            <div class="phase-item teal">Asset must be verified (verificationStatus=verified)</div>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">PHASE 1<br/><small style="color:#64748b;">Parallel</small></div>
+          <div class="phase-items">
+            <div class="phase-item orange">WHOIS / RDAP</div>
+            <div class="phase-item orange">DNS (A/AAAA/MX/NS/TXT/SOA/CNAME/SRV)</div>
+            <div class="phase-item orange">SPF full policy parse</div>
+            <div class="phase-item orange">DMARC (adkim/aspf/pct)</div>
+            <div class="phase-item orange">DKIM selector probing</div>
+            <div class="phase-item orange">CT logs (crt.sh)</div>
+            <div class="phase-item orange">ASN via ip-api.com</div>
+            <div class="phase-item orange">Shodan InternetDB</div>
+            <div class="phase-item orange">VirusTotal enrichment</div>
+            <div class="phase-item orange">subfinder · dnsx · shuffledns</div>
+            <div class="phase-item orange">AlienVault OTX</div>
+            <div class="phase-item orange">Wayback Machine</div>
+            <div class="phase-item orange">URLScan.io</div>
+            <div class="phase-item orange">GitHub exposure (Search API)</div>
+            <div class="phase-item orange">CommonCrawl · RapidDNS</div>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">PHASE 2<br/><small style="color:#64748b;">Parallel</small></div>
+          <div class="phase-items">
+            <div class="phase-item blue">Nmap (TCP scan)</div>
+            <div class="phase-item blue">Naabu (port scanner)</div>
+            <div class="phase-item blue">Masscan (fallback, CAP_NET_RAW)</div>
+            <div class="phase-item blue">SSL/TLS analysis (tls.connect)</div>
+            <div class="phase-item blue">Certificate parsing (CN/SAN/expiry)</div>
+            <div class="phase-item blue">HTTP probing (status/title/headers)</div>
+            <div class="phase-item blue">Redirect chain follow</div>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">PHASE 3<br/><small style="color:#64748b;">Parallel</small></div>
+          <div class="phase-items">
+            <div class="phase-item purple">Technology detection (400+ signatures)</div>
+            <div class="phase-item purple">Screenshot capture (Puppeteer)</div>
+            <div class="phase-item purple">Directory fuzzing (BFS depth-3, 2000 endpoints)</div>
+            <div class="phase-item purple">WAF detection</div>
+            <div class="phase-item purple">JS challenge resolver</div>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">PHASE 4<br/><small style="color:#64748b;">Parallel</small></div>
+          <div class="phase-items">
+            <div class="phase-item red">Nuclei scanning (40+ templates)</div>
+            <div class="phase-item red">CVE templates (critical/high)</div>
+            <div class="phase-item red">Exposed panels detection</div>
+            <div class="phase-item red">Secrets hunting (trufflehog-style)</div>
+            <div class="phase-item red">JavaScript analysis (jsAnalyzer.ts)</div>
+            <div class="phase-item red">Cloud recon (S3/GCS/Azure buckets)</div>
+            <div class="phase-item red">Parameter discovery (fuzz inject)</div>
+            <div class="phase-item red">Nikto web vulnerability scan</div>
+            <div class="phase-item red">Dalfox XSS scanner</div>
+            <div class="phase-item red">FFuf directory fuzzer</div>
+            <div class="phase-item red">WhatWeb tech fingerprinting</div>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">PHASE 5<br/><small style="color:#64748b;">Sequential</small></div>
+          <div class="phase-items">
+            <div class="phase-item green">Exposed port findings (26 dangerous ports)</div>
+            <div class="phase-item green">EPSS enrichment (first.org, 100/batch)</div>
+            <div class="phase-item green">KEV enrichment (CISA catalog, 24h cache)</div>
+            <div class="phase-item green">NVD CVE lookup</div>
+            <div class="phase-item green">Finding deduplication</div>
+            <div class="phase-item green">Finding INSERT to DB</div>
+            <div class="phase-item green">finalizeScannedAssets() — risk scores</div>
+            <div class="phase-item green">dispatchNotifications() → alert rules</div>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">NOTIFY</div>
+          <div class="phase-items">
+            <div class="phase-item teal">Email (Nodemailer / Resend)</div>
+            <div class="phase-item teal">Slack webhook</div>
+            <div class="phase-item teal">Discord webhook</div>
+            <div class="phase-item teal">Telegram bot</div>
+            <div class="phase-item teal">Generic webhook</div>
+            <div class="phase-item teal">SSE real-time push (/api/alerts/stream)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Risk Score Formula</h3>
+  <div class="card" style="margin-top:8px;">
+    <p style="font-family:monospace; font-size:13px; color:#f1f5f9; line-height:2;">
+      <strong>Risk Score</strong> = CVSS component<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;+ EPSS component (probability of exploitation)<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;+ KEV bonus (+15 if CISA Known Exploited)<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;+ Criticality bonus (asset criticality tag)<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;+ Exposure bonus (publicly accessible + open dangerous ports)<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;+ Business Impact component (1–10 scale, configurable per asset)<br/>
+      <span style="color:#64748b;">→ Final score: 0–100 · Levels: Critical / High / Medium / Low / Info</span>
+    </p>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 6. MODULES -->
+<section id="s6">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">6</div>
+    <h2>Product Modules</h2>
+  </div>
+
+  <div class="cards cols-2" style="gap:12px;">
+
+    <!-- M1 Asset Inventory -->
+    <div class="card accent-blue">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">📦</span>
+        <h4 style="color:var(--blue);margin:0;">M1 — Asset Inventory (CAASM)</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li><strong>10 asset types:</strong> Domain, Subdomain, URL, IP, CIDR, API, SSL Cert, Cloud Asset, Host, Mobile App</li>
+        <li><strong>Asset tags:</strong> Production / Staging / Development / Critical / Internal / External (free-text)</li>
+        <li><strong>Business Impact:</strong> 1–10 integer, factored into risk score</li>
+        <li><strong>Grouping:</strong> Asset groups with group-level risk rollup</li>
+        <li><strong>Verification:</strong> DNS TXT / Email / HTTP file / Cloud</li>
+        <li><strong>Topology:</strong> D3 force-directed graph — attack surface visualisation</li>
+      </ul>
+    </div>
+
+    <!-- M2 Passive Discovery -->
+    <div class="card accent-orange">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🌐</span>
+        <h4 style="color:var(--orange);margin:0;">M2 — Passive Discovery (EASM)</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>CT logs (crt.sh), WHOIS/RDAP, ASN, DNS full resolution</li>
+        <li>SPF full policy parse, DMARC (adkim/aspf/pct), DKIM selector probing</li>
+        <li>GitHub Exposure (Search API), AlienVault OTX, Wayback Machine</li>
+        <li>URLScan.io, RapidDNS, CommonCrawl, Shodan InternetDB</li>
+        <li>subfinder · dnsx · shuffledns for subdomain enumeration</li>
+        <li>Results stored in <code>discovery_results</code> table with history</li>
+      </ul>
+    </div>
+
+    <!-- M3 Active Discovery -->
+    <div class="card accent-red">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🔍</span>
+        <h4 style="color:var(--red);margin:0;">M3 — Active Discovery &amp; Scanning</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Port scanning: Nmap (TCP) → Naabu → Masscan fallback chain</li>
+        <li>SSL/TLS analysis, certificate parsing, HTTPS-first TLS probe</li>
+        <li>HTTP probing: status codes, response titles, security headers</li>
+        <li>400+ technology signature rules (techDetector.ts)</li>
+        <li>Screenshots via Puppeteer (stored as base64 PNG)</li>
+        <li>Directory fuzzing: BFS depth-3, 2000 endpoint limit</li>
+        <li>WAF detection, JS challenge resolution</li>
+      </ul>
+    </div>
+
+    <!-- M4 Vulnerability Mgmt -->
+    <div class="card accent-red">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🐛</span>
+        <h4 style="color:var(--red);margin:0;">M4 — Vulnerability Management</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>40+ Nuclei templates: CVEs, exposed panels, misconfigs, secrets</li>
+        <li>EPSS enrichment via first.org (batch 100 CVEs/request)</li>
+        <li>KEV enrichment from CISA catalog (24h cache)</li>
+        <li>NVD CVE lookup with rate-limit handling</li>
+        <li>Finding lifecycle: open → in_progress → accepted_risk / false_positive / mitigated</li>
+        <li>Comment threads on findings, screenshot evidence</li>
+        <li>Deduplication by (cveId + assetId)</li>
+      </ul>
+    </div>
+
+    <!-- M5 Compliance -->
+    <div class="card accent-green">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">📋</span>
+        <h4 style="color:var(--green);margin:0;">M5 — Compliance Management</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li><strong>Frameworks:</strong> ISO 27001, SOC 2, PCI DSS, HIPAA, CIS Controls</li>
+        <li>Control lifecycle: planned → in_progress → implemented → not_applicable</li>
+        <li>Evidence file upload/download/delete per control</li>
+        <li>Gap analysis summary — score per framework per tenant</li>
+        <li>Assignee + due date tracking per control</li>
+      </ul>
+    </div>
+
+    <!-- M6 Risk -->
+    <div class="card accent-orange">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">📊</span>
+        <h4 style="color:var(--orange);margin:0;">M6 — Risk Prioritisation</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Multi-factor scoring: CVSS + EPSS + KEV + criticality + exposure + business impact</li>
+        <li>Per-asset risk score history (<code>risk_score_history</code> table)</li>
+        <li>Manual recalculation trigger (POST /risk/recalculate)</li>
+        <li>Risk dashboard with top vulnerable assets, severity breakdown charts</li>
+        <li>Risk level: Critical / High / Medium / Low / Info</li>
+      </ul>
+    </div>
+
+    <!-- M7 Alerting -->
+    <div class="card accent-teal">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🔔</span>
+        <h4 style="color:var(--teal);margin:0;">M7 — Alerting &amp; Notifications</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Alert rules: any / new_finding / critical_finding / high_finding / scan_complete / brand_threat</li>
+        <li>Channels: Email · Slack · Discord · Telegram · Generic Webhook</li>
+        <li>Real-time alert push via SSE stream (<code>/api/alerts/stream</code>)</li>
+        <li>Alert lifecycle: unread → acknowledged / dismissed</li>
+        <li>Per-tenant rule configuration with channelConfig JSON</li>
+      </ul>
+    </div>
+
+    <!-- M8 Reporting -->
+    <div class="card accent-blue">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">📄</span>
+        <h4 style="color:var(--blue);margin:0;">M8 — Reporting</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Report types: executive / technical / compliance / inventory</li>
+        <li>Export formats: CSV · JSON · PDF (data endpoint for PDF generation)</li>
+        <li>PDF data APIs: per-asset · per-brand-threat-scan · full report</li>
+        <li>AI-powered executive summary generation</li>
+        <li>Scan report pages with full asset + findings breakdown</li>
+      </ul>
+    </div>
+
+    <!-- M9 AI Copilot -->
+    <div class="card accent-purple">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🤖</span>
+        <h4 style="color:var(--purple);margin:0;">M9 — AI Security Copilot</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Model: GPT-4o-mini via OpenAI API (per-user configurable)</li>
+        <li>Actions: explain finding · remediation guidance · executive summary · compliance guidance</li>
+        <li>Per-user AI settings: provider · apiKey · model · system prompt</li>
+        <li>Fallback templates when LLM unavailable</li>
+        <li>AI availability status endpoint</li>
+      </ul>
+    </div>
+
+    <!-- M10 Shadow IT -->
+    <div class="card accent-orange">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">👁️</span>
+        <h4 style="color:var(--orange);margin:0;">M10 — Shadow IT Discovery</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Discovers rogue assets: subdomains, cloud buckets, admin panels, shadow services</li>
+        <li>Shadow SaaS via SPF includes + DKIM selectors + JS API analysis</li>
+        <li>Risk triage: approve / remediate / under_review / false_positive</li>
+        <li>Severity override (riskLevel) persisted to DB with audit log</li>
+        <li>IdP integrations: Google Workspace, Microsoft Graph, Okta</li>
+        <li>OAuth app inventory with scope risk scoring</li>
+        <li>Network device discovery (ARP/mDNS/SNMP/NetBIOS)</li>
+      </ul>
+    </div>
+
+    <!-- M11 Brand Threats -->
+    <div class="card accent-red">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🎯</span>
+        <h4 style="color:var(--red);margin:0;">M11 — Brand Threat Intelligence</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Typosquatting via dnstwist (4000+ permutations)</li>
+        <li>Phishing domain detection, brand abuse scoring</li>
+        <li>Favicon hash matching (MurmurHash3)</li>
+        <li>WHOIS registrar + registration date enrichment</li>
+        <li>Screenshot capture of live lookalike domains</li>
+        <li>Takedown request workflow management</li>
+      </ul>
+    </div>
+
+    <!-- M12 TPRM -->
+    <div class="card accent-teal">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🤝</span>
+        <h4 style="color:var(--teal);margin:0;">M12 — Third-Party Risk Management</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Vendor registry with risk questionnaires</li>
+        <li>Assessment lifecycle: draft → submitted → reviewed → closed</li>
+        <li>Risk-based vendor scoring</li>
+        <li>Role-based: admin (all) · AM (assigned clients) · client (own tenant, gated)</li>
+        <li>Document evidence attachment per vendor assessment</li>
+      </ul>
+    </div>
+
+    <!-- M13 AI Mapper -->
+    <div class="card accent-purple">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🧠</span>
+        <h4 style="color:var(--purple);margin:0;">M13 — AI Attack Surface Mapper</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>LLM-driven attack surface analysis scan</li>
+        <li>Writes to assets, findings, alerts, risk scores, compliance tables</li>
+        <li>Admin module toggle (tenant-level enable/disable)</li>
+        <li>Scan history with full result persistence</li>
+        <li>Deduplication via onConflictDoUpdate on (tenantId, ip, port)</li>
+      </ul>
+    </div>
+
+    <!-- M14 Audit Logs -->
+    <div class="card accent-slate">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">📜</span>
+        <h4 style="margin:0;">M14 — Immutable Audit Log</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Every write operation logged: action · resourceType · resourceId · metadata · ip</li>
+        <li>PostgreSQL BEFORE UPDATE/DELETE trigger raises exception — truly immutable</li>
+        <li>Audit trail searchable and filterable in the UI</li>
+        <li>Used for compliance evidence and forensic investigation</li>
+      </ul>
+    </div>
+
+    <!-- M15 Billing -->
+    <div class="card accent-green">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">💳</span>
+        <h4 style="color:var(--green);margin:0;">M15 — Billing &amp; Subscriptions (Stripe)</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>Stripe Checkout, Customer Portal, webhook handling</li>
+        <li>Pricing tiers (packages table): maxAssets, maxUsers per plan</li>
+        <li>Webhook registered before express.json() for raw body access</li>
+        <li>Subscription status persisted to tenants.stripeCustomerId</li>
+      </ul>
+    </div>
+
+    <!-- M16 Security Tools -->
+    <div class="card accent-orange">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:18px;">🔧</span>
+        <h4 style="color:var(--orange);margin:0;">M16 — Security Tool Library</h4>
+        <span class="badge badge-green">Complete</span>
+      </div>
+      <ul>
+        <li>15 tool binaries in Nix PATH: nmap, nuclei, subfinder, dnsx, ffuf, nikto, dalfox, whatweb, etc.</li>
+        <li>Tool pipeline config per tenant (phase, order, enable/disable)</li>
+        <li>Real execution with output capture + exit code persistence</li>
+        <li>Tool run history with full stdout/stderr</li>
+      </ul>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 7. BACKGROUND WORKERS -->
+<section id="s7">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">7</div>
+    <h2>Background Worker Architecture</h2>
+  </div>
+
+  <div class="cards cols-3">
+    <div class="card accent-orange">
+      <h4>beatScheduler.ts</h4>
+      <ul>
+        <li>Polls every <strong>60 seconds</strong></li>
+        <li>Dispatches due scan schedules (hourly/daily/weekly/monthly)</li>
+        <li>Asset-frequency scans (nextScanAt ≤ NOW)</li>
+        <li>Calls <code>enqueueOrRun()</code> directly (no HTTP)</li>
+        <li>Startup recovery: re-enqueues stuck scans from boot-30s</li>
+      </ul>
+    </div>
+    <div class="card accent-blue">
+      <h4>scanWorker.ts</h4>
+      <ul>
+        <li>BullMQ when Redis available</li>
+        <li>In-process FIFO queue as fallback</li>
+        <li>MAX_CONCURRENT_SCANS = 5 (env configurable)</li>
+        <li>MAX_PARALLEL_ASSETS = 3</li>
+        <li>Status: pending → running → completed / failed</li>
+        <li>Stuck scan guard: 10 min timeout</li>
+      </ul>
+    </div>
+    <div class="card accent-teal">
+      <h4>alertWorker.ts</h4>
+      <ul>
+        <li>Processes notification jobs from queue</li>
+        <li>Evaluates alert rules per tenant</li>
+        <li>Dispatches: Email / Slack / Discord / Telegram / Webhook</li>
+        <li>Platform fallback channels (if no tenant rules match)</li>
+        <li>Per-event deduplication</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Queue Architecture (BullMQ + Redis optional)</h3>
+  <div class="flow" style="max-width:600px;">
+    <div class="flow-node"><span class="flow-icon">📥</span> Job arrives (scan trigger / alert event)</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-node secondary"><span class="flow-icon">📦</span> Redis available? → BullMQ queue · Else → in-process FIFO</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-node"><span class="flow-icon">👷</span> Worker picks up job (concurrency limit enforced)</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-node primary"><span class="flow-icon">⚙️</span> executePipeline() → all 5 phases</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-node success"><span class="flow-icon">✅</span> finalizeScannedAssets() → risk scores updated</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-node"><span class="flow-icon">🔔</span> dispatchNotifications() → alert rules evaluated</div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 8. DATABASE SCHEMA -->
+<section id="s8">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">8</div>
+    <h2>Database Schema</h2>
+  </div>
+  <p>PostgreSQL managed by Drizzle ORM. All tenant-scoped tables include <code>tenant_id INTEGER NOT NULL</code>. Row Level Security enforced at DB level via <code>current_setting('app.tenant_id')</code>.</p>
+
+  <div class="cards cols-3">
+    <div class="card accent-blue">
+      <h4>Core Tables</h4>
+      <table>
+        <thead><tr><th>Table</th><th>Key Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>tenants</code></td><td>Orgs, plan, Stripe customer</td></tr>
+          <tr><td><code>users</code></td><td>Accounts, roles, 2FA, avatar</td></tr>
+          <tr><td><code>sessions</code></td><td>Refresh tokens (SHA256 hash)</td></tr>
+          <tr><td><code>invitations</code></td><td>Pre-registration invites</td></tr>
+          <tr><td><code>packages</code></td><td>Pricing tiers</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card accent-orange">
+      <h4>Asset Tables</h4>
+      <table>
+        <thead><tr><th>Table</th><th>Key Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>assets</code></td><td>10 asset types, risk, tags</td></tr>
+          <tr><td><code>asset_groups</code></td><td>Logical grouping</td></tr>
+          <tr><td><code>asset_group_members</code></td><td>Join table</td></tr>
+          <tr><td><code>technology_detections</code></td><td>Per-scan tech fingerprints</td></tr>
+          <tr><td><code>screenshots</code></td><td>Base64 PNG captures</td></tr>
+          <tr><td><code>discovery_results</code></td><td>Historical OSINT results</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card accent-red">
+      <h4>Scan &amp; Finding Tables</h4>
+      <table>
+        <thead><tr><th>Table</th><th>Key Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>scans</code></td><td>Scan jobs, status lifecycle</td></tr>
+          <tr><td><code>scan_jobs</code></td><td>Per-asset sub-jobs</td></tr>
+          <tr><td><code>scan_asset_results</code></td><td>Full raw JSONB output</td></tr>
+          <tr><td><code>scan_schedules</code></td><td>Recurring scan config</td></tr>
+          <tr><td><code>findings</code></td><td>CVEs + CVSS + EPSS + KEV</td></tr>
+          <tr><td><code>finding_comments</code></td><td>Threaded discussion</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card accent-green">
+      <h4>Compliance &amp; Risk Tables</h4>
+      <table>
+        <thead><tr><th>Table</th><th>Key Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>compliance_frameworks</code></td><td>ISO/SOC/PCI/HIPAA/CIS</td></tr>
+          <tr><td><code>compliance_controls</code></td><td>Controls + evidence files</td></tr>
+          <tr><td><code>risk_scores</code></td><td>Multi-factor scores</td></tr>
+          <tr><td><code>risk_score_history</code></td><td>Trend data over time</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card accent-teal">
+      <h4>Alert &amp; Platform Tables</h4>
+      <table>
+        <thead><tr><th>Table</th><th>Key Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>alerts</code></td><td>Alert inbox, lifecycle</td></tr>
+          <tr><td><code>alert_rules</code></td><td>Channel configs, triggers</td></tr>
+          <tr><td><code>audit_logs</code></td><td>Immutable audit trail</td></tr>
+          <tr><td><code>platform_settings</code></td><td>API keys, feature flags</td></tr>
+          <tr><td><code>user_ai_settings</code></td><td>Per-user LLM config</td></tr>
+          <tr><td><code>reports</code></td><td>Generated report registry</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card accent-purple">
+      <h4>Extended Module Tables</h4>
+      <table>
+        <thead><tr><th>Table</th><th>Key Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>shadow_it_assets</code></td><td>Rogue asset inventory</td></tr>
+          <tr><td><code>shadow_it_saas_apps</code></td><td>SaaS discovery</td></tr>
+          <tr><td><code>shadow_it_oauth_apps</code></td><td>OAuth grants + risk scoring</td></tr>
+          <tr><td><code>brand_threat_scans</code></td><td>Typosquatting scans</td></tr>
+          <tr><td><code>brand_threat_results</code></td><td>Lookalike domains</td></tr>
+          <tr><td><code>takedown_requests</code></td><td>Domain abuse takedowns</td></tr>
+          <tr><td><code>tprm_vendors</code></td><td>Third-party vendors</td></tr>
+          <tr><td><code>ai_mapper_scans</code></td><td>AI attack surface scans</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 9. API SURFACE -->
+<section id="s9">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">9</div>
+    <h2>API Surface</h2>
+  </div>
+  <p>All routes prefixed with <code>/api</code>. No version prefix. Authentication via <code>Authorization: Bearer &lt;JWT&gt;</code>. OpenAPI spec is the source of truth at <code>lib/api-spec/openapi.yaml</code>.</p>
+
+  <div class="cards cols-2">
+    <div>
+      <table>
+        <thead><tr><th>Module</th><th>Path Prefix</th><th>Key Operations</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Auth</strong></td><td><code>/auth/*</code></td><td>login, register, refresh, 2FA, avatar, sessions</td></tr>
+          <tr><td><strong>Assets</strong></td><td><code>/assets</code></td><td>CRUD, verify, technologies</td></tr>
+          <tr><td><strong>Asset Groups</strong></td><td><code>/asset-groups</code></td><td>CRUD, members</td></tr>
+          <tr><td><strong>Scans</strong></td><td><code>/scans</code></td><td>create, list, cancel, jobs, schedules</td></tr>
+          <tr><td><strong>Pipeline</strong></td><td><code>/pipeline-run</code></td><td>Trigger full pipeline scan</td></tr>
+          <tr><td><strong>Findings</strong></td><td><code>/findings</code></td><td>CRUD, comments, scan-data, filter by severity</td></tr>
+          <tr><td><strong>Discovery</strong></td><td><code>/discovery</code></td><td>run, results, latest per asset</td></tr>
+          <tr><td><strong>Compliance</strong></td><td><code>/compliance</code></td><td>frameworks, controls, evidence upload/download</td></tr>
+          <tr><td><strong>Risk</strong></td><td><code>/risk</code></td><td>scores, history, recalculate</td></tr>
+          <tr><td><strong>Alerts</strong></td><td><code>/alerts</code></td><td>inbox, rules, SSE stream</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <table>
+        <thead><tr><th>Module</th><th>Path Prefix</th><th>Key Operations</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Reports</strong></td><td><code>/reports</code></td><td>generate, download CSV/JSON, PDF data</td></tr>
+          <tr><td><strong>AI Copilot</strong></td><td><code>/ai</code></td><td>explain, remediate, executive-summary, compliance-guidance</td></tr>
+          <tr><td><strong>Tools</strong></td><td><code>/tools</code></td><td>library, pipeline config, run tool, history</td></tr>
+          <tr><td><strong>Brand Threats</strong></td><td><code>/brand-threats</code></td><td>scan, results, delete</td></tr>
+          <tr><td><strong>Takedowns</strong></td><td><code>/takedowns</code></td><td>create, update status, delete</td></tr>
+          <tr><td><strong>Shadow IT</strong></td><td><code>/shadow-it</code></td><td>assets, saas, triage, scan, dashboard</td></tr>
+          <tr><td><strong>Users</strong></td><td><code>/users</code></td><td>CRUD, invitations</td></tr>
+          <tr><td><strong>Tenants</strong></td><td><code>/tenants</code></td><td>CRUD (super_admin only)</td></tr>
+          <tr><td><strong>Graph</strong></td><td><code>/graph</code></td><td>attack-surface nodes + relationships</td></tr>
+          <tr><td><strong>Dashboard</strong></td><td><code>/dashboard</code></td><td>summary metrics</td></tr>
+          <tr><td><strong>Search</strong></td><td><code>/search</code></td><td>full-text (tsvector) across assets/findings</td></tr>
+          <tr><td><strong>Stripe</strong></td><td><code>/stripe</code></td><td>products, checkout, subscription, portal</td></tr>
+          <tr><td><strong>Queue Monitor</strong></td><td><code>/queues</code></td><td>BullMQ metrics (super_admin)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 10. SECURITY -->
+<section id="s10">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">10</div>
+    <h2>Security Architecture</h2>
+  </div>
+
+  <div class="security-tier">
+    <div class="security-tier-label">Layer 1 — Transport &amp; Network</div>
+    <div class="security-tier-content">
+      <span class="badge badge-blue">mTLS via Replit Proxy</span>
+      <span class="badge badge-blue">HTTPS enforced in production</span>
+      <span class="badge badge-blue">Helmet (11 security headers)</span>
+      <span class="badge badge-blue">CORS restricted to allowed origins</span>
+    </div>
+  </div>
+  <div class="security-tier">
+    <div class="security-tier-label">Layer 2 — Rate Limiting &amp; DDoS</div>
+    <div class="security-tier-content">
+      <span class="badge badge-orange">Auth endpoints: 20 req / 15min</span>
+      <span class="badge badge-orange">Global API: 200 req / 15min</span>
+      <span class="badge badge-orange">express-rate-limit with trust proxy</span>
+      <span class="badge badge-orange">Circuit breaker (external API calls)</span>
+    </div>
+  </div>
+  <div class="security-tier">
+    <div class="security-tier-label">Layer 3 — Authentication</div>
+    <div class="security-tier-content">
+      <span class="badge badge-red">JWT (RS256 / HS256), 15-min TTL</span>
+      <span class="badge badge-red">bcrypt password hashing</span>
+      <span class="badge badge-red">TOTP 2FA (email OTP)</span>
+      <span class="badge badge-red">Refresh token rotation</span>
+      <span class="badge badge-red">Session revocation</span>
+    </div>
+  </div>
+  <div class="security-tier">
+    <div class="security-tier-label">Layer 4 — Authorisation</div>
+    <div class="security-tier-content">
+      <span class="badge badge-purple">RBAC (4 roles)</span>
+      <span class="badge badge-purple">requireRole middleware per endpoint</span>
+      <span class="badge badge-purple">tenantId scoped on every query</span>
+      <span class="badge badge-purple">PostgreSQL RLS enforcement</span>
+      <span class="badge badge-purple">AM client-scope isolation</span>
+    </div>
+  </div>
+  <div class="security-tier">
+    <div class="security-tier-label">Layer 5 — Data &amp; Integrity</div>
+    <div class="security-tier-content">
+      <span class="badge badge-green">Drizzle ORM (no raw SQL injection risk)</span>
+      <span class="badge badge-green">Zod input validation on all endpoints</span>
+      <span class="badge badge-green">Immutable audit log (DB trigger)</span>
+      <span class="badge badge-green">Secrets in env vars (never in code)</span>
+      <span class="badge badge-green">Evidence files — access-controlled download</span>
+    </div>
+  </div>
+  <div class="security-tier">
+    <div class="security-tier-label">Layer 6 — Content Security</div>
+    <div class="security-tier-content">
+      <span class="badge badge-teal">CSP via Helmet (custom config)</span>
+      <span class="badge badge-teal">No eval() / no inline scripts</span>
+      <span class="badge badge-teal">Stripe webhook raw body validation</span>
+      <span class="badge badge-teal">Multipart upload size limits</span>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 11. TECH STACK -->
+<section id="s11">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">11</div>
+    <h2>Technology Stack</h2>
+  </div>
+
+  <div class="cards cols-3">
+    <div class="card accent-blue">
+      <h4>Frontend</h4>
+      <table>
+        <thead><tr><th>Technology</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><strong>React 19</strong></td><td>UI framework</td></tr>
+          <tr><td><strong>Vite</strong></td><td>Build tool + dev server</td></tr>
+          <tr><td><strong>TypeScript 5.9</strong></td><td>Type safety</td></tr>
+          <tr><td><strong>Tailwind CSS v4</strong></td><td>Utility-first styling</td></tr>
+          <tr><td><strong>ShadCN UI</strong></td><td>Component library</td></tr>
+          <tr><td><strong>TanStack Query v5</strong></td><td>Server state + caching</td></tr>
+          <tr><td><strong>Zustand v5</strong></td><td>Auth state</td></tr>
+          <tr><td><strong>Wouter v3</strong></td><td>Client-side routing</td></tr>
+          <tr><td><strong>Recharts v2</strong></td><td>Charts</td></tr>
+          <tr><td><strong>D3 v7</strong></td><td>Force-directed graph</td></tr>
+          <tr><td><strong>Orval</strong></td><td>OpenAPI → React hooks</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card accent-orange">
+      <h4>Backend</h4>
+      <table>
+        <thead><tr><th>Technology</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Node.js 24</strong></td><td>Runtime</td></tr>
+          <tr><td><strong>Express 5</strong></td><td>HTTP server</td></tr>
+          <tr><td><strong>TypeScript 5.9</strong></td><td>Type safety</td></tr>
+          <tr><td><strong>Drizzle ORM</strong></td><td>Database queries</td></tr>
+          <tr><td><strong>drizzle-zod</strong></td><td>Schema → Zod</td></tr>
+          <tr><td><strong>Zod v3</strong></td><td>Input validation</td></tr>
+          <tr><td><strong>esbuild</strong></td><td>Bundle to ESM</td></tr>
+          <tr><td><strong>BullMQ</strong></td><td>Job queue</td></tr>
+          <tr><td><strong>Puppeteer</strong></td><td>Screenshot engine</td></tr>
+          <tr><td><strong>Nodemailer / Resend</strong></td><td>Email dispatch</td></tr>
+          <tr><td><strong>pino</strong></td><td>Structured logging</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card accent-green">
+      <h4>Infrastructure &amp; Security Tools</h4>
+      <table>
+        <thead><tr><th>Technology</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><strong>PostgreSQL</strong></td><td>Primary database</td></tr>
+          <tr><td><strong>Redis (optional)</strong></td><td>BullMQ broker</td></tr>
+          <tr><td><strong>Nmap</strong></td><td>Port scanning</td></tr>
+          <tr><td><strong>Nuclei</strong></td><td>Vulnerability scanning</td></tr>
+          <tr><td><strong>subfinder / dnsx</strong></td><td>Subdomain enumeration</td></tr>
+          <tr><td><strong>ffuf</strong></td><td>Directory fuzzing</td></tr>
+          <tr><td><strong>nikto</strong></td><td>Web vulnerability scan</td></tr>
+          <tr><td><strong>dalfox</strong></td><td>XSS scanning</td></tr>
+          <tr><td><strong>whatweb</strong></td><td>Tech fingerprinting</td></tr>
+          <tr><td><strong>dnstwist</strong></td><td>Typosquatting detection</td></tr>
+          <tr><td><strong>Stripe</strong></td><td>Payments / billing</td></tr>
+          <tr><td><strong>OpenAI GPT-4o-mini</strong></td><td>AI Copilot</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ 12. MONOREPO -->
+<section id="s12">
+<div class="container">
+  <div class="section-header">
+    <div class="section-num">12</div>
+    <h2>Monorepo Structure</h2>
+  </div>
+
+  <div class="cards cols-2">
+    <div>
+      <div class="tree">
+<span class="dir">/</span>
+├── <span class="dir">artifacts/</span>
+│   ├── <span class="dir">api-server/</span>         <span class="comment"># Express 5 backend</span>
+│   │   └── <span class="dir">src/</span>
+│   │       ├── <span class="file">app.ts</span>           <span class="comment"># Middleware stack</span>
+│   │       ├── <span class="file">index.ts</span>         <span class="comment"># Entry + workers</span>
+│   │       ├── <span class="dir">routes/</span>          <span class="comment"># 30+ route files</span>
+│   │       ├── <span class="dir">lib/</span>             <span class="comment"># Utilities, engines</span>
+│   │       └── <span class="dir">workers/</span>         <span class="comment"># beat, scan, alert</span>
+│   ├── <span class="dir">ctem-platform/</span>      <span class="comment"># React + Vite SPA</span>
+│   │   └── <span class="dir">src/</span>
+│   │       ├── <span class="file">App.tsx</span>          <span class="comment"># All routes</span>
+│   │       ├── <span class="dir">pages/</span>           <span class="comment"># 30+ page components</span>
+│   │       └── <span class="dir">components/</span>
+│   │           ├── <span class="dir">layout/</span>      <span class="comment"># Sidebar, Navbar</span>
+│   │           └── <span class="dir">ui/</span>          <span class="comment"># ShadCN wrappers</span>
+│   └── <span class="dir">mockup-sandbox/</span>     <span class="comment"># Canvas preview server</span>
+├── <span class="dir">lib/</span>
+│   ├── <span class="dir">api-spec/</span>
+│   │   └── <span class="file">openapi.yaml</span>     <span class="comment"># Source of truth</span>
+│   ├── <span class="dir">api-client-react/</span>   <span class="comment"># Generated hooks (Orval)</span>
+│   ├── <span class="dir">api-zod/</span>             <span class="comment"># Generated Zod schemas</span>
+│   └── <span class="dir">db/</span>
+│       └── <span class="dir">src/schema/</span>      <span class="comment"># Drizzle table definitions</span>
+├── <span class="dir">scripts/</span>              <span class="comment"># Utility scripts</span>
+├── <span class="file">pnpm-workspace.yaml</span>   <span class="comment"># Workspace + catalog pins</span>
+├── <span class="file">tsconfig.json</span>         <span class="comment"># Solution file (libs only)</span>
+└── <span class="file">tsconfig.base.json</span>    <span class="comment"># Shared strict TS defaults</span>
+      </div>
+    </div>
+    <div>
+      <h3>Package Dependency Graph</h3>
+      <div class="flow">
+        <div class="flow-split">
+          <div class="flow-node primary" style="min-height:50px;">api-server<br/><small>@workspace/api-server</small></div>
+          <div class="flow-node secondary" style="min-height:50px;">ctem-platform<br/><small>@workspace/ctem-platform</small></div>
+        </div>
+        <div class="flow-arrow">↓ depends on</div>
+        <div class="flow-split">
+          <div class="flow-node" style="min-height:45px;">@workspace/db<br/><small>Schema + Drizzle</small></div>
+          <div class="flow-node" style="min-height:45px;">@workspace/api-zod<br/><small>Zod schemas</small></div>
+          <div class="flow-node" style="min-height:45px;">@workspace/api-client-react<br/><small>TanStack Query hooks</small></div>
+        </div>
+        <div class="flow-arrow">↓ generated from</div>
+        <div class="flow-node primary"><span class="flow-icon">📋</span> lib/api-spec/openapi.yaml (Orval codegen)</div>
+      </div>
+
+      <h3 style="margin-top:20px;">Workflows (Replit)</h3>
+      <table>
+        <thead><tr><th>Service</th><th>Port</th><th>Path</th></tr></thead>
+        <tbody>
+          <tr><td>API Server</td><td>8080</td><td><code>/api</code></td></tr>
+          <tr><td>CTEM Platform (SPA)</td><td>23203</td><td><code>/</code></td></tr>
+          <tr><td>Mockup Sandbox</td><td>auto</td><td><code>/mockup-sandbox</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:16px;">Codegen Commands</h3>
+      <div class="card" style="padding:12px;">
+        <code style="display:block;line-height:2.2;font-size:11px;">
+          # Regenerate hooks + Zod schemas after OpenAPI change<br/>
+          pnpm --filter @workspace/api-spec run codegen<br/>
+          <br/>
+          # Push DB schema changes (dev only)<br/>
+          pnpm --filter @workspace/db run push<br/>
+          <br/>
+          # Full typecheck<br/>
+          pnpm run typecheck
+        </code>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- FOOTER -->
+<div style="background:var(--surface);border-top:1px solid var(--border);padding:24px 0;text-align:center;">
+  <div class="container">
+    <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;">
+      <div style="width:24px;height:24px;background:linear-gradient(135deg,#f97316,#dc2626);border-radius:6px;display:flex;align-items:center;justify-content:center;">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="white"><path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7l-9-5z"/></svg>
+      </div>
+      <span style="font-weight:700;font-size:15px;">Sentinelware</span>
+    </div>
+    <p style="color:var(--muted);font-size:12px;margin:0;">
+      Enterprise CTEM Platform · High-Level Design Document · Version 2.0 · July 2026 · Confidential
+    </p>
+    <p style="color:#475569;font-size:11px;margin-top:6px;">
+      16 modules · 30+ API route files · 40+ DB tables · 5-phase scan pipeline · Multi-tenant SaaS
+    </p>
+  </div>
+</div>
+
+<!-- Print button -->
+<button class="print-btn no-print" onclick="window.print()">
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z"/>
+  </svg>
+  Save as PDF
+</button>
+
+</body>
+</html>
