@@ -938,6 +938,94 @@ router.get("/tprm/fourth-parties/concentration-risk", requireAuth, requireTprm, 
   });
 });
 
+// ── Update 4th party risk level (all rows sharing that domain/name) ───────────
+router.patch("/tprm/fourth-parties/risk-level", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const scopeTenantIds = await getVendorScopeTenantIds(req);
+  const { domain, name, riskLevel } = req.body as { domain?: string; name?: string; riskLevel: string };
+
+  if (!riskLevel || !["critical", "high", "medium", "low"].includes(riskLevel)) {
+    res.status(400).json({ error: "riskLevel must be critical, high, medium or low" }); return;
+  }
+  if (!domain && !name) {
+    res.status(400).json({ error: "domain or name is required" }); return;
+  }
+
+  const tenantCond = scopeTenantIds.length > 0
+    ? inArray(tprmFourthPartyVendorsTable.tenantId, scopeTenantIds)
+    : sql`false`;
+
+  const keyCond = domain
+    ? eq(tprmFourthPartyVendorsTable.domain, domain)
+    : eq(tprmFourthPartyVendorsTable.name, name!);
+
+  // Fetch existing rows so we know old riskLevels before update
+  const existing = await db.select({
+    id:            tprmFourthPartyVendorsTable.id,
+    parentVendorId:tprmFourthPartyVendorsTable.parentVendorId,
+    tenantId:      tprmFourthPartyVendorsTable.tenantId,
+    riskLevel:     tprmFourthPartyVendorsTable.riskLevel,
+  }).from(tprmFourthPartyVendorsTable).where(and(tenantCond, keyCond));
+
+  if (existing.length === 0) {
+    res.status(404).json({ error: "No matching 4th party entries found" }); return;
+  }
+
+  await db.update(tprmFourthPartyVendorsTable)
+    .set({ riskLevel })
+    .where(and(tenantCond, keyCond));
+
+  // Recalculate each unique parent vendor's risk score
+  const riskOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+  const uniqueVendors = [...new Map(existing.map(r => [`${r.parentVendorId}-${r.tenantId}`, r])).values()];
+
+  await Promise.all(uniqueVendors.map(async ({ parentVendorId, tenantId: vTenantId, riskLevel: oldRiskLevel }) => {
+    try {
+      const [vendor] = await db
+        .select({ riskScore: tprmVendorsTable.riskScore, riskGrade: tprmVendorsTable.riskGrade })
+        .from(tprmVendorsTable)
+        .where(eq(tprmVendorsTable.id, parentVendorId));
+      if (!vendor) return;
+
+      // Delta per risk level change: each level step = 4 points
+      const oldOrder = riskOrder[oldRiskLevel] ?? 2;
+      const newOrder = riskOrder[riskLevel] ?? 2;
+      const delta = (oldOrder - newOrder) * 4; // positive = risk went DOWN = score improves
+
+      const newScore = Math.max(0, Math.min(100, (vendor.riskScore ?? 50) + delta));
+      let newGrade = "F";
+      if      (newScore >= 90) newGrade = "A+";
+      else if (newScore >= 80) newGrade = "A";
+      else if (newScore >= 70) newGrade = "B";
+      else if (newScore >= 60) newGrade = "C";
+      else if (newScore >= 50) newGrade = "D";
+
+      await db.update(tprmVendorsTable)
+        .set({ riskScore: newScore, riskGrade: newGrade, updatedAt: new Date() })
+        .where(eq(tprmVendorsTable.id, parentVendorId));
+
+      // Persist new risk score history row
+      const [lastScore] = await db.select({ overallScore: tprmVendorRiskScoresTable.overallScore })
+        .from(tprmVendorRiskScoresTable)
+        .where(and(eq(tprmVendorRiskScoresTable.vendorId, parentVendorId), eq(tprmVendorRiskScoresTable.tenantId, vTenantId)))
+        .orderBy(desc(tprmVendorRiskScoresTable.calculatedAt)).limit(1);
+
+      await db.insert(tprmVendorRiskScoresTable).values({
+        vendorId: parentVendorId, tenantId: vTenantId,
+        overallScore:    newScore,
+        networkScore:    lastScore?.overallScore ?? 50,
+        dnsScore: 0, webAppScore: 0, emailScore: 0, tlsScore: 0,
+        endpointScore: 0, cloudScore: 0, appSecScore: 0, reputationScore: 0,
+        infoLeakScore: 0, darkWebMentions: 0,
+        calculatedAt: new Date(),
+      });
+    } catch (err) {
+      logger.warn({ err, parentVendorId }, "TPRM: vendor risk recalc failed (non-fatal)");
+    }
+  }));
+
+  res.json({ ok: true, updated: existing.length });
+});
+
 router.get("/tprm/fourth-parties/graph", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const scopeTenantIds = await getVendorScopeTenantIds(req);
   const vendorTenantCond = scopeTenantIds.length > 0
