@@ -553,15 +553,52 @@ router.get("/tprm/vendors/compare", requireAuth, requireTprm, async (req: Authen
     if (vendorIds.length === 0) { res.json([]); return; }
     const vendors = await db.select().from(tprmVendorsTable).where(inArray(tprmVendorsTable.id, vendorIds));
     const result = await Promise.all(vendors.map(async v => {
-      const scores = await db.select({ overallScore: tprmVendorRiskScoresTable.overallScore, calculatedAt: tprmVendorRiskScoresTable.calculatedAt })
-        .from(tprmVendorRiskScoresTable)
-        .where(and(eq(tprmVendorRiskScoresTable.vendorId, v.id), eq(tprmVendorRiskScoresTable.tenantId, v.tenantId)))
-        .orderBy(asc(tprmVendorRiskScoresTable.calculatedAt))
-        .limit(30);
-      const [findings] = await db.select({ critical: sql<number>`count(*) filter (where severity='critical')::int`, high: sql<number>`count(*) filter (where severity='high')::int`, medium: sql<number>`count(*) filter (where severity='medium')::int`, low: sql<number>`count(*) filter (where severity='low')::int` })
-        .from(tprmVendorFindingsTable)
-        .where(and(eq(tprmVendorFindingsTable.vendorId, v.id), eq(tprmVendorFindingsTable.tenantId, v.tenantId)));
-      return { id: v.id, companyName: v.companyName, riskScore: v.riskScore, riskGrade: v.riskGrade, domain: v.domain, logoUrl: v.logoUrl, industry: v.industry, riskHistory: scores.map(s => ({ score: s.overallScore, date: s.calculatedAt })), findings: findings ?? { critical: 0, high: 0, medium: 0, low: 0 } };
+      const [scores, findingCounts, openFindingCounts, fourthPartyRows] = await Promise.all([
+        db.select({ overallScore: tprmVendorRiskScoresTable.overallScore, calculatedAt: tprmVendorRiskScoresTable.calculatedAt })
+          .from(tprmVendorRiskScoresTable)
+          .where(and(eq(tprmVendorRiskScoresTable.vendorId, v.id), eq(tprmVendorRiskScoresTable.tenantId, v.tenantId)))
+          .orderBy(asc(tprmVendorRiskScoresTable.calculatedAt))
+          .limit(30),
+        db.select({
+          critical: sql<number>`count(*) filter (where severity='critical')::int`,
+          high:     sql<number>`count(*) filter (where severity='high')::int`,
+          medium:   sql<number>`count(*) filter (where severity='medium')::int`,
+          low:      sql<number>`count(*) filter (where severity='low')::int`,
+        }).from(tprmVendorFindingsTable)
+          .where(and(eq(tprmVendorFindingsTable.vendorId, v.id), eq(tprmVendorFindingsTable.tenantId, v.tenantId))),
+        db.select({ count: sql<number>`count(*)::int` })
+          .from(tprmVendorFindingsTable)
+          .where(and(
+            eq(tprmVendorFindingsTable.vendorId, v.id),
+            eq(tprmVendorFindingsTable.tenantId, v.tenantId),
+            eq(tprmVendorFindingsTable.status, "open"),
+          )),
+        db.select({ count: sql<number>`count(*)::int` })
+          .from(tprmFourthPartyVendorsTable)
+          .where(and(
+            eq(tprmFourthPartyVendorsTable.parentVendorId, v.id),
+            eq(tprmFourthPartyVendorsTable.tenantId, v.tenantId),
+          )),
+      ]);
+      const fc = findingCounts[0] ?? { critical: 0, high: 0, medium: 0, low: 0 };
+      return {
+        id:               v.id,
+        companyName:      v.companyName,
+        riskScore:        v.riskScore,
+        riskGrade:        v.riskGrade,
+        domain:           v.domain,
+        logoUrl:          v.logoUrl,
+        industry:         v.industry,
+        inherentRisk:     v.inherentRisk,
+        criticalFindings: fc.critical,
+        highFindings:     fc.high,
+        mediumFindings:   fc.medium,
+        lowFindings:      fc.low,
+        openFindings:     openFindingCounts[0]?.count ?? 0,
+        fourthPartyCount: fourthPartyRows[0]?.count ?? 0,
+        complianceScore:  null as number | null,
+        riskHistory:      scores.map(s => ({ score: s.overallScore, date: s.calculatedAt })),
+      };
     }));
     res.json(result);
   } catch (err) {

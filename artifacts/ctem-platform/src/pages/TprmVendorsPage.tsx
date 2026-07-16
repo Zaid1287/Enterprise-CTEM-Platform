@@ -480,22 +480,22 @@ export default function TprmVendorsPage() {
         </Card>
       ) : view === "table" ? (
         <Card>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
+          <CardContent className="p-0 overflow-x-auto">
+            <table className="w-full text-sm min-w-[1280px]">
               <thead>
                 <tr className="border-b border-border/50">
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Vendor</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Domain</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Type</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Industry</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Inherent Risk</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Scan Freq</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Grade</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Risk Score</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Assets</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Last Scanned</th>
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5" />
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Vendor</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Domain</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Type</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Industry</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Inherent Risk</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Scan Freq</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Grade</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Risk Score</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Assets</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Last Scanned</th>
+                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 whitespace-nowrap">Status</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap text-right text-xs text-muted-foreground font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -535,8 +535,8 @@ export default function TprmVendorsPage() {
                       }
                     </td>
                     {/* Actions */}
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1">
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
