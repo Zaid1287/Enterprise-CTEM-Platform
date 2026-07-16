@@ -128,9 +128,18 @@ const CATEGORY_META: Record<string, {
     border: "border-border",
     description: "Miscellaneous platform configuration values",
   },
+  shadow_it: {
+    label: "Shadow IT / IdP Credentials",
+    icon: EyeOff,
+    color: "text-purple-400",
+    bg: "bg-purple-500/10",
+    border: "border-purple-500/20",
+    description: "API credentials for Identity Provider integrations — Google Workspace Service Account, Microsoft Azure Client Secret, and Okta API Token. Required by the Shadow IT SaaS & OAuth Discovery module to enumerate OAuth apps and user attributions.",
+    docsUrl: "https://workspace.google.com/products/admin/",
+  },
 };
 
-const CATEGORY_ORDER = ["infrastructure", "billing", "scanning", "waf_bypass", "intelligence", "osint", "brand_threat", "brand_intelligence", "email", "notifications", "general"];
+const CATEGORY_ORDER = ["infrastructure", "billing", "scanning", "waf_bypass", "intelligence", "osint", "brand_threat", "brand_intelligence", "shadow_it", "email", "notifications", "general"];
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function PlatformSettingsPage() {

@@ -65,6 +65,9 @@ const PLATFORM_KEYS: PlatformKeyDef[] = [
   { key: "ti_greynoise_key",         label: "GreyNoise API Key",       description: "GreyNoise API key — classifies IPs as benign internet noise vs. targeted malicious activity. Requires Community or Enterprise plan.", category: "threat_intel" },
   { key: "ti_virustotal_key",        label: "VirusTotal TI API Key",   description: "VirusTotal API key for Threat Intelligence feeds — enables file/URL/IP/domain reputation lookups and hunting feeds. Separate from the ASM scan VirusTotal key; both can be set independently.", category: "threat_intel" },
   { key: "ti_threatfox_key",         label: "ThreatFox API Key",       description: "ThreatFox (abuse.ch) API key — ingests IOC feeds from ThreatFox including C2 server IPs, malware hashes, and botnet indicators. Free API key available at threatfox.abuse.ch.", category: "threat_intel" },
+  { key: "shadow_it_google_sa_json",        label: "Google Workspace Service Account JSON", description: "Full JSON content of a Google Cloud Service Account key file with Domain-Wide Delegation enabled. Required scopes: admin.directory.user.readonly, admin.directory.user.security. Used by the Shadow IT SaaS & OAuth Discovery module to enumerate OAuth apps granted by your Google Workspace users.", category: "shadow_it" },
+  { key: "shadow_it_azure_client_secret",   label: "Microsoft Azure Client Secret",         description: "Client Secret value from your Azure AD App Registration. Required Application permissions: Application.Read.All, User.Read.All, DelegatedPermissionGrant.ReadWrite.All — with Admin Consent granted. Used by the Shadow IT module to enumerate OAuth apps from Microsoft Entra ID.", category: "shadow_it" },
+  { key: "shadow_it_okta_api_token",        label: "Okta API Token",                        description: "Okta API token created in Admin Console → Security → API → Tokens. Requires read access to Users and Applications. Used by the Shadow IT module to enumerate OAuth apps and user attributions from your Okta organization.", category: "shadow_it" },
 ];
 
 function isSuperAdmin(req: AuthenticatedRequest): boolean {
@@ -73,7 +76,7 @@ function isSuperAdmin(req: AuthenticatedRequest): boolean {
 
 function maskValue(key: string, value: string): string {
   if (!value) return "";
-  const sensitiveKeys = ["api_key", "webhook_url", "smtp_pass", "smtp_user"];
+  const sensitiveKeys = ["api_key", "webhook_url", "smtp_pass", "smtp_user", "client_secret", "api_token", "_sa_json", "secret_key", "access_token", "bearer_token"];
   const isSensitive = sensitiveKeys.some(k => key.includes(k));
   if (!isSensitive) return value;
   if (value.length <= 8) return "••••••••";

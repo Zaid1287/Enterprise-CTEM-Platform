@@ -7,6 +7,7 @@ import {
   shadowItOauthAppsTable,
   shadowItOauthUsersTable,
   shadowItNetworkDevicesTable,
+  platformSettingsTable,
 } from "@workspace/db";
 import { eq, and, desc, count, sql } from "drizzle-orm";
 import { requireAuth, requireRole, type AuthenticatedRequest } from "../lib/auth";
@@ -725,6 +726,70 @@ router.post("/shadow-it/scan", requireRole("manager", "admin", "super_admin"), a
       logger.error({ err, tenantId }, "Manual Shadow IT scan failed");
     }
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IdP CREDENTIAL MANAGEMENT (admin-accessible platform setting save)
+// Allows admins (not just super_admin) to store IdP credentials
+// ─────────────────────────────────────────────────────────────────────────────
+
+const VALID_IDP_CRED_KEYS = [
+  "shadow_it_google_sa_json",
+  "shadow_it_azure_client_secret",
+  "shadow_it_okta_api_token",
+] as const;
+
+router.put("/shadow-it/idp-credentials", requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { key, value } = req.body as { key: string; value: string };
+  if (!key || !VALID_IDP_CRED_KEYS.includes(key as typeof VALID_IDP_CRED_KEYS[number])) {
+    res.status(400).json({ error: `Invalid credential key. Must be one of: ${VALID_IDP_CRED_KEYS.join(", ")}` });
+    return;
+  }
+  try {
+    if (!value || value.trim() === "") {
+      await db.delete(platformSettingsTable).where(eq(platformSettingsTable.key, key));
+    } else {
+      const existing = await db.select({ id: platformSettingsTable.key }).from(platformSettingsTable).where(eq(platformSettingsTable.key, key));
+      const labelMap: Record<string, string> = {
+        shadow_it_google_sa_json: "Google Workspace Service Account JSON",
+        shadow_it_azure_client_secret: "Microsoft Azure Client Secret",
+        shadow_it_okta_api_token: "Okta API Token",
+      };
+      if (existing.length > 0) {
+        await db.update(platformSettingsTable).set({ value: value.trim(), updatedAt: new Date() }).where(eq(platformSettingsTable.key, key));
+      } else {
+        await db.insert(platformSettingsTable).values({
+          key,
+          value: value.trim(),
+          label: labelMap[key] ?? key,
+          description: "IdP credential for Shadow IT discovery",
+          category: "shadow_it",
+        });
+      }
+    }
+    await logAudit(req.user! as any, "shadow_it.idp_credential_save", "platform_setting", 0, JSON.stringify({ key }));
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "PUT /shadow-it/idp-credentials failed");
+    res.status(500).json({ error: "Failed to save IdP credential" });
+  }
+});
+
+router.get("/shadow-it/idp-credential-status", requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  try {
+    const rows = await db.select({ key: platformSettingsTable.key, hasValue: sql<boolean>`(value IS NOT NULL AND value != '')` })
+      .from(platformSettingsTable)
+      .where(sql`key = ANY(ARRAY['shadow_it_google_sa_json','shadow_it_azure_client_secret','shadow_it_okta_api_token'])`);
+    const map: Record<string, boolean> = {};
+    for (const r of rows) map[r.key] = Boolean(r.hasValue);
+    res.json({
+      shadow_it_google_sa_json: map["shadow_it_google_sa_json"] ?? false,
+      shadow_it_azure_client_secret: map["shadow_it_azure_client_secret"] ?? false,
+      shadow_it_okta_api_token: map["shadow_it_okta_api_token"] ?? false,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch credential status" });
+  }
 });
 
 export default router;
