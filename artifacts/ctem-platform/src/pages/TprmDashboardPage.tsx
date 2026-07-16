@@ -30,7 +30,7 @@ interface DashboardData {
   oneTimeBreakdown:    { poor: number; average: number; good: number };
   topCritical: any[];
   assetCounts: { domains: number; subdomains: number; ipAddresses: number; webApps: number; mobileApps: number };
-  infraCoverage: { misconfiguredCloud: number; subdomains: number; mobileApps: number; webApps: number };
+  infraCoverage: { misconfiguredCloud: number; subdomains: number; mobileApps: number; webApps: number; misconfiguredDns: number; sslIssues: number };
   digitalExposure: { credentialLeaks: number; docsExposed: number; darkWebMentions: number; brandMentions: number; employeeDataExposed: number; credentialOnForum: number };
   activeDataLeaks: number;
   activeSecurityRisks: number;
@@ -233,12 +233,14 @@ export default function TprmDashboardPage() {
       {/* Infrastructure Attack Vector Coverage */}
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Infrastructure Initial Attack Vector Coverage</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
             { label: "Misconfigured Cloud Services", value: data?.infraCoverage.misconfiguredCloud, color: "text-blue-400" },
             { label: "Subdomains",                   value: data?.infraCoverage.subdomains,          color: "text-purple-400" },
             { label: "Mobile Apps",                  value: data?.infraCoverage.mobileApps,          color: "text-cyan-400" },
             { label: "Web Apps",                     value: data?.infraCoverage.webApps,             color: "text-emerald-400" },
+            { label: "Misconfigured DNS",            value: data?.infraCoverage.misconfiguredDns,    color: "text-yellow-400" },
+            { label: "SSL Issues",                   value: data?.infraCoverage.sslIssues,           color: "text-red-400" },
           ].map(k => (
             <Card key={k.label} className="bg-card/50 border-dashed">
               <CardContent className="pt-3 pb-3">

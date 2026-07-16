@@ -1041,7 +1041,7 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
 
     const vendorIds = allVendors.map(v => v.id);
     let digitalExposure = { credentialLeaks: 0, docsExposed: 0, darkWebMentions: 0, brandMentions: 0, employeeDataExposed: 0, credentialOnForum: 0 };
-    let infraCoverage = { misconfiguredCloud: 0, subdomains: 0, mobileApps: 0, webApps: 0 };
+    let infraCoverage = { misconfiguredCloud: 0, subdomains: 0, mobileApps: 0, webApps: 0, misconfiguredDns: 0, sslIssues: 0 };
     let assetCounts = { domains: 0, subdomains: 0, ipAddresses: 0, webApps: 0, mobileApps: 0 };
     let activeDataLeaks = 0;
     let activeSecurityRisks = 0;
@@ -1089,6 +1089,8 @@ router.get("/tprm/dashboard", requireAuth, requireTprm, async (req: Authenticate
       infraCoverage.subdomains         = assetCounts.subdomains;
       infraCoverage.mobileApps         = assetCounts.mobileApps;
       infraCoverage.webApps            = assetCounts.webApps;
+      infraCoverage.misconfiguredDns   = findings.filter(f => f.category === "email" || f.category === "dns").length;
+      infraCoverage.sslIssues          = findings.filter(f => f.category === "tls").length;
 
       digitalExposure.credentialLeaks    = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".env") || f.title?.includes("credential") || f.title?.includes("secret"))).length;
       digitalExposure.docsExposed        = findings.filter(f => f.category === "info_leak" && (f.title?.includes(".git") || f.title?.includes("config"))).length;
