@@ -587,12 +587,13 @@ function scheduleLabel(item: any): string {
 }
 
 function WatchlistItem({
-  item, onDelete, onScheduleChange, onEdit, deleting, latestScan, onViewScan, onRunScan, onView, runningScan,
+  item, onDelete, onScheduleChange, onEdit, deleting, latestScan, onViewScan, onRunScan, onView, runningScan, allAssets = [],
 }: {
   item: any;
   onDelete: (id: number) => void;
   onScheduleChange: (id: number, schedule: WatchlistSchedule) => void;
-  onEdit: (id: number, updates: { value: string; type: string; notes: string }) => Promise<void>;
+  onEdit: (id: number, updates: { value: string; type: string; notes: string; assetId?: number | null }) => Promise<void>;
+  allAssets?: any[];
   deleting: boolean;
   latestScan?: any;
   onViewScan?: (id: number) => void;
@@ -612,12 +613,17 @@ function WatchlistItem({
   const [editValue, setEditValue] = useState(item.value ?? "");
   const [editType, setEditType] = useState(item.type ?? "domain");
   const [editNotes, setEditNotes] = useState(item.notes ?? "");
+  const [editAssetId, setEditAssetId] = useState<number | null>(item.assetId ?? null);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Derive linked asset name for display badge
+  const linkedAsset = item.assetId ? (allAssets as any[]).find((a: any) => a.id === item.assetId) : null;
 
   function openItemEdit() {
     setEditValue(item.value ?? "");
     setEditType(item.type ?? "domain");
     setEditNotes(item.notes ?? "");
+    setEditAssetId(item.assetId ?? null);
     setEditingFreq(false); // close schedule editor if open
     setEditingItem(true);
   }
@@ -626,7 +632,7 @@ function WatchlistItem({
     if (!editValue.trim()) return;
     setSavingEdit(true);
     try {
-      await onEdit(item.id, { value: editValue.trim(), type: editType, notes: editNotes });
+      await onEdit(item.id, { value: editValue.trim(), type: editType, notes: editNotes, assetId: editAssetId });
       setEditingItem(false);
     } finally {
       setSavingEdit(false);
@@ -672,6 +678,12 @@ function WatchlistItem({
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center gap-1 shrink-0">
                 <RotateCw className="w-2.5 h-2.5" />
                 {label}
+              </span>
+            )}
+            {linkedAsset && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center gap-1 shrink-0" title={`Linked to asset: ${linkedAsset.name ?? linkedAsset.domain ?? `#${linkedAsset.id}`}`}>
+                <CheckCircle2 className="w-2.5 h-2.5" />
+                {linkedAsset.name ?? linkedAsset.domain ?? `Asset #${linkedAsset.id}`}
               </span>
             )}
           </div>
@@ -813,27 +825,52 @@ function WatchlistItem({
               />
             </div>
           </div>
-          {/* Live scan domain preview */}
+          {/* Live scan preview */}
           {editValue.trim() && editType !== "ip" && editPreview?.domain && (
             <p className="text-[10px] text-emerald-400/80 flex items-center gap-1.5">
               <Zap className="w-3 h-3 shrink-0" />
               Will scan: <span className="font-mono font-medium">{editPreview.domain}</span>
             </p>
           )}
-          {editValue.trim() && editType !== "ip" && !editPreview?.domain && editPreview?.error && (
+          {editValue.trim() && editType !== "ip" && !editPreview?.domain && editPreview?.osintLabel && (
+            <p className="text-[10px] text-blue-400/80 flex items-center gap-1.5">
+              <Zap className="w-3 h-3 shrink-0" />
+              {editPreview.osintLabel}
+            </p>
+          )}
+          {editValue.trim() && editType !== "ip" && !editPreview?.domain && !editPreview?.osintLabel && editPreview?.error && (
             <p className="text-[10px] text-muted-foreground/60 flex items-center gap-1.5">
               <AlertTriangle className="w-3 h-3 shrink-0" />
               {editPreview.error}
             </p>
           )}
-          <div className="space-y-1">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Notes (optional)</span>
-            <input
-              value={editNotes}
-              onChange={e => setEditNotes(e.target.value)}
-              placeholder="Optional context or description"
-              className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500/40"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Notes (optional)</span>
+              <input
+                value={editNotes}
+                onChange={e => setEditNotes(e.target.value)}
+                placeholder="Optional context or description"
+                className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+              />
+            </div>
+            <div className="space-y-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Link to Asset <span className="opacity-50">(verified only)</span></span>
+              <select
+                value={editAssetId ?? ""}
+                onChange={e => setEditAssetId(e.target.value ? parseInt(e.target.value, 10) : null)}
+                className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+              >
+                <option value="">— None —</option>
+                {(allAssets as any[])
+                  .filter((a: any) => a.verificationStatus === "verified")
+                  .map((a: any) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name ?? a.domain ?? `Asset #${a.id}`} ({a.type})
+                    </option>
+                  ))}
+              </select>
+            </div>
           </div>
           <div className="flex gap-1.5 justify-end">
             <Button
@@ -1153,7 +1190,7 @@ function WatchlistSection() {
     }
   }
 
-  async function handleEditItem(id: number, updates: { value: string; type: string; notes: string }) {
+  async function handleEditItem(id: number, updates: { value: string; type: string; notes: string; assetId?: number | null }) {
     const res = await fetch(`/api/brand-watchlist/${id}`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
@@ -1337,9 +1374,11 @@ function WatchlistSection() {
                   className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
                 >
                   <option value="">— None —</option>
-                  {(watchlistAssets as any[]).map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name ?? a.domain ?? a.value ?? `Asset #${a.id}`} ({a.type})</option>
-                  ))}
+                  {(watchlistAssets as any[])
+                    .filter((a: any) => a.verificationStatus === "verified")
+                    .map((a: any) => (
+                      <option key={a.id} value={a.id}>{a.name ?? a.domain ?? `Asset #${a.id}`} ({a.type})</option>
+                    ))}
                 </select>
               </div>
             </div>
@@ -1382,6 +1421,7 @@ function WatchlistSection() {
                 onRunScan={handleRunScan}
                 onView={handleViewItem}
                 runningScan={runningScanItemId === item.id}
+                allAssets={watchlistAssets as any[]}
               />
             ))}
           </div>
