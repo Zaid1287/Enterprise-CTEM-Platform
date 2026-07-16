@@ -1863,8 +1863,218 @@ export async function enrichStaleScans(): Promise<void> {
     }
 
     logger.info("Brand threat enrichment: all phases completed");
+
+    // ── Phase D: DNS backfill for archived results missing registration data ──
+    // Runs fire-and-forget so it doesn't block startup or the main phases.
+    // Finds archived rows with no dns_a and no registration_status and re-resolves
+    // DNS to populate registration_status, risk_score, and is_phishing so that
+    // the "Previous Scan Rounds" history table shows accurate Registered / High
+    // Risk / Phishing counts instead of all dashes.
+    setImmediate(() => { void backfillArchivedDns(); });
+
   } catch (err) {
     logger.warn({ err }, "Brand threat enrichment: failed (non-fatal)");
+  }
+}
+
+/**
+ * Phase D — retroactive DNS backfill for archived brand_threat_results rows
+ * that have no dns_a and no registration_status.  These rows were written by
+ * older scan runs before DNS enrichment was reliable.  Re-resolving DNS now
+ * lets the "Previous Scan Rounds" history card show real Registered / High Risk
+ * / Phishing counts.
+ *
+ * Processes up to MAX_BACKFILL rows per run with 20 concurrent DNS workers.
+ * Runs entirely in the background — never blocks startup.
+ */
+async function backfillArchivedDns(): Promise<void> {
+  const MAX_BACKFILL = 5000;
+  const DNS_CONCURRENCY = 20;
+  try {
+    // Find archived rows that have no dns_a AND no registration_status.
+    // We include vtMalicious/vtSuspicious/isPhishing/fuzzer/whoisAgeDays so
+    // we can recompute a proper risk score after DNS resolves.
+    // Target archived rows from old scans where DNS resolution was broken:
+    // these have dns_a = NULL (no IP ever resolved) AND registration_status =
+    // 'unregistered' (set by old code that couldn't reach external DNS).
+    // We only re-enrich rows from scan rounds where ZERO domains are registered —
+    // a statistical impossibility for a real domain, meaning DNS was fully blocked.
+    // To avoid unbounded work, cap at MAX_BACKFILL rows and limit to 200 per scan.
+    // Find scan IDs that have archived rounds where EVERY domain is 'unregistered'
+    // and has no DNS A record — this indicates the DNS resolver was blocked during
+    // that old scan run (a statistical impossibility for real domain portfolios).
+    const corruptRounds = await db.execute<{ scanId: number }>(sql`
+      SELECT DISTINCT rounds.scan_id AS "scanId"
+      FROM (
+        SELECT scan_id,
+               date_trunc('minute', archived_at) AS bucket,
+               COUNT(*)                                                                                 AS total,
+               COUNT(CASE WHEN dns_a IS NULL OR cardinality(dns_a) = 0 THEN 1 END)                    AS no_dns_a,
+               COUNT(CASE WHEN registration_status IN ('active','parked','registered') THEN 1 END)     AS registered_cnt
+        FROM brand_threat_results
+        WHERE archived_at IS NOT NULL
+        GROUP BY scan_id, bucket
+      ) rounds
+      WHERE rounds.total > 50
+        AND rounds.registered_cnt = 0
+        AND rounds.no_dns_a > 0
+    `);
+
+    if (corruptRounds.rows.length === 0) {
+      logger.info("Brand threat enrichment: Phase D — no archived rows need DNS backfill");
+      return;
+    }
+
+    // Now find the exact (scan_id, bucket) pairs that are corrupt so we can
+    // sample up to ROWS_PER_ROUND rows from EACH corrupt round independently.
+    // This prevents all 200-per-scan rows from landing in a single bucket.
+    const corruptBuckets = await db.execute<{ scanId: number; bucket: Date }>(sql`
+      SELECT scan_id AS "scanId", bucket
+      FROM (
+        SELECT scan_id,
+               date_trunc('minute', archived_at) AS bucket,
+               COUNT(*)                                                                             AS total,
+               COUNT(CASE WHEN dns_a IS NULL OR cardinality(dns_a) = 0 THEN 1 END)                AS no_dns_a,
+               COUNT(CASE WHEN registration_status IN ('active','parked','registered') THEN 1 END) AS registered_cnt
+        FROM brand_threat_results
+        WHERE archived_at IS NOT NULL
+        GROUP BY scan_id, bucket
+      ) rounds
+      WHERE rounds.total > 50
+        AND rounds.registered_cnt = 0
+        AND rounds.no_dns_a > 0
+    `);
+
+    const ROWS_PER_ROUND = 200;
+    logger.info(
+      { bucketCount: corruptBuckets.rows.length },
+      "Brand threat enrichment: Phase D — found corrupt archived rounds to backfill",
+    );
+
+    // Collect up to ROWS_PER_ROUND rows from EACH corrupt round
+    const allRows: Array<{
+      id: number; permutation: string; fuzzer: string | null;
+      vtMalicious: number | null; vtSuspicious: number | null;
+      isPhishing: boolean | null; phishingSource: string | null;
+      whoisAgeDays: number | null; geoCountry: string | null;
+    }> = [];
+
+    for (const { scanId, bucket } of corruptBuckets.rows) {
+      const bucketRows = await db
+        .select({
+          id:             brandThreatResultsTable.id,
+          permutation:    brandThreatResultsTable.permutation,
+          fuzzer:         brandThreatResultsTable.fuzzer,
+          vtMalicious:    brandThreatResultsTable.vtMalicious,
+          vtSuspicious:   brandThreatResultsTable.vtSuspicious,
+          isPhishing:     brandThreatResultsTable.isPhishing,
+          phishingSource: brandThreatResultsTable.phishingSource,
+          whoisAgeDays:   brandThreatResultsTable.whoisAgeDays,
+          geoCountry:     brandThreatResultsTable.geoCountry,
+        })
+        .from(brandThreatResultsTable)
+        .where(and(
+          eq(brandThreatResultsTable.scanId, scanId),
+          isNotNull(brandThreatResultsTable.archivedAt),
+          sql`date_trunc('minute', ${brandThreatResultsTable.archivedAt}) = ${bucket}`,
+          isNull(brandThreatResultsTable.dnsA),
+        ))
+        .limit(ROWS_PER_ROUND);
+      allRows.push(...bucketRows);
+      if (allRows.length >= MAX_BACKFILL) break;
+    }
+
+    const rows = allRows.slice(0, MAX_BACKFILL);
+
+    if (rows.length === 0) {
+      logger.info("Brand threat enrichment: Phase D — no archived rows need DNS backfill");
+      return;
+    }
+
+    logger.info({ count: rows.length }, "Brand threat enrichment: Phase D — starting DNS backfill for archived rows");
+
+    // Load CDN ranges once for risk score computation
+    const cdnRanges = await loadCdnRangesFromDb().catch(() => [] as Array<{ start: number; end: number; label: string }>);
+
+    let updated = 0;
+    let skipped = 0;
+    const queue = [...rows];
+
+    async function worker(): Promise<void> {
+      while (queue.length > 0) {
+        const row = queue.shift();
+        if (!row) break;
+        try {
+          const resolved = await checkDNSFull(row.permutation);
+
+          // If still no DNS response, mark as unregistered so we don't retry
+          // every startup (set registration_status = 'unregistered', keep dns_a null).
+          if (
+            resolved.dnsA.length === 0 &&
+            resolved.dnsAaaa.length === 0 &&
+            resolved.dnsMx.length === 0 &&
+            resolved.dnsNs.length === 0
+          ) {
+            await db.update(brandThreatResultsTable)
+              .set({ registrationStatus: "unregistered" })
+              .where(eq(brandThreatResultsTable.id, row.id));
+            skipped++;
+            continue;
+          }
+
+          const registrationStatus =
+            resolved.dnsA.length > 0  ? "active"     :
+            resolved.dnsNs.length > 0 ? "parked"     :
+            resolved.dnsMx.length > 0 ? "registered" : "unregistered";
+
+          const riskScore = computeRisk(
+            resolved.dnsA,
+            resolved.dnsMx,
+            resolved.dnsNs,
+            row.fuzzer ?? "original",
+            row.vtMalicious ?? 0,
+            row.vtSuspicious ?? 0,
+            row.isPhishing ?? false,
+            row.phishingSource ?? null,
+            row.whoisAgeDays ?? null,
+            row.geoCountry ?? null,
+            null,
+            cdnRanges,
+          );
+
+          await db.update(brandThreatResultsTable)
+            .set({
+              dnsA:               resolved.dnsA.length    ? resolved.dnsA    : undefined,
+              dnsAaaa:            resolved.dnsAaaa.length ? resolved.dnsAaaa : undefined,
+              dnsMx:              resolved.dnsMx.length   ? resolved.dnsMx   : undefined,
+              dnsNs:              resolved.dnsNs.length   ? resolved.dnsNs   : undefined,
+              registrationStatus,
+              riskScore,
+              isSuspicious:       riskScore >= 60,
+            })
+            .where(eq(brandThreatResultsTable.id, row.id));
+          updated++;
+        } catch {
+          // Skip individual failures silently — DNS lookups can time out
+          skipped++;
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: DNS_CONCURRENCY }, () => worker()));
+
+    logger.info(
+      { updated, skipped, total: rows.length },
+      "Brand threat enrichment: Phase D — archived DNS backfill complete",
+    );
+
+    // If we hit the MAX_BACKFILL cap, schedule another pass after 30s
+    if (rows.length >= MAX_BACKFILL) {
+      logger.info("Brand threat enrichment: Phase D — more rows remain, scheduling follow-up pass");
+      setTimeout(() => { void backfillArchivedDns(); }, 30_000);
+    }
+  } catch (err) {
+    logger.warn({ err }, "Brand threat enrichment: Phase D — backfill failed (non-fatal)");
   }
 }
 
