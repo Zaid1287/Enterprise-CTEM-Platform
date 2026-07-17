@@ -29,17 +29,22 @@ export const complianceModuleAssignmentsTable = pgTable("compliance_module_assig
 // This is the canonical list of controls per framework — shared across tenants.
 // controlId e.g. "A.5.1", "CC6.1", "1.1.1" etc.
 export const complianceGlobalControlsTable = pgTable("compliance_global_controls", {
-  id:          serial("id").primaryKey(),
-  frameworkId: integer("framework_id").notNull().references(() => complianceFrameworksTable.id, { onDelete: "cascade" }),
-  controlId:   text("control_id").notNull(),
-  title:       text("title").notNull(),
-  description: text("description"),
-  category:    text("category"),       // Annex clause / domain (e.g. "Organizational Controls")
-  guidance:    text("guidance"),       // Implementation guidance
-  isEnabled:   boolean("is_enabled").notNull().default(true),
-  sortOrder:   integer("sort_order").notNull().default(0),
-  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt:   timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+  id:                 serial("id").primaryKey(),
+  frameworkId:        integer("framework_id").notNull().references(() => complianceFrameworksTable.id, { onDelete: "cascade" }),
+  controlId:          text("control_id").notNull(),
+  title:              text("title").notNull(),
+  description:        text("description"),
+  category:           text("category"),           // Annex clause / domain (e.g. "Organizational Controls")
+  domain:             text("domain"),             // Security domain (e.g. "Access Control")
+  controlType:        text("control_type"),       // preventive/detective/corrective/compensating
+  riskLevel:          text("risk_level"),         // critical/high/medium/low
+  guidance:           text("guidance"),           // Implementation guidance
+  testingProcedures:  text("testing_procedures"), // How to test compliance
+  evidenceRequired:   text("evidence_required"),  // What evidence must be provided
+  isEnabled:          boolean("is_enabled").notNull().default(true),
+  sortOrder:          integer("sort_order").notNull().default(0),
+  createdAt:          timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:          timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 // ── Per-tenant control answers (status + evidence per global control) ─────────

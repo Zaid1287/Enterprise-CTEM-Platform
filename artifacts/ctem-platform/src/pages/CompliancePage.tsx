@@ -41,7 +41,12 @@ interface ControlAnswer {
   title: string;
   description: string | null;
   category: string | null;
+  domain: string | null;
+  controlType: string | null;
+  riskLevel: string | null;
   guidance: string | null;
+  testingProcedures: string | null;
+  evidenceRequired: string | null;
   isEnabled: boolean;
   sortOrder: number;
   frameworkId: number;
@@ -78,11 +83,38 @@ interface GlobalControl {
   title: string;
   description: string | null;
   category: string | null;
+  domain: string | null;
+  controlType: string | null;
+  riskLevel: string | null;
   guidance: string | null;
+  testingProcedures: string | null;
+  evidenceRequired: string | null;
   isEnabled: boolean;
   sortOrder: number;
   frameworkName: string | null;
   frameworkShortName: string | null;
+}
+
+interface ClientComplianceSummary {
+  tenantId: number;
+  tenantName: string;
+  moduleEnabled: boolean;
+  total: number;
+  compliant: number;
+  inProgress: number;
+  nonCompliant: number;
+  notApplicable: number;
+  score: number;
+}
+
+interface TenantAsset {
+  id: number;
+  name: string;
+  value: string | null;
+  type: string;
+  verificationStatus: string;
+  isComplianceEnabled: boolean;
+  enabledAt: string | null;
 }
 
 interface Asset {
@@ -184,7 +216,7 @@ function ControlEditDrawer({ control, frameworkId, onClose }: { control: Control
   const { toast } = useToast();
   const qc = useQueryClient();
   const [status, setStatus] = useState<StatusKey>(control.status);
-  const [notes, setNotes] = useState(control.notes ?? "");
+  const [notes, setNotes] = useState(control.notes ?? control.guidance ?? "");
   const [assignedTo, setAssignedTo] = useState(control.assignedTo ?? "");
   const [dueDate, setDueDate] = useState(control.dueDate ?? "");
   const [uploading, setUploading] = useState(false);
@@ -257,6 +289,40 @@ function ControlEditDrawer({ control, frameworkId, onClose }: { control: Control
                 <Info className="w-3 h-3" />Guidance
               </p>
               <p className="text-muted-foreground leading-relaxed">{control.guidance}</p>
+            </div>
+          )}
+          {(control.domain || control.controlType || control.riskLevel) && (
+            <div className="flex flex-wrap gap-1.5">
+              {control.domain && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">{control.domain}</span>
+              )}
+              {control.controlType && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 capitalize">{control.controlType}</span>
+              )}
+              {control.riskLevel && (
+                <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
+                  control.riskLevel === "critical" ? "bg-red-500/10 border border-red-500/20 text-red-400" :
+                  control.riskLevel === "high" ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" :
+                  control.riskLevel === "medium" ? "bg-yellow-500/10 border border-yellow-500/20 text-yellow-400" :
+                  "bg-green-500/10 border border-green-500/20 text-green-400"
+                }`}>{control.riskLevel} risk</span>
+              )}
+            </div>
+          )}
+          {control.testingProcedures && (
+            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 text-xs">
+              <p className="font-medium text-amber-400/80 mb-1 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" />Testing Procedures
+              </p>
+              <p className="text-muted-foreground leading-relaxed whitespace-pre-line">{control.testingProcedures}</p>
+            </div>
+          )}
+          {control.evidenceRequired && (
+            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3 text-xs">
+              <p className="font-medium text-emerald-400/80 mb-1 flex items-center gap-1">
+                <FileText className="w-3 h-3" />Evidence Required
+              </p>
+              <p className="text-muted-foreground leading-relaxed whitespace-pre-line">{control.evidenceRequired}</p>
             </div>
           )}
           <div>
@@ -341,13 +407,25 @@ function GlobalControlDialog({ control, frameworkId, onClose }: { control: Globa
   const [controlId, setControlId] = useState(control?.controlId ?? "");
   const [description, setDescription] = useState(control?.description ?? "");
   const [category, setCategory] = useState(control?.category ?? "");
+  const [domain, setDomain] = useState(control?.domain ?? "");
+  const [controlType, setControlType] = useState(control?.controlType ?? "");
+  const [riskLevel, setRiskLevel] = useState(control?.riskLevel ?? "");
   const [guidance, setGuidance] = useState(control?.guidance ?? "");
+  const [testingProcedures, setTestingProcedures] = useState(control?.testingProcedures ?? "");
+  const [evidenceRequired, setEvidenceRequired] = useState(control?.evidenceRequired ?? "");
   const isEdit = !!control;
+
+  const payload = {
+    title, controlId, description: description || null, category: category || null,
+    domain: domain || null, controlType: controlType || null, riskLevel: riskLevel || null,
+    guidance: guidance || null, testingProcedures: testingProcedures || null,
+    evidenceRequired: evidenceRequired || null,
+  };
 
   const save = useMutation({
     mutationFn: () => isEdit
-      ? apiFetch(`${BASE}/api/compliance/library/${control!.id}`, { method: "PATCH", body: JSON.stringify({ title, controlId, description, category, guidance }) })
-      : apiFetch(`${BASE}/api/compliance/library`, { method: "POST", body: JSON.stringify({ frameworkId, controlId, title, description, category, guidance }) }),
+      ? apiFetch(`${BASE}/api/compliance/library/${control!.id}`, { method: "PATCH", body: JSON.stringify(payload) })
+      : apiFetch(`${BASE}/api/compliance/library`, { method: "POST", body: JSON.stringify({ frameworkId, ...payload }) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["compliance-library"] });
       qc.invalidateQueries({ queryKey: ["compliance-answers", frameworkId] });
@@ -359,11 +437,12 @@ function GlobalControlDialog({ control, frameworkId, onClose }: { control: Globa
 
   return (
     <Dialog open onOpenChange={() => onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit Control" : "Add Control"}</DialogTitle>
+          <DialogTitle>{isEdit ? "Edit Control" : "Add Control to Library"}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* Row 1: ID + Category */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Control ID *</label>
@@ -374,26 +453,78 @@ function GlobalControlDialog({ control, frameworkId, onClose }: { control: Globa
               <Input value={category} onChange={e => setCategory(e.target.value)} placeholder="e.g. Organizational Controls" className="h-8 text-xs" />
             </div>
           </div>
+
+          {/* Title */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1 block">Title *</label>
             <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Control title" className="h-8 text-xs" />
           </div>
+
+          {/* Domain + Control Type + Risk Level */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Security Domain</label>
+              <Input value={domain} onChange={e => setDomain(e.target.value)} placeholder="e.g. Access Control" className="h-8 text-xs" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Control Type</label>
+              <Select value={controlType} onValueChange={setControlType}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select type…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="preventive">Preventive</SelectItem>
+                  <SelectItem value="detective">Detective</SelectItem>
+                  <SelectItem value="corrective">Corrective</SelectItem>
+                  <SelectItem value="compensating">Compensating</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Risk Level</label>
+              <Select value={riskLevel} onValueChange={setRiskLevel}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select level…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="critical">Critical</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Description */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1 block">Description</label>
-            <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
-              placeholder="Full control description..." className="text-xs" />
+            <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={2}
+              placeholder="Full control description and requirements..." className="text-xs" />
           </div>
+
+          {/* Guidance */}
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Guidance</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Implementation Guidance</label>
             <Textarea value={guidance} onChange={e => setGuidance(e.target.value)} rows={3}
-              placeholder="Implementation guidance..." className="text-xs" />
+              placeholder="Step-by-step implementation guidance for this control..." className="text-xs" />
+          </div>
+
+          {/* Testing Procedures */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Testing Procedures</label>
+            <Textarea value={testingProcedures} onChange={e => setTestingProcedures(e.target.value)} rows={3}
+              placeholder="How to test and verify this control is in place (e.g. review logs, interview staff, inspect configuration)..." className="text-xs" />
+          </div>
+
+          {/* Evidence Required */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Evidence Required</label>
+            <Textarea value={evidenceRequired} onChange={e => setEvidenceRequired(e.target.value)} rows={2}
+              placeholder="What evidence must be collected to demonstrate compliance (e.g. policy document, screenshot, audit log export)..." className="text-xs" />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
           <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || !title || !controlId}>
             {save.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
-            {isEdit ? "Save" : "Create"}
+            {isEdit ? "Save Changes" : "Create Control"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -489,7 +620,7 @@ function ControlsTable({ controls, isAdmin, frameworkId, onEdit, onAdminEdit, on
                           <>
                             {onAdminEdit && (
                               <button className="opacity-0 group-hover:opacity-100 transition text-muted-foreground hover:text-foreground p-1"
-                                onClick={e => { e.stopPropagation(); onAdminEdit({ id: c.globalControlId, frameworkId: c.frameworkId, controlId: c.controlId, title: c.title, description: c.description, category: c.category, guidance: c.guidance, isEnabled: c.isEnabled, sortOrder: c.sortOrder, frameworkName: c.frameworkName, frameworkShortName: c.frameworkShortName }); }}
+                                onClick={e => { e.stopPropagation(); onAdminEdit({ id: c.globalControlId, frameworkId: c.frameworkId, controlId: c.controlId, title: c.title, description: c.description, category: c.category, domain: c.domain, controlType: c.controlType, riskLevel: c.riskLevel, guidance: c.guidance, testingProcedures: c.testingProcedures, evidenceRequired: c.evidenceRequired, isEnabled: c.isEnabled, sortOrder: c.sortOrder, frameworkName: c.frameworkName, frameworkShortName: c.frameworkShortName }); }}
                                 title="Edit control definition">
                                 <BookOpen className="w-3.5 h-3.5" />
                               </button>
@@ -777,7 +908,122 @@ function AssetComplianceTab() {
   );
 }
 
+// ── Client Compliance Overview (admin/AM — shown in Overview tab) ─────────────
+function ClientComplianceSection() {
+  const { data: clients = [], isLoading } = useQuery<ClientComplianceSummary[]>({
+    queryKey: ["compliance-clients-overview"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/clients/overview`),
+  });
+
+  if (isLoading) return (
+    <div>
+      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Building2 className="w-4 h-4 text-primary" />Client Compliance Posture</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}
+      </div>
+    </div>
+  );
+
+  if (clients.length === 0) return null;
+
+  return (
+    <div>
+      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+        <Building2 className="w-4 h-4 text-primary" />
+        Client Compliance Posture
+        <span className="text-xs font-normal text-muted-foreground">({clients.length} client{clients.length !== 1 ? "s" : ""})</span>
+      </h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        {clients.map(c => {
+          const scoreColor = c.score >= 70 ? "text-green-400" : c.score >= 40 ? "text-yellow-400" : "text-red-400";
+          return (
+            <div key={c.tenantId} className="bg-card border border-border rounded-xl p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">{c.tenantName}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {c.moduleEnabled
+                      ? <Badge className="text-[10px] bg-green-500/15 text-green-400 border-green-500/30">Module Active</Badge>
+                      : <Badge className="text-[10px] bg-muted text-muted-foreground border-border">Module Off</Badge>
+                    }
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={cn("text-2xl font-bold", scoreColor)}>{c.score}%</p>
+                  <p className="text-[10px] text-muted-foreground">compliance score</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {([
+                  ["Compliant", c.compliant, "text-green-400", "bg-green-500/10"],
+                  ["In Prog.", c.inProgress, "text-yellow-400", "bg-yellow-500/10"],
+                  ["Non-Comp.", c.nonCompliant, "text-red-400", "bg-red-500/10"],
+                  ["N/A", c.notApplicable, "text-slate-400", "bg-slate-500/10"],
+                ] as [string, number, string, string][]).map(([label, val, cls, bg]) => (
+                  <div key={label} className={cn("rounded-lg px-1.5 py-2 text-center", bg)}>
+                    <p className={cn("text-sm font-bold", cls)}>{val}</p>
+                    <p className="text-[9px] text-muted-foreground leading-tight mt-0.5">{label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="w-full bg-muted/30 rounded-full h-1.5">
+                <div className={cn("h-1.5 rounded-full transition-all", c.score >= 70 ? "bg-green-500" : c.score >= 40 ? "bg-yellow-500" : "bg-red-500")}
+                  style={{ width: `${c.score}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Assignments Tab ───────────────────────────────────────────────────────────
+function TenantAssetRow({ tenantId }: { tenantId: number }) {
+  const [open, setOpen] = useState(false);
+  const { data: assets, isLoading } = useQuery<TenantAsset[]>({
+    queryKey: ["compliance-client-assets", tenantId],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/clients/${tenantId}/assets`),
+    enabled: open,
+  });
+
+  const verified = assets?.filter(a => a.verificationStatus === "verified") ?? [];
+  const enabled = verified.filter(a => a.isComplianceEnabled);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mt-1"
+      >
+        <ChevronDown className={cn("w-3 h-3 transition-transform", open ? "rotate-180" : "")} />
+        {open
+          ? `${enabled.length} of ${verified.length} verified asset${verified.length !== 1 ? "s" : ""} compliance-enabled`
+          : "View verified assets"}
+      </button>
+      {open && (
+        <div className="mt-2 ml-1 space-y-1">
+          {isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+          {!isLoading && verified.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">No verified assets for this tenant. Assets must be verified before compliance tracking can be enabled.</p>
+          )}
+          {verified.map(a => (
+            <div key={a.id} className="flex items-center gap-2 bg-muted/20 rounded px-3 py-1.5 text-xs">
+              <ShieldCheck className={cn("w-3 h-3 shrink-0", a.isComplianceEnabled ? "text-green-400" : "text-muted-foreground")} />
+              <span className="flex-1 truncate font-medium">{a.name}</span>
+              <span className="text-muted-foreground shrink-0">{a.type}</span>
+              {a.isComplianceEnabled
+                ? <Badge className="text-[10px] bg-green-500/20 text-green-400 border-green-500/30 shrink-0">Compliance ON</Badge>
+                : <Badge className="text-[10px] bg-muted text-muted-foreground border-border shrink-0">Compliance OFF</Badge>
+              }
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AssignmentsTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -798,7 +1044,7 @@ function AssignmentsTab() {
     <div className="space-y-3">
       <div className="bg-primary/5 border border-primary/20 rounded-lg px-4 py-3 text-xs text-muted-foreground flex items-start gap-2">
         <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-        <span>Toggle the Compliance module on or off for each client tenant. Admins and account managers always have access regardless.</span>
+        <span>Toggle the Compliance module on or off for each client tenant. Only <strong className="text-foreground">verified assets</strong> can have compliance tracking enabled — unverified assets are excluded from scope.</span>
       </div>
       {isLoading
         ? <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
@@ -807,18 +1053,21 @@ function AssignmentsTab() {
           : (
             <div className="bg-card border border-border rounded-xl divide-y divide-border overflow-hidden">
               {assignments.map(a => (
-                <div key={a.tenantId} className="flex items-center gap-4 px-4 py-3">
-                  <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{a.tenantName}</p>
-                    {a.enabledAt && <p className="text-xs text-muted-foreground">Enabled {new Date(a.enabledAt).toLocaleDateString()}</p>}
+                <div key={a.tenantId} className="px-4 py-3">
+                  <div className="flex items-center gap-4">
+                    <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{a.tenantName}</p>
+                      {a.enabledAt && <p className="text-xs text-muted-foreground">Enabled {new Date(a.enabledAt).toLocaleDateString()}</p>}
+                    </div>
+                    {a.isEnabled && <Badge className="text-xs bg-green-500/20 text-green-400 border-green-500/30">Active</Badge>}
+                    <button onClick={() => toggle.mutate({ tenantId: a.tenantId, isEnabled: !a.isEnabled })} disabled={toggle.isPending}>
+                      {a.isEnabled
+                        ? <ToggleRight className="w-8 h-8 text-green-400 hover:text-green-300 transition" />
+                        : <ToggleLeft className="w-8 h-8 text-muted-foreground hover:text-foreground transition" />}
+                    </button>
                   </div>
-                  {a.isEnabled && <Badge className="text-xs bg-green-500/20 text-green-400 border-green-500/30">Active</Badge>}
-                  <button onClick={() => toggle.mutate({ tenantId: a.tenantId, isEnabled: !a.isEnabled })} disabled={toggle.isPending}>
-                    {a.isEnabled
-                      ? <ToggleRight className="w-8 h-8 text-green-400 hover:text-green-300 transition" />
-                      : <ToggleLeft className="w-8 h-8 text-muted-foreground hover:text-foreground transition" />}
-                  </button>
+                  <TenantAssetRow tenantId={a.tenantId} />
                 </div>
               ))}
             </div>
@@ -968,6 +1217,7 @@ export default function CompliancePage() {
                 ))}
               </div>
             )}
+            {isAdminOrAM && <ClientComplianceSection />}
           </div>
         )}
 

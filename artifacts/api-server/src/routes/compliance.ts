@@ -94,14 +94,17 @@ router.get("/compliance/library", requireAuth, requireCompliance, async (req: Au
 });
 
 router.post("/compliance/library", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { frameworkId, controlId, title, description, category, guidance, sortOrder } = req.body;
+  const { frameworkId, controlId, title, description, category, domain, controlType, riskLevel, guidance, testingProcedures, evidenceRequired, sortOrder } = req.body;
   if (!frameworkId || !controlId || !title) { res.status(400).json({ error: "frameworkId, controlId, title required" }); return; }
   const [fw] = await db.select().from(complianceFrameworksTable).where(eq(complianceFrameworksTable.id, parseInt(frameworkId)));
   if (!fw) { res.status(400).json({ error: "Framework not found" }); return; }
   const [ctrl] = await db.insert(complianceGlobalControlsTable).values({
     frameworkId: fw.id, controlId: String(controlId), title: String(title),
     description: description || null, category: category || null,
-    guidance: guidance || null, sortOrder: sortOrder ? parseInt(sortOrder) : 0,
+    domain: domain || null, controlType: controlType || null, riskLevel: riskLevel || null,
+    guidance: guidance || null, testingProcedures: testingProcedures || null,
+    evidenceRequired: evidenceRequired || null,
+    sortOrder: sortOrder ? parseInt(sortOrder) : 0,
   }).returning();
   await logAudit(req.user!, "create_global_control", "compliance", ctrl.id, `${fw.shortName}: ${controlId} — ${title}`, req);
   res.status(201).json({ ...ctrl, frameworkName: fw.name, frameworkShortName: fw.shortName });
@@ -109,7 +112,7 @@ router.post("/compliance/library", requireAuth, requireRole("admin", "super_admi
 
 router.patch("/compliance/library/:id", requireAuth, requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = parseInt(req.params.id as string);
-  const allowed = ["controlId", "title", "description", "category", "guidance", "isEnabled", "sortOrder"];
+  const allowed = ["controlId", "title", "description", "category", "domain", "controlType", "riskLevel", "guidance", "testingProcedures", "evidenceRequired", "isEnabled", "sortOrder"];
   const updates: Record<string, any> = { updatedAt: new Date() };
   for (const k of allowed) {
     if (req.body[k] !== undefined) {
@@ -163,7 +166,12 @@ router.get("/compliance/answers", requireAuth, requireCompliance, async (req: Au
     title: control.title,
     description: control.description,
     category: control.category,
+    domain: control.domain,
+    controlType: control.controlType,
+    riskLevel: control.riskLevel,
     guidance: control.guidance,
+    testingProcedures: control.testingProcedures,
+    evidenceRequired: control.evidenceRequired,
     isEnabled: control.isEnabled,
     sortOrder: control.sortOrder,
     frameworkId: control.frameworkId,
@@ -312,6 +320,73 @@ router.get("/compliance/summary", requireAuth, requireCompliance, async (req: Au
     };
   });
   res.json(summary);
+});
+
+// ── Client compliance overview (admin/SA/AM) ──────────────────────────────────
+// Returns per-tenant compliance scores so admin can see client posture in Overview
+router.get("/compliance/clients/overview", requireAuth, requireRole("admin", "super_admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { userId, role } = req.user!;
+  let clientTenantIds: number[];
+  if (role === "account_manager") {
+    clientTenantIds = await getAmClientTenantIds(userId);
+  } else {
+    const privIds = await getPrivilegedTenantIds(req.user!);
+    clientTenantIds = privIds;
+  }
+  if (clientTenantIds.length === 0) { res.json([]); return; }
+
+  const tenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name })
+    .from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds));
+
+  const allControls = await db.select().from(complianceGlobalControlsTable)
+    .where(eq(complianceGlobalControlsTable.isEnabled, true));
+
+  const allAnswers = await db.select().from(complianceControlAnswersTable)
+    .where(inArray(complianceControlAnswersTable.tenantId, clientTenantIds));
+
+  const assignments = await db.select().from(complianceModuleAssignmentsTable)
+    .where(inArray(complianceModuleAssignmentsTable.tenantId, clientTenantIds));
+
+  const result = tenants.map(t => {
+    const answers = allAnswers.filter(a => a.tenantId === t.id);
+    const answerMap = new Map(answers.map(a => [a.globalControlId, a]));
+    const total = allControls.length;
+    const statuses = allControls.map(c => answerMap.get(c.id)?.status ?? "non_compliant");
+    const compliant = statuses.filter(s => s === "compliant").length;
+    const inProgress = statuses.filter(s => s === "in_progress").length;
+    const nonCompliant = statuses.filter(s => s === "non_compliant").length;
+    const notApplicable = statuses.filter(s => s === "not_applicable").length;
+    const score = total > 0 ? Math.round((compliant / (total - notApplicable || 1)) * 100) : 0;
+    const moduleEnabled = assignments.find(a => a.tenantId === t.id)?.isEnabled ?? false;
+    return { tenantId: t.id, tenantName: t.name, moduleEnabled, total, compliant, inProgress, nonCompliant, notApplicable, score };
+  });
+  res.json(result);
+});
+
+// Returns verified assets for a specific client tenant (admin view for Assignments tab)
+router.get("/compliance/clients/:tenantId/assets", requireAuth, requireRole("admin", "super_admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const clientTenantId = parseInt(req.params.tenantId as string);
+  const rows = await db.select({
+    assetId:            assetsTable.id,
+    assetName:          assetsTable.name,
+    assetValue:         assetsTable.value,
+    assetType:          assetsTable.type,
+    verificationStatus: assetsTable.verificationStatus,
+    isComplianceEnabled: complianceAssetSettingsTable.isEnabled,
+    enabledAt:          complianceAssetSettingsTable.enabledAt,
+  }).from(assetsTable)
+    .leftJoin(complianceAssetSettingsTable, eq(complianceAssetSettingsTable.assetId, assetsTable.id))
+    .where(and(
+      eq(assetsTable.tenantId, clientTenantId),
+      eq(assetsTable.verificationStatus, "verified"),
+    ))
+    .orderBy(assetsTable.name);
+  res.json(rows.map(r => ({
+    id: r.assetId, name: r.assetName, value: r.assetValue, type: r.assetType,
+    verificationStatus: r.verificationStatus,
+    isComplianceEnabled: r.isComplianceEnabled ?? false,
+    enabledAt: r.enabledAt,
+  })));
 });
 
 // ── Asset compliance settings: list enabled+verified assets ──────────────────
