@@ -1602,6 +1602,36 @@ router.get("/tprm/vendors/:id/questionnaires", requireAuth, requireTprm, async (
   res.json(rows.map(q => ({ ...q, responses: undefined })));
 });
 
+router.patch("/tprm/vendors/:id/questionnaires/:qid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const qid = parseInt(req.params.qid as string);
+  const [existing] = await db.select().from(tprmVendorQuestionnairesTable)
+    .where(and(eq(tprmVendorQuestionnairesTable.id, qid), eq(tprmVendorQuestionnairesTable.tenantId, tenantId)));
+  if (!existing) { res.status(404).json({ error: "Questionnaire not found" }); return; }
+  const { status, dueDate, respondedBy, notes, score } = req.body;
+  const updates: Record<string, any> = {};
+  if (status     !== undefined) updates.status      = status;
+  if (respondedBy !== undefined) updates.respondedBy = respondedBy;
+  if (notes      !== undefined) updates.notes       = notes;
+  if (score      !== undefined) updates.score       = score !== null ? parseInt(score) : null;
+  if (dueDate    !== undefined) updates.dueDate     = dueDate === "" || dueDate === null ? null : new Date(dueDate);
+  if (status === "completed" && !existing.completedAt) updates.completedAt = new Date();
+  const [updated] = await db.update(tprmVendorQuestionnairesTable).set(updates)
+    .where(and(eq(tprmVendorQuestionnairesTable.id, qid), eq(tprmVendorQuestionnairesTable.tenantId, tenantId))).returning();
+  res.json({ ...updated, responses: undefined });
+});
+
+router.delete("/tprm/vendors/:id/questionnaires/:qid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const qid = parseInt(req.params.qid as string);
+  const [existing] = await db.select().from(tprmVendorQuestionnairesTable)
+    .where(and(eq(tprmVendorQuestionnairesTable.id, qid), eq(tprmVendorQuestionnairesTable.tenantId, tenantId)));
+  if (!existing) { res.status(404).json({ error: "Questionnaire not found" }); return; }
+  await db.delete(tprmVendorQuestionnairesTable)
+    .where(and(eq(tprmVendorQuestionnairesTable.id, qid), eq(tprmVendorQuestionnairesTable.tenantId, tenantId)));
+  res.json({ ok: true });
+});
+
 router.get("/tprm/questionnaires/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const id = parseInt(req.params.id as string);
@@ -2492,13 +2522,14 @@ router.post("/tprm/vendors/:id/compliance-controls", requireAuth, requireTprm, a
 router.patch("/tprm/vendors/:id/compliance-controls/:cid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const cid = parseInt(req.params.cid as string);
-  const allowed = ["status", "evidence", "notes", "assignedTo", "nextReviewAt", "controlTitle", "category"];
+  const allowed = ["status", "evidence", "notes", "assignedTo", "nextReviewAt", "controlTitle", "category", "isActive"];
   const updates: Record<string, any> = { updatedAt: new Date() };
   for (const k of allowed) {
     if (req.body[k] !== undefined) {
-      // Timestamp columns: convert empty string → null to avoid PG cast errors
       if (k === "nextReviewAt") {
         updates[k] = req.body[k] === "" || req.body[k] === null ? null : new Date(req.body[k]);
+      } else if (k === "isActive") {
+        updates[k] = Boolean(req.body[k]);
       } else {
         updates[k] = req.body[k];
       }

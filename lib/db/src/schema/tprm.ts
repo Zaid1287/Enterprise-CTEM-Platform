@@ -281,6 +281,7 @@ export const tprmVendorComplianceControlsTable = pgTable("tprm_vendor_compliance
   assignedTo:   text("assigned_to"),
   reviewedAt:   timestamp("reviewed_at", { withTimezone: true }),
   nextReviewAt: timestamp("next_review_at", { withTimezone: true }),
+  isActive:     boolean("is_active").notNull().default(true),
   createdBy:    integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:    timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

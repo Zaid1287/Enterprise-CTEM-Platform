@@ -13,12 +13,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   ArrowLeft, RefreshCw, Globe, Shield, Bug, Package, FileText, AlertTriangle,
   CheckCircle2, Loader2, Upload, Plus, Mail, Phone, User,
   Building2, Clock, Download, Trash2, Send, ChevronRight, Eye, Zap, Lock, Database, Search,
   Flame, RadioTower, ScanSearch, ShieldAlert,
   Bell, BellOff, ClipboardList, XCircle, BarChart3, ChevronDown, ChevronUp, Info,
+  Edit2, ExternalLink,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
@@ -85,6 +87,10 @@ export default function TprmVendorDetailPage() {
   const [qForm, setQForm]           = useState({ templateId: "", dueDate: "", recipientEmail: "" });
   const [sendingQ, setSendingQ]     = useState(false);
   const [qPortalLink, setQPortalLink] = useState<string | null>(null);
+  const [editingQ, setEditingQ]       = useState<any | null>(null);
+  const [qEditForm, setQEditForm]     = useState({ status: "", dueDate: "", respondedBy: "", notes: "", score: "" });
+  const [savingQEdit, setSavingQEdit] = useState(false);
+  const [localQuestionnaires, setLocalQuestionnaires] = useState<any[]>([]);
 
   // SLA state
   const [slaForm, setSlaForm] = useState({ slaUptimePercent: "", slaResponseTimeHours: "", slaReviewDate: "", slaNotes: "", slaBreachCount: "" });
@@ -139,7 +145,7 @@ export default function TprmVendorDetailPage() {
   const loadVendor = () => {
     setLoading(true);
     apiFetch<any>(`/api/tprm/vendors/${id}`)
-      .then(setVendor)
+      .then(v => { setVendor(v); setLocalQuestionnaires(v.questionnaires ?? []); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -333,11 +339,56 @@ export default function TprmVendorDetailPage() {
       setShowSendQ(false);
       setQForm({ templateId: "", dueDate: "", recipientEmail: "" });
       toast({ title: "Questionnaire sent", description: `Sent to ${qForm.recipientEmail.trim()}` });
+      const newQ = { ...r, portalLink: undefined };
+      setLocalQuestionnaires(prev => [newQ, ...prev]);
       loadVendor();
     } catch (err: any) {
       toast({ title: "Failed to send questionnaire", description: err?.message ?? "Server error — please try again", variant: "destructive" });
     }
     setSendingQ(false);
+  };
+
+  const openEditQ = (q: any) => {
+    setEditingQ(q);
+    setQEditForm({
+      status:      q.status ?? "sent",
+      dueDate:     q.dueDate ? new Date(q.dueDate).toISOString().slice(0, 10) : "",
+      respondedBy: q.respondedBy ?? "",
+      notes:       q.notes ?? "",
+      score:       q.score !== null && q.score !== undefined ? String(q.score) : "",
+    });
+  };
+
+  const saveQEdit = async () => {
+    if (!editingQ) return;
+    setSavingQEdit(true);
+    try {
+      const payload: any = {
+        status:      qEditForm.status,
+        respondedBy: qEditForm.respondedBy || null,
+        notes:       qEditForm.notes || null,
+        dueDate:     qEditForm.dueDate || null,
+        score:       qEditForm.score !== "" ? parseInt(qEditForm.score) : null,
+      };
+      const updated = await apiFetch<any>(`/api/tprm/vendors/${id}/questionnaires/${editingQ.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      setLocalQuestionnaires(prev => prev.map(q => q.id === updated.id ? updated : q));
+      setEditingQ(null);
+      toast({ title: "Questionnaire updated", description: `Status: ${updated.status}` });
+    } catch (err: any) {
+      toast({ title: "Failed to update questionnaire", description: err?.message ?? "Server error", variant: "destructive" });
+    }
+    setSavingQEdit(false);
+  };
+
+  const deleteQ = async (q: any) => {
+    if (!confirm(`Delete questionnaire #${q.id}? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/questionnaires/${q.id}`, { method: "DELETE" });
+      setLocalQuestionnaires(prev => prev.filter(x => x.id !== q.id));
+      toast({ title: "Questionnaire deleted" });
+    } catch (err: any) {
+      toast({ title: "Delete failed", description: err?.message, variant: "destructive" });
+    }
   };
 
   const saveSla = async () => {
@@ -1213,25 +1264,47 @@ export default function TprmVendorDetailPage() {
                       not_applicable:  { label: "N/A",             color: "text-slate-400",  border: "border-slate-500/30"  },
                     };
                     const sm = statusMap[ctrl.status] ?? statusMap.pending_review;
+                    const isInactive = ctrl.isActive === false;
                     return (
-                      <Card key={ctrl.id} className={`bg-card/60 border-l-2 ${sm.border}`}>
+                      <Card key={ctrl.id} className={`border-l-2 transition-opacity ${sm.border} ${isInactive ? "opacity-50 bg-muted/20" : "bg-card/60"}`}>
                         <CardContent className="py-2.5 px-3">
                           <div className="flex items-start gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-xs font-mono font-semibold text-muted-foreground">{ctrl.controlId}</span>
+                                <span className={`text-xs font-mono font-semibold ${isInactive ? "text-muted-foreground/50 line-through" : "text-muted-foreground"}`}>{ctrl.controlId}</span>
                                 {ctrl.category && <Badge variant="outline" className="text-[10px] py-0 h-4">{ctrl.category}</Badge>}
                                 <Badge variant="outline" className={`text-[10px] py-0 h-4 ${sm.color} border-current`}>{sm.label}</Badge>
+                                {isInactive && <Badge variant="secondary" className="text-[10px] py-0 h-4 bg-muted/60">Disabled</Badge>}
                               </div>
-                              <p className="text-xs mt-0.5">{ctrl.controlTitle}</p>
+                              <p className={`text-xs mt-0.5 ${isInactive ? "text-muted-foreground/60" : ""}`}>{ctrl.controlTitle}</p>
                               {ctrl.evidence && <p className="text-[10px] text-muted-foreground mt-0.5 truncate"><span className="font-medium">Evidence:</span> {ctrl.evidence}</p>}
                               {ctrl.assignedTo && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Assigned:</span> {ctrl.assignedTo}</p>}
                               {ctrl.nextReviewAt && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Next review:</span> {new Date(ctrl.nextReviewAt).toLocaleDateString()}</p>}
                               {ctrl.notes && <p className="text-[10px] text-muted-foreground italic">{ctrl.notes}</p>}
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
-                              <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 hover:text-blue-300 px-2" onClick={() => openEditControl(ctrl)}>Edit</Button>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteControl(ctrl.id)}><Trash2 className="w-3 h-3" /></Button>
+                              <Switch
+                                checked={ctrl.isActive !== false}
+                                className="scale-75"
+                                title={ctrl.isActive !== false ? "Disable control" : "Enable control"}
+                                onCheckedChange={async (checked) => {
+                                  setControls(prev => prev.map(c => c.id === ctrl.id ? { ...c, isActive: checked } : c));
+                                  try {
+                                    const updated = await apiFetch<any>(`/api/tprm/vendors/${id}/compliance-controls/${ctrl.id}`, { method: "PATCH", body: JSON.stringify({ isActive: checked }) });
+                                    setControls(prev => prev.map(c => c.id === updated.id ? updated : c));
+                                    toast({ title: checked ? "Control enabled" : "Control disabled", description: ctrl.controlId });
+                                  } catch (err: any) {
+                                    setControls(prev => prev.map(c => c.id === ctrl.id ? { ...c, isActive: !checked } : c));
+                                    toast({ title: "Toggle failed", description: err?.message, variant: "destructive" });
+                                  }
+                                }}
+                              />
+                              <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 hover:text-blue-300 px-2" onClick={() => openEditControl(ctrl)}>
+                                <Edit2 className="w-3 h-3 mr-0.5" />Edit
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteControl(ctrl.id)} title="Delete control">
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
                             </div>
                           </div>
                         </CardContent>
@@ -1367,27 +1440,75 @@ export default function TprmVendorDetailPage() {
               </CardContent>
             </Card>
           )}
-          {(vendor.questionnaires ?? []).length === 0 ? (
+          {localQuestionnaires.length === 0 ? (
             <Card className="border-dashed"><CardContent className="py-10 text-center text-sm text-muted-foreground">No questionnaires sent yet</CardContent></Card>
           ) : (
             <div className="space-y-2">
-              {(vendor.questionnaires ?? []).map((q: any) => (
-                <Card key={q.id} className="bg-card/60">
-                  <CardContent className="py-3 flex items-center gap-3">
-                    <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">Questionnaire #{q.id}</p>
-                      <p className="text-xs text-muted-foreground">{q.respondedBy ?? "No respondent set"}{q.sentAt ? ` • Sent ${new Date(q.sentAt).toLocaleDateString()}` : ""}</p>
-                    </div>
-                    <Badge variant="outline" className="text-[10px] capitalize">{q.status}</Badge>
-                    {q.score !== null && q.score !== undefined
-                      ? <span className="text-sm font-semibold">{q.score}/100</span>
-                      : q.status === "completed" && <span className="text-xs text-muted-foreground italic">Manual review required</span>
-                    }
-                    {q.dueDate && <span className="text-xs text-muted-foreground">Due {new Date(q.dueDate).toLocaleDateString()}</span>}
-                  </CardContent>
-                </Card>
-              ))}
+              {localQuestionnaires.map((q: any) => {
+                const qStatusColor: Record<string, string> = {
+                  sent:        "text-blue-400 border-blue-500/40",
+                  in_progress: "text-yellow-400 border-yellow-500/40",
+                  completed:   "text-green-400 border-green-500/40",
+                  overdue:     "text-red-400 border-red-500/40",
+                  expired:     "text-slate-400 border-slate-500/40",
+                };
+                const qsc = qStatusColor[q.status] ?? "text-slate-400";
+                return (
+                  <Card key={q.id} className="bg-card/60">
+                    <CardContent className="py-3">
+                      <div className="flex items-start gap-3">
+                        <FileText className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium">Questionnaire #{q.id}</p>
+                            <Badge variant="outline" className={`text-[10px] capitalize ${qsc}`}>{q.status?.replace("_", " ")}</Badge>
+                            {q.score !== null && q.score !== undefined && (
+                              <span className={`text-xs font-semibold ${q.score >= 80 ? "text-green-400" : q.score >= 50 ? "text-yellow-400" : "text-red-400"}`}>{q.score}/100</span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 mt-0.5">
+                            {q.respondedBy && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Respondent:</span> {q.respondedBy}</p>}
+                            {q.sentAt && <p className="text-[10px] text-muted-foreground">Sent {new Date(q.sentAt).toLocaleDateString()}</p>}
+                            {q.dueDate && <p className="text-[10px] text-muted-foreground">Due {new Date(q.dueDate).toLocaleDateString()}</p>}
+                            {q.completedAt && <p className="text-[10px] text-muted-foreground">Completed {new Date(q.completedAt).toLocaleDateString()}</p>}
+                          </div>
+                          {q.notes && <p className="text-[10px] text-muted-foreground italic mt-0.5">{q.notes}</p>}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            variant="ghost" size="sm"
+                            className="h-7 text-[10px] text-blue-400 hover:text-blue-300 px-2"
+                            onClick={() => openEditQ(q)}
+                          >
+                            <Edit2 className="w-3 h-3 mr-0.5" />Edit
+                          </Button>
+                          {q.accessToken && (
+                            <Button
+                              variant="ghost" size="sm"
+                              className="h-7 text-[10px] text-slate-400 hover:text-slate-300 px-2"
+                              title="Open questionnaire portal"
+                              onClick={() => {
+                                const link = `${window.location.origin}/tprm/questionnaire/${q.accessToken}`;
+                                window.open(link, "_blank");
+                              }}
+                            >
+                              <ExternalLink className="w-3 h-3 mr-0.5" />Portal
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost" size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-red-400"
+                            title="Delete questionnaire"
+                            onClick={() => deleteQ(q)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -1772,6 +1893,48 @@ export default function TprmVendorDetailPage() {
             <Button onClick={addReminder} disabled={savingReminder || !reminderForm.title || !reminderForm.dueDate}>
               {savingReminder && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save Reminder
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Questionnaire Dialog */}
+      <Dialog open={!!editingQ} onOpenChange={open => { if (!open) setEditingQ(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Questionnaire #{editingQ?.id}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Status</Label>
+              <Select value={qEditForm.status} onValueChange={v => setQEditForm(f => ({ ...f, status: v }))}>
+                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sent">Sent</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                  <SelectItem value="expired">Expired</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Due Date</Label>
+              <Input type="date" className="mt-1 h-8 text-sm" value={qEditForm.dueDate} onChange={e => setQEditForm(f => ({ ...f, dueDate: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Respondent</Label>
+              <Input className="mt-1 h-8 text-sm" placeholder="Vendor contact name" value={qEditForm.respondedBy} onChange={e => setQEditForm(f => ({ ...f, respondedBy: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Score (0–100)</Label>
+              <Input type="number" min={0} max={100} className="mt-1 h-8 text-sm" placeholder="Leave blank if not scored" value={qEditForm.score} onChange={e => setQEditForm(f => ({ ...f, score: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Notes</Label>
+              <Textarea className="mt-1 text-sm" rows={3} placeholder="Internal notes…" value={qEditForm.notes} onChange={e => setQEditForm(f => ({ ...f, notes: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter className="mt-2">
+            <Button variant="outline" size="sm" onClick={() => setEditingQ(null)}>Cancel</Button>
+            <Button size="sm" onClick={saveQEdit} disabled={savingQEdit}>{savingQEdit ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Saving…</> : "Save Changes"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
