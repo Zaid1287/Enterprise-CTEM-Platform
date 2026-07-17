@@ -759,7 +759,15 @@ router.get("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authentica
       db.select().from(tprmComplianceDocumentsTable).where(and(eq(tprmComplianceDocumentsTable.vendorId, vendorId), eq(tprmComplianceDocumentsTable.tenantId, tenantId))).orderBy(desc(tprmComplianceDocumentsTable.createdAt)),
     ]);
 
-    res.json({ ...vendor, riskScores, assets, findings, fourthParties, supplyChain, contacts, questionnaires: questionnaires.map(q => ({ ...q, responses: undefined })), complianceDocs });
+    // Attach template names to questionnaires (batch fetch)
+    const tplIds = [...new Set(questionnaires.filter(q => q.templateId).map(q => q.templateId!))];
+    const tplRows = tplIds.length > 0
+      ? await db.select({ id: tprmQuestionnaireTemplatesTable.id, name: tprmQuestionnaireTemplatesTable.name })
+          .from(tprmQuestionnaireTemplatesTable).where(inArray(tprmQuestionnaireTemplatesTable.id, tplIds))
+      : [];
+    const tplNameMap = new Map(tplRows.map(t => [t.id, t.name]));
+
+    res.json({ ...vendor, riskScores, assets, findings, fourthParties, supplyChain, contacts, questionnaires: questionnaires.map(q => ({ ...q, responses: undefined, templateName: q.templateId ? (tplNameMap.get(q.templateId) ?? null) : null })), complianceDocs });
   } catch (err) {
     logger.error({ err }, "TPRM vendor detail error");
     res.status(500).json({ error: "Failed to load vendor" });
@@ -1599,7 +1607,10 @@ router.get("/tprm/vendors/:id/questionnaires", requireAuth, requireTprm, async (
   const vendorId = parseInt(req.params.id as string);
   if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
   const rows = await db.select().from(tprmVendorQuestionnairesTable).where(and(eq(tprmVendorQuestionnairesTable.vendorId, vendorId), eq(tprmVendorQuestionnairesTable.tenantId, tenantId))).orderBy(desc(tprmVendorQuestionnairesTable.createdAt));
-  res.json(rows.map(q => ({ ...q, responses: undefined })));
+  const tplIds = [...new Set(rows.filter(q => q.templateId).map(q => q.templateId!))];
+  const tplRows = tplIds.length > 0 ? await db.select({ id: tprmQuestionnaireTemplatesTable.id, name: tprmQuestionnaireTemplatesTable.name }).from(tprmQuestionnaireTemplatesTable).where(inArray(tprmQuestionnaireTemplatesTable.id, tplIds)) : [];
+  const tplMap = new Map(tplRows.map(t => [t.id, t.name]));
+  res.json(rows.map(q => ({ ...q, responses: undefined, templateName: q.templateId ? (tplMap.get(q.templateId) ?? null) : null })));
 });
 
 router.patch("/tprm/vendors/:id/questionnaires/:qid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
@@ -1630,6 +1641,31 @@ router.delete("/tprm/vendors/:id/questionnaires/:qid", requireAuth, requireTprm,
   await db.delete(tprmVendorQuestionnairesTable)
     .where(and(eq(tprmVendorQuestionnairesTable.id, qid), eq(tprmVendorQuestionnairesTable.tenantId, tenantId)));
   res.json({ ok: true });
+});
+
+// Apply questionnaire score to vendor risk — triggers a full vendor rescan in background
+router.post("/tprm/vendors/:id/questionnaires/:qid/apply-risk", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  const qid = parseInt(req.params.qid as string);
+  const vendor = await resolveVendor(vendorId, tenantId);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const [q] = await db.select().from(tprmVendorQuestionnairesTable)
+    .where(and(eq(tprmVendorQuestionnairesTable.id, qid), eq(tprmVendorQuestionnairesTable.tenantId, tenantId)));
+  if (!q) { res.status(404).json({ error: "Questionnaire not found" }); return; }
+  // Mark completed if not already
+  if (q.status !== "completed") {
+    await db.update(tprmVendorQuestionnairesTable)
+      .set({ status: "completed", completedAt: new Date() })
+      .where(eq(tprmVendorQuestionnairesTable.id, qid));
+  }
+  // Trigger background rescan to blend questionnaire score into overall vendor risk
+  setImmediate(() => {
+    runFullVendorScan(vendorId, tenantId).catch(err =>
+      logger.warn({ err, vendorId }, "TPRM: apply-risk rescan failed")
+    );
+  });
+  res.json({ ok: true, message: "Risk recalculation triggered. Vendor risk score will update shortly." });
 });
 
 router.get("/tprm/questionnaires/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {

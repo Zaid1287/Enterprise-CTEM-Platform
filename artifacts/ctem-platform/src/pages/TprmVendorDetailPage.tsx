@@ -90,7 +90,11 @@ export default function TprmVendorDetailPage() {
   const [editingQ, setEditingQ]       = useState<any | null>(null);
   const [qEditForm, setQEditForm]     = useState({ status: "", dueDate: "", respondedBy: "", notes: "", score: "" });
   const [savingQEdit, setSavingQEdit] = useState(false);
+  const [savingQRisk, setSavingQRisk] = useState(false);
   const [localQuestionnaires, setLocalQuestionnaires] = useState<any[]>([]);
+  // View responses state
+  const [viewingQ, setViewingQ] = useState<any | null>(null);
+  const [loadingQDetail, setLoadingQDetail] = useState(false);
 
   // SLA state
   const [slaForm, setSlaForm] = useState({ slaUptimePercent: "", slaResponseTimeHours: "", slaReviewDate: "", slaNotes: "", slaBreachCount: "" });
@@ -378,6 +382,31 @@ export default function TprmVendorDetailPage() {
       toast({ title: "Failed to update questionnaire", description: err?.message ?? "Server error", variant: "destructive" });
     }
     setSavingQEdit(false);
+  };
+
+  const viewQuestionnaire = async (q: any) => {
+    setLoadingQDetail(true);
+    setViewingQ({ ...q, _loading: true });
+    try {
+      const detail = await apiFetch<any>(`/api/tprm/questionnaires/${q.id}`);
+      setViewingQ(detail);
+    } catch {
+      setViewingQ({ ...q, _error: true });
+    }
+    setLoadingQDetail(false);
+  };
+
+  const applyQRisk = async (q: any) => {
+    setSavingQRisk(true);
+    try {
+      const r = await apiFetch<any>(`/api/tprm/vendors/${id}/questionnaires/${q.id}/apply-risk`, { method: "POST" });
+      toast({ title: "Risk update triggered", description: r.message ?? "Vendor risk score is being recalculated." });
+      setViewingQ(null);
+      setTimeout(loadVendor, 5000);
+    } catch (err: any) {
+      toast({ title: "Failed to trigger risk update", description: err?.message ?? "Server error", variant: "destructive" });
+    }
+    setSavingQRisk(false);
   };
 
   const deleteQ = async (q: any) => {
@@ -1460,11 +1489,14 @@ export default function TprmVendorDetailPage() {
                         <FileText className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-medium">Questionnaire #{q.id}</p>
+                            <p className="text-sm font-medium">
+                              {q.templateName ?? templates.find((t: any) => t.id === q.templateId)?.name ?? `Questionnaire #${q.id}`}
+                            </p>
                             <Badge variant="outline" className={`text-[10px] capitalize ${qsc}`}>{q.status?.replace("_", " ")}</Badge>
                             {q.score !== null && q.score !== undefined && (
                               <span className={`text-xs font-semibold ${q.score >= 80 ? "text-green-400" : q.score >= 50 ? "text-yellow-400" : "text-red-400"}`}>{q.score}/100</span>
                             )}
+                            {q.riskLevel && <span className={`text-[10px] font-medium capitalize px-1.5 py-0.5 rounded ${q.riskLevel === "low" ? "bg-green-500/20 text-green-400" : q.riskLevel === "medium" ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}`}>{q.riskLevel} risk</span>}
                           </div>
                           <div className="flex flex-wrap gap-x-3 mt-0.5">
                             {q.respondedBy && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Respondent:</span> {q.respondedBy}</p>}
@@ -1477,6 +1509,13 @@ export default function TprmVendorDetailPage() {
                         <div className="flex items-center gap-1 shrink-0">
                           <Button
                             variant="ghost" size="sm"
+                            className="h-7 text-[10px] text-violet-400 hover:text-violet-300 px-2"
+                            onClick={() => viewQuestionnaire(q)}
+                          >
+                            <Eye className="w-3 h-3 mr-0.5" />Responses
+                          </Button>
+                          <Button
+                            variant="ghost" size="sm"
                             className="h-7 text-[10px] text-blue-400 hover:text-blue-300 px-2"
                             onClick={() => openEditQ(q)}
                           >
@@ -1486,9 +1525,9 @@ export default function TprmVendorDetailPage() {
                             <Button
                               variant="ghost" size="sm"
                               className="h-7 text-[10px] text-slate-400 hover:text-slate-300 px-2"
-                              title="Open questionnaire portal"
+                              title="Open vendor questionnaire portal"
                               onClick={() => {
-                                const link = `${window.location.origin}/tprm/questionnaire/${q.accessToken}`;
+                                const link = `${window.location.origin}/tprm/respond/${q.accessToken}`;
                                 window.open(link, "_blank");
                               }}
                             >
@@ -1893,6 +1932,119 @@ export default function TprmVendorDetailPage() {
             <Button onClick={addReminder} disabled={savingReminder || !reminderForm.title || !reminderForm.dueDate}>
               {savingReminder && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save Reminder
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Responses Dialog */}
+      <Dialog open={!!viewingQ} onOpenChange={open => { if (!open) setViewingQ(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="w-4 h-4" />
+              {viewingQ?._loading ? "Loading…" : (viewingQ?.template?.name ?? viewingQ?.templateName ?? `Questionnaire #${viewingQ?.id}`)}
+            </DialogTitle>
+          </DialogHeader>
+          {viewingQ?._loading ? (
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : viewingQ?._error ? (
+            <p className="text-sm text-destructive py-6 text-center">Failed to load questionnaire details.</p>
+          ) : viewingQ && (
+            <div className="space-y-4">
+              {/* Summary row */}
+              <div className="flex flex-wrap gap-3 p-3 rounded-lg bg-muted/40 text-xs">
+                <div><span className="text-muted-foreground">Status: </span><span className="capitalize font-medium">{viewingQ.status?.replace("_", " ")}</span></div>
+                {viewingQ.respondedBy && <div><span className="text-muted-foreground">Respondent: </span><span className="font-medium">{viewingQ.respondedBy}</span></div>}
+                {viewingQ.sentAt && <div><span className="text-muted-foreground">Sent: </span><span className="font-medium">{new Date(viewingQ.sentAt).toLocaleDateString()}</span></div>}
+                {viewingQ.dueDate && <div><span className="text-muted-foreground">Due: </span><span className="font-medium">{new Date(viewingQ.dueDate).toLocaleDateString()}</span></div>}
+                {viewingQ.completedAt && <div><span className="text-muted-foreground">Completed: </span><span className="font-medium">{new Date(viewingQ.completedAt).toLocaleDateString()}</span></div>}
+                {viewingQ.score !== null && viewingQ.score !== undefined && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">Score: </span>
+                    <span className={`font-bold ${viewingQ.score >= 80 ? "text-green-400" : viewingQ.score >= 50 ? "text-yellow-400" : "text-red-400"}`}>{viewingQ.score}/100</span>
+                    {viewingQ.riskLevel && <span className={`capitalize px-1.5 py-0.5 rounded font-medium ${viewingQ.riskLevel === "low" ? "bg-green-500/20 text-green-400" : viewingQ.riskLevel === "medium" ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}`}>{viewingQ.riskLevel} risk</span>}
+                  </div>
+                )}
+              </div>
+
+              {/* Questionnaire responses */}
+              {(() => {
+                const questions: any[] = viewingQ.template?.questions ?? [];
+                const responses: any[] = viewingQ.responses ?? [];
+                const respMap = new Map(responses.map((r: any) => [r.questionId, r.answer]));
+                const categories = [...new Set(questions.map((q: any) => q.category))];
+                if (questions.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-sm text-muted-foreground">
+                      {viewingQ.status === "completed"
+                        ? "Response recorded but template questions are no longer available."
+                        : "Awaiting vendor response — questionnaire has not been completed yet."}
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-4">
+                    {categories.map(cat => {
+                      const catQs = questions.filter((q: any) => q.category === cat);
+                      return (
+                        <div key={cat} className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground capitalize">{String(cat).replace(/_/g, " ")}</p>
+                          {catQs.map((q: any, i: number) => {
+                            const answer = respMap.get(q.id);
+                            const hasAnswer = answer !== undefined && answer !== null;
+                            return (
+                              <div key={q.id} className="rounded-lg border border-border/60 p-3 space-y-1.5">
+                                <p className="text-sm font-medium">{i + 1}. {q.text}{q.required && <span className="text-red-400 ml-1 text-[10px]">*</span>}</p>
+                                <div className={`text-sm rounded px-2 py-1.5 ${hasAnswer ? "bg-muted/50" : "bg-muted/20 text-muted-foreground italic"}`}>
+                                  {!hasAnswer ? "No answer provided" :
+                                    q.type === "boolean" ? (
+                                      <span className={answer === true ? "text-green-400 font-medium" : "text-red-400 font-medium"}>{answer === true ? "✓ Yes" : "✗ No"}</span>
+                                    ) : q.type === "rating" ? (
+                                      <span className="font-medium">{answer}/5 {["★","★★","★★★","★★★★","★★★★★"][Number(answer) - 1] ?? ""}</span>
+                                    ) : q.type === "file" ? (
+                                      <span className="flex items-center gap-1.5"><Download className="w-3.5 h-3.5" />{typeof answer === "object" ? answer?.name ?? "File uploaded" : String(answer)}</span>
+                                    ) : (
+                                      <span>{String(answer)}</span>
+                                    )
+                                  }
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* Portal link copy */}
+              {viewingQ.accessToken && (
+                <div className="flex items-center gap-2 p-2 rounded bg-muted/30 border border-border/40">
+                  <span className="text-[10px] text-muted-foreground font-mono truncate flex-1">{window.location.origin}/tprm/respond/{viewingQ.accessToken}</span>
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 shrink-0" onClick={() => navigator.clipboard.writeText(`${window.location.origin}/tprm/respond/${viewingQ.accessToken}`)}>
+                    Copy Link
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 shrink-0" onClick={() => window.open(`${window.location.origin}/tprm/respond/${viewingQ.accessToken}`, "_blank")}>
+                    <ExternalLink className="w-3 h-3 mr-0.5" />Open Portal
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter className="mt-4 flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => setViewingQ(null)}>Close</Button>
+            {viewingQ && !viewingQ._loading && !viewingQ._error && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => { const q = viewingQ; setViewingQ(null); openEditQ(q); }}>
+                  <Edit2 className="w-3 h-3 mr-1.5" />Edit Status / Score
+                </Button>
+                <Button size="sm" onClick={() => applyQRisk(viewingQ)} disabled={savingQRisk}>
+                  {savingQRisk ? <Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1.5" />}
+                  Recalculate Vendor Risk
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
