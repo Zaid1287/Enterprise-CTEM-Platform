@@ -643,8 +643,9 @@ router.get("/threat-intel/c2-servers", requireAuth, async (req: AuthenticatedReq
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
-  const { country, malwareFamily, active, limit = "50", offset = "0" } = req.query as Record<string, string>;
+  const { q, country, malwareFamily, active, limit = "50", offset = "0" } = req.query as Record<string, string>;
   const conditions = [];
+  if (q) conditions.push(or(ilike(tiC2ServersTable.ip, `%${q}%`), ilike(tiC2ServersTable.domain, `%${q}%`), ilike(tiC2ServersTable.actorName, `%${q}%`))!);
   if (country) conditions.push(eq(tiC2ServersTable.country, country));
   if (malwareFamily) conditions.push(eq(tiC2ServersTable.malwareFamily, malwareFamily));
   if (active === "true") conditions.push(eq(tiC2ServersTable.isActive, true));
@@ -654,6 +655,74 @@ router.get("/threat-intel/c2-servers", requireAuth, async (req: AuthenticatedReq
     db.select({ count: sql<number>`count(*)` }).from(tiC2ServersTable).where(conditions.length ? and(...conditions) : undefined).then(r => Number(r[0]?.count ?? 0)),
   ]);
   res.json({ c2Servers: rows, total });
+});
+
+router.get("/threat-intel/c2-servers/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, role } = req.user!;
+  const enabled = await getThreatIntelEnabled(tenantId, role);
+  if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
+  const [row] = await db.select().from(tiC2ServersTable).where(eq(tiC2ServersTable.id, Number(req.params.id)));
+  if (!row) { res.status(404).json({ error: "C2 server not found" }); return; }
+  res.json(row);
+});
+
+router.post("/threat-intel/c2-servers", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const {
+    ip, port, domain, country, countryCode, asn, asnOrg, isp, city, lat, lng,
+    malwareFamily, actorName, tags, confidence, isActive,
+    cloudProvider, serviceCategory, sectorsAtRisk, platformsAtRisk, orgsAtRisk, source,
+  } = req.body;
+  if (!ip) { res.status(400).json({ error: "ip is required" }); return; }
+  try {
+    const [row] = await db.insert(tiC2ServersTable).values({
+      ip: ip.trim(),
+      port: port ? Number(port) : null,
+      domain: domain?.trim() || null,
+      country: country?.trim() || null,
+      countryCode: countryCode?.trim() || null,
+      asn: asn?.trim() || null,
+      asnOrg: asnOrg?.trim() || null,
+      isp: isp?.trim() || null,
+      city: city?.trim() || null,
+      lat: lat ? Number(lat) : null,
+      lng: lng ? Number(lng) : null,
+      malwareFamily: malwareFamily?.trim() || null,
+      actorName: actorName?.trim() || null,
+      tags: Array.isArray(tags) ? tags : [],
+      confidence: confidence !== undefined ? Number(confidence) : 70,
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+      cloudProvider: cloudProvider?.trim() || null,
+      serviceCategory: serviceCategory?.trim() || null,
+      sectorsAtRisk: Array.isArray(sectorsAtRisk) ? sectorsAtRisk : [],
+      platformsAtRisk: Array.isArray(platformsAtRisk) ? platformsAtRisk : [],
+      orgsAtRisk: Array.isArray(orgsAtRisk) ? orgsAtRisk : [],
+      source: source?.trim() || "manual",
+    }).returning();
+    res.status(201).json(row);
+  } catch (err: any) {
+    if (err.code === "23505") { res.status(409).json({ error: "A C2 server with this IP and source already exists" }); return; }
+    throw err;
+  }
+});
+
+router.patch("/threat-intel/c2-servers/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const update = { ...req.body, updatedAt: new Date() };
+  delete update.id;
+  if (update.port !== undefined) update.port = update.port ? Number(update.port) : null;
+  if (update.lat !== undefined) update.lat = update.lat ? Number(update.lat) : null;
+  if (update.lng !== undefined) update.lng = update.lng ? Number(update.lng) : null;
+  if (update.confidence !== undefined) update.confidence = Number(update.confidence);
+  const [row] = await db.update(tiC2ServersTable).set(update).where(eq(tiC2ServersTable.id, Number(req.params.id))).returning();
+  if (!row) { res.status(404).json({ error: "C2 server not found" }); return; }
+  res.json(row);
+});
+
+router.delete("/threat-intel/c2-servers/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  await db.delete(tiC2ServersTable).where(eq(tiC2ServersTable.id, Number(req.params.id)));
+  res.sendStatus(204);
 });
 
 // ── CVE Intelligence ──────────────────────────────────────────────────────────

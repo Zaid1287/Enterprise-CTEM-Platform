@@ -261,18 +261,22 @@ function MultiSelectDropdown({
 /* ── Shared form fields ─────────────────────────────────────────────────── */
 function ActorFormFields({
   f, setF,
-  campaigns, malware,
+  campaigns, malware, c2Servers,
   selectedCampaignIds, onToggleCampaign,
   selectedMalwareIds, onToggleMalware,
+  selectedC2Ids, onToggleC2,
 }: {
   f: ActorForm;
   setF: React.Dispatch<React.SetStateAction<ActorForm>>;
   campaigns: any[];
   malware: any[];
+  c2Servers: any[];
   selectedCampaignIds: number[];
   onToggleCampaign: (id: number) => void;
   selectedMalwareIds: number[];
   onToggleMalware: (id: number) => void;
+  selectedC2Ids: number[];
+  onToggleC2: (id: number) => void;
 }) {
   const txt = (key: keyof ActorForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setF(x => ({ ...x, [key]: e.target.value }));
@@ -351,8 +355,19 @@ function ActorFormFields({
           emptyText="No malware found"
           accentClass="text-red-400 bg-red-500/10 border-red-500/20"
         />
+        <MultiSelectDropdown
+          label="Linked C2 Infrastructure"
+          items={c2Servers}
+          selectedIds={selectedC2Ids}
+          onToggle={onToggleC2}
+          getLabel={(s: any) => `${s.ip}${s.port ? `:${s.port}` : ""}`}
+          getSublabel={(s: any) => [s.malwareFamily ?? null, s.country ?? null, s.isActive ? "Active" : "Inactive"].filter(Boolean).join(" · ")}
+          placeholder="Select C2 servers to link to this actor…"
+          emptyText="No C2 servers found — add them on the C2 Infrastructure page"
+          accentClass="text-orange-400 bg-orange-500/10 border-orange-500/20"
+        />
         <div className="rounded-lg bg-muted/20 border border-border/40 px-3 py-2 text-[11px] text-muted-foreground">
-          Selecting items above will <span className="text-foreground/70 font-medium">update those records</span> in the Campaigns and Malware databases to link them to this actor. View them on the actor's detail page after saving.
+          Selecting items above will <span className="text-foreground/70 font-medium">update those records</span> in the Campaigns, Malware, and C2 Infrastructure databases to link them to this actor.
         </div>
       </div>
 
@@ -515,16 +530,18 @@ function ActorFormFields({
 }
 
 /* ── Linking helpers ─────────────────────────────────────────────────────── */
-/** After creating/editing an actor, sync campaign and malware associations */
+/** After creating/editing an actor, sync campaign, malware, and C2 associations */
 async function syncAssociations(
   actorId: number,
   actorName: string,
   selectedCampaignIds: number[],
-  prevCampaignIds: number[],   // IDs that were linked BEFORE this save
+  prevCampaignIds: number[],
   allCampaigns: any[],
   selectedMalwareIds: number[],
   prevMalwareIds: number[],
   allMalware: any[],
+  selectedC2Ids: number[],
+  prevC2Ids: number[],
 ) {
   const patches: Promise<any>[] = [];
 
@@ -558,7 +575,7 @@ async function syncAssociations(
     if (!mw) return;
     const existingIds:   string[] = Array.isArray(mw.actorIds)   ? mw.actorIds   : [];
     const existingNames: string[] = Array.isArray(mw.actorNames) ? mw.actorNames : [];
-    if (existingIds.includes(actorIdStr)) return; // already linked
+    if (existingIds.includes(actorIdStr)) return;
     patches.push(apiFetch(`${BASE}/api/threat-intel/malware/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -584,6 +601,26 @@ async function syncAssociations(
     }));
   });
 
+  // ── C2 Infrastructure ──────────────────────────────────────────────────
+  // C2 actorName is a single text field — link = set actorName, unlink = null
+  const c2ToLink   = selectedC2Ids.filter(id => !prevC2Ids.includes(id));
+  const c2ToUnlink = prevC2Ids.filter(id => !selectedC2Ids.includes(id));
+
+  c2ToLink.forEach(id =>
+    patches.push(apiFetch(`${BASE}/api/threat-intel/c2-servers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actorName }),
+    }))
+  );
+  c2ToUnlink.forEach(id =>
+    patches.push(apiFetch(`${BASE}/api/threat-intel/c2-servers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actorName: null }),
+    }))
+  );
+
   await Promise.allSettled(patches);
 }
 
@@ -592,6 +629,7 @@ function AddActorModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
   const [f, setF] = useState<ActorForm>(EMPTY_FORM);
   const [selectedCampaignIds, setSelectedCampaignIds] = useState<number[]>([]);
   const [selectedMalwareIds, setSelectedMalwareIds]   = useState<number[]>([]);
+  const [selectedC2Ids, setSelectedC2Ids]             = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const { toast } = useToast();
@@ -606,15 +644,18 @@ function AddActorModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
     queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/malware?limit=200`),
     staleTime: 60_000,
   });
+  const { data: c2Data } = useQuery({
+    queryKey: ["ti-c2-mini"],
+    queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/c2-servers?limit=200`),
+    staleTime: 60_000,
+  });
   const allCampaigns: any[] = campaignsData?.campaigns ?? [];
   const allMalware:   any[] = malwareData?.malware     ?? [];
+  const allC2:        any[] = c2Data?.c2Servers        ?? [];
 
-  function toggleCampaign(id: number) {
-    setSelectedCampaignIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
-  }
-  function toggleMalware(id: number) {
-    setSelectedMalwareIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
-  }
+  function toggleCampaign(id: number) { setSelectedCampaignIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]); }
+  function toggleMalware(id: number)  { setSelectedMalwareIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]); }
+  function toggleC2(id: number)       { setSelectedC2Ids(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]); }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -627,20 +668,18 @@ function AddActorModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
         body: JSON.stringify(formToPayload(f)),
       });
       const actor = res.actor;
-      // Sync relationships
-      if (selectedCampaignIds.length > 0 || selectedMalwareIds.length > 0) {
-        await syncAssociations(
-          actor.id, actor.name,
-          selectedCampaignIds, [],
-          allCampaigns,
-          selectedMalwareIds, [],
-          allMalware,
-        );
-      }
-      toast({
-        title: "Threat actor created",
-        description: `${actor.name} added${selectedCampaignIds.length > 0 || selectedMalwareIds.length > 0 ? ` and linked to ${selectedCampaignIds.length} campaign(s), ${selectedMalwareIds.length} malware family(ies)` : ""}.`,
-      });
+      await syncAssociations(
+        actor.id, actor.name,
+        selectedCampaignIds, [], allCampaigns,
+        selectedMalwareIds, [], allMalware,
+        selectedC2Ids, [],
+      );
+      const linked = [
+        selectedCampaignIds.length > 0 ? `${selectedCampaignIds.length} campaign(s)` : null,
+        selectedMalwareIds.length > 0  ? `${selectedMalwareIds.length} malware family(ies)` : null,
+        selectedC2Ids.length > 0       ? `${selectedC2Ids.length} C2 server(s)` : null,
+      ].filter(Boolean).join(", ");
+      toast({ title: "Threat actor created", description: `${actor.name} added${linked ? ` and linked to ${linked}` : ""}.` });
       onDone(); onClose();
     } catch (ex: any) {
       setErr(ex.message ?? "Failed to create actor");
@@ -660,9 +699,10 @@ function AddActorModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
         <form onSubmit={submit} className="space-y-4">
           <ActorFormFields
             f={f} setF={setF}
-            campaigns={allCampaigns} malware={allMalware}
+            campaigns={allCampaigns} malware={allMalware} c2Servers={allC2}
             selectedCampaignIds={selectedCampaignIds} onToggleCampaign={toggleCampaign}
             selectedMalwareIds={selectedMalwareIds} onToggleMalware={toggleMalware}
+            selectedC2Ids={selectedC2Ids} onToggleC2={toggleC2}
           />
           {err && <p className="text-xs text-destructive">{err}</p>}
           <div className="flex gap-2 pt-1">
@@ -695,24 +735,31 @@ function EditActorModal({ actor, onClose, onDone }: { actor: any; onClose: () =>
     queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/malware?limit=200`),
     staleTime: 60_000,
   });
+  const { data: c2Data } = useQuery({
+    queryKey: ["ti-c2-mini"],
+    queryFn: () => apiFetch<any>(`${BASE}/api/threat-intel/c2-servers?limit=200`),
+    staleTime: 60_000,
+  });
   const allCampaigns: any[] = campaignsData?.campaigns ?? [];
   const allMalware:   any[] = malwareData?.malware     ?? [];
-
-  // Pre-compute which campaigns and malware are already linked to this actor
-  const initCampaignIds: number[] = allCampaigns
-    .filter((c: any) => c.actorId === actor.id)
-    .map((c: any) => c.id);
+  const allC2:        any[] = c2Data?.c2Servers        ?? [];
 
   const actorIdStr = String(actor.id);
+
+  // Pre-compute initial linked IDs
+  const initCampaignIds: number[] = allCampaigns.filter((c: any) => c.actorId === actor.id).map((c: any) => c.id);
   const initMalwareIds: number[] = allMalware
     .filter((m: any) =>
       (Array.isArray(m.actorIds) && m.actorIds.includes(actorIdStr)) ||
-      (Array.isArray(m.actorNames) && m.actorNames.includes(actor.name)),
-    )
+      (Array.isArray(m.actorNames) && m.actorNames.includes(actor.name)))
     .map((m: any) => m.id);
+  const initC2Ids: number[] = allC2
+    .filter((s: any) => s.actorName === actor.name)
+    .map((s: any) => s.id);
 
   const [selectedCampaignIds, setSelectedCampaignIds] = useState<number[]>(() => initCampaignIds);
   const [selectedMalwareIds, setSelectedMalwareIds]   = useState<number[]>(() => initMalwareIds);
+  const [selectedC2Ids, setSelectedC2Ids]             = useState<number[]>(() => initC2Ids);
 
   // Re-initialize when lists load
   useEffect(() => {
@@ -723,18 +770,17 @@ function EditActorModal({ actor, onClose, onDone }: { actor: any; onClose: () =>
       allMalware
         .filter((m: any) =>
           (Array.isArray(m.actorIds) && m.actorIds.includes(actorIdStr)) ||
-          (Array.isArray(m.actorNames) && m.actorNames.includes(actor.name)),
-        )
+          (Array.isArray(m.actorNames) && m.actorNames.includes(actor.name)))
         .map((m: any) => m.id),
     );
   }, [malwareData]);
+  useEffect(() => {
+    setSelectedC2Ids(allC2.filter((s: any) => s.actorName === actor.name).map((s: any) => s.id));
+  }, [c2Data]);
 
-  function toggleCampaign(id: number) {
-    setSelectedCampaignIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
-  }
-  function toggleMalware(id: number) {
-    setSelectedMalwareIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
-  }
+  function toggleCampaign(id: number) { setSelectedCampaignIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]); }
+  function toggleMalware(id: number)  { setSelectedMalwareIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]); }
+  function toggleC2(id: number)       { setSelectedC2Ids(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]); }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -748,10 +794,9 @@ function EditActorModal({ actor, onClose, onDone }: { actor: any; onClose: () =>
       });
       await syncAssociations(
         actor.id, updated.name ?? f.name,
-        selectedCampaignIds, initCampaignIds,
-        allCampaigns,
-        selectedMalwareIds, initMalwareIds,
-        allMalware,
+        selectedCampaignIds, initCampaignIds, allCampaigns,
+        selectedMalwareIds, initMalwareIds, allMalware,
+        selectedC2Ids, initC2Ids,
       );
       toast({ title: "Threat actor updated" });
       onDone(updated);
@@ -777,9 +822,10 @@ function EditActorModal({ actor, onClose, onDone }: { actor: any; onClose: () =>
         <form onSubmit={submit} className="space-y-4">
           <ActorFormFields
             f={f} setF={setF}
-            campaigns={allCampaigns} malware={allMalware}
+            campaigns={allCampaigns} malware={allMalware} c2Servers={allC2}
             selectedCampaignIds={selectedCampaignIds} onToggleCampaign={toggleCampaign}
             selectedMalwareIds={selectedMalwareIds} onToggleMalware={toggleMalware}
+            selectedC2Ids={selectedC2Ids} onToggleC2={toggleC2}
           />
           {err && <p className="text-xs text-destructive">{err}</p>}
           <div className="flex gap-2 pt-1">
