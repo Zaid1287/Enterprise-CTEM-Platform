@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Eye, RefreshCw, Shield, AlertTriangle, Calendar, Search,
@@ -623,31 +624,14 @@ export default function ThreatIntelDarkWebPage() {
             )}
 
             {/* Pagination */}
-            {total > L && (
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <span className="text-xs text-muted-foreground">Page {page + 1} of {pages}</span>
-                <div className="flex items-center gap-1.5">
-                  <Button size="sm" variant="outline" className="h-8 gap-1 text-xs" disabled={page === 0}
-                    onClick={() => setPage(p => p - 1)}>
-                    <ChevronLeft className="w-3.5 h-3.5" />Prev
-                  </Button>
-                  {Array.from({ length: Math.min(pages, 5) }, (_, i) => {
-                    const pg = pages <= 5 ? i : Math.max(0, Math.min(page - 2, pages - 5)) + i;
-                    return (
-                      <Button key={pg} size="sm" variant={pg === page ? "default" : "outline"}
-                        className="h-8 w-8 p-0 text-xs"
-                        onClick={() => setPage(pg)}>
-                        {pg + 1}
-                      </Button>
-                    );
-                  })}
-                  <Button size="sm" variant="outline" className="h-8 gap-1 text-xs" disabled={page >= pages - 1}
-                    onClick={() => setPage(p => p + 1)}>
-                    Next<ChevronRight className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-            )}
+            <SmartPagination
+              page={page + 1}
+              totalPages={pages}
+              totalItems={total}
+              pageSize={L}
+              itemLabel="findings"
+              onPageChange={p => setPage(p - 1)}
+            />
           </div>
         </div>
       ) : (

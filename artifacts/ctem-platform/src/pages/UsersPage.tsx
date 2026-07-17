@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import {
   useListUsers, useCreateUser, useDeleteUser,
   getListUsersQueryKey,
@@ -253,6 +254,11 @@ export default function UsersPage() {
   const userList = Array.isArray(users) ? users as any[] : [];
   const showTenantCol = role === "super_admin" || role === "admin" || role === "account_manager";
 
+  const USER_PAGE_SIZE = 15;
+  const [userPage, setUserPage] = useState(1);
+  const userTotalPages = Math.max(1, Math.ceil(userList.length / USER_PAGE_SIZE));
+  const pagedUsers = userList.slice((userPage - 1) * USER_PAGE_SIZE, userPage * USER_PAGE_SIZE);
+
   const stats = {
     total: userList.length,
     active: userList.filter((u: any) => u.isActive).length,
@@ -324,7 +330,7 @@ export default function UsersPage() {
                 ))}
               </tr>
             ))}
-            {!isLoading && userList.map((u: any) => (
+            {!isLoading && pagedUsers.map((u: any) => (
               <tr key={u.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors group">
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2.5">
@@ -402,6 +408,15 @@ export default function UsersPage() {
             )}
           </tbody>
         </table>
+        <SmartPagination
+          page={userPage}
+          totalPages={userTotalPages}
+          totalItems={userList.length}
+          pageSize={USER_PAGE_SIZE}
+          itemLabel="users"
+          onPageChange={setUserPage}
+          className="px-4 py-3 border-t border-border/40"
+        />
       </div>
 
       {/* ── Invitations Panel ── */}

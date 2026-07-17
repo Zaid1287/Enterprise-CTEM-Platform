@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import {
   RefreshCw, Download, Filter, Search, AlertTriangle, Shield,
   Loader2, Activity, Zap, Clock, XCircle, Radio,
@@ -443,20 +444,15 @@ export default function ScanTelemetryPage() {
         </div>
 
         {/* Pagination */}
-        {pages > 1 && (
-          <div className="px-5 py-3 border-t flex items-center justify-between bg-muted/20">
-            <span className="text-xs text-muted-foreground">
-              Page {page} of {pages} · <span className="font-medium">{total.toLocaleString()}</span> total records
-            </span>
-            <div className="flex items-center gap-1.5">
-              <Button variant="outline" size="sm" className="h-7 text-xs" disabled={page <= 1} onClick={() => setPage(1)}>«</Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</Button>
-              <div className="px-3 py-1 text-xs bg-muted rounded-md font-medium">{page}</div>
-              <Button variant="outline" size="sm" className="h-7 text-xs" disabled={page >= pages} onClick={() => setPage(p => Math.min(pages, p + 1))}>Next</Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs" disabled={page >= pages} onClick={() => setPage(pages)}>»</Button>
-            </div>
-          </div>
-        )}
+        <SmartPagination
+          page={page}
+          totalPages={pages}
+          totalItems={total}
+          pageSize={50}
+          itemLabel="records"
+          onPageChange={setPage}
+          className="px-5 py-3 border-t bg-muted/20"
+        />
       </div>
     </div>
   );

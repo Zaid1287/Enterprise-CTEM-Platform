@@ -1,4 +1,5 @@
 import { useState, Fragment } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Building2, Users, Server, Bug, ChevronDown, ChevronUp, ChevronRight,
@@ -274,6 +275,9 @@ export default function TenantsPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Record<number, ActiveTab>>({});
 
+  const TENANT_PAGE_SIZE = 15;
+  const [tenantPage, setTenantPage] = useState(1);
+
   // Create tenant dialog
   const [showCreate, setShowCreate] = useState(false);
   const [tenantForm, setTenantForm] = useState(emptyTenantForm);
@@ -523,6 +527,9 @@ export default function TenantsPage() {
   const totalAssets   = tenants.filter(t => t.isPlatform).reduce((s, t) => s + t.assetCount, 0);
   const totalFindings = tenants.reduce((s, t) => s + t.findingCount, 0);
 
+  const tenantTotalPages = Math.max(1, Math.ceil(tenants.length / TENANT_PAGE_SIZE));
+  const pagedTenants = tenants.slice((tenantPage - 1) * TENANT_PAGE_SIZE, tenantPage * TENANT_PAGE_SIZE);
+
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
@@ -588,7 +595,7 @@ export default function TenantsPage() {
                   No tenants yet. Click <strong>New Tenant</strong> to create one.
                 </td></tr>
               )}
-              {tenants.map(t => (
+              {pagedTenants.map(t => (
                 <Fragment key={t.id}>
                   <tr
                     className={cn(
@@ -876,6 +883,15 @@ export default function TenantsPage() {
               ))}
             </tbody>
           </table>
+          <SmartPagination
+            page={tenantPage}
+            totalPages={tenantTotalPages}
+            totalItems={tenants.length}
+            pageSize={TENANT_PAGE_SIZE}
+            itemLabel="tenants"
+            onPageChange={setTenantPage}
+            className="px-4 py-3 border-t border-border/40"
+          />
         </div>
       )}
 

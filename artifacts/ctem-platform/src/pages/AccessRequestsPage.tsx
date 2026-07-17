@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import {
   CheckCircle2, XCircle, Clock, Mail, Building2, User, Phone,
   Users, MessageSquare, Loader2, ChevronDown, ChevronUp,
@@ -54,6 +55,7 @@ export default function AccessRequestsPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const handleStatusFilter = (s: string) => { setStatusFilter(s); setReqPage(1); };
 
   const { data: requests = [], isLoading } = useQuery<AccessRequest[]>({
     queryKey: ["access-requests"],
@@ -76,6 +78,11 @@ export default function AccessRequestsPage() {
 
   const filtered = statusFilter === "all" ? requests : requests.filter(r => r.status === statusFilter);
 
+  const REQ_PAGE_SIZE = 10;
+  const [reqPage, setReqPage] = useState(1);
+  const reqTotalPages = Math.max(1, Math.ceil(filtered.length / REQ_PAGE_SIZE));
+  const pagedFiltered = filtered.slice((reqPage - 1) * REQ_PAGE_SIZE, reqPage * REQ_PAGE_SIZE);
+
   const counts = {
     all: requests.length,
     pending: requests.filter(r => r.status === "pending").length,
@@ -97,7 +104,7 @@ export default function AccessRequestsPage() {
         {(["all", "pending", "approved", "rejected"] as const).map(s => (
           <button
             key={s}
-            onClick={() => setStatusFilter(s)}
+            onClick={() => handleStatusFilter(s)}
             className={cn(
               "px-3 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
               statusFilter === s
@@ -121,7 +128,7 @@ export default function AccessRequestsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(req => {
+          {pagedFiltered.map(req => {
             const isExpanded = expandedId === req.id;
             const notes = reviewNotes[req.id] ?? req.reviewNotes ?? "";
             return (
@@ -253,6 +260,14 @@ export default function AccessRequestsPage() {
           })}
         </div>
       )}
+      <SmartPagination
+        page={reqPage}
+        totalPages={reqTotalPages}
+        totalItems={filtered.length}
+        pageSize={REQ_PAGE_SIZE}
+        itemLabel="requests"
+        onPageChange={setReqPage}
+      />
     </div>
   );
 }

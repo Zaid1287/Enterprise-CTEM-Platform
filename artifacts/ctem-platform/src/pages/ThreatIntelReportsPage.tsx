@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import {
   FileBarChart2, Plus, Loader2, X, RefreshCw, Clock,
   CheckCircle2, AlertCircle, Download, Eye, Trash2,
@@ -458,6 +459,11 @@ export default function ThreatIntelReportsPage() {
   const generatingCount = reports.filter(r => r.status === "generating").length;
   const failedCount = reports.filter(r => r.status === "failed").length;
 
+  const REPORTS_PAGE_SIZE = 10;
+  const [rptPage, setRptPage] = useState(1);
+  const rptTotalPages = Math.max(1, Math.ceil(reports.length / REPORTS_PAGE_SIZE));
+  const reportsPaged = reports.slice((rptPage - 1) * REPORTS_PAGE_SIZE, rptPage * REPORTS_PAGE_SIZE);
+
   return (
     <div className="p-6 space-y-6">
       {showNew && <NewReportModal onClose={() => setShowNew(false)} onDone={() => refetch()} />}
@@ -543,7 +549,7 @@ export default function ThreatIntelReportsPage() {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {reports.map((r: any) => {
+          {reportsPaged.map((r: any) => {
             const sm = STATUS_META[r.status] ?? STATUS_META.pending;
             const tm = TYPE_META[r.reportType] ?? TYPE_META.summary;
             const meta = r.metadata as any;
@@ -619,6 +625,14 @@ export default function ThreatIntelReportsPage() {
           })}
         </div>
       )}
+      <SmartPagination
+        page={rptPage}
+        totalPages={rptTotalPages}
+        totalItems={reports.length}
+        pageSize={REPORTS_PAGE_SIZE}
+        itemLabel="reports"
+        onPageChange={setRptPage}
+      />
     </div>
   );
 }

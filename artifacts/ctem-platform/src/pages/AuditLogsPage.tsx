@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -300,51 +301,15 @@ export default function AuditLogsPage() {
         </div>
 
         {/* Pagination footer */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/10">
-            <p className="text-xs text-muted-foreground">
-              Showing <span className="font-medium text-foreground">{((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, total)}</span> of{" "}
-              <span className="font-medium text-foreground">{total.toLocaleString()}</span> entries
-            </p>
-            <div className="flex items-center gap-1">
-              <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => goTo(1)} disabled={page === 1}>
-                <ChevronsLeft className="w-3.5 h-3.5" />
-              </Button>
-              <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => goTo(page - 1)} disabled={page === 1}>
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </Button>
-              <div className="flex items-center gap-1 mx-1">
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  let p: number;
-                  if (totalPages <= 5) p = i + 1;
-                  else if (page <= 3) p = i + 1;
-                  else if (page >= totalPages - 2) p = totalPages - 4 + i;
-                  else p = page - 2 + i;
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => goTo(p)}
-                      className={cn(
-                        "h-7 min-w-[28px] px-2 rounded text-xs font-medium transition-colors",
-                        p === page
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                      )}
-                    >
-                      {p}
-                    </button>
-                  );
-                })}
-              </div>
-              <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => goTo(page + 1)} disabled={page === totalPages}>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Button>
-              <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => goTo(totalPages)} disabled={page === totalPages}>
-                <ChevronsRight className="w-3.5 h-3.5" />
-              </Button>
-            </div>
-          </div>
-        )}
+        <SmartPagination
+          page={page}
+          totalPages={totalPages}
+          totalItems={total}
+          pageSize={PAGE_SIZE}
+          itemLabel="entries"
+          onPageChange={goTo}
+          className="px-4 py-3 border-t border-border bg-muted/10"
+        />
       </div>
     </div>
   );
