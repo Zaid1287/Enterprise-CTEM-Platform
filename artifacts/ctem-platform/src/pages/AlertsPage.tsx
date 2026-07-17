@@ -10,7 +10,8 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Bell, BellOff, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox, Brain, Sparkles, RefreshCw, X } from "lucide-react";
+import { Plus, Bell, BellOff, ChevronRight, Trash2, Power, FlaskConical, CheckCircle2, XCircle, Loader2, ShieldAlert, DatabaseZap, Crosshair, ScanSearch, AlertTriangle, Activity, Archive, Inbox, Brain, Sparkles, RefreshCw, X } from "lucide-react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,18 +28,6 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const INBOX_PAGE_SIZE   = 20;
 const ARCHIVE_PAGE_SIZE = 20;
 
-function buildPageRange(current: number, total: number): (number | "…")[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-  const delta = 2;
-  const left  = Math.max(2, current - delta);
-  const right = Math.min(total - 1, current + delta);
-  const pages: (number | "…")[] = [1];
-  if (left > 2)       pages.push("…");
-  for (let p = left; p <= right; p++) pages.push(p);
-  if (right < total - 1) pages.push("…");
-  pages.push(total);
-  return pages;
-}
 
 function AlertTypeIcon({ type, className }: { type: string; className?: string }) {
   const cls = className ?? "w-4 h-4 shrink-0";
@@ -539,41 +528,15 @@ export default function AlertsPage() {
             </div>
           )}
 
-          {/* Inbox smart pagination */}
-          {inboxTotalPages > 1 && (
-            <div className="flex flex-col items-center gap-2 pt-2">
-              <p className="text-xs text-muted-foreground">
-                Page {inboxPage + 1} of {inboxTotalPages} · {filteredUnread.length} alert{filteredUnread.length !== 1 ? "s" : ""}
-              </p>
-              <div className="flex items-center gap-1 flex-wrap justify-center">
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage === 0} onClick={() => setInboxPage(0)} title="First page">
-                  <ChevronsLeft className="w-3.5 h-3.5" />
-                </Button>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage === 0} onClick={() => setInboxPage(p => p - 1)} title="Previous page">
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </Button>
-                {buildPageRange(inboxPage + 1, inboxTotalPages).map((p, i) =>
-                  p === "…" ? (
-                    <span key={`ellipsis-${i}`} className="w-7 text-center text-xs text-muted-foreground select-none">…</span>
-                  ) : (
-                    <Button
-                      key={p}
-                      variant={inboxPage + 1 === p ? "default" : "outline"}
-                      size="icon"
-                      className="h-7 w-7 text-xs"
-                      onClick={() => setInboxPage((p as number) - 1)}
-                    >{p}</Button>
-                  )
-                )}
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage >= inboxTotalPages - 1} onClick={() => setInboxPage(p => p + 1)} title="Next page">
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </Button>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={inboxPage >= inboxTotalPages - 1} onClick={() => setInboxPage(inboxTotalPages - 1)} title="Last page">
-                  <ChevronsRight className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </div>
-          )}
+          {/* Inbox pagination */}
+          <SmartPagination
+            page={inboxPage + 1}
+            totalPages={inboxTotalPages}
+            totalItems={filteredUnread.length}
+            pageSize={INBOX_PAGE_SIZE}
+            itemLabel="alerts"
+            onPageChange={p => setInboxPage(p - 1)}
+          />
         </TabsContent>
 
         {/* ── Archive — read alerts with pagination ────────────── */}
@@ -621,41 +584,15 @@ export default function AlertsPage() {
             </div>
           )}
 
-          {archiveTotalPages > 1 && (
-            <div className="flex flex-col items-center gap-2 pt-2">
-              <p className="text-xs text-muted-foreground">
-                Page {archivePage + 1} of {archiveTotalPages} · {filteredArchive.length} alert{filteredArchive.length !== 1 ? "s" : ""}
-                {hasActiveFilters ? " (filtered)" : ""}
-              </p>
-              <div className="flex items-center gap-1 flex-wrap justify-center">
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage === 0} onClick={() => setArchivePage(0)} title="First page">
-                  <ChevronsLeft className="w-3.5 h-3.5" />
-                </Button>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage === 0} onClick={() => setArchivePage(p => p - 1)} title="Previous page">
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </Button>
-                {buildPageRange(archivePage + 1, archiveTotalPages).map((p, i) =>
-                  p === "…" ? (
-                    <span key={`ellipsis-${i}`} className="w-7 text-center text-xs text-muted-foreground select-none">…</span>
-                  ) : (
-                    <Button
-                      key={p}
-                      variant={archivePage + 1 === p ? "default" : "outline"}
-                      size="icon"
-                      className="h-7 w-7 text-xs"
-                      onClick={() => setArchivePage((p as number) - 1)}
-                    >{p}</Button>
-                  )
-                )}
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage >= archiveTotalPages - 1} onClick={() => setArchivePage(p => p + 1)} title="Next page">
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </Button>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={archivePage >= archiveTotalPages - 1} onClick={() => setArchivePage(archiveTotalPages - 1)} title="Last page">
-                  <ChevronsRight className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </div>
-          )}
+          {/* Archive pagination */}
+          <SmartPagination
+            page={archivePage + 1}
+            totalPages={archiveTotalPages}
+            totalItems={filteredArchive.length}
+            pageSize={ARCHIVE_PAGE_SIZE}
+            itemLabel="alerts"
+            onPageChange={p => setArchivePage(p - 1)}
+          />
         </TabsContent>
 
         {/* ── Alert Rules ──────────────────────────────────────── */}

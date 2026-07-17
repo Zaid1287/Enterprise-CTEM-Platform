@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
 import { useAuth } from "@/hooks/useAuth";
 import { useAiMapperWs } from "@/hooks/useAiMapperWs";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -97,6 +98,9 @@ export default function AiMapperScansPage() {
       return next;
     });
   }, []);
+
+  const [scansPage, setScansPage] = useState(1);
+  const SCANS_PAGE_SIZE = 15;
 
   const [showNew, setShowNew]               = useState(false);
   const [dialogTab, setDialogTab]           = useState("presets");
@@ -202,6 +206,9 @@ export default function AiMapperScansPage() {
   const scopePreview = buildCidrScope();
   const scopeLines   = scopePreview?.split("\n").filter(Boolean) ?? [];
 
+  const scansTotalPages = Math.max(1, Math.ceil(scans.length / SCANS_PAGE_SIZE));
+  const pagedScans = scans.slice((scansPage - 1) * SCANS_PAGE_SIZE, scansPage * SCANS_PAGE_SIZE);
+
   return (
     <div className="p-6 space-y-5 w-full">
       <div className="flex items-center justify-between">
@@ -253,7 +260,7 @@ export default function AiMapperScansPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {scans.map(scan => {
+                {pagedScans.map(scan => {
                   const Icon = STATUS_ICON[scan.status] ?? Clock;
                   const isRunning = scan.status === "running" || scan.status === "pending";
                   return (
@@ -334,6 +341,14 @@ export default function AiMapperScansPage() {
               </tbody>
             </table>
           </div>
+          <SmartPagination
+            page={scansPage}
+            totalPages={scansTotalPages}
+            totalItems={scans.length}
+            pageSize={SCANS_PAGE_SIZE}
+            itemLabel="scans"
+            onPageChange={setScansPage}
+          />
         </div>
       )}
 

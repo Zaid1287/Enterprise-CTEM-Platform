@@ -9,7 +9,8 @@ import { useListAssets } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Download, Trash2, FileText, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Search, Brain, Sparkles, AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Download, Trash2, FileText, Loader2, CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, Search, Brain, Sparkles, AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -365,20 +366,14 @@ export default function ReportsPage() {
         )}
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-1">
-          <p className="text-xs text-muted-foreground">
-            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, allReports.length)} of {allReports.length} reports
-          </p>
-          <div className="flex items-center gap-1">
-            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</Button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-              <Button key={p} size="sm" variant={p === page ? "default" : "outline"} className="h-7 w-7 p-0 text-xs" onClick={() => setPage(p)}>{p}</Button>
-            ))}
-            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>›</Button>
-          </div>
-        </div>
-      )}
+      <SmartPagination
+        page={page}
+        totalPages={totalPages}
+        totalItems={allReports.length}
+        pageSize={PAGE_SIZE}
+        itemLabel="reports"
+        onPageChange={setPage}
+      />
 
       {/* ── Create Report Dialog ── */}
       <Dialog open={showCreate} onOpenChange={v => { if (!v) closeCreate(); }}>

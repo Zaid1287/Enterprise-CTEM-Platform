@@ -14,6 +14,7 @@ import {
   ArrowUpRight, Award, MonitorSmartphone, MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { cn, formatDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { getToken } from "@/lib/auth";
@@ -1765,6 +1766,8 @@ export default function BrandThreatPage() {
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"scans" | "watchlist" | "schedules">("scans");
+  const [btPage, setBtPage] = useState(1);
+  const BT_PAGE_SIZE = 12;
 
   const { data: scans, isLoading, refetch } = useListBrandThreats({
     query: { queryKey: getListBrandThreatsQueryKey(), staleTime: 0, refetchInterval: (query: any) => {
@@ -1817,6 +1820,8 @@ export default function BrandThreatPage() {
   const filtered = search.trim()
     ? scanList.filter((s: any) => s.domain.includes(search.trim().toLowerCase()))
     : scanList;
+  const btTotalPages = Math.max(1, Math.ceil(filtered.length / BT_PAGE_SIZE));
+  const btPaged = filtered.slice((btPage - 1) * BT_PAGE_SIZE, btPage * BT_PAGE_SIZE);
 
   const totalLive     = scanList.reduce((n: number, s: any) => n + (s.liveCount ?? 0), 0);
   const totalPhishing = scanList.reduce((n: number, s: any) => n + (s.phishingCount ?? 0), 0);
@@ -1977,7 +1982,7 @@ export default function BrandThreatPage() {
                     type="text"
                     placeholder="Filter by domain…"
                     value={search}
-                    onChange={e => setSearch(e.target.value)}
+                    onChange={e => { setSearch(e.target.value); setBtPage(1); }}
                     className="w-full bg-background border border-border rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
@@ -1988,7 +1993,7 @@ export default function BrandThreatPage() {
 
               {/* Card grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {filtered.map((scan: any) => (
+                {btPaged.map((scan: any) => (
                   <ScanCard
                     key={scan.id}
                     scan={scan}
@@ -2005,6 +2010,14 @@ export default function BrandThreatPage() {
                   No scans match "{search}"
                 </div>
               )}
+              <SmartPagination
+                page={btPage}
+                totalPages={btTotalPages}
+                totalItems={filtered.length}
+                pageSize={BT_PAGE_SIZE}
+                itemLabel="scans"
+                onPageChange={setBtPage}
+              />
             </>
           )}
         </div>

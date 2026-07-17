@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
 import { useAuth } from "@/hooks/useAuth";
@@ -116,6 +117,8 @@ export default function AiMapperScanSchedulesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState<Schedule | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null);
+  const [schPage, setSchPage] = useState(1);
+  const SCH_PAGE_SIZE = 10;
 
   const { data: schedules = [], isLoading } = useQuery<Schedule[]>({
     queryKey: ["ai-mapper-schedules"],
@@ -124,6 +127,9 @@ export default function AiMapperScanSchedulesPage() {
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["ai-mapper-schedules"] });
+
+  const schTotalPages = Math.max(1, Math.ceil(schedules.length / SCH_PAGE_SIZE));
+  const pagedSchedules = schedules.slice((schPage - 1) * SCH_PAGE_SIZE, schPage * SCH_PAGE_SIZE);
 
   const createMut = useMutation({
     mutationFn: (data: Partial<Schedule>) => apiFetch("/api/ai-mapper/scan-schedules", { method: "POST", body: JSON.stringify(data) }),
@@ -178,8 +184,9 @@ export default function AiMapperScanSchedulesPage() {
             </CardContent>
           </Card>
         ) : (
+          <>
           <div className="grid gap-4">
-            {schedules.map(sch => (
+            {pagedSchedules.map(sch => (
               <Card key={sch.id} className={`bg-card/60 border-border/40 transition-opacity ${!sch.isActive ? "opacity-60" : ""}`}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
@@ -232,6 +239,15 @@ export default function AiMapperScanSchedulesPage() {
               </Card>
             ))}
           </div>
+          <SmartPagination
+            page={schPage}
+            totalPages={schTotalPages}
+            totalItems={schedules.length}
+            pageSize={SCH_PAGE_SIZE}
+            itemLabel="schedules"
+            onPageChange={setSchPage}
+          />
+          </>
         )}
 
         {/* Create Dialog */}
