@@ -1024,12 +1024,150 @@ router.get("/threat-intel/dark-web", requireAuth, async (req: AuthenticatedReque
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
-  const { limit = "50", offset = "0" } = req.query as Record<string, string>;
-  const [rows, total] = await Promise.all([
-    db.select().from(tiDarkWebMentionsTable).where(eq(tiDarkWebMentionsTable.tenantId, tenantId)).orderBy(desc(tiDarkWebMentionsTable.detectedAt)).limit(Math.min(Number(limit), 100)).offset(Number(offset)),
-    db.select({ count: sql<number>`count(*)` }).from(tiDarkWebMentionsTable).where(eq(tiDarkWebMentionsTable.tenantId, tenantId)).then(r => Number(r[0]?.count ?? 0)),
+  const isGlobal = role === "admin" || role === "super_admin";
+  const { severity, source, assetDomain, q, limit = "50", offset = "0" } = req.query as Record<string, string>;
+
+  const conds: any[] = [];
+  // Scope: admin/SA see all tenants, others see only their own
+  if (!isGlobal) conds.push(eq(tiDarkWebMentionsTable.tenantId, tenantId));
+  if (severity)    conds.push(eq(tiDarkWebMentionsTable.severity, severity));
+  if (source)      conds.push(eq(tiDarkWebMentionsTable.source, source));
+  if (assetDomain) conds.push(ilike(tiDarkWebMentionsTable.assetDomain, `%${assetDomain}%`));
+  if (q)           conds.push(or(ilike(tiDarkWebMentionsTable.title, `%${q}%`), ilike(tiDarkWebMentionsTable.content, `%${q}%`))!);
+
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [rawRows, total, tenants, lastRun] = await Promise.all([
+    db.select({ m: tiDarkWebMentionsTable, tenantName: tenantsTable.name })
+      .from(tiDarkWebMentionsTable)
+      .leftJoin(tenantsTable, eq(tiDarkWebMentionsTable.tenantId, tenantsTable.id))
+      .where(where)
+      .orderBy(desc(tiDarkWebMentionsTable.detectedAt), desc(tiDarkWebMentionsTable.createdAt))
+      .limit(Math.min(Number(limit), 200))
+      .offset(Number(offset)),
+    db.select({ count: sql<number>`count(*)` }).from(tiDarkWebMentionsTable).where(where).then(r => Number(r[0]?.count ?? 0)),
+    isGlobal
+      ? db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable)
+      : Promise.resolve([]),
+    (async () => {
+      const { tiFeedRunsTable: frt } = await import("@workspace/db");
+      const [row] = await db.select().from(frt)
+        .where(eq(frt.source, "dark_web_monitor"))
+        .orderBy(desc(frt.startedAt))
+        .limit(1);
+      return row ?? null;
+    })(),
   ]);
-  res.json({ mentions: rows, total });
+
+  // Normalise field names for the frontend
+  const mentions = rawRows.map(({ m, tenantName }) => ({
+    id: m.id,
+    tenantId: m.tenantId,
+    tenantName: tenantName ?? null,
+    sourceType: m.source,          // alias for frontend
+    source: m.source,
+    url: m.sourceUrl,              // alias for frontend
+    sourceUrl: m.sourceUrl,
+    riskLevel: m.severity,         // alias for frontend
+    severity: m.severity,
+    snippet: m.content,            // alias for frontend
+    content: m.content,
+    title: m.title,
+    keywords: m.keywords,
+    actors: m.actors,
+    isVerified: m.isVerified,
+    assetDomain: m.assetDomain,
+    mentionType: m.mentionType,
+    rawData: m.rawData,
+    detectedAt: m.detectedAt,
+    createdAt: m.createdAt,
+  }));
+
+  res.json({ mentions, total, tenants, lastRun });
+});
+
+// Monitored assets — returns all assets that can be dark-web-monitored with mention counts
+router.get("/threat-intel/dark-web/assets", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, role } = req.user!;
+  const enabled = await getThreatIntelEnabled(tenantId, role);
+  if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
+  const isGlobal = role === "admin" || role === "super_admin";
+
+  // Assets with domains/IPs that dark web monitoring can scan
+  const rawAssets = await db.select({
+    id: assetsTable.id,
+    tenantId: assetsTable.tenantId,
+    name: assetsTable.name,
+    type: assetsTable.type,
+    value: assetsTable.value,
+    ipAddress: assetsTable.ipAddress,
+    tenantName: tenantsTable.name,
+  })
+    .from(assetsTable)
+    .leftJoin(tenantsTable, eq(assetsTable.tenantId, tenantsTable.id))
+    .where(isGlobal ? undefined : eq(assetsTable.tenantId, tenantId))
+    .orderBy(assetsTable.tenantId, assetsTable.name)
+    .limit(500);
+
+  // Count mentions per asset domain
+  const domainCounts: Record<string, number> = {};
+  const countRows = await db.select({
+    assetDomain: tiDarkWebMentionsTable.assetDomain,
+    cnt: sql<number>`count(*)`,
+  }).from(tiDarkWebMentionsTable).groupBy(tiDarkWebMentionsTable.assetDomain);
+  for (const r of countRows) if (r.assetDomain) domainCounts[r.assetDomain] = Number(r.cnt);
+
+  const DOMAIN_TYPES = ["domain", "subdomain", "url", "host", "ssl_certificate"];
+  const IP_TYPES = ["ip"];
+
+  const assets = rawAssets
+    .filter(a => {
+      const v = (a.value ?? "").trim().toLowerCase();
+      return DOMAIN_TYPES.includes(a.type.toLowerCase()) || IP_TYPES.includes(a.type.toLowerCase()) || /^([a-z0-9][\w-]*\.)+[a-z]{2,}$/.test(v);
+    })
+    .map(a => {
+      let domain: string | null = null;
+      const v = (a.value ?? "").trim();
+      const t = a.type.toLowerCase();
+      if (t === "domain" || t === "subdomain") domain = v.replace(/^www\./, "").split(".").slice(-2).join(".");
+      else if (t === "url") { try { domain = new URL(v).hostname.replace(/^www\./, "").split(".").slice(-2).join("."); } catch {} }
+      else if (t === "ssl_certificate") domain = v.replace(/^\*\./, "").split(".").slice(-2).join(".");
+      else if (t === "host" && /^[a-z][\w.-]*\.[a-z]{2,}$/i.test(v)) domain = v.split(".").slice(-2).join(".");
+      return {
+        id: a.id,
+        tenantId: a.tenantId,
+        tenantName: a.tenantName,
+        name: a.name,
+        type: a.type,
+        value: a.value,
+        domain,
+        ipAddress: a.ipAddress,
+        mentionCount: domain ? (domainCounts[domain] ?? 0) : (a.ipAddress ? (domainCounts[a.ipAddress] ?? 0) : 0),
+      };
+    });
+
+  res.json({ assets });
+});
+
+// Trigger a dark web monitor scan (admin/SA only)
+router.post("/threat-intel/dark-web/scan", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const { tenantId, role } = req.user!;
+  const enabled = await getThreatIntelEnabled(tenantId, role);
+  if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
+
+  const { targetTenantId, assetId } = req.body as { targetTenantId?: number; assetId?: number };
+
+  res.json({ message: "Dark web monitor scan started. Results will appear within 1–2 minutes." });
+
+  setImmediate(async () => {
+    try {
+      const { runDarkWebMonitor } = await import("../lib/threatIntel/darkWebMonitor.js");
+      await runDarkWebMonitor({ tenantId: targetTenantId, assetId });
+    } catch (err: any) {
+      logger.warn({ err: err.message }, "[dark-web] Background scan failed");
+    }
+  });
 });
 
 // ── Reports ───────────────────────────────────────────────────────────────────

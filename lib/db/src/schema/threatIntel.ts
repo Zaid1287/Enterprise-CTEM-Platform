@@ -265,6 +265,7 @@ export const tiDarkWebMentionsTable = pgTable("ti_dark_web_mentions", {
   id:          serial("id").primaryKey(),
   tenantId:    integer("tenant_id").references(() => tenantsTable.id, { onDelete: "cascade" }),
   mentionType: text("mention_type").notNull().default("general"),
+  title:       text("title"),
   content:     text("content"),
   source:      text("source").notNull(),
   sourceUrl:   text("source_url"),
@@ -273,6 +274,8 @@ export const tiDarkWebMentionsTable = pgTable("ti_dark_web_mentions", {
   actors:      text("actors").array().notNull().default([]),
   isVerified:  boolean("is_verified").notNull().default(false),
   rawData:     jsonb("raw_data"),
+  assetDomain: text("asset_domain"),
+  breachKey:   text("breach_key"),
   detectedAt:  timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
