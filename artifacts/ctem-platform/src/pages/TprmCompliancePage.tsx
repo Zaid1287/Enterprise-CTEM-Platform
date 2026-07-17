@@ -9,12 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import {
   RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock,
   ChevronRight, Edit2, Trash2, Loader2, Shield, ClipboardList,
   Upload, Download, ExternalLink, ChevronDown, ChevronUp, FileText,
+  Settings, Minus,
 } from "lucide-react";
 
 const DOC_TYPES = ["SOC2 Type II", "ISO 27001", "PCI DSS", "HIPAA BAA", "GDPR DPA", "ISO 27017"];
@@ -26,13 +26,26 @@ interface VendorComplianceRow {
   logoUrl: string | null;
   docsByType: Record<string, { id: number; status: string; expiresAt: string | null; daysRemaining: number | null } | null>;
   documents: any[];
+  controlsSummary?: { total: number; compliant: number; active: number; score: number } | null;
 }
 
 function cellIcon(doc: { status: string; daysRemaining: number | null } | null) {
   if (!doc) return <XCircle className="w-4 h-4 text-red-400 mx-auto" aria-label="Missing" />;
-  if (doc.status === "expired" || (doc.daysRemaining !== null && doc.daysRemaining < 0)) return <AlertTriangle className="w-4 h-4 text-red-400 mx-auto" aria-label="Expired" />;
-  if (doc.daysRemaining !== null && doc.daysRemaining <= 30) return <Clock className="w-4 h-4 text-yellow-400 mx-auto" aria-label={`Expiring in ${doc.daysRemaining}d`} />;
+  if (doc.status === "expired" || (doc.daysRemaining !== null && doc.daysRemaining < 0))
+    return <AlertTriangle className="w-4 h-4 text-red-400 mx-auto" aria-label="Expired" />;
+  if (doc.daysRemaining !== null && doc.daysRemaining <= 30)
+    return <Clock className="w-4 h-4 text-yellow-400 mx-auto" aria-label={`Expiring in ${doc.daysRemaining}d`} />;
   return <CheckCircle2 className="w-4 h-4 text-green-400 mx-auto" aria-label="Valid" />;
+}
+
+function controlsMatrixIcon(summary: VendorComplianceRow["controlsSummary"]) {
+  if (!summary || summary.total === 0)
+    return <Minus className="w-4 h-4 text-slate-500 mx-auto" aria-label="No controls" />;
+  if (summary.score === 100)
+    return <CheckCircle2 className="w-4 h-4 text-green-400 mx-auto" aria-label="All controls compliant" />;
+  if (summary.score >= 50)
+    return <AlertTriangle className="w-4 h-4 text-yellow-400 mx-auto" aria-label={`${summary.score}% compliant`} />;
+  return <XCircle className="w-4 h-4 text-red-400 mx-auto" aria-label={`${summary.score}% compliant`} />;
 }
 
 const STATUS_OPTIONS = [
@@ -50,11 +63,11 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 const CTRL_STATUS_MAP: Record<string, { label: string; color: string; border: string }> = {
-  compliant:      { label: "Compliant",      color: "text-green-400",  border: "border-green-500/30"  },
-  partial:        { label: "Partial",         color: "text-yellow-400", border: "border-yellow-500/30" },
-  non_compliant:  { label: "Non-Compliant",   color: "text-red-400",    border: "border-red-500/30"    },
-  pending_review: { label: "Pending Review",  color: "text-blue-400",   border: "border-blue-500/30"   },
-  not_applicable: { label: "N/A",             color: "text-slate-400",  border: "border-slate-500/30"  },
+  compliant:      { label: "Compliant",     color: "text-green-400",  border: "border-green-500/30"  },
+  partial:        { label: "Partial",        color: "text-yellow-400", border: "border-yellow-500/30" },
+  non_compliant:  { label: "Non-Compliant",  color: "text-red-400",   border: "border-red-500/30"    },
+  pending_review: { label: "Pending Review", color: "text-blue-400",  border: "border-blue-500/30"   },
+  not_applicable: { label: "N/A",            color: "text-slate-400", border: "border-slate-500/30"  },
 };
 
 export default function TprmCompliancePage() {
@@ -65,18 +78,16 @@ export default function TprmCompliancePage() {
   const [rows, setRows]         = useState<VendorComplianceRow[]>([]);
   const [expiring, setExpiring] = useState<any[]>([]);
   const [loading, setLoading]   = useState(true);
+  const [matrixFramework, setMatrixFramework] = useState("iso27001");
 
   // Controls state (cross-vendor)
-  const [allControls, setAllControls]         = useState<any[]>([]);
-  const [controlsLoading, setControlsLoading] = useState(false);
+  const [allControls, setAllControls]             = useState<any[]>([]);
+  const [controlsLoading, setControlsLoading]     = useState(false);
   const [controlsFramework, setControlsFramework] = useState("iso27001");
-  const [editingCtrl, setEditingCtrl]         = useState<any | null>(null);
-  const [ctrlForm, setCtrlForm]               = useState({
-    status: "", evidence: "", notes: "", assignedTo: "",
-    controlTitle: "", controlId: "", category: "", isActive: true,
-  });
-  const [savingCtrl, setSavingCtrl]           = useState(false);
-  const [togglingCtrl, setTogglingCtrl]       = useState<number | null>(null);
+  const [editingCtrl, setEditingCtrl]             = useState<any | null>(null);
+  const [ctrlForm, setCtrlForm]                   = useState({ status: "", evidence: "", notes: "", assignedTo: "" });
+  const [savingCtrl, setSavingCtrl]               = useState(false);
+  const [togglingCtrl, setTogglingCtrl]           = useState<number | null>(null);
 
   // Accordion state — vendor cards collapsed by default
   const [expandedVendors, setExpandedVendors] = useState<Set<number>>(new Set());
@@ -87,19 +98,27 @@ export default function TprmCompliancePage() {
   });
 
   // All documents across vendors
-  const [allDocs, setAllDocs]               = useState<any[]>([]);
-  const [editingDoc, setEditingDoc]         = useState<any | null>(null);
-  const [docForm, setDocForm]               = useState({ status: "", expiresAt: "", notes: "" });
-  const [savingDoc, setSavingDoc]           = useState(false);
-  const [expandedDocVendors, setExpandedDocVendors] = useState<Set<number>>(new Set());
+  const [allDocs, setAllDocs]                         = useState<any[]>([]);
+  const [editingDoc, setEditingDoc]                   = useState<any | null>(null);
+  const [docForm, setDocForm]                         = useState({ status: "", expiresAt: "", notes: "" });
+  const [savingDoc, setSavingDoc]                     = useState(false);
+  const [expandedDocVendors, setExpandedDocVendors]   = useState<Set<number>>(new Set());
   const toggleDocVendor = (id: number) => setExpandedDocVendors(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
   });
 
-  // Load matrix
-  const loadMatrix = async () => {
+  // Users for Assigned To dropdown
+  const [users, setUsers] = useState<any[]>([]);
+
+  useEffect(() => {
+    apiFetch<any[]>("/api/users").then(setUsers).catch(() => {});
+  }, []);
+
+  // Load matrix + controls summary
+  const loadMatrix = async (fw?: string) => {
+    const framework = fw ?? matrixFramework;
     setLoading(true);
     try {
       const [vendors, exp] = await Promise.all([
@@ -110,7 +129,10 @@ export default function TprmCompliancePage() {
       const vendorRows: VendorComplianceRow[] = [];
       await Promise.all((vendors.vendors ?? []).map(async (v: any) => {
         try {
-          const comp = await apiFetch<any>(`/api/tprm/vendors/${v.id}/compliance`);
+          const [comp, ctrls] = await Promise.all([
+            apiFetch<any>(`/api/tprm/vendors/${v.id}/compliance`),
+            apiFetch<any[]>(`/api/tprm/vendors/${v.id}/compliance-controls?framework=${framework}`).catch(() => []),
+          ]);
           const docs = comp.documents ?? [];
           const docsByType: Record<string, any> = {};
           for (const dt of DOC_TYPES) {
@@ -123,7 +145,20 @@ export default function TprmCompliancePage() {
               docsByType[dt] = expired ? { id: expired.id, status: "expired", expiresAt: expired.expiresAt, daysRemaining: -1 } : null;
             }
           }
-          vendorRows.push({ id: v.id, companyName: v.companyName, domain: v.domain, logoUrl: v.logoUrl, docsByType, documents: docs });
+          // Controls summary for this vendor
+          const activeCtrls  = (ctrls as any[]).filter(c => c.isActive !== false);
+          const compliantCt  = activeCtrls.filter(c => c.status === "compliant").length;
+          const partialCt    = activeCtrls.filter(c => c.status === "partial").length;
+          const score        = activeCtrls.length > 0
+            ? Math.round(((compliantCt + partialCt * 0.5) / activeCtrls.length) * 100)
+            : 0;
+          const controlsSummary = {
+            total:     (ctrls as any[]).length,
+            active:    activeCtrls.length,
+            compliant: compliantCt,
+            score,
+          };
+          vendorRows.push({ id: v.id, companyName: v.companyName, domain: v.domain, logoUrl: v.logoUrl, docsByType, documents: docs, controlsSummary });
         } catch { /* skip */ }
       }));
       setRows(vendorRows);
@@ -179,8 +214,7 @@ export default function TprmCompliancePage() {
     setSavingDoc(true);
     try {
       await apiFetch(`/api/tprm/vendors/${editingDoc.vendorId}/compliance/${editingDoc.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(docForm),
+        method: "PATCH", body: JSON.stringify(docForm),
       });
       toast({ title: "Document updated" });
       setEditingDoc(null);
@@ -202,19 +236,10 @@ export default function TprmCompliancePage() {
     } catch { toast({ title: "Delete failed", variant: "destructive" }); }
   };
 
-  // Edit compliance control
+  // Quick-update compliance control (Status, Evidence, Assigned To, Notes only)
   const openEditCtrl = (ctrl: any) => {
     setEditingCtrl(ctrl);
-    setCtrlForm({
-      status:       ctrl.status      ?? "pending_review",
-      evidence:     ctrl.evidence    ?? "",
-      notes:        ctrl.notes       ?? "",
-      assignedTo:   ctrl.assignedTo  ?? "",
-      controlTitle: ctrl.controlTitle ?? "",
-      controlId:    ctrl.controlId   ?? "",
-      category:     ctrl.category    ?? "",
-      isActive:     ctrl.isActive    !== false,
-    });
+    setCtrlForm({ status: ctrl.status ?? "pending_review", evidence: ctrl.evidence ?? "", notes: ctrl.notes ?? "", assignedTo: ctrl.assignedTo ?? "" });
   };
 
   const saveCtrl = async () => {
@@ -224,13 +249,10 @@ export default function TprmCompliancePage() {
       const updated = await apiFetch<any>(`/api/tprm/vendors/${editingCtrl.vendorId}/compliance-controls/${editingCtrl.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          status:       ctrlForm.status       || undefined,
-          evidence:     ctrlForm.evidence     || undefined,
-          notes:        ctrlForm.notes        || undefined,
-          assignedTo:   ctrlForm.assignedTo   || undefined,
-          controlTitle: ctrlForm.controlTitle || undefined,
-          category:     ctrlForm.category     || undefined,
-          isActive:     ctrlForm.isActive,
+          status:     ctrlForm.status     || undefined,
+          evidence:   ctrlForm.evidence   || undefined,
+          notes:      ctrlForm.notes      || undefined,
+          assignedTo: ctrlForm.assignedTo || undefined,
         }),
       });
       toast({ title: "Control updated" });
@@ -255,8 +277,7 @@ export default function TprmCompliancePage() {
     setTogglingCtrl(ctrl.id);
     try {
       const updated = await apiFetch<any>(`/api/tprm/vendors/${ctrl.vendorId}/compliance-controls/${ctrl.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ isActive: !ctrl.isActive }),
+        method: "PATCH", body: JSON.stringify({ isActive: !ctrl.isActive }),
       });
       setAllControls(prev => prev.map(c => c.id === updated.id ? { ...c, isActive: updated.isActive } : c));
       toast({ title: updated.isActive ? "Control enabled" : "Control disabled" });
@@ -264,7 +285,6 @@ export default function TprmCompliancePage() {
     setTogglingCtrl(null);
   };
 
-  // Derived data
   const totalControls = allControls.length;
 
   // Documents grouped by vendor
@@ -285,13 +305,20 @@ export default function TprmCompliancePage() {
           <h1 className="text-xl font-bold">Compliance Management</h1>
           <p className="text-muted-foreground text-sm">Cross-vendor compliance documents, controls, and coverage matrix</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => {
-          if (mainTab === "matrix") loadMatrix();
-          else if (mainTab === "controls") loadControls();
-          else loadAllDocs();
-        }}>
-          <RefreshCw className="w-4 h-4" />
-        </Button>
+        <div className="flex gap-2">
+          <Link href="/tprm/compliance/controls">
+            <Button variant="outline" size="sm" className="gap-1.5">
+              <Settings className="w-3.5 h-3.5" />Manage Controls
+            </Button>
+          </Link>
+          <Button variant="outline" size="sm" onClick={() => {
+            if (mainTab === "matrix") loadMatrix();
+            else if (mainTab === "controls") loadControls();
+            else loadAllDocs();
+          }}>
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Expiring soon banner */}
@@ -343,6 +370,21 @@ export default function TprmCompliancePage() {
           </Card>
         ) : (
           <>
+            {/* Framework selector for controls column */}
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-muted-foreground">Controls column framework:</p>
+              <Select value={matrixFramework} onValueChange={fw => { setMatrixFramework(fw); loadMatrix(fw); }}>
+                <SelectTrigger className="h-7 text-xs w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="iso27001">ISO 27001:2022</SelectItem>
+                  <SelectItem value="soc2">SOC 2</SelectItem>
+                  <SelectItem value="pcidss">PCI DSS v4.0</SelectItem>
+                  <SelectItem value="hipaa">HIPAA</SelectItem>
+                  <SelectItem value="nist_csf">NIST CSF 2.0</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <Card>
               <CardContent className="p-0 overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
@@ -352,6 +394,7 @@ export default function TprmCompliancePage() {
                       {DOC_TYPES.map(dt => (
                         <th key={dt} className="text-center text-xs text-muted-foreground font-medium px-3 py-2.5 whitespace-nowrap">{dt}</th>
                       ))}
+                      <th className="text-center text-xs text-muted-foreground font-medium px-3 py-2.5 whitespace-nowrap">Controls</th>
                       <th className="px-4 py-2.5 w-10" />
                     </tr>
                   </thead>
@@ -390,6 +433,26 @@ export default function TprmCompliancePage() {
                             </td>
                           );
                         })}
+                        {/* Controls compliance column */}
+                        <td className="px-3 py-3 text-center">
+                          <div className="relative group/cell">
+                            {controlsMatrixIcon(r.controlsSummary)}
+                            {r.controlsSummary && r.controlsSummary.total > 0 && (
+                              <div className="absolute top-5 left-1/2 -translate-x-1/2 z-20 hidden group-hover/cell:flex flex-col items-start gap-1 bg-popover border border-border rounded shadow-lg p-2 min-w-[160px]">
+                                <span className="text-[10px] font-medium">Controls Compliance</span>
+                                <span className="text-[10px] text-muted-foreground">{r.controlsSummary.compliant}/{r.controlsSummary.active} compliant ({r.controlsSummary.score}%)</span>
+                                {r.controlsSummary.score === 100 && (
+                                  <Badge variant="outline" className="text-[10px] text-green-400 border-green-500/30">All Compliant ✓</Badge>
+                                )}
+                                <Link href={`/tprm/compliance/controls?vendor=${r.id}&framework=${matrixFramework}`} onClick={e => e.stopPropagation()}>
+                                  <Button variant="ghost" size="sm" className="h-5 text-[10px] px-1.5 text-blue-400 mt-1">
+                                    <Settings className="w-2.5 h-2.5 mr-0.5" />Manage
+                                  </Button>
+                                </Link>
+                              </div>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3">
                           <Link href={`/tprm/vendors/${r.id}`}>
                             <ChevronRight className="w-4 h-4 text-muted-foreground hover:text-foreground cursor-pointer" />
@@ -401,12 +464,13 @@ export default function TprmCompliancePage() {
                 </table>
               </CardContent>
             </Card>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-green-400" />Valid</span>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+              <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-green-400" />Valid / All compliant</span>
               <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-yellow-400" />Expiring ≤30d</span>
-              <span className="flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-red-400" />Expired</span>
-              <span className="flex items-center gap-1"><XCircle className="w-3.5 h-3.5 text-red-400" />Missing</span>
-              <span className="text-muted-foreground/50">· Hover a cell to edit</span>
+              <span className="flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-yellow-400" />Partial compliance</span>
+              <span className="flex items-center gap-1"><XCircle className="w-3.5 h-3.5 text-red-400" />Expired / Missing / Non-compliant</span>
+              <span className="flex items-center gap-1"><Minus className="w-3.5 h-3.5 text-slate-500" />No controls set</span>
+              <span className="text-muted-foreground/50">· Hover a cell to edit or manage</span>
             </div>
           </>
         )
@@ -415,7 +479,7 @@ export default function TprmCompliancePage() {
       {/* ── CONTROLS TAB ────────────────────────────────────────────────────── */}
       {mainTab === "controls" && (
         <div className="space-y-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <Select value={controlsFramework} onValueChange={v => { setControlsFramework(v); loadControls(v); }}>
               <SelectTrigger className="h-8 text-xs w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -426,7 +490,12 @@ export default function TprmCompliancePage() {
                 <SelectItem value="nist_csf">NIST CSF 2.0</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-sm text-muted-foreground">{totalControls} control{totalControls !== 1 ? "s" : ""} across all vendors</p>
+            <p className="text-sm text-muted-foreground flex-1">{totalControls} control{totalControls !== 1 ? "s" : ""} across all vendors</p>
+            <Link href={`/tprm/compliance/controls?framework=${controlsFramework}`}>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                <Settings className="w-3.5 h-3.5" />Manage Controls
+              </Button>
+            </Link>
           </div>
 
           {/* Scorecard */}
@@ -468,49 +537,49 @@ export default function TprmCompliancePage() {
               <CardContent className="py-12 text-center text-sm text-muted-foreground">
                 <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-30" />
                 <p>No controls for <strong>{controlsFramework.replace(/_/g, " ").toUpperCase()}</strong> across any vendors yet.</p>
-                <p className="text-xs mt-1">Open a vendor detail page and seed the framework controls first.</p>
+                <p className="text-xs mt-1 mb-3">Use the Manage Controls page to seed or add controls per vendor.</p>
+                <Link href={`/tprm/compliance/controls?framework=${controlsFramework}`}>
+                  <Button size="sm" variant="outline"><Settings className="w-3.5 h-3.5 mr-1.5" />Go to Manage Controls</Button>
+                </Link>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-2">
-              {/* Group by vendor — each vendor is a collapsible accordion card */}
               {Array.from(new Map(allControls.map(c => [c.vendorId, c.vendorName]))).map(([vid, vname]) => {
                 const vControls = allControls.filter(c => c.vendorId === vid);
-                const compliantCount = vControls.filter(c => c.status === "compliant").length;
+                const compliantCount = vControls.filter(c => c.status === "compliant" && c.isActive !== false).length;
+                const activeCount    = vControls.filter(c => c.isActive !== false).length;
                 const isOpen = expandedVendors.has(vid as number);
                 return (
                   <Card key={vid} className={isOpen ? "border-border" : "border-border/60"}>
-                    {/* Accordion header — always visible, clickable */}
-                    <button
-                      className="w-full text-left"
-                      onClick={() => toggleVendor(vid as number)}
-                    >
+                    <button className="w-full text-left" onClick={() => toggleVendor(vid as number)}>
                       <CardHeader className="py-3 px-4">
                         <CardTitle className="text-sm flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Shield className="w-4 h-4 text-muted-foreground shrink-0" />
                             <span className="font-medium">{vname as string}</span>
                             <span className="text-xs text-muted-foreground font-normal">({vControls.length} controls)</span>
-                            <span className={`text-xs font-medium ${compliantCount === vControls.length ? "text-green-400" : compliantCount > 0 ? "text-yellow-400" : "text-muted-foreground"}`}>
-                              {compliantCount}/{vControls.length} compliant
+                            <span className={`text-xs font-medium ${compliantCount === activeCount && activeCount > 0 ? "text-green-400" : compliantCount > 0 ? "text-yellow-400" : "text-muted-foreground"}`}>
+                              {compliantCount}/{activeCount} compliant
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Link href={`/tprm/vendors/${vid}`} onClick={e => e.stopPropagation()}>
+                            <Link href={`/tprm/compliance/controls?vendor=${vid}&framework=${controlsFramework}`} onClick={e => e.stopPropagation()}>
                               <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 px-2">
-                                <ExternalLink className="w-3 h-3 mr-1" />Open Vendor
+                                <Settings className="w-3 h-3 mr-1" />Manage
                               </Button>
                             </Link>
-                            {isOpen
-                              ? <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                              : <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                            }
+                            <Link href={`/tprm/vendors/${vid}`} onClick={e => e.stopPropagation()}>
+                              <Button variant="ghost" size="sm" className="h-6 text-[10px] text-muted-foreground px-2">
+                                <ExternalLink className="w-3 h-3 mr-1" />Vendor
+                              </Button>
+                            </Link>
+                            {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                           </div>
                         </CardTitle>
                       </CardHeader>
                     </button>
 
-                    {/* Accordion body — only rendered when expanded */}
                     {isOpen && (
                       <CardContent className="pb-3 pt-0 px-4">
                         <div className="space-y-1 border-t border-border/40 pt-3">
@@ -522,11 +591,10 @@ export default function TprmCompliancePage() {
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="text-xs font-mono font-semibold text-muted-foreground">{ctrl.controlId}</span>
-                                    {isDisabled ? (
-                                      <Badge variant="outline" className="text-[10px] py-0 h-4 text-slate-400 border-slate-500/30">Disabled</Badge>
-                                    ) : (
-                                      <Badge variant="outline" className={`text-[10px] py-0 h-4 ${sm.color} border-current`}>{sm.label}</Badge>
-                                    )}
+                                    {isDisabled
+                                      ? <Badge variant="outline" className="text-[10px] py-0 h-4 text-slate-400 border-slate-500/30">Disabled</Badge>
+                                      : <Badge variant="outline" className={`text-[10px] py-0 h-4 ${sm.color} border-current`}>{sm.label}</Badge>
+                                    }
                                     {ctrl.category && <Badge variant="outline" className="text-[10px] py-0 h-4">{ctrl.category}</Badge>}
                                   </div>
                                   <p className="text-xs mt-0.5 truncate">{ctrl.controlTitle}</p>
@@ -534,20 +602,16 @@ export default function TprmCompliancePage() {
                                   {ctrl.assignedTo && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Assigned:</span> {ctrl.assignedTo}</p>}
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {/* Enable / Disable toggle */}
                                   <button
                                     title={isDisabled ? "Enable control" : "Disable control"}
                                     disabled={togglingCtrl === ctrl.id}
                                     onClick={() => toggleCtrlActive(ctrl)}
                                     className={`text-[10px] px-2 py-1 rounded border transition-colors ${isDisabled ? "border-green-500/40 text-green-400 hover:bg-green-500/10" : "border-slate-500/40 text-slate-400 hover:bg-slate-500/10"}`}
                                   >
-                                    {togglingCtrl === ctrl.id
-                                      ? <Loader2 className="w-3 h-3 animate-spin" />
-                                      : isDisabled ? "Enable" : "Disable"
-                                    }
+                                    {togglingCtrl === ctrl.id ? <Loader2 className="w-3 h-3 animate-spin inline" /> : isDisabled ? "Enable" : "Disable"}
                                   </button>
                                   <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 text-blue-400 hover:text-blue-300" onClick={() => openEditCtrl(ctrl)}>
-                                    <Edit2 className="w-3 h-3 mr-0.5" />Edit
+                                    <Edit2 className="w-3 h-3 mr-0.5" />Update
                                   </Button>
                                   <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteCtrl(ctrl)}>
                                     <Trash2 className="w-3 h-3" />
@@ -576,12 +640,8 @@ export default function TprmCompliancePage() {
             </p>
             {docsByVendor.length > 0 && (
               <div className="flex gap-2">
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setExpandedDocVendors(new Set(docsByVendor.map(v => v.vendorId)))}>
-                  Expand All
-                </Button>
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setExpandedDocVendors(new Set())}>
-                  Collapse All
-                </Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setExpandedDocVendors(new Set(docsByVendor.map(v => v.vendorId)))}>Expand All</Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setExpandedDocVendors(new Set())}>Collapse All</Button>
               </div>
             )}
           </div>
@@ -601,7 +661,6 @@ export default function TprmCompliancePage() {
                 const validCount = group.documents.filter(d => d.status === "valid").length;
                 return (
                   <Card key={group.vendorId} className={isOpen ? "border-border" : "border-border/60"}>
-                    {/* Vendor header — clickable to expand/collapse */}
                     <button className="w-full text-left" onClick={() => toggleDocVendor(group.vendorId)}>
                       <CardHeader className="py-3 px-4">
                         <CardTitle className="text-sm flex items-center justify-between">
@@ -609,9 +668,7 @@ export default function TprmCompliancePage() {
                             <Shield className="w-4 h-4 text-muted-foreground shrink-0" />
                             <span className="font-medium">{group.vendorName}</span>
                             <span className="text-xs text-muted-foreground font-normal">({group.documents.length} document{group.documents.length !== 1 ? "s" : ""})</span>
-                            {validCount > 0 && (
-                              <span className="text-xs text-green-400 font-medium">{validCount} valid</span>
-                            )}
+                            {validCount > 0 && <span className="text-xs text-green-400 font-medium">{validCount} valid</span>}
                           </div>
                           <div className="flex items-center gap-2">
                             <Link href={`/tprm/vendors/${group.vendorId}`} onClick={e => e.stopPropagation()}>
@@ -619,23 +676,19 @@ export default function TprmCompliancePage() {
                                 <ExternalLink className="w-3 h-3 mr-1" />Open Vendor
                               </Button>
                             </Link>
-                            {isOpen
-                              ? <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                              : <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                            }
+                            {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                           </div>
                         </CardTitle>
                       </CardHeader>
                     </button>
 
-                    {/* Document list — only when expanded */}
                     {isOpen && (
                       <CardContent className="pb-3 pt-0 px-4">
                         <div className="space-y-1.5 border-t border-border/40 pt-3">
                           {group.documents.map(doc => {
-                            const exp   = doc.expiresAt ? new Date(doc.expiresAt) : null;
-                            const days  = exp ? Math.ceil((exp.getTime() - Date.now()) / 86400000) : null;
-                            const sc    = STATUS_COLOR[doc.status] ?? "";
+                            const exp  = doc.expiresAt ? new Date(doc.expiresAt) : null;
+                            const days = exp ? Math.ceil((exp.getTime() - Date.now()) / 86400000) : null;
+                            const sc   = STATUS_COLOR[doc.status] ?? "";
                             return (
                               <div key={doc.id} className="flex items-center gap-3 p-2 rounded bg-muted/20 hover:bg-accent/20 transition-colors">
                                 <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -652,9 +705,7 @@ export default function TprmCompliancePage() {
                                         {days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d remaining`}
                                       </span>
                                     )}
-                                    {doc.createdAt && (
-                                      <span className="text-xs text-muted-foreground">Uploaded {new Date(doc.createdAt).toLocaleDateString()}</span>
-                                    )}
+                                    {doc.createdAt && <span className="text-xs text-muted-foreground">Uploaded {new Date(doc.createdAt).toLocaleDateString()}</span>}
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
@@ -665,16 +716,10 @@ export default function TprmCompliancePage() {
                                       </a>
                                     </Button>
                                   )}
-                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDoc(doc)} title="Edit">
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteDoc(doc)} title="Delete">
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDoc(doc)} title="Edit"><Edit2 className="w-3.5 h-3.5" /></Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteDoc(doc)} title="Delete"><Trash2 className="w-3.5 h-3.5" /></Button>
                                   <Link href={`/tprm/vendors/${doc.vendorId}`}>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Open vendor">
-                                      <ExternalLink className="w-3.5 h-3.5" />
-                                    </Button>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Open vendor"><ExternalLink className="w-3.5 h-3.5" /></Button>
                                   </Link>
                                 </div>
                               </div>
@@ -722,42 +767,25 @@ export default function TprmCompliancePage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingDoc(null)}>Cancel</Button>
-            <Button onClick={saveDoc} disabled={savingDoc}>
-              {savingDoc && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save Changes
-            </Button>
+            <Button onClick={saveDoc} disabled={savingDoc}>{savingDoc && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Edit Control Dialog ───────────────────────────────────────────── */}
+      {/* ── Quick-Update Control Dialog (Status / Evidence / Assigned To / Notes only) ── */}
       <Dialog open={!!editingCtrl} onOpenChange={o => { if (!o) setEditingCtrl(null); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><ClipboardList className="w-4 h-4" />Edit Control</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ClipboardList className="w-4 h-4" />Update Control Status</DialogTitle>
+          </DialogHeader>
           {editingCtrl && (
             <div className="space-y-3">
               <div className="p-2 rounded bg-muted/30 border border-border/40">
-                <p className="text-xs text-muted-foreground">Vendor: <span className="font-medium text-foreground">{editingCtrl.vendorName}</span></p>
+                <p className="text-xs font-mono font-semibold text-muted-foreground">{editingCtrl.controlId}</p>
+                <p className="text-sm font-medium mt-0.5">{editingCtrl.controlTitle}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Vendor: {editingCtrl.vendorName}</p>
               </div>
 
-              {/* Control ID */}
-              <div>
-                <Label className="text-xs">Control ID</Label>
-                <Input className="mt-1 h-8 text-sm font-mono" value={ctrlForm.controlId} onChange={e => setCtrlForm(f => ({ ...f, controlId: e.target.value }))} placeholder="e.g. A.5.1" />
-              </div>
-
-              {/* Control Title — full edit to fix names like "protection & disposal" */}
-              <div>
-                <Label className="text-xs">Control Title</Label>
-                <Input className="mt-1 h-8 text-sm" value={ctrlForm.controlTitle} onChange={e => setCtrlForm(f => ({ ...f, controlTitle: e.target.value }))} placeholder="e.g. Confidential information protection and disposal" />
-              </div>
-
-              {/* Category */}
-              <div>
-                <Label className="text-xs">Category</Label>
-                <Input className="mt-1 h-8 text-sm" value={ctrlForm.category} onChange={e => setCtrlForm(f => ({ ...f, category: e.target.value }))} placeholder="e.g. Organizational, People, Technical…" />
-              </div>
-
-              {/* Status */}
               <div>
                 <Label className="text-xs">Compliance Status</Label>
                 <Select value={ctrlForm.status} onValueChange={v => setCtrlForm(f => ({ ...f, status: v }))}>
@@ -772,42 +800,43 @@ export default function TprmCompliancePage() {
                 </Select>
               </div>
 
-              {/* Evidence */}
               <div>
                 <Label className="text-xs">Evidence / Reference</Label>
                 <Input className="mt-1 h-8 text-sm" value={ctrlForm.evidence} onChange={e => setCtrlForm(f => ({ ...f, evidence: e.target.value }))} placeholder="e.g. SOC2 report §6.1, policy link…" />
               </div>
 
-              {/* Assigned To */}
               <div>
                 <Label className="text-xs">Assigned To</Label>
-                <Input className="mt-1 h-8 text-sm" value={ctrlForm.assignedTo} onChange={e => setCtrlForm(f => ({ ...f, assignedTo: e.target.value }))} placeholder="Name or email" />
+                <Select value={ctrlForm.assignedTo} onValueChange={v => setCtrlForm(f => ({ ...f, assignedTo: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select account manager…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">— None —</SelectItem>
+                    {users.map((u: any) => (
+                      <SelectItem key={u.id} value={u.email}>
+                        {u.name ?? u.email}
+                        {u.role === "account_manager" ? " (AM)" : u.role === "admin" ? " (Admin)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              {/* Notes */}
               <div>
                 <Label className="text-xs">Notes</Label>
                 <Input className="mt-1 h-8 text-sm" value={ctrlForm.notes} onChange={e => setCtrlForm(f => ({ ...f, notes: e.target.value }))} placeholder="Additional context…" />
               </div>
 
-              {/* Enable / Disable toggle */}
-              <div className="flex items-center justify-between rounded border border-border/50 p-3 bg-muted/20">
-                <div>
-                  <p className="text-sm font-medium">Control Active</p>
-                  <p className="text-xs text-muted-foreground">Disabled controls are hidden from compliance scoring</p>
-                </div>
-                <Switch
-                  checked={ctrlForm.isActive}
-                  onCheckedChange={v => setCtrlForm(f => ({ ...f, isActive: v }))}
-                />
-              </div>
+              <p className="text-[10px] text-muted-foreground">
+                To rename the control ID/title or change category, use{" "}
+                <Link href={`/tprm/compliance/controls?vendor=${editingCtrl.vendorId}`} className="text-blue-400 underline" onClick={() => setEditingCtrl(null)}>
+                  Manage Controls
+                </Link>.
+              </p>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingCtrl(null)}>Cancel</Button>
-            <Button onClick={saveCtrl} disabled={savingCtrl}>
-              {savingCtrl && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save Changes
-            </Button>
+            <Button onClick={saveCtrl} disabled={savingCtrl}>{savingCtrl && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
