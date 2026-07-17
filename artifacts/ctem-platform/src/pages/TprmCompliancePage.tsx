@@ -1,11 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Link } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock, ChevronRight } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import {
+  RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock,
+  ChevronRight, Edit2, Trash2, Plus, Loader2, Shield, ClipboardList,
+  Upload, Download, ExternalLink,
+} from "lucide-react";
 
 const DOC_TYPES = ["SOC2 Type II", "ISO 27001", "PCI DSS", "HIPAA BAA", "GDPR DPA", "ISO 27017"];
 
@@ -14,7 +23,8 @@ interface VendorComplianceRow {
   companyName: string;
   domain: string;
   logoUrl: string | null;
-  docsByType: Record<string, { status: string; expiresAt: string | null; daysRemaining: number | null } | null>;
+  docsByType: Record<string, { id: number; status: string; expiresAt: string | null; daysRemaining: number | null } | null>;
+  documents: any[];
 }
 
 function cellIcon(doc: { status: string; daysRemaining: number | null } | null) {
@@ -24,12 +34,46 @@ function cellIcon(doc: { status: string; daysRemaining: number | null } | null) 
   return <CheckCircle2 className="w-4 h-4 text-green-400 mx-auto" aria-label="Valid" />;
 }
 
-export default function TprmCompliancePage() {
-  const [rows, setRows]           = useState<VendorComplianceRow[]>([]);
-  const [expiring, setExpiring]   = useState<any[]>([]);
-  const [loading, setLoading]     = useState(true);
+const STATUS_OPTIONS = [
+  { value: "valid",           label: "Valid" },
+  { value: "pending_review",  label: "Pending Review" },
+  { value: "expiring_soon",   label: "Expiring Soon" },
+  { value: "expired",         label: "Expired" },
+];
 
-  const load = async () => {
+const STATUS_COLOR: Record<string, string> = {
+  valid:           "text-green-400 border-green-500/30",
+  pending_review:  "text-blue-400 border-blue-500/30",
+  expiring_soon:   "text-yellow-400 border-yellow-500/30",
+  expired:         "text-red-400 border-red-500/30",
+};
+
+export default function TprmCompliancePage() {
+  const { toast } = useToast();
+  const [mainTab, setMainTab] = useState<"matrix" | "controls" | "documents">("matrix");
+
+  // Matrix state
+  const [rows, setRows]         = useState<VendorComplianceRow[]>([]);
+  const [expiring, setExpiring] = useState<any[]>([]);
+  const [loading, setLoading]   = useState(true);
+
+  // Controls state (cross-vendor)
+  const [allControls, setAllControls]     = useState<any[]>([]);
+  const [controlsLoading, setControlsLoading] = useState(false);
+  const [controlsFramework, setControlsFramework] = useState("iso27001");
+  const [editingCtrl, setEditingCtrl]     = useState<any | null>(null);
+  const [ctrlForm, setCtrlForm]           = useState({ status: "", evidence: "", notes: "", assignedTo: "" });
+  const [savingCtrl, setSavingCtrl]       = useState(false);
+
+  // All documents across vendors
+  const [allDocs, setAllDocs]         = useState<any[]>([]);
+  const [editingDoc, setEditingDoc]   = useState<any | null>(null);
+  const [docForm, setDocForm]         = useState({ status: "", expiresAt: "", notes: "" });
+  const [savingDoc, setSavingDoc]     = useState(false);
+  const [vendorFilter, setVendorFilter] = useState("all");
+
+  // Load matrix
+  const loadMatrix = async () => {
     setLoading(true);
     try {
       const [vendors, exp] = await Promise.all([
@@ -37,24 +81,23 @@ export default function TprmCompliancePage() {
         apiFetch<any[]>("/api/tprm/compliance/expiring"),
       ]);
       setExpiring(exp);
-
-      // For each vendor fetch compliance docs (compact via vendor list + inline fetch)
       const vendorRows: VendorComplianceRow[] = [];
       await Promise.all((vendors.vendors ?? []).map(async (v: any) => {
         try {
           const comp = await apiFetch<any>(`/api/tprm/vendors/${v.id}/compliance`);
+          const docs = comp.documents ?? [];
           const docsByType: Record<string, any> = {};
           for (const dt of DOC_TYPES) {
-            const d = (comp.documents ?? []).find((x: any) => x.documentType === dt && x.status !== "expired");
+            const d = docs.find((x: any) => x.documentType === dt && x.status !== "expired");
             if (d) {
               const days = d.expiresAt ? Math.ceil((new Date(d.expiresAt).getTime() - Date.now()) / 86400000) : null;
-              docsByType[dt] = { status: d.status, expiresAt: d.expiresAt, daysRemaining: days };
+              docsByType[dt] = { id: d.id, status: d.status, expiresAt: d.expiresAt, daysRemaining: days };
             } else {
-              const expired = (comp.documents ?? []).find((x: any) => x.documentType === dt);
-              docsByType[dt] = expired ? { status: "expired", expiresAt: expired.expiresAt, daysRemaining: -1 } : null;
+              const expired = docs.find((x: any) => x.documentType === dt);
+              docsByType[dt] = expired ? { id: expired.id, status: "expired", expiresAt: expired.expiresAt, daysRemaining: -1 } : null;
             }
           }
-          vendorRows.push({ id: v.id, companyName: v.companyName, domain: v.domain, logoUrl: v.logoUrl, docsByType });
+          vendorRows.push({ id: v.id, companyName: v.companyName, domain: v.domain, logoUrl: v.logoUrl, docsByType, documents: docs });
         } catch { /* skip */ }
       }));
       setRows(vendorRows);
@@ -62,16 +105,136 @@ export default function TprmCompliancePage() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  // Load controls across vendors
+  const loadControls = async (fw?: string) => {
+    const framework = fw ?? controlsFramework;
+    setControlsLoading(true);
+    try {
+      const vendors = await apiFetch<any>("/api/tprm/vendors?limit=200");
+      const all: any[] = [];
+      await Promise.all((vendors.vendors ?? []).map(async (v: any) => {
+        try {
+          const ctrls = await apiFetch<any[]>(`/api/tprm/vendors/${v.id}/compliance-controls?framework=${framework}`);
+          ctrls.forEach(c => all.push({ ...c, vendorId: v.id, vendorName: v.companyName }));
+        } catch { /* skip */ }
+      }));
+      setAllControls(all);
+    } catch { /* ignore */ }
+    setControlsLoading(false);
+  };
+
+  // Load all documents
+  const loadAllDocs = async () => {
+    try {
+      const vendors = await apiFetch<any>("/api/tprm/vendors?limit=200");
+      const all: any[] = [];
+      await Promise.all((vendors.vendors ?? []).map(async (v: any) => {
+        try {
+          const comp = await apiFetch<any>(`/api/tprm/vendors/${v.id}/compliance`);
+          (comp.documents ?? []).forEach((d: any) => all.push({ ...d, vendorId: v.id, vendorName: v.companyName }));
+        } catch { /* skip */ }
+      }));
+      setAllDocs(all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { loadMatrix(); }, []);
+  useEffect(() => { if (mainTab === "controls") loadControls(); }, [mainTab]);
+  useEffect(() => { if (mainTab === "documents") loadAllDocs(); }, [mainTab]);
+
+  // Edit compliance document
+  const openEditDoc = (doc: any) => {
+    setEditingDoc(doc);
+    setDocForm({ status: doc.status ?? "pending_review", expiresAt: doc.expiresAt ? doc.expiresAt.slice(0, 10) : "", notes: doc.notes ?? "" });
+  };
+
+  const saveDoc = async () => {
+    if (!editingDoc) return;
+    setSavingDoc(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${editingDoc.vendorId}/compliance/${editingDoc.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(docForm),
+      });
+      toast({ title: "Document updated" });
+      setEditingDoc(null);
+      if (mainTab === "documents") loadAllDocs();
+      if (mainTab === "matrix") loadMatrix();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err?.message, variant: "destructive" });
+    }
+    setSavingDoc(false);
+  };
+
+  const deleteDoc = async (doc: any) => {
+    if (!confirm(`Delete document "${doc.title}"? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/api/tprm/vendors/${doc.vendorId}/compliance/${doc.id}`, { method: "DELETE" });
+      toast({ title: "Document deleted" });
+      if (mainTab === "documents") loadAllDocs();
+      if (mainTab === "matrix") loadMatrix();
+    } catch { toast({ title: "Delete failed", variant: "destructive" }); }
+  };
+
+  // Edit compliance control
+  const openEditCtrl = (ctrl: any) => {
+    setEditingCtrl(ctrl);
+    setCtrlForm({ status: ctrl.status, evidence: ctrl.evidence ?? "", notes: ctrl.notes ?? "", assignedTo: ctrl.assignedTo ?? "" });
+  };
+
+  const saveCtrl = async () => {
+    if (!editingCtrl) return;
+    setSavingCtrl(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${editingCtrl.vendorId}/compliance-controls/${editingCtrl.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(ctrlForm),
+      });
+      toast({ title: "Control updated" });
+      setEditingCtrl(null);
+      loadControls();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err?.message, variant: "destructive" });
+    }
+    setSavingCtrl(false);
+  };
+
+  const deleteCtrl = async (ctrl: any) => {
+    if (!confirm(`Delete control "${ctrl.controlId} — ${ctrl.controlTitle}"?`)) return;
+    try {
+      await apiFetch(`/api/tprm/vendors/${ctrl.vendorId}/compliance-controls/${ctrl.id}`, { method: "DELETE" });
+      toast({ title: "Control deleted" });
+      loadControls();
+    } catch { toast({ title: "Delete failed", variant: "destructive" }); }
+  };
+
+  // Counts for tab labels
+  const totalControls = allControls.length;
+  const allDocsList   = useMemo(() =>
+    vendorFilter === "all" ? allDocs : allDocs.filter(d => String(d.vendorId) === vendorFilter),
+    [allDocs, vendorFilter]);
+  const vendorOptions = useMemo(() => Array.from(new Map(allDocs.map(d => [String(d.vendorId), d.vendorName]))), [allDocs]);
+
+  // Control status helpers
+  const ctrlStatusMap: Record<string, { label: string; color: string; border: string }> = {
+    compliant:      { label: "Compliant",      color: "text-green-400",  border: "border-green-500/30"  },
+    partial:        { label: "Partial",         color: "text-yellow-400", border: "border-yellow-500/30" },
+    non_compliant:  { label: "Non-Compliant",   color: "text-red-400",    border: "border-red-500/30"    },
+    pending_review: { label: "Pending Review",  color: "text-blue-400",   border: "border-blue-500/30"   },
+    not_applicable: { label: "N/A",             color: "text-slate-400",  border: "border-slate-500/30"  },
+  };
 
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">Compliance Coverage</h1>
-          <p className="text-muted-foreground text-sm">Cross-vendor compliance document status board</p>
+          <h1 className="text-xl font-bold">Compliance Management</h1>
+          <p className="text-muted-foreground text-sm">Cross-vendor compliance documents, controls, and coverage matrix</p>
         </div>
-        <Button variant="outline" size="sm" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
+        <Button variant="outline" size="sm" onClick={() => { if (mainTab === "matrix") loadMatrix(); else if (mainTab === "controls") loadControls(); else loadAllDocs(); }}>
+          <RefreshCw className="w-4 h-4" />
+        </Button>
       </div>
 
       {/* Expiring soon banner */}
@@ -81,7 +244,7 @@ export default function TprmCompliancePage() {
             <div className="flex items-start gap-2">
               <Clock className="w-4 h-4 text-yellow-400 mt-0.5 shrink-0" />
               <div>
-                <p className="text-sm font-medium text-yellow-400">Compliance Documents Expiring Soon</p>
+                <p className="text-sm font-medium text-yellow-400">Documents Expiring Soon</p>
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {expiring.map(d => (
                     <Link key={d.id} href={`/tprm/vendors/${d.vendorId}`}>
@@ -97,66 +260,371 @@ export default function TprmCompliancePage() {
         </Card>
       )}
 
-      {/* Matrix table */}
-      {loading ? (
-        <Skeleton className="h-64" />
-      ) : rows.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="py-14 text-center text-sm text-muted-foreground">
-            No vendors yet. <Link href="/tprm/vendors" className="text-primary underline">Add vendors</Link> to track their compliance documents.
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="border-b border-border/50">
-                  <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 sticky left-0 bg-card z-10 min-w-[200px]">Vendor</th>
-                  {DOC_TYPES.map(dt => (
-                    <th key={dt} className="text-center text-xs text-muted-foreground font-medium px-3 py-2.5 whitespace-nowrap">{dt}</th>
-                  ))}
-                  <th className="px-4 py-2.5 w-10" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.id} className="border-b border-border/30 hover:bg-accent/20 transition-colors">
-                    <td className="px-4 py-3 sticky left-0 bg-card z-10">
-                      <div className="flex items-center gap-2">
-                        {r.logoUrl ? (
-                          <img src={r.logoUrl} alt="" className="w-6 h-6 rounded object-contain bg-white/10 p-0.5" />
-                        ) : (
-                          <div className="w-6 h-6 rounded bg-muted flex items-center justify-center text-[10px] font-bold">{r.companyName[0]}</div>
-                        )}
-                        <span className="font-medium truncate max-w-[150px]">{r.companyName}</span>
-                      </div>
-                    </td>
-                    {DOC_TYPES.map(dt => (
-                      <td key={dt} className="px-3 py-3 text-center">
-                        {cellIcon(r.docsByType[dt] ?? null)}
-                      </td>
+      {/* Main tabs */}
+      <div className="flex gap-1 border-b border-border/50">
+        {([
+          ["matrix",    Shield,        "Coverage Matrix"],
+          ["controls",  ClipboardList, "Compliance Controls"],
+          ["documents", Upload,        "All Documents"],
+        ] as const).map(([val, Icon, label]) => (
+          <button key={val} onClick={() => setMainTab(val)}
+            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${mainTab === val ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+            <Icon className="w-3.5 h-3.5" />{label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── MATRIX TAB ─────────────────────────────────────────────────────── */}
+      {mainTab === "matrix" && (
+        loading ? (
+          <Skeleton className="h-64" />
+        ) : rows.length === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="py-14 text-center text-sm text-muted-foreground">
+              No vendors yet. <Link href="/tprm/vendors" className="text-primary underline">Add vendors</Link> to track compliance.
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <Card>
+              <CardContent className="p-0 overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b border-border/50">
+                      <th className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5 sticky left-0 bg-card z-10 min-w-[200px]">Vendor</th>
+                      {DOC_TYPES.map(dt => (
+                        <th key={dt} className="text-center text-xs text-muted-foreground font-medium px-3 py-2.5 whitespace-nowrap">{dt}</th>
+                      ))}
+                      <th className="px-4 py-2.5 w-10" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.id} className="border-b border-border/30 hover:bg-accent/20 transition-colors group">
+                        <td className="px-4 py-3 sticky left-0 bg-card z-10">
+                          <div className="flex items-center gap-2">
+                            {r.logoUrl ? (
+                              <img src={r.logoUrl} alt="" className="w-6 h-6 rounded object-contain bg-white/10 p-0.5" />
+                            ) : (
+                              <div className="w-6 h-6 rounded bg-muted flex items-center justify-center text-[10px] font-bold">{r.companyName[0]}</div>
+                            )}
+                            <span className="font-medium truncate max-w-[150px]">{r.companyName}</span>
+                          </div>
+                        </td>
+                        {DOC_TYPES.map(dt => {
+                          const doc = r.docsByType[dt] ?? null;
+                          return (
+                            <td key={dt} className="px-3 py-3 text-center">
+                              <div className="relative group/cell">
+                                {cellIcon(doc)}
+                                {doc && (
+                                  <div className="absolute top-5 left-1/2 -translate-x-1/2 z-20 hidden group-hover/cell:flex flex-col items-start gap-1 bg-popover border border-border rounded shadow-lg p-2 min-w-[140px]">
+                                    <span className="text-[10px] font-medium">{dt}</span>
+                                    <Badge variant="outline" className={`text-[10px] ${STATUS_COLOR[doc.status] ?? ""}`}>{doc.status?.replace(/_/g, " ")}</Badge>
+                                    {doc.expiresAt && <span className="text-[10px] text-muted-foreground">Expires: {new Date(doc.expiresAt).toLocaleDateString()}</span>}
+                                    <div className="flex gap-1 mt-1">
+                                      <Button variant="ghost" size="sm" className="h-5 text-[10px] px-1.5 text-blue-400" onClick={() => openEditDoc({ ...doc, documentType: dt, title: dt, vendorId: r.id })}>
+                                        <Edit2 className="w-2.5 h-2.5 mr-0.5" />Edit
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
+                        <td className="px-4 py-3">
+                          <Link href={`/tprm/vendors/${r.id}`}>
+                            <ChevronRight className="w-4 h-4 text-muted-foreground hover:text-foreground cursor-pointer" />
+                          </Link>
+                        </td>
+                      </tr>
                     ))}
-                    <td className="px-4 py-3">
-                      <Link href={`/tprm/vendors/${r.id}`}>
-                        <ChevronRight className="w-4 h-4 text-muted-foreground hover:text-foreground cursor-pointer" />
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-green-400" />Valid</span>
+              <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-yellow-400" />Expiring ≤30d</span>
+              <span className="flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-red-400" />Expired</span>
+              <span className="flex items-center gap-1"><XCircle className="w-3.5 h-3.5 text-red-400" />Missing</span>
+              <span className="text-muted-foreground/50">· Hover a cell to edit</span>
+            </div>
+          </>
+        )
       )}
 
-      {/* Legend */}
-      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-green-400" />Valid</span>
-        <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-yellow-400" />Expiring ≤30d</span>
-        <span className="flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-red-400" />Expired</span>
-        <span className="flex items-center gap-1"><XCircle className="w-3.5 h-3.5 text-red-400" />Missing</span>
-      </div>
+      {/* ── CONTROLS TAB ────────────────────────────────────────────────────── */}
+      {mainTab === "controls" && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Select value={controlsFramework} onValueChange={v => { setControlsFramework(v); loadControls(v); }}>
+              <SelectTrigger className="h-8 text-xs w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="iso27001">ISO 27001:2022</SelectItem>
+                <SelectItem value="soc2">SOC 2</SelectItem>
+                <SelectItem value="pcidss">PCI DSS v4.0</SelectItem>
+                <SelectItem value="hipaa">HIPAA</SelectItem>
+                <SelectItem value="nist_csf">NIST CSF 2.0</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">{totalControls} control{totalControls !== 1 ? "s" : ""} across all vendors</p>
+          </div>
+
+          {/* Scorecard */}
+          {allControls.length > 0 && (() => {
+            const total     = allControls.length;
+            const compliant = allControls.filter(c => c.status === "compliant").length;
+            const partial   = allControls.filter(c => c.status === "partial").length;
+            const nonC      = allControls.filter(c => c.status === "non_compliant").length;
+            const na        = allControls.filter(c => c.status === "not_applicable").length;
+            const pending   = allControls.filter(c => c.status === "pending_review").length;
+            const score     = total - na > 0 ? Math.round(((compliant + partial * 0.5) / (total - na)) * 100) : 0;
+            return (
+              <Card>
+                <CardContent className="py-3">
+                  <div className="grid grid-cols-6 gap-2">
+                    {[
+                      { label: "Overall Score", count: `${score}%`, color: score >= 80 ? "text-green-400" : score >= 50 ? "text-yellow-400" : "text-red-400", bg: "bg-muted/30" },
+                      { label: "Compliant",     count: compliant,   color: "text-green-400",  bg: "bg-green-500/10"  },
+                      { label: "Partial",        count: partial,     color: "text-yellow-400", bg: "bg-yellow-500/10" },
+                      { label: "Non-Compliant",  count: nonC,        color: "text-red-400",    bg: "bg-red-500/10"    },
+                      { label: "Pending",        count: pending,     color: "text-blue-400",   bg: "bg-blue-500/10"   },
+                      { label: "N/A",            count: na,          color: "text-slate-400",  bg: "bg-slate-500/10"  },
+                    ].map(s => (
+                      <div key={s.label} className={`rounded p-2 text-center ${s.bg}`}>
+                        <p className={`text-lg font-bold ${s.color}`}>{s.count}</p>
+                        <p className="text-[10px] text-muted-foreground leading-tight">{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
+
+          {controlsLoading ? (
+            <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          ) : allControls.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p>No controls for <strong>{controlsFramework.replace(/_/g, " ").toUpperCase()}</strong> across any vendors yet.</p>
+                <p className="text-xs mt-1">Open a vendor detail page and seed the framework controls first.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {/* Group by vendor */}
+              {Array.from(new Map(allControls.map(c => [c.vendorId, c.vendorName]))).map(([vid, vname]) => {
+                const vControls = allControls.filter(c => c.vendorId === vid);
+                return (
+                  <Card key={vid}>
+                    <CardHeader className="pb-1 pt-3">
+                      <CardTitle className="text-sm flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-muted-foreground" />{vname}
+                          <span className="text-xs text-muted-foreground font-normal">({vControls.length} controls)</span>
+                        </span>
+                        <Link href={`/tprm/vendors/${vid}`}>
+                          <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400"><ExternalLink className="w-3 h-3 mr-1" />Open Vendor</Button>
+                        </Link>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pb-3">
+                      <div className="space-y-1">
+                        {vControls.map(ctrl => {
+                          const sm = ctrlStatusMap[ctrl.status] ?? ctrlStatusMap.pending_review;
+                          return (
+                            <div key={ctrl.id} className={`flex items-center gap-2 p-2 rounded border-l-2 bg-muted/20 ${sm.border}`}>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-mono font-semibold text-muted-foreground">{ctrl.controlId}</span>
+                                  <Badge variant="outline" className={`text-[10px] py-0 h-4 ${sm.color} border-current`}>{sm.label}</Badge>
+                                  {ctrl.category && <Badge variant="outline" className="text-[10px] py-0 h-4">{ctrl.category}</Badge>}
+                                </div>
+                                <p className="text-xs mt-0.5 truncate">{ctrl.controlTitle}</p>
+                                {ctrl.evidence && <p className="text-[10px] text-muted-foreground truncate"><span className="font-medium">Evidence:</span> {ctrl.evidence}</p>}
+                                {ctrl.assignedTo && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Assigned:</span> {ctrl.assignedTo}</p>}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 text-blue-400 hover:text-blue-300" onClick={() => openEditCtrl(ctrl)}>
+                                  <Edit2 className="w-3 h-3 mr-0.5" />Edit
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteCtrl(ctrl)}>
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── DOCUMENTS TAB ───────────────────────────────────────────────────── */}
+      {mainTab === "documents" && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Select value={vendorFilter} onValueChange={setVendorFilter}>
+              <SelectTrigger className="h-8 text-xs w-48"><SelectValue placeholder="All vendors" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All vendors</SelectItem>
+                {vendorOptions.map(([vid, vname]) => <SelectItem key={vid} value={vid}>{vname}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">{allDocsList.length} document{allDocsList.length !== 1 ? "s" : ""}</p>
+          </div>
+
+          {allDocsList.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                No compliance documents found. Upload documents on individual vendor pages.
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {allDocsList.map(doc => {
+                const exp   = doc.expiresAt ? new Date(doc.expiresAt) : null;
+                const days  = exp ? Math.ceil((exp.getTime() - Date.now()) / 86400000) : null;
+                const sc    = STATUS_COLOR[doc.status] ?? "";
+                return (
+                  <Card key={doc.id} className="bg-card/60 hover:bg-accent/10 transition-colors">
+                    <CardContent className="py-2.5 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium truncate">{doc.title || doc.documentType}</p>
+                            <Badge variant="outline" className={`text-[10px] ${sc}`}>{doc.status?.replace(/_/g, " ")}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{doc.documentType}</Badge>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="text-xs text-muted-foreground font-medium">{doc.vendorName}</span>
+                            {doc.auditor && <span className="text-xs text-muted-foreground">• {doc.auditor}</span>}
+                            {days !== null && (
+                              <span className={`text-xs ${days < 0 ? "text-red-400" : days <= 30 ? "text-yellow-400" : "text-green-400"}`}>
+                                {days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d remaining`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {doc.fileName && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
+                              <a href={`/api/tprm/vendors/${doc.vendorId}/compliance/${doc.id}/download`} download={doc.fileName}><Download className="w-3.5 h-3.5" /></a>
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDoc(doc)} title="Edit">
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteDoc(doc)} title="Delete">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                          <Link href={`/tprm/vendors/${doc.vendorId}`}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7"><ExternalLink className="w-3.5 h-3.5" /></Button>
+                          </Link>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Edit Document Dialog ──────────────────────────────────────────── */}
+      <Dialog open={!!editingDoc} onOpenChange={o => { if (!o) setEditingDoc(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Edit2 className="w-4 h-4" />Edit Compliance Document</DialogTitle></DialogHeader>
+          {editingDoc && (
+            <div className="space-y-3">
+              <div className="p-2 rounded bg-muted/30 border border-border/40 text-xs">
+                <p className="font-medium">{editingDoc.title || editingDoc.documentType}</p>
+                <p className="text-muted-foreground">{editingDoc.vendorName}</p>
+              </div>
+              <div>
+                <Label className="text-xs">Status</Label>
+                <Select value={docForm.status} onValueChange={v => setDocForm(f => ({ ...f, status: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {STATUS_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Expiry Date</Label>
+                <Input type="date" className="mt-1 h-8 text-sm" value={docForm.expiresAt} onChange={e => setDocForm(f => ({ ...f, expiresAt: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Notes</Label>
+                <Input className="mt-1 h-8 text-sm" value={docForm.notes} onChange={e => setDocForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional notes…" />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingDoc(null)}>Cancel</Button>
+            <Button onClick={saveDoc} disabled={savingDoc}>
+              {savingDoc && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Control Dialog ───────────────────────────────────────────── */}
+      <Dialog open={!!editingCtrl} onOpenChange={o => { if (!o) setEditingCtrl(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><ClipboardList className="w-4 h-4" />Update Control</DialogTitle></DialogHeader>
+          {editingCtrl && (
+            <div className="space-y-3">
+              <div className="p-2 rounded bg-muted/30 border border-border/40">
+                <p className="text-xs font-mono font-semibold text-muted-foreground">{editingCtrl.controlId}</p>
+                <p className="text-sm font-medium mt-0.5">{editingCtrl.controlTitle}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Vendor: {editingCtrl.vendorName}</p>
+              </div>
+              <div>
+                <Label className="text-xs">Status</Label>
+                <Select value={ctrlForm.status} onValueChange={v => setCtrlForm(f => ({ ...f, status: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending_review">Pending Review</SelectItem>
+                    <SelectItem value="compliant">Compliant</SelectItem>
+                    <SelectItem value="partial">Partial</SelectItem>
+                    <SelectItem value="non_compliant">Non-Compliant</SelectItem>
+                    <SelectItem value="not_applicable">Not Applicable</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Evidence / Reference</Label>
+                <Input className="mt-1 h-8 text-sm" value={ctrlForm.evidence} onChange={e => setCtrlForm(f => ({ ...f, evidence: e.target.value }))} placeholder="e.g. SOC2 report §6.1, policy link…" />
+              </div>
+              <div>
+                <Label className="text-xs">Assigned To</Label>
+                <Input className="mt-1 h-8 text-sm" value={ctrlForm.assignedTo} onChange={e => setCtrlForm(f => ({ ...f, assignedTo: e.target.value }))} placeholder="Name or email" />
+              </div>
+              <div>
+                <Label className="text-xs">Notes</Label>
+                <Input className="mt-1 h-8 text-sm" value={ctrlForm.notes} onChange={e => setCtrlForm(f => ({ ...f, notes: e.target.value }))} placeholder="Additional context…" />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingCtrl(null)}>Cancel</Button>
+            <Button onClick={saveCtrl} disabled={savingCtrl}>
+              {savingCtrl && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

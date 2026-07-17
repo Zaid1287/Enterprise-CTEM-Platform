@@ -301,6 +301,22 @@ export const tprmComplianceRemindersTable = pgTable("tprm_compliance_reminders",
   createdAt:     timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const tprmQuestionLibraryTable = pgTable("tprm_question_library", {
+  id:        serial("id").primaryKey(),
+  tenantId:  integer("tenant_id").references(() => tenantsTable.id, { onDelete: "cascade" }),
+  text:      text("text").notNull(),
+  type:      text("type").notNull().default("boolean"),
+  category:  text("category").notNull().default("general"),
+  required:  boolean("required").notNull().default(false),
+  weight:    integer("weight").notNull().default(1),
+  options:   jsonb("options"),
+  isGlobal:  boolean("is_global").notNull().default(false),
+  isActive:  boolean("is_active").notNull().default(true),
+  createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const tprmSbomUploadsTable = pgTable("tprm_sbom_uploads", {
   id:                      serial("id").primaryKey(),
   vendorId:                integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
@@ -333,3 +349,4 @@ export type TprmComplianceRequirement       = typeof tprmComplianceRequirementsT
 export type TprmVendorComplianceControl     = typeof tprmVendorComplianceControlsTable.$inferSelect;
 export type TprmComplianceReminder          = typeof tprmComplianceRemindersTable.$inferSelect;
 export type TprmSbomUpload                  = typeof tprmSbomUploadsTable.$inferSelect;
+export type TprmQuestionLibrary             = typeof tprmQuestionLibraryTable.$inferSelect;

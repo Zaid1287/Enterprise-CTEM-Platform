@@ -18,6 +18,7 @@ import {
   tprmComplianceRequirementsTable,
   tprmVendorComplianceControlsTable,
   tprmComplianceRemindersTable,
+  tprmQuestionLibraryTable,
   tprmSbomUploadsTable,
   tenantsTable,
   platformSettingsTable,
@@ -2553,6 +2554,64 @@ router.delete("/tprm/vendors/:id/reminders/:rid", requireAuth, requireTprm, asyn
   const { tenantId } = req.user!;
   const rid = parseInt(req.params.rid as string);
   await db.delete(tprmComplianceRemindersTable).where(and(eq(tprmComplianceRemindersTable.id, rid), eq(tprmComplianceRemindersTable.tenantId, tenantId)));
+  res.json({ ok: true });
+});
+
+// ── Question Library ─────────────────────────────────────────────────────────
+
+router.get("/tprm/question-library", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, role } = req.user!;
+  const isSA = role === "super_admin";
+  const rows = await db
+    .select()
+    .from(tprmQuestionLibraryTable)
+    .where(
+      isSA
+        ? undefined
+        : or(eq(tprmQuestionLibraryTable.tenantId, tenantId), eq(tprmQuestionLibraryTable.isGlobal, true))
+    )
+    .orderBy(tprmQuestionLibraryTable.category, tprmQuestionLibraryTable.id);
+  res.json(rows);
+});
+
+router.post("/tprm/question-library", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, userId, role } = req.user!;
+  const { text, type, category, required, weight, options, isGlobal } = req.body as any;
+  if (!text?.trim()) { res.status(400).json({ error: "text required" }); return; }
+  const isG = isGlobal && role === "super_admin";
+  const [row] = await db
+    .insert(tprmQuestionLibraryTable)
+    .values({ tenantId: isG ? null : tenantId, text: text.trim(), type: type ?? "boolean", category: category ?? "general", required: !!required, weight: weight ?? 1, options: options ?? null, isGlobal: isG, isActive: true, createdBy: userId as any })
+    .returning();
+  res.status(201).json(row);
+});
+
+router.patch("/tprm/question-library/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, role } = req.user!;
+  const qid = parseInt(req.params.id as string);
+  const existing = await db.select().from(tprmQuestionLibraryTable).where(eq(tprmQuestionLibraryTable.id, qid)).limit(1);
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
+  const q = existing[0];
+  if (q.isGlobal && role !== "super_admin") { res.status(403).json({ error: "Only super_admin can edit global questions" }); return; }
+  if (!q.isGlobal && q.tenantId !== tenantId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const { text, type, category, required, weight, options, isActive } = req.body as any;
+  const [updated] = await db
+    .update(tprmQuestionLibraryTable)
+    .set({ ...(text !== undefined && { text }), ...(type !== undefined && { type }), ...(category !== undefined && { category }), ...(required !== undefined && { required: !!required }), ...(weight !== undefined && { weight }), ...(options !== undefined && { options }), ...(isActive !== undefined && { isActive: !!isActive }), updatedAt: new Date() })
+    .where(eq(tprmQuestionLibraryTable.id, qid))
+    .returning();
+  res.json(updated);
+});
+
+router.delete("/tprm/question-library/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, role } = req.user!;
+  const qid = parseInt(req.params.id as string);
+  const existing = await db.select().from(tprmQuestionLibraryTable).where(eq(tprmQuestionLibraryTable.id, qid)).limit(1);
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
+  const q = existing[0];
+  if (q.isGlobal && role !== "super_admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  if (!q.isGlobal && q.tenantId !== tenantId) { res.status(403).json({ error: "Forbidden" }); return; }
+  await db.delete(tprmQuestionLibraryTable).where(eq(tprmQuestionLibraryTable.id, qid));
   res.json({ ok: true });
 });
 
