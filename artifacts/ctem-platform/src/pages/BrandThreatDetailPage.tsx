@@ -3198,15 +3198,15 @@ export default function BrandThreatDetailPage() {
         const history: any[] = s?.scanHistory ?? [];
         return (
           <div className="mx-6 mt-4 shrink-0">
-            <details className="group bg-muted/20 border border-border rounded-xl overflow-hidden" open={history.length > 0}>
+            <details className="group bg-muted/20 border border-border rounded-xl overflow-hidden">
               <summary className="flex items-center gap-2 px-4 py-2.5 cursor-pointer select-none text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors list-none">
                 <History className="w-3.5 h-3.5" />
                 Previous Scan Rounds
                 {history.length > 0 && (
                   <span className="ml-1 bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full text-[10px] font-bold">{history.length}</span>
                 )}
-                <span className="ml-auto text-muted-foreground/50 text-[10px] group-open:hidden">▶ expand</span>
-                <span className="ml-auto text-muted-foreground/50 text-[10px] hidden group-open:inline">▼ collapse</span>
+                <ChevronRight className="ml-auto w-3.5 h-3.5 text-muted-foreground/50 group-open:hidden" />
+                <ChevronDown className="ml-auto w-3.5 h-3.5 text-muted-foreground/50 hidden group-open:block" />
               </summary>
               <div className="border-t border-border">
                 {history.length === 0 ? (
