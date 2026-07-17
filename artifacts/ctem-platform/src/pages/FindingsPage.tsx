@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Link, useLocation, useSearch } from "wouter";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,7 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { TenantFilter } from "@/components/TenantFilter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
-  Search, ExternalLink, ChevronLeft, ChevronRight, X,
+  Search, ExternalLink, X,
   ShieldAlert, Globe, Network, Server, Cpu, Smartphone,
   FileText, Code2, Camera, Tag, Info,
   CheckCircle2, Clock, AlertCircle, XCircle, Minus,
@@ -1626,27 +1627,15 @@ export default function FindingsPage() {
       </div>
 
       {/* Pagination */}
-      {!isLoading && totalPages > 1 && (
-        <div className="flex items-center justify-between pt-1">
-          <p className="text-xs text-muted-foreground">
-            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, list.length)} of {list.length} findings
-          </p>
-          <div className="flex items-center gap-1">
-            <Button size="sm" variant="outline" className="h-7 px-2" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </Button>
-            {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-              const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page >= totalPages - 3 ? totalPages - 6 + i : page - 3 + i;
-              if (p < 1 || p > totalPages) return null;
-              return (
-                <Button key={p} size="sm" variant={p === page ? "default" : "outline"} className="h-7 w-7 p-0 text-xs" onClick={() => setPage(p)}>{p}</Button>
-              );
-            })}
-            <Button size="sm" variant="outline" className="h-7 px-2" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </div>
+      {!isLoading && (
+        <SmartPagination
+          page={page}
+          totalPages={totalPages}
+          totalItems={list.length}
+          pageSize={PAGE_SIZE}
+          itemLabel="findings"
+          onPageChange={setPage}
+        />
       )}
 
       {/* Finding Drawer */}

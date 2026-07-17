@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useLocation } from "wouter";
 import {
   useListSecurityTools, useCreateSecurityTool, useDeleteSecurityTool, useUpdateSecurityTool,
@@ -845,28 +846,14 @@ export default function SecurityToolsPage() {
           ))}
 
           {/* Pagination */}
-          {toolsTotalPages > 1 && (
-            <div className="flex items-center justify-between pt-1">
-              <p className="text-xs text-muted-foreground">
-                Showing {(toolsPage - 1) * TOOLS_PAGE_SIZE + 1}–{Math.min(toolsPage * TOOLS_PAGE_SIZE, tools.length)} of {tools.length} tools
-              </p>
-              <div className="flex items-center gap-1">
-                <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={toolsPage === 1} onClick={() => setToolsPage(p => p - 1)}>
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </Button>
-                {Array.from({ length: Math.min(toolsTotalPages, 7) }, (_, i) => {
-                  const p = toolsTotalPages <= 7 ? i + 1 : toolsPage <= 4 ? i + 1 : toolsPage >= toolsTotalPages - 3 ? toolsTotalPages - 6 + i : toolsPage - 3 + i;
-                  if (p < 1 || p > toolsTotalPages) return null;
-                  return (
-                    <Button key={p} size="sm" variant={p === toolsPage ? "default" : "outline"} className="h-7 w-7 p-0 text-xs" onClick={() => setToolsPage(p)}>{p}</Button>
-                  );
-                })}
-                <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={toolsPage === toolsTotalPages} onClick={() => setToolsPage(p => p + 1)}>
-                  <ChevronRightIcon className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </div>
-          )}
+          <SmartPagination
+            page={toolsPage}
+            totalPages={toolsTotalPages}
+            totalItems={tools.length}
+            pageSize={TOOLS_PAGE_SIZE}
+            itemLabel="tools"
+            onPageChange={setToolsPage}
+          />
         </div>
       )}
 
@@ -1017,29 +1004,16 @@ export default function SecurityToolsPage() {
               </tbody>
             </table>
             {/* Pagination */}
-            {runsTotalPages > 1 && (
-              <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-card/50">
-                <span className="text-xs text-muted-foreground">
-                  {runsTotal} run{runsTotal !== 1 ? "s" : ""} · page {runsPage} of {runsTotalPages}
-                </span>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost" size="icon" className="h-7 w-7"
-                    disabled={runsPage <= 1}
-                    onClick={() => setRunsPage(p => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost" size="icon" className="h-7 w-7"
-                    disabled={runsPage >= runsTotalPages}
-                    onClick={() => setRunsPage(p => Math.min(runsTotalPages, p + 1))}
-                  >
-                    <ChevronRightIcon className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-            )}
+            <div className="px-4 py-2.5 border-t border-border bg-card/50">
+              <SmartPagination
+                page={runsPage}
+                totalPages={runsTotalPages}
+                totalItems={runsTotal}
+                pageSize={RUNS_PAGE_SIZE}
+                itemLabel="runs"
+                onPageChange={setRunsPage}
+              />
+            </div>
           </div>
 
           {selectedRun && (

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import {
   useListRiskScores, getListRiskScoresQueryKey,
   useGetTopRiskyAssets, getGetTopRiskyAssetsQueryKey,
@@ -21,11 +22,13 @@ const RISK_COLORS: Record<string, string> = {
 };
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const RISK_PAGE_SIZE = 15;
 
 export default function RiskPage() {
   const { user } = useAuth();
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const [assetFilter, setAssetFilter] = useState<string>("all");
+  const [riskPage, setRiskPage] = useState(1);
   const isPrivileged = user?.role === "super_admin" || user?.role === "admin";
 
   const { data: scores, isLoading } = useListRiskScores({
@@ -67,6 +70,14 @@ export default function RiskPage() {
     const id = Number(assetFilter);
     return allScores.filter((s: any) => s.assetId === id);
   }, [allScores, assetFilter]);
+
+  // Paginated risk table
+  const scoredList = useMemo(
+    () => [...list].filter((s: any) => s.score !== null).sort((a: any, b: any) => b.score - a.score),
+    [list],
+  );
+  const riskTotalPages = Math.max(1, Math.ceil(scoredList.length / RISK_PAGE_SIZE));
+  const paginatedScores = scoredList.slice((riskPage - 1) * RISK_PAGE_SIZE, riskPage * RISK_PAGE_SIZE);
   const history = historyData as any[] ?? [];
   const levels = ["critical", "high", "medium", "low"];
   const breakdown = levels.map(level => ({
@@ -96,7 +107,7 @@ export default function RiskPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {/* Per-asset filter */}
           {allScores.length > 0 && (
-            <Select value={assetFilter} onValueChange={setAssetFilter}>
+            <Select value={assetFilter} onValueChange={v => { setAssetFilter(v); setRiskPage(1); }}>
               <SelectTrigger className="h-8 w-40 text-xs">
                 <SelectValue placeholder="All Assets" />
               </SelectTrigger>
@@ -108,7 +119,7 @@ export default function RiskPage() {
               </SelectContent>
             </Select>
           )}
-          {isPrivileged && <TenantFilter value={tenantFilter} onChange={v => { setTenantFilter(v); setAssetFilter("all"); }} />}
+          {isPrivileged && <TenantFilter value={tenantFilter} onChange={v => { setTenantFilter(v); setAssetFilter("all"); setRiskPage(1); }} />}
         </div>
       </div>
 
@@ -241,7 +252,7 @@ export default function RiskPage() {
                   {[...Array(10)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
               ))}
-              {!isLoading && [...list].filter((s: any) => s.score !== null).sort((a: any, b: any) => b.score - a.score).map((s: any) => (
+              {!isLoading && paginatedScores.map((s: any) => (
                 <tr key={s.assetId} className="border-b border-border/50 hover:bg-accent/30">
                   <td className="px-4 py-2.5 text-sm font-medium max-w-[140px] truncate">{s.assetName}</td>
                   <td className="px-4 py-2.5">
@@ -264,7 +275,7 @@ export default function RiskPage() {
                   <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : "—"}</td>
                 </tr>
               ))}
-              {!isLoading && list.length === 0 && (
+              {!isLoading && scoredList.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-4 py-8 text-center text-xs text-muted-foreground">
                     No risk scores yet — run a scan to populate risk data
@@ -273,6 +284,16 @@ export default function RiskPage() {
               )}
             </tbody>
           </table>
+        </div>
+        <div className="px-4 py-2.5 border-t border-border">
+          <SmartPagination
+            page={riskPage}
+            totalPages={riskTotalPages}
+            totalItems={scoredList.length}
+            pageSize={RISK_PAGE_SIZE}
+            itemLabel="assets"
+            onPageChange={setRiskPage}
+          />
         </div>
       </div>
     </div>

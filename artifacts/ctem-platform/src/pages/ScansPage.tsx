@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import {
   useListScans, useCreateScan, useCancelScan,
   useListAssets, useListScanJobs, useListAssetGroups, useGetAssetGroupMembers, useCreateScanSchedule,
@@ -552,20 +553,14 @@ export default function ScansPage() {
         )}
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-1">
-          <p className="text-xs text-muted-foreground">
-            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, allScans.length)} of {allScans.length} scans
-          </p>
-          <div className="flex items-center gap-1">
-            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</Button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-              <Button key={p} size="sm" variant={p === page ? "default" : "outline"} className="h-7 w-7 p-0 text-xs" onClick={() => setPage(p)}>{p}</Button>
-            ))}
-            <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>›</Button>
-          </div>
-        </div>
-      )}
+      <SmartPagination
+        page={page}
+        totalPages={totalPages}
+        totalItems={allScans.length}
+        pageSize={PAGE_SIZE}
+        itemLabel="scans"
+        onPageChange={setPage}
+      />
       </>)}
 
       <Dialog open={showCreate} onOpenChange={v => {
