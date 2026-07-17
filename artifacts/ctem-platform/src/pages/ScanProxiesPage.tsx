@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Trash2, Pencil, Wifi, WifiOff, Clock, RefreshCw,
-  Loader2, TestTube2, Upload, Check, X, KeyRound, Eye, EyeOff, ShieldAlert, RotateCcw,
+  Loader2, TestTube2, Upload, Check, X, KeyRound, Eye, EyeOff,
+  ShieldAlert, RotateCcw, Globe, Activity, Server,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,9 +25,7 @@ import { useAuth } from "@/hooks/useAuth";
 /* ─── Types ─────────────────────────────────────────────────────────── */
 interface Proxy {
   id: number; ip: string; port: number; label: string | null; type: string;
-  country: string | null; asn: string | null;
-  username: string | null;
-  hasAuth: boolean;
+  country: string | null; asn: string | null; username: string | null; hasAuth: boolean;
   healthScore: number; successCount: number; failCount: number;
   count429: number; count403: number; avgLatencyMs: number | null;
   status: "active" | "cooldown" | "inactive" | "auth_failed"; lastTestedAt: string | null;
@@ -64,7 +63,48 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-/* ─── Issue 2: Add / Edit Dialog with username/password ──────────────── */
+/* ─── Health Bar ──────────────────────────────────────────────────────── */
+function HealthBar({ score }: { score: number }) {
+  const color = score >= 70 ? "bg-green-500" : score >= 30 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden min-w-16">
+        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${Math.min(100, score)}%` }} />
+      </div>
+      <span className={cn("text-xs font-bold tabular-nums w-8 text-right", score >= 70 ? "text-green-600" : score >= 30 ? "text-amber-500" : "text-red-500")}>
+        {score}
+      </span>
+    </div>
+  );
+}
+
+/* ─── Stat Card ───────────────────────────────────────────────────────── */
+function StatCard({ label, value, icon: Icon, color, sub }: {
+  label: string; value: number | string; icon: React.ElementType; color: string; sub?: string;
+}) {
+  const colorMap: Record<string, { bg: string; icon: string; border: string }> = {
+    green:  { bg: "bg-green-500/10",  icon: "text-green-500",  border: "border-l-green-500"  },
+    amber:  { bg: "bg-amber-500/10",  icon: "text-amber-500",  border: "border-l-amber-500"  },
+    red:    { bg: "bg-red-500/10",    icon: "text-red-500",    border: "border-l-red-500"    },
+    orange: { bg: "bg-orange-500/10", icon: "text-orange-500", border: "border-l-orange-500" },
+    blue:   { bg: "bg-blue-500/10",   icon: "text-blue-500",   border: "border-l-blue-500"   },
+  };
+  const c = colorMap[color] ?? colorMap.blue;
+  return (
+    <div className={cn("rounded-xl border bg-card p-4 flex items-start gap-3 border-l-4", c.border)}>
+      <div className={cn("p-2 rounded-lg shrink-0", c.bg)}>
+        <Icon className={cn("w-4 h-4", c.icon)} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className={cn("text-2xl font-bold leading-tight mt-0.5 tabular-nums", c.icon)}>{value}</p>
+        {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Add / Edit Dialog ──────────────────────────────────────────────── */
 function ProxyDialog({ open, onClose, initial }: { open: boolean; onClose: () => void; initial?: Proxy }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -77,19 +117,14 @@ function ProxyDialog({ open, onClose, initial }: { open: boolean; onClose: () =>
   const [username, setUsername] = useState(initial?.username ?? "");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd]   = useState(false);
-
   const isEdit = !!initial;
 
   const saveMut = useMutation({
     mutationFn: (body: object) =>
       isEdit
         ? api(`/api/scan-proxies/${initial!.id}`, { method: "PATCH", body: JSON.stringify(body) })
-        : api("/api/scan-proxies",                { method: "POST",  body: JSON.stringify(body) }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["scan-proxies"] });
-      toast({ title: isEdit ? "Proxy updated" : "Proxy added" });
-      onClose();
-    },
+        : api("/api/scan-proxies", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["scan-proxies"] }); toast({ title: isEdit ? "Proxy updated" : "Proxy added" }); onClose(); },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
@@ -97,10 +132,8 @@ function ProxyDialog({ open, onClose, initial }: { open: boolean; onClose: () =>
     if (!ip.trim()) { toast({ title: "IP required", variant: "destructive" }); return; }
     const body: Record<string, any> = {
       ip: ip.trim(), port: parseInt(port, 10), label: label || undefined,
-      type, country: country || undefined, asn: asn || undefined,
-      username: username || undefined,
+      type, country: country || undefined, asn: asn || undefined, username: username || undefined,
     };
-    // Only send password if it was changed (non-empty)
     if (password) body.password = password;
     saveMut.mutate(body);
   };
@@ -109,7 +142,10 @@ function ProxyDialog({ open, onClose, initial }: { open: boolean; onClose: () =>
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit Proxy" : "Add Proxy"}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-blue-500" />
+            {isEdit ? "Edit Proxy" : "Add Proxy"}
+          </DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-2 gap-3">
@@ -150,8 +186,6 @@ function ProxyDialog({ open, onClose, initial }: { open: boolean; onClose: () =>
             <Label>ASN / Provider</Label>
             <Input placeholder="e.g. Hetzner" value={asn} onChange={e => setAsn(e.target.value)} />
           </div>
-
-          {/* Issue 2: Proxy auth credentials */}
           <div className="border-t pt-3">
             <div className="flex items-center gap-1.5 mb-3">
               <KeyRound className="w-3.5 h-3.5 text-muted-foreground" />
@@ -165,31 +199,17 @@ function ProxyDialog({ open, onClose, initial }: { open: boolean; onClose: () =>
               <div className="space-y-1.5">
                 <Label>{isEdit ? "New Password" : "Password"}</Label>
                 <div className="relative">
-                  <Input
-                    type={showPwd ? "text" : "password"}
-                    placeholder={isEdit ? "leave blank to keep" : "pass"}
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    autoComplete="new-password"
-                    className="pr-8"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowPwd(v => !v)}
-                  >
+                  <Input type={showPwd ? "text" : "password"} placeholder={isEdit ? "leave blank to keep" : "pass"} value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" className="pr-8" />
+                  <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPwd(v => !v)}>
                     {showPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </div>
             </div>
             {isEdit && initial?.hasAuth && !password && (
-              <p className="text-xs text-muted-foreground mt-1.5">
-                Credentials already set. Leave blank to keep the existing password.
-              </p>
+              <p className="text-xs text-muted-foreground mt-1.5">Credentials already set. Leave blank to keep the existing password.</p>
             )}
           </div>
-
           {!isEdit && (
             <p className="text-xs text-muted-foreground bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2">
               A live TCP ping test will run on save. Status will reflect the result immediately.
@@ -208,7 +228,7 @@ function ProxyDialog({ open, onClose, initial }: { open: boolean; onClose: () =>
   );
 }
 
-/* ─── Issue 3: Bulk Import Dialog ────────────────────────────────────── */
+/* ─── Bulk Import Dialog ─────────────────────────────────────────────── */
 function BulkImportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -220,10 +240,7 @@ function BulkImportDialog({ open, onClose }: { open: boolean; onClose: () => voi
     if (!text.trim()) { toast({ title: "Paste proxy list first", variant: "destructive" }); return; }
     setLoading(true);
     try {
-      const res = await api<BulkResult>("/api/scan-proxies/bulk", {
-        method: "POST",
-        body: JSON.stringify({ proxies: text }),
-      });
+      const res = await api<BulkResult>("/api/scan-proxies/bulk", { method: "POST", body: JSON.stringify({ proxies: text }) });
       setResult(res);
       qc.invalidateQueries({ queryKey: ["scan-proxies"] });
       toast({ title: `Imported ${res.imported} proxies`, description: `${res.failed} failed.` });
@@ -238,53 +255,42 @@ function BulkImportDialog({ open, onClose }: { open: boolean; onClose: () => voi
     <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setResult(null); setText(""); } }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Bulk Import Proxies</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Upload className="w-4 h-4 text-blue-500" /> Bulk Import Proxies
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           {!result ? (
             <>
-              <p className="text-sm text-muted-foreground">
-                Paste one proxy per line. Supported formats:
-              </p>
+              <p className="text-sm text-muted-foreground">Paste one proxy per line. Supported formats:</p>
               <div className="bg-muted/50 rounded-lg px-3 py-2 font-mono text-xs text-muted-foreground space-y-0.5">
                 <div>ip:port</div>
                 <div>ip:port:username:password</div>
                 <div>ip:port:username:password:label</div>
               </div>
-              <Textarea
-                placeholder={"1.2.3.4:8080\n5.6.7.8:3128:user:secret\n9.10.11.12:8888:user:pass:Datacenter-US"}
-                value={text}
-                onChange={e => setText(e.target.value)}
-                rows={10}
-                className="font-mono text-xs"
-              />
-              <p className="text-xs text-muted-foreground">
-                Each proxy will be health-checked (TCP ping) before import. This may take a moment.
-              </p>
+              <Textarea placeholder={"1.2.3.4:8080\n5.6.7.8:3128:user:secret\n9.10.11.12:8888:user:pass:Datacenter-US"} value={text} onChange={e => setText(e.target.value)} rows={10} className="font-mono text-xs" />
+              <p className="text-xs text-muted-foreground">Each proxy will be health-checked (TCP ping) before import. This may take a moment.</p>
             </>
           ) : (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="rounded-lg border bg-green-500/10 p-3">
-                  <p className="text-2xl font-bold text-green-600">{result.imported}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Imported</p>
+                <div className="rounded-xl border bg-green-500/10 p-4">
+                  <p className="text-3xl font-bold text-green-600">{result.imported}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Imported</p>
                 </div>
-                <div className="rounded-lg border bg-red-500/10 p-3">
-                  <p className="text-2xl font-bold text-red-500">{result.failed}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Failed</p>
+                <div className="rounded-xl border bg-red-500/10 p-4">
+                  <p className="text-3xl font-bold text-red-500">{result.failed}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Failed</p>
                 </div>
-                <div className="rounded-lg border bg-muted p-3">
-                  <p className="text-2xl font-bold">{result.total}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Total</p>
+                <div className="rounded-xl border bg-muted p-4">
+                  <p className="text-3xl font-bold">{result.total}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Total</p>
                 </div>
               </div>
               <div className="max-h-48 overflow-y-auto space-y-1">
                 {result.results.map((r, i) => (
                   <div key={i} className={cn("flex items-center gap-2 text-xs px-2 py-1 rounded", r.ok ? "bg-green-500/5" : "bg-red-500/5")}>
-                    {r.ok
-                      ? <Check className="w-3 h-3 text-green-600 shrink-0" />
-                      : <X className="w-3 h-3 text-red-500 shrink-0" />
-                    }
+                    {r.ok ? <Check className="w-3 h-3 text-green-600 shrink-0" /> : <X className="w-3 h-3 text-red-500 shrink-0" />}
                     <span className="font-mono">{r.ip}:{r.port}</span>
                     {r.ok && r.latencyMs != null && <span className="text-muted-foreground ml-auto">{r.latencyMs}ms</span>}
                     {!r.ok && r.error && <span className="text-red-500 ml-auto truncate max-w-32" title={r.error}>{r.error}</span>}
@@ -321,63 +327,32 @@ function FixAuthDialog({ open, onClose, proxy }: { open: boolean; onClose: () =>
   const [showPwd, setShowPwd]   = useState(false);
 
   const fixMut = useMutation({
-    mutationFn: (body: object) =>
-      api(`/api/scan-proxies/${proxy.id}`, { method: "PATCH", body: JSON.stringify(body) }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["scan-proxies"] });
-      toast({ title: "Proxy re-enabled", description: "Status reset to active with health score 50." });
-      onClose();
-    },
+    mutationFn: (body: object) => api(`/api/scan-proxies/${proxy.id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["scan-proxies"] }); toast({ title: "Proxy re-enabled", description: "Status reset to active with health score 50." }); onClose(); },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
-
-  const handleSubmit = () => {
-    if (!password.trim()) {
-      toast({ title: "New password required", variant: "destructive" });
-      return;
-    }
-    fixMut.mutate({ username: username || null, password, resetAuthFailed: true });
-  };
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-orange-500" />
-            Fix Credentials & Re-enable
+            <ShieldAlert className="w-4 h-4 text-orange-500" /> Fix Credentials & Re-enable
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2.5 text-xs text-orange-700 dark:text-orange-400">
-            Proxy <span className="font-mono font-semibold">{proxy.ip}:{proxy.port}</span> failed authentication.
-            Update the credentials below and click Re-enable to restore it to active status.
+            Proxy <span className="font-mono font-semibold">{proxy.ip}:{proxy.port}</span> failed authentication. Update the credentials below and click Re-enable to restore it.
           </div>
           <div className="space-y-1.5">
             <Label>Username</Label>
-            <Input
-              placeholder="user"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              autoComplete="off"
-            />
+            <Input placeholder="user" value={username} onChange={e => setUsername(e.target.value)} autoComplete="off" />
           </div>
           <div className="space-y-1.5">
             <Label>New Password <span className="text-destructive">*</span></Label>
             <div className="relative">
-              <Input
-                type={showPwd ? "text" : "password"}
-                placeholder="new password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                autoComplete="new-password"
-                className="pr-8"
-              />
-              <button
-                type="button"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowPwd(v => !v)}
-              >
+              <Input type={showPwd ? "text" : "password"} placeholder="new password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" className="pr-8" />
+              <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPwd(v => !v)}>
                 {showPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               </button>
             </div>
@@ -385,11 +360,8 @@ function FixAuthDialog({ open, onClose, proxy }: { open: boolean; onClose: () =>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={fixMut.isPending}>Cancel</Button>
-          <Button onClick={handleSubmit} disabled={fixMut.isPending} className="gap-1.5">
-            {fixMut.isPending
-              ? <Loader2 className="w-4 h-4 animate-spin" />
-              : <RotateCcw className="w-4 h-4" />
-            }
+          <Button onClick={() => { if (!password.trim()) { toast({ title: "New password required", variant: "destructive" }); return; } fixMut.mutate({ username: username || null, password, resetAuthFailed: true }); }} disabled={fixMut.isPending} className="gap-1.5">
+            {fixMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
             Re-enable Proxy
           </Button>
         </DialogFooter>
@@ -398,30 +370,18 @@ function FixAuthDialog({ open, onClose, proxy }: { open: boolean; onClose: () =>
   );
 }
 
-/* ─── Issue 9: Inline Editable Row ──────────────────────────────────── */
-interface InlineEdit {
-  ip: string; port: string; label: string; type: string;
-  country: string; asn: string; username: string; password: string;
-}
+/* ─── Inline Editable Row ────────────────────────────────────────────── */
+interface InlineEdit { ip: string; port: string; label: string; type: string; country: string; asn: string; username: string; password: string; }
 
-function InlineProxyRow({
-  proxy, isSuperAdmin, testingId, onTest, onDelete,
-  onCancelEdit,
-}: {
-  proxy: Proxy;
-  isSuperAdmin: boolean;
-  testingId: number | null;
-  onTest: (p: Proxy) => void;
-  onDelete: (p: Proxy) => void;
-  onCancelEdit: () => void;
+function InlineProxyRow({ proxy, testingId, onTest, onDelete, onCancelEdit }: {
+  proxy: Proxy; testingId: number | null;
+  onTest: (p: Proxy) => void; onDelete: (p: Proxy) => void; onCancelEdit: () => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [row, setRow] = useState<InlineEdit>({
-    ip: proxy.ip, port: String(proxy.port),
-    label: proxy.label ?? "", type: proxy.type,
-    country: proxy.country ?? "", asn: proxy.asn ?? "",
-    username: proxy.username ?? "", password: "",
+    ip: proxy.ip, port: String(proxy.port), label: proxy.label ?? "", type: proxy.type,
+    country: proxy.country ?? "", asn: proxy.asn ?? "", username: proxy.username ?? "", password: "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -430,10 +390,8 @@ function InlineProxyRow({
     setSaving(true);
     try {
       const body: Record<string, any> = {
-        ip: row.ip.trim(), port: parseInt(row.port, 10),
-        label: row.label || null, type: row.type,
-        country: row.country || null, asn: row.asn || null,
-        username: row.username || null,
+        ip: row.ip.trim(), port: parseInt(row.port, 10), label: row.label || null, type: row.type,
+        country: row.country || null, asn: row.asn || null, username: row.username || null,
       };
       if (row.password) body.password = row.password;
       await api(`/api/scan-proxies/${proxy.id}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -442,12 +400,10 @@ function InlineProxyRow({
       onCancelEdit();
     } catch (e: any) {
       toast({ title: "Update failed", description: e.message, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
-  const cell = "px-2 py-1.5";
+  const cell = "px-4 py-2";
   const inp = "h-7 text-xs px-2";
 
   return (
@@ -469,14 +425,16 @@ function InlineProxyRow({
       </td>
       <td className={cell}><Input className={inp} value={row.country} onChange={e => setRow(r => ({ ...r, country: e.target.value }))} placeholder="DE" maxLength={3} /></td>
       <td className={cell}><Input className={inp} value={row.asn} onChange={e => setRow(r => ({ ...r, asn: e.target.value }))} placeholder="ASN" /></td>
-      {/* Health / successPct / 429s / 403s / latency — read-only in inline edit */}
-      <td className="px-2 py-1.5 text-right text-xs font-bold" style={{ color: proxy.healthScore >= 70 ? "#16a34a" : proxy.healthScore >= 30 ? "#f59e0b" : "#ef4444" }}>{proxy.healthScore}</td>
-      <td className="px-2 py-1.5 text-right text-xs text-muted-foreground">—</td>
-      <td className="px-2 py-1.5 text-right text-xs">{proxy.count429}</td>
-      <td className="px-2 py-1.5 text-right text-xs">{proxy.count403}</td>
-      <td className="px-2 py-1.5 text-right text-xs text-muted-foreground">{proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}</td>
+      <td className={`${cell} text-right`}>
+        <span className={cn("font-bold text-sm tabular-nums", proxy.healthScore >= 70 ? "text-green-600" : proxy.healthScore >= 30 ? "text-amber-500" : "text-red-500")}>
+          {proxy.healthScore}
+        </span>
+      </td>
+      <td className={`${cell} text-right text-xs text-muted-foreground`}>—</td>
+      <td className={`${cell} text-right text-xs`}>{proxy.count429}</td>
+      <td className={`${cell} text-right text-xs`}>{proxy.count403}</td>
+      <td className={`${cell} text-right text-xs text-muted-foreground`}>{proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}</td>
       <td className={cell} colSpan={2}>
-        {/* Auth credentials inline */}
         <div className="flex gap-1.5">
           <Input className={inp} value={row.username} onChange={e => setRow(r => ({ ...r, username: e.target.value }))} placeholder="user (opt)" />
           <Input className={inp} type="password" value={row.password} onChange={e => setRow(r => ({ ...r, password: e.target.value }))} placeholder="pass (opt)" />
@@ -496,17 +454,27 @@ function InlineProxyRow({
   );
 }
 
+/* ─── Type Badge ──────────────────────────────────────────────────────── */
+const TYPE_COLORS: Record<string, string> = {
+  datacenter:  "bg-blue-500/10 text-blue-600 border-blue-500/25",
+  residential: "bg-green-500/10 text-green-600 border-green-500/25",
+  isp:         "bg-purple-500/10 text-purple-600 border-purple-500/25",
+  mobile:      "bg-cyan-500/10 text-cyan-600 border-cyan-500/25",
+  socks5:      "bg-orange-500/10 text-orange-600 border-orange-500/25",
+  http:        "bg-slate-500/10 text-slate-600 border-slate-500/25",
+};
+
 /* ─── Main Page ───────────────────────────────────────────────────────── */
 export default function ScanProxiesPage() {
   const { user } = useAuth();
   const isSuperAdmin = user?.role === "super_admin";
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [showAdd, setShowAdd]         = useState(false);
-  const [showBulk, setShowBulk]       = useState(false);
-  const [editingId, setEditingId]     = useState<number | null>(null);
+  const [showAdd, setShowAdd]           = useState(false);
+  const [showBulk, setShowBulk]         = useState(false);
+  const [editingId, setEditingId]       = useState<number | null>(null);
   const [fixAuthProxy, setFixAuthProxy] = useState<Proxy | null>(null);
-  const [testingId, setTestingId]     = useState<number | null>(null);
+  const [testingId, setTestingId]       = useState<number | null>(null);
 
   const { data: proxies = [], isLoading } = useQuery<Proxy[]>({
     queryKey: ["scan-proxies"],
@@ -530,31 +498,40 @@ export default function ScanProxiesPage() {
       } else {
         toast({ title: "Proxy unreachable", description: "TCP connection failed.", variant: "destructive" });
       }
-    } catch {
-      toast({ title: "Health check failed", variant: "destructive" });
-    } finally {
-      setTestingId(null);
-    }
+    } catch { toast({ title: "Health check failed", variant: "destructive" }); }
+    finally { setTestingId(null); }
   };
 
   const activeCount     = proxies.filter(p => p.status === "active").length;
   const cooldownCount   = proxies.filter(p => p.status === "cooldown").length;
   const inactiveCount   = proxies.filter(p => p.status === "inactive").length;
   const authFailedCount = proxies.filter(p => p.status === "auth_failed").length;
+  const avgHealth = proxies.length > 0 ? Math.round(proxies.reduce((s, p) => s + p.healthScore, 0) / proxies.length) : 0;
 
   return (
-    <div className="p-6 space-y-6 max-w-screen-xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Proxy / IP Pool Management</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Configure and test outbound proxies used by the scan orchestration engine
-          </p>
+    <div className="p-6 space-y-6">
+      {/* ── Dialogs ── */}
+      <ProxyDialog open={showAdd} onClose={() => setShowAdd(false)} />
+      <BulkImportDialog open={showBulk} onClose={() => setShowBulk(false)} />
+      {fixAuthProxy && (
+        <FixAuthDialog open={!!fixAuthProxy} onClose={() => setFixAuthProxy(null)} proxy={fixAuthProxy} />
+      )}
+
+      {/* ── Header ── */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-blue-500/15 border border-blue-500/25">
+            <Globe className="w-6 h-6 text-blue-500" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Proxy / IP Pool Management</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Configure and health-check outbound proxies used by the scan orchestration engine
+            </p>
+          </div>
         </div>
         {isSuperAdmin && (
-          <div className="flex gap-2">
-            {/* Issue 3: Bulk import button */}
+          <div className="flex items-center gap-2 shrink-0">
             <Button variant="outline" onClick={() => setShowBulk(true)} className="gap-1.5">
               <Upload className="w-4 h-4" /> Bulk Import
             </Button>
@@ -565,43 +542,72 @@ export default function ScanProxiesPage() {
         )}
       </div>
 
-      {/* Summary chips */}
-      <div className="flex gap-3 flex-wrap">
-        <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/25 gap-1.5 px-3 py-1 text-sm">
-          <Wifi className="w-3.5 h-3.5" /> {activeCount} Healthy
-        </Badge>
-        <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/25 gap-1.5 px-3 py-1 text-sm">
-          <Clock className="w-3.5 h-3.5" /> {cooldownCount} Cooling
-        </Badge>
-        <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/25 gap-1.5 px-3 py-1 text-sm">
-          <WifiOff className="w-3.5 h-3.5" /> {inactiveCount} Inactive
-        </Badge>
-        {authFailedCount > 0 && (
-          <Badge variant="outline" className="bg-orange-500/10 text-orange-600 border-orange-500/25 gap-1.5 px-3 py-1 text-sm">
-            <ShieldAlert className="w-3.5 h-3.5" /> {authFailedCount} Auth Failed
-          </Badge>
+      {/* ── Stat Cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        {isLoading ? (
+          Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
+        ) : (
+          <>
+            <StatCard label="Total Proxies"   value={proxies.length}  icon={Server}  color="blue"   sub="in pool" />
+            <StatCard label="Healthy"         value={activeCount}     icon={Wifi}    color="green"  sub="accepting requests" />
+            <StatCard label="Cooling Down"    value={cooldownCount}   icon={Clock}   color="amber"  sub="temporary pause" />
+            <StatCard label="Inactive"        value={inactiveCount}   icon={WifiOff} color="red"    sub="health check failed" />
+            <StatCard label="Avg Health Score" value={proxies.length > 0 ? avgHealth : "—"} icon={Activity} color={avgHealth >= 70 ? "green" : avgHealth >= 40 ? "amber" : "red"} sub="pool average" />
+          </>
         )}
       </div>
 
-      {/* Proxy Table */}
+      {/* ── Auth Failed Banner ── */}
+      {authFailedCount > 0 && (
+        <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 px-5 py-3 flex items-center gap-3">
+          <ShieldAlert className="w-5 h-5 text-orange-500 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-orange-600">{authFailedCount} proxy{authFailedCount > 1 ? "ies" : ""} failed authentication</p>
+            <p className="text-xs text-orange-600/80 mt-0.5">Click the re-enable button in the table below to update credentials and restore them.</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Proxy Table ── */}
       <div className="rounded-xl border bg-card overflow-hidden">
+        <div className="px-5 py-4 border-b flex items-center justify-between bg-muted/20">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-blue-500/15 border border-blue-500/25">
+              <Server className="w-4 h-4 text-blue-500" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold">Proxy Pool</h2>
+              <p className="text-xs text-muted-foreground">{proxies.length} proxy{proxies.length !== 1 ? "ies" : ""} configured · auto-refreshes every 30s</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/25 gap-1 text-xs">
+              <Wifi className="w-3 h-3" /> {activeCount} healthy
+            </Badge>
+            {authFailedCount > 0 && (
+              <Badge variant="outline" className="bg-orange-500/10 text-orange-600 border-orange-500/25 gap-1 text-xs">
+                <ShieldAlert className="w-3 h-3" /> {authFailedCount} auth failed
+              </Badge>
+            )}
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
-                <th className="px-4 py-3 text-left font-medium">IP Address</th>
-                <th className="px-4 py-3 text-left font-medium">Label</th>
-                <th className="px-4 py-3 text-left font-medium">Class</th>
-                <th className="px-4 py-3 text-left font-medium">Country</th>
-                <th className="px-4 py-3 text-left font-medium">ASN</th>
-                <th className="px-4 py-3 text-right font-medium">Health</th>
-                <th className="px-4 py-3 text-right font-medium">Success %</th>
-                <th className="px-4 py-3 text-right font-medium">429s</th>
-                <th className="px-4 py-3 text-right font-medium">403s</th>
-                <th className="px-4 py-3 text-right font-medium">Avg Latency</th>
-                <th className="px-4 py-3 text-left font-medium">Status</th>
-                <th className="px-4 py-3 text-left font-medium">Last Tested</th>
-                <th className="px-4 py-3 text-right font-medium">Actions</th>
+                <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">IP : Port</th>
+                <th className="px-4 py-2.5 text-left font-medium">Label</th>
+                <th className="px-4 py-2.5 text-left font-medium">Class</th>
+                <th className="px-4 py-2.5 text-left font-medium">Country</th>
+                <th className="px-4 py-2.5 text-left font-medium">ASN</th>
+                <th className="px-4 py-2.5 text-right font-medium">Health</th>
+                <th className="px-4 py-2.5 text-right font-medium">Success %</th>
+                <th className="px-4 py-2.5 text-right font-medium">429s</th>
+                <th className="px-4 py-2.5 text-right font-medium">403s</th>
+                <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">Avg Latency</th>
+                <th className="px-4 py-2.5 text-left font-medium">Status</th>
+                <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">Last Tested</th>
+                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -614,19 +620,23 @@ export default function ScanProxiesPage() {
                   </tr>
                 ))
               ) : proxies.length === 0 ? (
-                <tr><td colSpan={13} className="px-4 py-12 text-center">
-                  <p className="text-muted-foreground text-sm">No proxies configured yet.</p>
-                  <p className="text-xs text-muted-foreground mt-1">Add a proxy IP to start routing scan traffic through it.</p>
-                </td></tr>
+                <tr>
+                  <td colSpan={13} className="px-4 py-16 text-center">
+                    <Globe className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">No proxies configured yet</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">Add a proxy IP to start routing scan traffic through it</p>
+                    {isSuperAdmin && (
+                      <Button size="sm" className="mt-4 gap-1.5" onClick={() => setShowAdd(true)}>
+                        <Plus className="w-3.5 h-3.5" /> Add First Proxy
+                      </Button>
+                    )}
+                  </td>
+                </tr>
               ) : proxies.map(proxy => {
-                /* ── Issue 9: Inline edit row ── */
                 if (editingId === proxy.id) {
                   return (
                     <InlineProxyRow
-                      key={proxy.id}
-                      proxy={proxy}
-                      isSuperAdmin={isSuperAdmin}
-                      testingId={testingId}
+                      key={proxy.id} proxy={proxy} testingId={testingId}
                       onTest={testProxy}
                       onDelete={() => { if (confirm(`Remove proxy ${proxy.ip}?`)) deleteMut.mutate(proxy.id); }}
                       onCancelEdit={() => setEditingId(null)}
@@ -634,75 +644,71 @@ export default function ScanProxiesPage() {
                   );
                 }
 
-                const total = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
-                const successPct = total > 0 ? Math.round(proxy.successCount / total * 100) : null;
+                const tot = (proxy.successCount ?? 0) + (proxy.failCount ?? 0);
+                const successPct = tot > 0 ? Math.round(proxy.successCount / tot * 100) : null;
+                const typeColor = TYPE_COLORS[proxy.type] ?? "bg-muted text-muted-foreground";
+
                 return (
-                  <tr key={proxy.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-2.5 font-mono text-xs">
-                      <span>{proxy.ip}:{proxy.port}</span>
-                      {proxy.hasAuth && (
-                        <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 gap-0.5 bg-purple-500/10 text-purple-600 border-purple-500/25">
-                          <KeyRound className="w-2.5 h-2.5" /> Auth
-                        </Badge>
-                      )}
+                  <tr key={proxy.id} className={cn(
+                    "border-b last:border-0 hover:bg-muted/30 transition-colors",
+                    proxy.status === "auth_failed" && "bg-orange-500/5"
+                  )}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5 font-mono text-xs">
+                        <span className="font-semibold">{proxy.ip}</span>
+                        <span className="text-muted-foreground">:{proxy.port}</span>
+                        {proxy.hasAuth && (
+                          <Badge variant="outline" className="ml-0.5 text-[10px] px-1 py-0 gap-0.5 bg-purple-500/10 text-purple-600 border-purple-500/25">
+                            <KeyRound className="w-2.5 h-2.5" /> Auth
+                          </Badge>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{proxy.label ?? "—"}</td>
-                    <td className="px-4 py-2.5"><Badge variant="outline" className="text-xs capitalize">{proxy.type}</Badge></td>
-                    <td className="px-4 py-2.5 text-xs">{proxy.country ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{proxy.asn ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-right">
-                      <span className={cn("font-bold text-sm", proxy.healthScore >= 70 ? "text-green-600" : proxy.healthScore >= 30 ? "text-amber-500" : "text-red-500")}>
-                        {proxy.healthScore}
-                      </span>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{proxy.label ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className={cn("text-xs capitalize", typeColor)}>{proxy.type}</Badge>
                     </td>
-                    <td className="px-4 py-2.5 text-right text-xs">
+                    <td className="px-4 py-3 text-xs font-medium">{proxy.country ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{proxy.asn ?? "—"}</td>
+                    <td className="px-4 py-3 min-w-32">
+                      <HealthBar score={proxy.healthScore} />
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs">
                       {successPct != null ? (
-                        <span className={successPct >= 80 ? "text-green-600" : successPct >= 50 ? "text-amber-500" : "text-red-500"}>
+                        <span className={cn("font-semibold", successPct >= 80 ? "text-green-600" : successPct >= 50 ? "text-amber-500" : "text-red-500")}>
                           {successPct}%
                         </span>
-                      ) : "—"}
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-2.5 text-right text-xs">{proxy.count429 ?? 0}</td>
-                    <td className="px-4 py-2.5 text-right text-xs">{proxy.count403 ?? 0}</td>
-                    <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+                    <td className="px-4 py-3 text-right text-xs">
+                      {proxy.count429 > 0 ? <span className="text-amber-500 font-semibold">{proxy.count429}</span> : <span className="text-muted-foreground">0</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs">
+                      {proxy.count403 > 0 ? <span className="text-red-500 font-semibold">{proxy.count403}</span> : <span className="text-muted-foreground">0</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs text-muted-foreground">
                       {proxy.avgLatencyMs != null ? `${proxy.avgLatencyMs}ms` : "—"}
                     </td>
-                    <td className="px-4 py-2.5"><StatusBadge status={proxy.status} /></td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                      {proxy.lastTestedAt ? new Date(proxy.lastTestedAt).toLocaleString() : "Never"}
+                    <td className="px-4 py-3"><StatusBadge status={proxy.status} /></td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {proxy.lastTestedAt ? new Date(proxy.lastTestedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Never"}
                     </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost" size="icon" className="w-7 h-7" title="Test health"
-                          disabled={testingId === proxy.id}
-                          onClick={() => testProxy(proxy)}
-                        >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-0.5">
+                        <Button variant="ghost" size="icon" className="w-7 h-7" title="Test health" disabled={testingId === proxy.id} onClick={() => testProxy(proxy)}>
                           {testingId === proxy.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube2 className="w-3.5 h-3.5" />}
                         </Button>
                         {isSuperAdmin && (
                           <>
                             {proxy.status === "auth_failed" && (
-                              <Button
-                                variant="ghost" size="icon"
-                                className="w-7 h-7 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
-                                title="Fix Credentials & Re-enable"
-                                onClick={() => setFixAuthProxy(proxy)}
-                              >
+                              <Button variant="ghost" size="icon" className="w-7 h-7 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10" title="Fix Credentials & Re-enable" onClick={() => setFixAuthProxy(proxy)}>
                                 <RotateCcw className="w-3.5 h-3.5" />
                               </Button>
                             )}
-                            <Button
-                              variant="ghost" size="icon" className="w-7 h-7" title="Edit inline"
-                              onClick={() => setEditingId(proxy.id)}
-                            >
+                            <Button variant="ghost" size="icon" className="w-7 h-7" title="Edit inline" onClick={() => setEditingId(proxy.id)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
-                            <Button
-                              variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
-                              title="Delete" disabled={deleteMut.isPending}
-                              onClick={() => { if (confirm(`Remove proxy ${proxy.ip}?`)) deleteMut.mutate(proxy.id); }}
-                            >
+                            <Button variant="ghost" size="icon" className="w-7 h-7 text-red-500 hover:text-red-600 hover:bg-red-500/10" title="Remove proxy" onClick={() => { if (confirm(`Remove proxy ${proxy.ip}?`)) deleteMut.mutate(proxy.id); }}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </>
@@ -716,17 +722,6 @@ export default function ScanProxiesPage() {
           </table>
         </div>
       </div>
-
-      {/* Dialogs */}
-      {showAdd && <ProxyDialog open onClose={() => setShowAdd(false)} />}
-      {showBulk && <BulkImportDialog open onClose={() => setShowBulk(false)} />}
-      {fixAuthProxy && (
-        <FixAuthDialog
-          open
-          proxy={fixAuthProxy}
-          onClose={() => setFixAuthProxy(null)}
-        />
-      )}
     </div>
   );
 }
