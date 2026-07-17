@@ -974,16 +974,47 @@ router.get("/threat-intel/news", requireAuth, async (req: AuthenticatedRequest, 
   const enabled = await getThreatIntelEnabled(tenantId, role);
   if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
 
-  const { severity, q, limit = "50", offset = "0" } = req.query as Record<string, string>;
+  const { severity, source, q, limit = "50", offset = "0" } = req.query as Record<string, string>;
   const conditions = [];
   if (severity) conditions.push(eq(tiNewsFeedsTable.severity, severity));
+  if (source)   conditions.push(eq(tiNewsFeedsTable.source, source));
   if (q) conditions.push(or(ilike(tiNewsFeedsTable.title, `%${q}%`), ilike(tiNewsFeedsTable.summary, `%${q}%`))!);
 
   const [rows, total] = await Promise.all([
-    db.select().from(tiNewsFeedsTable).where(conditions.length ? and(...conditions) : undefined).orderBy(desc(tiNewsFeedsTable.createdAt)).limit(Math.min(Number(limit), 200)).offset(Number(offset)),
+    db.select().from(tiNewsFeedsTable).where(conditions.length ? and(...conditions) : undefined).orderBy(desc(tiNewsFeedsTable.publishedAt), desc(tiNewsFeedsTable.createdAt)).limit(Math.min(Number(limit), 200)).offset(Number(offset)),
     db.select({ count: sql<number>`count(*)` }).from(tiNewsFeedsTable).where(conditions.length ? and(...conditions) : undefined).then(r => Number(r[0]?.count ?? 0)),
   ]);
   res.json({ news: rows, total });
+});
+
+router.get("/threat-intel/news/sources", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, role } = req.user!;
+  const enabled = await getThreatIntelEnabled(tenantId, role);
+  if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
+  const { getNewsSourcesStatus } = await import("../lib/threatIntel/newsFetcher.js");
+  const sources = await getNewsSourcesStatus();
+  res.json({ sources });
+});
+
+router.post("/threat-intel/news/refresh", requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (!requireAdminOrSA(req, res)) return;
+  const { tenantId, role } = req.user!;
+  const enabled = await getThreatIntelEnabled(tenantId, role);
+  if (!enabled) { res.status(403).json({ error: "Threat Intelligence module not enabled" }); return; }
+
+  const { source } = req.body as { source?: string };
+
+  // Respond immediately — fetch runs in background
+  res.json({ message: source ? `Fetching news from ${source}…` : "Fetching from all news sources…" });
+
+  setImmediate(async () => {
+    try {
+      const { runNewsFeedRefresh } = await import("../lib/threatIntel/newsFetcher.js");
+      await runNewsFeedRefresh(source);
+    } catch (err: any) {
+      logger.warn({ err: err.message }, "[news] Background fetch failed");
+    }
+  });
 });
 
 // ── Dark web mentions ─────────────────────────────────────────────────────────
