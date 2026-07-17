@@ -289,6 +289,48 @@ function ThreatIntelRoute({ component: Component }: { component: React.Component
   );
 }
 
+function ComplianceBootstrap() {
+  const { isAuthenticated, user, setComplianceEnabled } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager") {
+      setComplianceEnabled(true);
+      return;
+    }
+    apiFetch<{ isEnabled: boolean }>("/api/compliance/module")
+      .then(d => setComplianceEnabled(d.isEnabled ?? false))
+      .catch(() => setComplianceEnabled(false));
+  }, [isAuthenticated, user?.role]);
+  return null;
+}
+
+function ComplianceRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated, complianceEnabled, complianceLoaded, user } = useAuth();
+  if (!isAuthenticated) return <Redirect to="/login" />;
+  if (!complianceLoaded) return <AppLayout><PageLoader /></AppLayout>;
+  const isPrivileged = user?.role === "admin" || user?.role === "super_admin" || user?.role === "account_manager";
+  if (!complianceEnabled && !isPrivileged) {
+    return (
+      <AppLayout>
+        <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-7 h-7 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+          </div>
+          <h2 className="text-lg font-semibold">Compliance Management</h2>
+          <p className="text-sm text-muted-foreground max-w-sm">The Compliance Management module is not enabled for your account. Contact your administrator to enable it.</p>
+        </div>
+      </AppLayout>
+    );
+  }
+  return (
+    <AppLayout>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </AppLayout>
+  );
+}
+
 function TprmBootstrap() {
   const { isAuthenticated, setTprmEnabled, user } = useAuth();
   useEffect(() => {
@@ -375,7 +417,7 @@ function Router() {
       <Route path="/findings/:id" component={() => <ProtectedRoute component={FindingDetailPage} />} />
       <Route path="/false-positives" component={() => <ProtectedRoute component={FalsePositivesPage} />} />
       <Route path="/scans" component={() => <ProtectedRoute component={ScansPage} />} />
-      <Route path="/compliance" component={() => <ProtectedRoute component={CompliancePage} />} />
+      <Route path="/compliance" component={() => <ComplianceRoute component={CompliancePage} />} />
       <Route path="/alerts" component={() => <ProtectedRoute component={AlertsPage} />} />
       <Route path="/risk" component={() => <ProtectedRoute component={RiskPage} />} />
       <Route path="/ai-copilot" component={() => <ProtectedRoute component={AiCopilotPage} />} />
@@ -473,6 +515,7 @@ function App() {
           <AiMapperBootstrap />
           <TprmBootstrap />
           <ThreatIntelBootstrap />
+          <ComplianceBootstrap />
           <Router />
         </WouterRouter>
         <Toaster />

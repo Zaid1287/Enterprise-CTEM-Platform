@@ -135,6 +135,60 @@ function AiMapperModuleCard({ tenantId, userRole }: { tenantId: number; userRole
   );
 }
 
+function ComplianceModuleCard({ tenantId, userRole }: { tenantId: number; userRole: string }) {
+  const { toast } = useToast();
+  const { complianceEnabled, setComplianceEnabled } = useAuth();
+  const qc = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ isEnabled: boolean }>({
+    queryKey: ["compliance-module", tenantId],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/module`),
+    enabled: !!tenantId,
+  });
+
+  const toggle = useMutation({
+    mutationFn: (enable: boolean) =>
+      apiFetch(`${BASE}/api/compliance/module`, {
+        method: "PATCH",
+        body: JSON.stringify({ isEnabled: enable }),
+      }),
+    onSuccess: (_data, enable) => {
+      setComplianceEnabled(enable);
+      qc.invalidateQueries({ queryKey: ["compliance-module", tenantId] });
+      toast({ title: enable ? "Compliance module enabled" : "Compliance module disabled" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const canToggle = userRole === "super_admin" || userRole === "admin";
+  const enabled = data?.isEnabled ?? complianceEnabled;
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold">Compliance Management Module</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            ISO 27001, SOC 2, PCI DSS v4, HIPAA, CIS v8, NIST CSF 2.0 — global control library with per-tenant evidence tracking.
+          </p>
+          {enabled && (
+            <Badge className="mt-2 text-xs bg-green-500/20 text-green-400 border-green-500/30">Active</Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {toggle.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+          <Switch
+            checked={enabled}
+            onCheckedChange={(val) => canToggle && toggle.mutate(val)}
+            disabled={!canToggle || toggle.isPending || isLoading}
+            aria-label={enabled ? "Disable Compliance module" : "Enable Compliance module"}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TprmModuleCard({ tenantId, userRole }: { tenantId: number; userRole: string }) {
   const { toast } = useToast();
   const { tprmEnabled, setTprmEnabled } = useAuth();
@@ -334,6 +388,11 @@ export default function TenantSettingsPage() {
           {/* TPRM Module — admins only */}
           {(user?.role === "admin" || user?.role === "super_admin") && (
             <TprmModuleCard tenantId={tenantId} userRole={user?.role ?? ""} />
+          )}
+
+          {/* Compliance Module — admins only */}
+          {(user?.role === "admin" || user?.role === "super_admin") && (
+            <ComplianceModuleCard tenantId={tenantId} userRole={user?.role ?? ""} />
           )}
 
           {/* Notification Channels — all roles */}

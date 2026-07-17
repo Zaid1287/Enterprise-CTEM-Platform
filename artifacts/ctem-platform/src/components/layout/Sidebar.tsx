@@ -144,7 +144,7 @@ let _scrollTop = 0;
 
 export function Sidebar() {
   const [location] = useLocation();
-  const { user, aiMapperEnabled, tprmEnabled, threatIntelEnabled } = useAuth();
+  const { user, aiMapperEnabled, tprmEnabled, threatIntelEnabled, complianceEnabled } = useAuth();
   const role = user?.role ?? "client";
   const [collapsed, setCollapsed] = useState(_collapsed);
   const asideRef = useRef<HTMLElement>(null);
@@ -258,6 +258,25 @@ export function Sidebar() {
     const tprmIdx = filteredGroups.findIndex(g => g.title === "Third Party Risk");
     const insertAfter = tprmIdx >= 0 ? tprmIdx : filteredGroups.findIndex(g => g.title === "AI Mapper");
     filteredGroups.splice(insertAfter >= 0 ? insertAfter + 1 : filteredGroups.length, 0, threatIntelGroup);
+  }
+
+  // Compliance module — visible to admin/SA/AM always; clients only when enabled
+  const complianceVisible = complianceEnabled || role === "admin" || role === "super_admin" || role === "account_manager";
+  if (complianceVisible) {
+    const govIdx = filteredGroups.findIndex(g => g.title === "Governance");
+    if (govIdx >= 0) {
+      // Replace the static Compliance item in Governance with a dedicated group
+      filteredGroups[govIdx].items = filteredGroups[govIdx].items.filter(i => i.href !== "/compliance");
+      if (filteredGroups[govIdx].items.length === 0) filteredGroups.splice(govIdx, 1);
+    }
+    const complianceItems: NavItem[] = [
+      { label: "Overview",          href: "/compliance",                      icon: ShieldCheck  },
+      { label: "Control Library",   href: "/compliance?tab=library",          icon: ClipboardList },
+      { label: "Asset Compliance",  href: "/compliance?tab=assets",           icon: Server       },
+      ...(isAdminOrSA ? [{ label: "Assignments", href: "/compliance?tab=assignments", icon: Users }] : []),
+    ];
+    const insertAt = govIdx >= 0 ? govIdx : filteredGroups.length;
+    filteredGroups.splice(insertAt, 0, { title: "Compliance", items: complianceItems });
   }
 
   const visibleGroups = isExternalMember ? externalGroups : filteredGroups;
