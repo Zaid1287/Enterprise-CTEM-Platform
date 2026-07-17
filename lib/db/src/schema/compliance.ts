@@ -6,6 +6,16 @@ import { usersTable } from "./users";
 import { assetGroupsTable } from "./assetGroups";
 import { assetsTable } from "./assets";
 
+// ── Per-asset compliance enable/disable (verified assets only) ────────────────
+export const complianceAssetSettingsTable = pgTable("compliance_asset_settings", {
+  assetId:   integer("asset_id").primaryKey().references(() => assetsTable.id, { onDelete: "cascade" }),
+  tenantId:  integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  enabledBy: integer("enabled_by").references(() => usersTable.id, { onDelete: "set null" }),
+  enabledAt: timestamp("enabled_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
 // ── Module gate (one row per tenant) ─────────────────────────────────────────
 export const complianceModuleAssignmentsTable = pgTable("compliance_module_assignments", {
   tenantId:  integer("tenant_id").primaryKey().references(() => tenantsTable.id, { onDelete: "cascade" }),

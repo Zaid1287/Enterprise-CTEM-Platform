@@ -6,6 +6,7 @@ import {
   db, complianceFrameworksTable, complianceControlsTable, complianceControlAssetsTable,
   complianceModuleAssignmentsTable, complianceGlobalControlsTable,
   complianceControlAnswersTable, complianceAssetControlsTable,
+  complianceAssetSettingsTable,
   tenantsTable, assetGroupsTable, assetsTable, usersTable,
 } from "@workspace/db";
 import { requireAuth, requireRole, denyExternalMembers, type AuthenticatedRequest } from "../lib/auth";
@@ -311,6 +312,67 @@ router.get("/compliance/summary", requireAuth, requireCompliance, async (req: Au
     };
   });
   res.json(summary);
+});
+
+// ── Asset compliance settings: list enabled+verified assets ──────────────────
+// IMPORTANT: must be registered BEFORE /:assetId to avoid Express swallowing it
+router.get("/compliance/assets/enabled", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+  const rows = await db.select({
+    assetId:            assetsTable.id,
+    assetName:          assetsTable.name,
+    assetValue:         assetsTable.value,
+    assetType:          assetsTable.type,
+    assetRiskLevel:     assetsTable.riskLevel,
+    verificationStatus: assetsTable.verificationStatus,
+    isEnabled:          complianceAssetSettingsTable.isEnabled,
+    enabledAt:          complianceAssetSettingsTable.enabledAt,
+  }).from(assetsTable)
+    .innerJoin(complianceAssetSettingsTable, eq(complianceAssetSettingsTable.assetId, assetsTable.id))
+    .where(and(
+      eq(assetsTable.tenantId, tenantId),
+      eq(assetsTable.verificationStatus, "verified"),
+      eq(complianceAssetSettingsTable.isEnabled, true),
+    ))
+    .orderBy(assetsTable.name);
+  res.json(rows.map(r => ({ id: r.assetId, name: r.assetName, domain: r.assetValue, type: r.assetType, riskLevel: r.assetRiskLevel, isEnabled: r.isEnabled, enabledAt: r.enabledAt })));
+});
+
+// ── Per-asset compliance settings (enable/disable for a specific asset) ────────
+router.get("/compliance/assets/:assetId/settings", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+  const assetId = parseInt(req.params.assetId as string);
+  const [asset] = await db.select({ id: assetsTable.id, verificationStatus: assetsTable.verificationStatus })
+    .from(assetsTable).where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+  const [settings] = await db.select().from(complianceAssetSettingsTable)
+    .where(eq(complianceAssetSettingsTable.assetId, assetId));
+  res.json({ assetId, isEnabled: settings?.isEnabled ?? false, enabledAt: settings?.enabledAt ?? null, verificationStatus: asset.verificationStatus });
+});
+
+router.patch("/compliance/assets/:assetId/settings", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId, userId } = req.user!;
+  const assetId = parseInt(req.params.assetId as string);
+  const { isEnabled } = req.body;
+  const [asset] = await db.select().from(assetsTable)
+    .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, tenantId)));
+  if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+  if (asset.verificationStatus !== "verified") {
+    res.status(400).json({ error: "Only verified assets can have compliance tracking enabled" });
+    return;
+  }
+  const [settings] = await db.insert(complianceAssetSettingsTable).values({
+    assetId, tenantId,
+    isEnabled: !!isEnabled,
+    enabledBy: isEnabled ? (userId as any) : null,
+    enabledAt: isEnabled ? new Date() : null,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: complianceAssetSettingsTable.assetId,
+    set: { isEnabled: !!isEnabled, enabledBy: isEnabled ? (userId as any) : null, enabledAt: isEnabled ? new Date() : null, updatedAt: new Date() },
+  }).returning();
+  await logAudit(req.user!, isEnabled ? "compliance_enable_asset" : "compliance_disable_asset", "asset", assetId, asset.name ?? String(assetId), req);
+  res.json(settings);
 });
 
 // ── Asset-level compliance ────────────────────────────────────────────────────

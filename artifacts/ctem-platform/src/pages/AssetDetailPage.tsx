@@ -11,12 +11,13 @@ import {
   getListAssetTechnologiesQueryKey, getListAssetScreenshotsQueryKey, getListBrandThreatsQueryKey,
   getListScansQueryKey, getListAssetPortsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/apiFetch";
 import {
   ArrowLeft, ExternalLink, ShieldCheck, Cpu, Loader2, RefreshCw, Camera, AlertTriangle, X,
   ChevronLeft, ChevronRight, Download, ShieldAlert, Fish, DatabaseZap, Siren, UserCheck,
   Brain, Sparkles, ChevronDown, ChevronUp, Network, BookmarkCheck, AtSign, Smartphone,
-  Mail, Search, Image, Server,
+  Mail, Search, Image, Server, ClipboardCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -88,6 +89,31 @@ export default function AssetDetailPage() {
   const [assignedAmId, setAssignedAmId]               = useState<string>("_none_");
   const [savingAssignment, setSavingAssignment]       = useState(false);
   const [cancellingId, setCancellingId]               = useState<number | null>(null);
+
+  const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  // ── Compliance tracking toggle (verified assets only) ──────────────────────
+  const { data: complianceSettings, refetch: refetchCompliance } = useQuery({
+    queryKey: ["asset-compliance-settings", id],
+    queryFn: () => apiFetch(`${BASE_URL}/api/compliance/assets/${id}/settings`),
+    enabled: !!id,
+    retry: false,
+  });
+  const complianceEnabled = (complianceSettings as any)?.isEnabled ?? false;
+  const complianceIsVerified = (complianceSettings as any)?.verificationStatus === "verified";
+
+  const toggleCompliance = useMutation({
+    mutationFn: (isEnabled: boolean) =>
+      apiFetch(`${BASE_URL}/api/compliance/assets/${id}/settings`, {
+        method: "PATCH",
+        body: JSON.stringify({ isEnabled }),
+      }),
+    onSuccess: () => {
+      refetchCompliance();
+      toast({ title: complianceEnabled ? "Compliance tracking disabled" : "Compliance tracking enabled" });
+    },
+    onError: (e: any) => toast({ title: e?.message ?? "Failed", variant: "destructive" }),
+  });
 
   // ── AI risk explanation state ─────────────────────────────────────────────
   const [showAiRisk, setShowAiRisk]     = useState(false);
@@ -368,7 +394,7 @@ export default function AssetDetailPage() {
       <div className="bg-card border border-border rounded-xl p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-xs bg-accent/50 px-2 py-0.5 rounded">{a.type}</span>
               <span className={cn("text-xs px-2 py-0.5 rounded-md font-medium", statusBadgeClass(a.verificationStatus))}>{a.verificationStatus}</span>
               {a.verificationStatus !== "verified" && (
@@ -382,6 +408,25 @@ export default function AssetDetailPage() {
                   <ShieldCheck className="w-3.5 h-3.5 mr-1" />
                   {verifying ? "Verifying…" : "Mark Verified"}
                 </Button>
+              )}
+              {/* Compliance tracking toggle — only shown for verified assets */}
+              {a.verificationStatus === "verified" && (
+                <button
+                  disabled={toggleCompliance.isPending}
+                  onClick={() => toggleCompliance.mutate(!complianceEnabled)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 h-6 px-2 rounded text-xs font-medium border transition-colors",
+                    complianceEnabled
+                      ? "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
+                      : "bg-muted/40 text-muted-foreground border-border hover:bg-muted/60",
+                  )}
+                  title={complianceEnabled ? "Disable compliance tracking for this asset" : "Enable compliance tracking for this asset"}
+                >
+                  {toggleCompliance.isPending
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <ClipboardCheck className="w-3 h-3" />}
+                  {complianceEnabled ? "Compliance On" : "Compliance Off"}
+                </button>
               )}
             </div>
             <h1 className="text-base font-semibold">{a.name}</h1>

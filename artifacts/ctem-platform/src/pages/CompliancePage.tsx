@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
 import { useAuth } from "@/hooks/useAuth";
@@ -656,12 +657,11 @@ function AssetComplianceTab() {
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [selectedFramework, setSelectedFramework] = useState<number | null>(null);
 
-  const { data: assetsRes = [] } = useQuery<any>({
-    queryKey: ["assets-list-compliance"],
-    queryFn: () => apiFetch(`${BASE}/api/assets`),
-    select: (d: any) => Array.isArray(d) ? d : (d.assets ?? []),
+  // Only show verified assets that have compliance tracking enabled (set from Asset Inventory)
+  const { data: assets = [] } = useQuery<Asset[]>({
+    queryKey: ["compliance-enabled-assets"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/assets/enabled`),
   });
-  const assets: Asset[] = assetsRes;
 
   const { data: frameworks = [] } = useQuery<Framework[]>({
     queryKey: ["compliance-frameworks"],
@@ -719,10 +719,16 @@ function AssetComplianceTab() {
         )}
       </div>
 
-      {!selectedAsset ? (
+      {assets.length === 0 ? (
+        <div className="bg-card border border-border rounded-xl p-10 text-center">
+          <ShieldCheck className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground font-medium">No compliance-enabled assets</p>
+          <p className="text-xs text-muted-foreground mt-1">Go to <strong>Asset Inventory → Asset Detail</strong> and enable Compliance Tracking for a verified asset.</p>
+        </div>
+      ) : !selectedAsset ? (
         <div className="bg-card border border-border rounded-xl p-10 text-center">
           <Server className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">Select an asset to view its compliance posture</p>
+          <p className="text-sm text-muted-foreground">Select a compliance-enabled asset to view its posture</p>
         </div>
       ) : loadingCtrls ? (
         <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
@@ -829,15 +835,23 @@ export default function CompliancePage() {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isAdminOrAM = isAdmin || user?.role === "account_manager";
 
-  const initialTab: TabId = useMemo(() => {
-    const t = new URLSearchParams(window.location.search).get("tab");
+  // useSearch() from Wouter is reactive — updates whenever the URL search changes
+  const search = useSearch();
+  const tabFromUrl: TabId = (() => {
+    const t = new URLSearchParams(search).get("tab");
     if (t === "library" && isAdminOrAM) return "library";
     if (t === "assets") return "assets";
     if (t === "assignments" && isAdminOrAM) return "assignments";
+    if (t === "controls") return "controls";
     return "overview";
-  }, []);
+  })();
 
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+  const [activeTab, setActiveTab] = useState<TabId>(tabFromUrl);
+
+  // Sync tab state when URL search changes (sidebar navigation)
+  useEffect(() => {
+    setActiveTab(tabFromUrl);
+  }, [search]);
   const [selectedFrameworkId, setSelectedFrameworkId] = useState(1);
   const [editingControl, setEditingControl] = useState<ControlAnswer | null>(null);
   const [adminEditControl, setAdminEditControl] = useState<GlobalControl | null | undefined>(undefined);
@@ -887,7 +901,7 @@ export default function CompliancePage() {
   ].filter(t => !t.adminOnly || isAdminOrAM);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col">
       {/* Header */}
       <div className="px-6 pt-6 pb-0 border-b border-border flex-none">
         <div className="flex items-center justify-between gap-4 mb-4">
@@ -925,7 +939,7 @@ export default function CompliancePage() {
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="p-6">
         {/* OVERVIEW */}
         {activeTab === "overview" && (
           <div className="space-y-6">
