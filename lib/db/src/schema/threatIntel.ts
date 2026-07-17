@@ -239,6 +239,7 @@ export const tiReportsTable = pgTable("ti_reports", {
   content:     text("content"),
   metadata:    jsonb("metadata"),
   generatedBy: integer("generated_by").references(() => usersTable.id, { onDelete: "set null" }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
   createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

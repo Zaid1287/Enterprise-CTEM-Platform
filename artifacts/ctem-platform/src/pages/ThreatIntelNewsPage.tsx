@@ -37,6 +37,36 @@ const SOURCE_STYLE: Record<string, string> = {
   sans_isc:         "text-pink-400 bg-pink-500/10 border-pink-500/20",
 };
 
+/* ── Daily auto-refresh status ───────────────────────────────────────────── */
+function DailyRefreshBadge({ sources }: { sources: any[] }) {
+  const completedAts = sources
+    .map(s => s.completedAt ? new Date(s.completedAt).getTime() : null)
+    .filter(Boolean) as number[];
+
+  if (completedAts.length === 0) return null;
+
+  const mostRecent = Math.max(...completedAts);
+  const nextRun = mostRecent + 24 * 3_600_000;
+  const now = Date.now();
+  const diffMs = nextRun - now;
+
+  let label: string;
+  if (diffMs <= 0) {
+    label = "Next auto-refresh: any moment";
+  } else {
+    const hrs = Math.floor(diffMs / 3_600_000);
+    const mins = Math.floor((diffMs % 3_600_000) / 60_000);
+    label = hrs > 0 ? `Next auto-refresh in ${hrs}h ${mins}m` : `Next auto-refresh in ${mins}m`;
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 text-[10px] text-green-400">
+      <Radio className="w-3 h-3 shrink-0" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
 /* ── Source status panel ─────────────────────────────────────────────────── */
 function SourceStatusPanel({
   sources,
@@ -75,6 +105,14 @@ function SourceStatusPanel({
           </Button>
         )}
       </div>
+
+      {/* Daily auto-refresh indicator */}
+      {sources.some(s => s.completedAt) && (
+        <div className="px-4 pt-2.5 pb-1">
+          <DailyRefreshBadge sources={sources} />
+        </div>
+      )}
+
       <div className="divide-y divide-border/50">
         {sources.map(s => (
           <div key={s.id} className="px-4 py-2.5 flex items-center justify-between gap-3">

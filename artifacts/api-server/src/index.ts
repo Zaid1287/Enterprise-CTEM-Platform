@@ -359,6 +359,35 @@ const server = app.listen(port, (err) => {
   warmBrowser()
     .then(() => logger.info("Puppeteer browser pre-warmed"))
     .catch(e => logger.warn({ err: e?.message }, "Puppeteer pre-warm failed (non-fatal)"));
+
+  // ── Daily Threat News Auto-Refresh ─────────────────────────────────────────
+  // Runs once at startup if last run was > 23 h ago, then every 24 h.
+  async function scheduleDailyNewsRefresh(): Promise<void> {
+    try {
+      const { runNewsFeedRefresh, getNewsSourcesStatus } = await import("./lib/threatIntel/newsFetcher.js");
+      const statuses = await getNewsSourcesStatus();
+      const anyNeverRun = statuses.some(s => !s.completedAt);
+      const allRecent   = statuses.every(s => {
+        if (!s.completedAt) return false;
+        return (Date.now() - new Date(s.completedAt).getTime()) < 23 * 3_600_000;
+      });
+      if (anyNeverRun || !allRecent) {
+        logger.info("Daily news refresh: running (last run > 23 h ago or never run)");
+        setImmediate(() => runNewsFeedRefresh().catch(e => logger.warn({ err: e?.message }, "News refresh failed")));
+      } else {
+        logger.info("Daily news refresh: skipped (all sources ran within 23 h)");
+      }
+    } catch (e: any) {
+      logger.warn({ err: e?.message }, "Daily news scheduler init failed");
+    }
+  }
+  scheduleDailyNewsRefresh();
+  // Re-run every 24 hours
+  setInterval(() => {
+    import("./lib/threatIntel/newsFetcher.js")
+      .then(m => m.runNewsFeedRefresh())
+      .catch(e => logger.warn({ err: e?.message }, "Scheduled news refresh failed"));
+  }, 24 * 3_600_000);
 });
 
 // ── WebSocket server for AI Mapper real-time scan/attack streams ──────────────
