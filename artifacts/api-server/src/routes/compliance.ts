@@ -732,4 +732,37 @@ router.delete("/compliance/controls/:controlId", requireAuth, requireRole("admin
   res.sendStatus(204);
 });
 
+// ── All evidence documents for the tenant ─────────────────────────────────────
+router.get("/compliance/documents", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+
+  const answers = await db.select({
+    answer: complianceControlAnswersTable,
+    control: complianceGlobalControlsTable,
+    frameworkName: complianceFrameworksTable.name,
+    frameworkShortName: complianceFrameworksTable.shortName,
+  })
+    .from(complianceControlAnswersTable)
+    .innerJoin(complianceGlobalControlsTable, eq(complianceControlAnswersTable.globalControlId, complianceGlobalControlsTable.id))
+    .leftJoin(complianceFrameworksTable, eq(complianceGlobalControlsTable.frameworkId, complianceFrameworksTable.id))
+    .where(eq(complianceControlAnswersTable.tenantId, tenantId))
+    .orderBy(complianceGlobalControlsTable.frameworkId, complianceGlobalControlsTable.sortOrder);
+
+  const withEvidence = answers.filter(({ answer }) => {
+    if (!answer.evidence) return false;
+    try { const files = JSON.parse(answer.evidence); return Array.isArray(files) && files.length > 0; } catch { return false; }
+  });
+
+  res.json(withEvidence.map(({ answer, control, frameworkName, frameworkShortName }) => ({
+    globalControlId: control.id,
+    controlId: control.controlId,
+    controlTitle: control.title,
+    category: control.category,
+    frameworkName,
+    frameworkShortName,
+    evidence: answer.evidence,
+    updatedAt: answer.updatedAt,
+  })));
+});
+
 export default router;

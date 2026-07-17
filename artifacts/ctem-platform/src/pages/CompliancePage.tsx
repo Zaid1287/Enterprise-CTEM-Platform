@@ -908,6 +908,341 @@ function AssetComplianceTab() {
   );
 }
 
+// ── Asset Controls Accordion (Controls tab — asset-first view) ───────────────
+interface AssetControlItem {
+  globalControlId: number;
+  controlId: string;
+  title: string;
+  description: string | null;
+  category: string | null;
+  isEnabled: boolean;
+  frameworkId: number;
+  frameworkName: string | null;
+  frameworkShortName: string | null;
+  assetControlId: number | null;
+  assetStatus: string | null;
+  tenantStatus: string | null;
+  status: string;
+}
+
+function AssetControlRow({
+  asset, frameworkId, isAdmin, onAdminEdit, onToggleEnabled, onDelete,
+}: {
+  asset: Asset;
+  frameworkId: number;
+  isAdmin: boolean;
+  onAdminEdit?: (c: GlobalControl) => void;
+  onToggleEnabled?: (id: number, en: boolean) => void;
+  onDelete?: (id: number) => void;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+
+  const { data: controls = [], isLoading } = useQuery<AssetControlItem[]>({
+    queryKey: ["compliance-asset-controls", asset.id, frameworkId],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/assets/${asset.id}?frameworkId=${frameworkId}`),
+    enabled: open,
+  });
+
+  const updateStatus = useMutation({
+    mutationFn: ({ globalControlId, status }: { globalControlId: number; status: string }) =>
+      apiFetch(`${BASE}/api/compliance/assets/${asset.id}/${globalControlId}`, { method: "PUT", body: JSON.stringify({ status }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["compliance-asset-controls", asset.id, frameworkId] }),
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const riskColors: Record<string, string> = {
+    critical: "bg-red-500/15 text-red-400 border-red-500/30",
+    high: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+    medium: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+    low: "bg-green-500/15 text-green-400 border-green-500/30",
+  };
+
+  const enabled = controls.filter(c => c.isEnabled);
+  const compliantCount = enabled.filter(c => c.status === "compliant").length;
+
+  return (
+    <div className="border-b border-border last:border-0">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/20 text-left transition-colors"
+      >
+        <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform shrink-0", open && "rotate-90")} />
+        <Server className="w-4 h-4 text-muted-foreground shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{asset.name}</p>
+          <p className="text-xs text-muted-foreground">{asset.type}{asset.domain ? ` · ${asset.domain}` : ""}</p>
+        </div>
+        {open && controls.length > 0 && (
+          <span className="text-xs text-muted-foreground shrink-0">
+            {compliantCount}/{enabled.length} compliant
+          </span>
+        )}
+        {asset.riskLevel && (
+          <Badge className={cn("text-xs border shrink-0", riskColors[asset.riskLevel] ?? "bg-muted text-muted-foreground border-border")}>
+            {asset.riskLevel}
+          </Badge>
+        )}
+        <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0", open && "rotate-180")} />
+      </button>
+
+      {open && (
+        <div className="bg-muted/5 border-t border-border">
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-9 rounded" />)}
+            </div>
+          ) : controls.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-sm text-muted-foreground">No controls scoped to this asset for this framework.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-border/50">
+              {controls.map(c => {
+                const status = (c.status ?? "non_compliant") as StatusKey;
+                const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.non_compliant;
+                const Icon = cfg.icon;
+                const asGlobal: GlobalControl = {
+                  id: c.globalControlId,
+                  frameworkId: c.frameworkId,
+                  controlId: c.controlId,
+                  title: c.title,
+                  description: c.description,
+                  category: c.category,
+                  domain: null,
+                  controlType: null,
+                  riskLevel: null,
+                  guidance: null,
+                  testingProcedures: null,
+                  evidenceRequired: null,
+                  isEnabled: c.isEnabled,
+                  sortOrder: 0,
+                  frameworkName: c.frameworkName,
+                  frameworkShortName: c.frameworkShortName,
+                };
+                return (
+                  <div key={c.globalControlId} className={cn("flex items-center gap-3 px-4 py-2.5 pl-10 hover:bg-muted/10", !c.isEnabled && "opacity-50")}>
+                    <Badge className={cn("text-xs border font-mono shrink-0", fwColor(c.frameworkShortName))}>{c.frameworkShortName}</Badge>
+                    <span className="text-xs font-mono text-muted-foreground w-20 shrink-0">{c.controlId}</span>
+                    <span className={cn("flex-1 text-xs truncate", !c.isEnabled && "line-through")}>{c.title}</span>
+                    <Badge className={cn("text-xs border shrink-0 gap-1 px-2 py-0.5", cfg.bg, cfg.color)}>
+                      <Icon className="w-3 h-3" />{cfg.label}
+                    </Badge>
+                    <Select
+                      value={status}
+                      onValueChange={v => updateStatus.mutate({ globalControlId: c.globalControlId, status: v })}
+                    >
+                      <SelectTrigger className="h-7 text-xs w-36 shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="non_compliant">Non-Compliant</SelectItem>
+                        <SelectItem value="in_progress">In Progress</SelectItem>
+                        <SelectItem value="compliant">Compliant</SelectItem>
+                        <SelectItem value="not_applicable">N/A</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {isAdmin && (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button
+                          onClick={() => onAdminEdit?.(asGlobal)}
+                          className="text-muted-foreground hover:text-foreground p-1.5 rounded hover:bg-muted/40"
+                          title="Edit control definition"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => onToggleEnabled?.(c.globalControlId, !c.isEnabled)}
+                          className="p-1.5 rounded hover:bg-muted/40"
+                          title={c.isEnabled ? "Disable control" : "Enable control"}
+                        >
+                          {c.isEnabled
+                            ? <ToggleRight className="w-3.5 h-3.5 text-green-400" />
+                            : <ToggleLeft className="w-3.5 h-3.5 text-muted-foreground" />}
+                        </button>
+                        <button
+                          onClick={() => { if (confirm("Delete this control from the global library?")) onDelete?.(c.globalControlId); }}
+                          className="text-red-400 hover:text-red-300 p-1.5 rounded hover:bg-red-500/10"
+                          title="Delete control"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssetControlsAccordion({
+  frameworkId, isAdmin, onAdminEdit, onToggleEnabled, onDelete,
+}: {
+  frameworkId: number;
+  isAdmin: boolean;
+  onAdminEdit?: (c: GlobalControl) => void;
+  onToggleEnabled?: (id: number, en: boolean) => void;
+  onDelete?: (id: number) => void;
+}) {
+  const { data: assets = [], isLoading } = useQuery<Asset[]>({
+    queryKey: ["compliance-enabled-assets"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/assets/enabled`),
+  });
+
+  if (isLoading) return (
+    <div className="space-y-2">
+      {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-xl" />)}
+    </div>
+  );
+
+  if (assets.length === 0) return (
+    <div className="bg-card border border-border rounded-xl p-10 text-center">
+      <ShieldCheck className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+      <p className="text-sm text-muted-foreground font-medium">No compliance-enabled assets</p>
+      <p className="text-xs text-muted-foreground mt-1">
+        Go to <strong>Asset Inventory → Asset Detail</strong> and enable Compliance Tracking for a verified asset.
+      </p>
+    </div>
+  );
+
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      {assets.map(asset => (
+        <AssetControlRow
+          key={asset.id}
+          asset={asset}
+          frameworkId={frameworkId}
+          isAdmin={isAdmin}
+          onAdminEdit={onAdminEdit}
+          onToggleEnabled={onToggleEnabled}
+          onDelete={onDelete}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── Documents Tab ─────────────────────────────────────────────────────────────
+interface EvidenceDoc {
+  globalControlId: number;
+  controlId: string;
+  controlTitle: string;
+  category: string | null;
+  frameworkName: string | null;
+  frameworkShortName: string | null;
+  evidence: string | null;
+  updatedAt: string | null;
+}
+
+function DocumentsTab() {
+  const [search, setSearch] = useState("");
+
+  const { data: documents = [], isLoading } = useQuery<EvidenceDoc[]>({
+    queryKey: ["compliance-documents"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/documents`),
+  });
+
+  const filtered = useMemo(() => {
+    if (!search) return documents;
+    const q = search.toLowerCase();
+    return documents.filter(d =>
+      d.controlTitle.toLowerCase().includes(q) ||
+      d.controlId.toLowerCase().includes(q) ||
+      (d.frameworkName ?? "").toLowerCase().includes(q) ||
+      (d.category ?? "").toLowerCase().includes(q)
+    );
+  }, [documents, search]);
+
+  const totalFiles = useMemo(() =>
+    documents.reduce((sum, d) => sum + parseEvidence(d.evidence).length, 0),
+  [documents]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search controls or frameworks…" className="h-8 pl-8 text-xs" />
+        </div>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground ml-auto">
+          <span>{documents.length} control{documents.length !== 1 ? "s" : ""} with evidence</span>
+          <span className="text-border">·</span>
+          <span>{totalFiles} file{totalFiles !== 1 ? "s" : ""} total</span>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-card border border-border rounded-xl p-12 text-center">
+          <FileText className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground font-medium">
+            {documents.length === 0 ? "No evidence documents uploaded yet" : "No matches"}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {documents.length === 0
+              ? "Upload evidence files when updating a control's status in the Controls tab."
+              : "Try a different search term."}
+          </p>
+        </div>
+      ) : (
+        <div className="bg-card border border-border rounded-xl divide-y divide-border overflow-hidden">
+          {filtered.map(doc => {
+            const files = parseEvidence(doc.evidence);
+            return (
+              <div key={doc.globalControlId} className="p-4">
+                <div className="flex items-start gap-3 mb-3">
+                  <Badge className={cn("text-xs border font-mono shrink-0 mt-0.5", fwColor(doc.frameworkShortName))}>
+                    {doc.frameworkShortName}
+                  </Badge>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground shrink-0">{doc.controlId}</span>
+                      <span className="text-sm font-medium">{doc.controlTitle}</span>
+                    </div>
+                    {doc.category && <p className="text-xs text-muted-foreground mt-0.5">{doc.category}</p>}
+                  </div>
+                  <div className="text-right shrink-0">
+                    {doc.updatedAt && (
+                      <p className="text-xs text-muted-foreground">{new Date(doc.updatedAt).toLocaleDateString()}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-0.5">{files.length} file{files.length !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 ml-1">
+                  {files.map(f => (
+                    <a
+                      key={f.path}
+                      href={`${BASE}/api/compliance/answers/${doc.globalControlId}/evidence/${f.path}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 bg-muted/40 hover:bg-muted/70 border border-border rounded-lg px-3 py-1.5 text-xs transition"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span className="truncate max-w-[200px]">{f.name}</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">
+                        {(f.size / 1024).toFixed(0)}KB
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Client Compliance Overview (admin/AM — shown in Overview tab) ─────────────
 function ClientComplianceSection() {
   const { data: clients = [], isLoading } = useQuery<ClientComplianceSummary[]>({
@@ -1077,7 +1412,7 @@ function AssignmentsTab() {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-type TabId = "overview" | "controls" | "library" | "assets" | "assignments";
+type TabId = "overview" | "controls" | "library" | "assets" | "assignments" | "documents";
 
 export default function CompliancePage() {
   const { user } = useAuth();
@@ -1092,6 +1427,7 @@ export default function CompliancePage() {
     if (t === "assets") return "assets";
     if (t === "assignments" && isAdminOrAM) return "assignments";
     if (t === "controls") return "controls";
+    if (t === "documents") return "documents";
     return "overview";
   })();
 
@@ -1102,7 +1438,6 @@ export default function CompliancePage() {
     setActiveTab(tabFromUrl);
   }, [search]);
   const [selectedFrameworkId, setSelectedFrameworkId] = useState(1);
-  const [editingControl, setEditingControl] = useState<ControlAnswer | null>(null);
   const [adminEditControl, setAdminEditControl] = useState<GlobalControl | null | undefined>(undefined);
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -1117,22 +1452,23 @@ export default function CompliancePage() {
     queryFn: () => apiFetch(`${BASE}/api/compliance/summary`),
   });
 
-  const { data: controls = [], isLoading: loadingControls } = useQuery<ControlAnswer[]>({
-    queryKey: ["compliance-answers", selectedFrameworkId],
-    queryFn: () => apiFetch(`${BASE}/api/compliance/answers?frameworkId=${selectedFrameworkId}`),
-    enabled: activeTab === "controls",
-  });
-
   const toggleGlobalEnabled = useMutation({
     mutationFn: ({ id, isEnabled }: { id: number; isEnabled: boolean }) =>
       apiFetch(`${BASE}/api/compliance/library/${id}`, { method: "PATCH", body: JSON.stringify({ isEnabled }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["compliance-answers", selectedFrameworkId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["compliance-library"] });
+      qc.invalidateQueries({ queryKey: ["compliance-asset-controls"] });
+    },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const deleteGlobal = useMutation({
     mutationFn: (id: number) => apiFetch(`${BASE}/api/compliance/library/${id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["compliance-answers", selectedFrameworkId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["compliance-library"] });
+      qc.invalidateQueries({ queryKey: ["compliance-asset-controls"] });
+      toast({ title: "Control deleted" });
+    },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -1144,6 +1480,7 @@ export default function CompliancePage() {
   const tabs = [
     { id: "overview" as TabId, label: "Overview" },
     { id: "controls" as TabId, label: "Controls" },
+    { id: "documents" as TabId, label: "All Documents" },
     { id: "library" as TabId, label: "Control Library", adminOnly: true },
     { id: "assets" as TabId, label: "Asset Compliance" },
     { id: "assignments" as TabId, label: "Module Assignments", adminOnly: true },
@@ -1261,21 +1598,18 @@ export default function CompliancePage() {
               </div>
             )}
 
-            {loadingControls
-              ? <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-              : (
-                <ControlsTable
-                  controls={controls}
-                  isAdmin={isAdmin}
-                  frameworkId={selectedFrameworkId}
-                  onEdit={c => setEditingControl(c)}
-                  onAdminEdit={isAdmin ? c => setAdminEditControl(c) : undefined}
-                  onToggleEnabled={isAdmin ? (id, en) => toggleGlobalEnabled.mutate({ id, isEnabled: en }) : undefined}
-                  onDelete={isAdmin ? id => { if (confirm("Delete this control from the global library?")) deleteGlobal.mutate(id); } : undefined}
-                />
-              )}
+            <AssetControlsAccordion
+              frameworkId={selectedFrameworkId}
+              isAdmin={isAdmin}
+              onAdminEdit={isAdmin ? c => setAdminEditControl(c) : undefined}
+              onToggleEnabled={isAdmin ? (id, en) => toggleGlobalEnabled.mutate({ id, isEnabled: en }) : undefined}
+              onDelete={isAdmin ? id => { if (confirm("Delete this control from the global library?")) deleteGlobal.mutate(id); } : undefined}
+            />
           </div>
         )}
+
+        {/* DOCUMENTS */}
+        {activeTab === "documents" && <DocumentsTab />}
 
         {/* LIBRARY */}
         {activeTab === "library" && (
@@ -1288,11 +1622,6 @@ export default function CompliancePage() {
         {/* ASSIGNMENTS */}
         {activeTab === "assignments" && isAdminOrAM && <AssignmentsTab />}
       </div>
-
-      {/* Control Edit Drawer */}
-      {editingControl && (
-        <ControlEditDrawer control={editingControl} frameworkId={selectedFrameworkId} onClose={() => setEditingControl(null)} />
-      )}
 
       {/* Admin Edit Dialog */}
       {adminEditControl !== undefined && (
