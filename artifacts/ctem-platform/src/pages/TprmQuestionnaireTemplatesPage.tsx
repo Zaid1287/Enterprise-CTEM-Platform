@@ -16,7 +16,7 @@ import {
   Plus, Trash2, Edit2, Loader2, FileText, Library,
   ChevronDown, ChevronUp, GripVertical, X,
   ChevronLeft, ChevronRight, ChevronFirst, ChevronLast,
-  BookOpen, Save,
+  Save,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -68,23 +68,6 @@ const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   file_upload:  "File Upload",
 };
 
-// Built-in library starters (shown when no DB questions exist for a category)
-const BUILTIN_QUESTIONS: Question[] = [
-  { id: "bq1",  text: "Does the vendor have an information security policy?",            type: "boolean",      category: "Governance",          required: true,  weight: 2 },
-  { id: "bq2",  text: "Is the vendor ISO 27001 certified?",                              type: "boolean",      category: "Compliance",          required: true,  weight: 2 },
-  { id: "bq3",  text: "Does the vendor perform annual penetration testing?",             type: "boolean",      category: "Testing",             required: true,  weight: 2 },
-  { id: "bq4",  text: "Does the vendor encrypt data at rest?",                           type: "boolean",      category: "Data Protection",     required: true,  weight: 2 },
-  { id: "bq5",  text: "Does the vendor encrypt data in transit?",                        type: "boolean",      category: "Data Protection",     required: true,  weight: 2 },
-  { id: "bq6",  text: "Does the vendor have a formal incident response plan?",           type: "boolean",      category: "Incident Response",   required: true,  weight: 2 },
-  { id: "bq7",  text: "Does the vendor perform background checks on employees?",         type: "boolean",      category: "HR Security",         required: false, weight: 1 },
-  { id: "bq8",  text: "Does the vendor use multi-factor authentication?",                type: "boolean",      category: "Access Control",      required: true,  weight: 2 },
-  { id: "bq9",  text: "Rate the vendor's overall security maturity level (1–5)",         type: "rating",       category: "Maturity",            required: false, weight: 3 },
-  { id: "bq10", text: "Does the vendor have SOC 2 Type II certification?",               type: "boolean",      category: "Compliance",          required: false, weight: 2 },
-  { id: "bq11", text: "What is the vendor's SLA for critical security incidents (hrs)?", type: "text",         category: "Incident Response",   required: false, weight: 1 },
-  { id: "bq12", text: "Does the vendor maintain a vulnerability disclosure program?",    type: "boolean",      category: "Vulnerability Mgmt",  required: false, weight: 1 },
-  { id: "bq13", text: "Which compliance frameworks does the vendor adhere to?",          type: "multi_choice", category: "Compliance",          required: false, weight: 1, options: ["ISO 27001","SOC 2","PCI DSS","HIPAA","GDPR","NIST CSF","CIS Controls"] },
-  { id: "bq14", text: "Please upload the latest third-party audit report",               type: "file_upload",  category: "Compliance",          required: false, weight: 2 },
-];
 
 function newQuestion(): Question {
   return { id: `cq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: "", type: "boolean", category: "general", required: false, weight: 1 };
@@ -175,13 +158,22 @@ export default function TprmQuestionnaireTemplatesPage() {
   };
   useEffect(() => { loadTemplates(); }, []);
 
-  // ── Load library ──────────────────────────────────────────────────────────
-  const loadLibrary = () => {
+  // ── Load library (auto-seeds defaults on first ever load) ─────────────────
+  const loadLibrary = async () => {
     setLoadingLib(true);
-    apiFetch<LibraryQuestion[]>("/api/tprm/question-library")
-      .then(setLibQuestions).catch(() => {}).finally(() => setLoadingLib(false));
+    try {
+      const qs = await apiFetch<LibraryQuestion[]>("/api/tprm/question-library");
+      if (qs.length === 0) {
+        await apiFetch("/api/tprm/question-library/seed-defaults", { method: "POST" });
+        const seeded = await apiFetch<LibraryQuestion[]>("/api/tprm/question-library");
+        setLibQuestions(seeded);
+      } else {
+        setLibQuestions(qs);
+      }
+    } catch { /* ignore */ }
+    setLoadingLib(false);
   };
-  useEffect(() => { if (mainTab === "library") loadLibrary(); }, [mainTab]);
+  useEffect(() => { loadLibrary(); }, []);
 
   // ── Pagination ────────────────────────────────────────────────────────────
   const tplTotal     = templates.length;
@@ -198,19 +190,18 @@ export default function TprmQuestionnaireTemplatesPage() {
   const pagedLib     = useMemo(() => filteredLib.slice((safeLibPage - 1) * LIB_PAGE_SIZE, safeLibPage * LIB_PAGE_SIZE), [filteredLib, safeLibPage]);
   const libCategories = useMemo(() => ["all", ...Array.from(new Set(libQuestions.map(q => q.category).filter(Boolean)))], [libQuestions]);
 
-  // All available questions for template builder = BUILTIN + DB library
-  const allLibQs: Question[] = useMemo(() => [
-    ...BUILTIN_QUESTIONS,
-    ...libQuestions.filter(q => q.isActive).map(q => ({
+  // All available questions for template builder = active DB library questions
+  const allLibQs: Question[] = useMemo(() =>
+    libQuestions.filter(q => q.isActive).map(q => ({
       id: `lib_${q.id}`, text: q.text, type: q.type, category: q.category,
       required: q.required, weight: q.weight, options: q.options ?? undefined,
     })),
-  ], [libQuestions]);
+  [libQuestions]);
 
   // ── Template CRUD ─────────────────────────────────────────────────────────
   const openCreate = () => {
     setForm({ name: "", description: "", category: "security" });
-    const req = BUILTIN_QUESTIONS.filter(q => q.required);
+    const req = allLibQs.filter(q => q.required);
     setQuestions(req);
     setLibSelected(new Set(req.map(q => q.id)));
     setAddingCustom(false); setLibOpen(false); setNewQ(newQuestion());
@@ -479,7 +470,7 @@ export default function TprmQuestionnaireTemplatesPage() {
         <div className="space-y-4">
           <div className="flex items-center gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground flex-1">
-              {libQuestions.length} custom question{libQuestions.length !== 1 ? "s" : ""} in your library · these appear in the template builder alongside the 14 built-in questions
+              {libQuestions.length} question{libQuestions.length !== 1 ? "s" : ""} in library · edit, delete, or enable/disable any question · all questions appear in the template builder
             </p>
             <Select value={libCategoryFilter} onValueChange={v => { setLibCategoryFilter(v); setLibPage(1); }}>
               <SelectTrigger className="h-8 text-xs w-40"><SelectValue placeholder="All categories" /></SelectTrigger>
@@ -489,38 +480,15 @@ export default function TprmQuestionnaireTemplatesPage() {
             </Select>
           </div>
 
-          {/* Built-in preview */}
-          <Card className="border-border/40 bg-muted/10">
-            <CardHeader className="pb-2 pt-3">
-              <CardTitle className="text-xs text-muted-foreground flex items-center gap-1.5"><BookOpen className="w-3.5 h-3.5" />14 Built-in Questions (read-only, always available)</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                {BUILTIN_QUESTIONS.map(q => (
-                  <div key={q.id} className="flex items-start gap-2 p-1.5 rounded bg-muted/20 border border-border/30">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs">{q.text}</p>
-                      <div className="flex gap-1 mt-0.5 flex-wrap">
-                        <Badge variant="outline" className="text-[10px]">{QUESTION_TYPE_LABELS[q.type]}</Badge>
-                        <Badge variant="outline" className="text-[10px]">{q.category}</Badge>
-                        {q.required && <Badge variant="secondary" className="text-[10px]">Required</Badge>}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Custom library questions */}
+          {/* All library questions — edit, delete, enable/disable any question */}
           {loadingLib ? (
             <Skeleton className="h-40" />
           ) : filteredLib.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="py-12 text-center">
                 <Library className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm font-medium">No custom library questions yet</p>
-                <p className="text-xs text-muted-foreground mt-1">Add questions like "Is the vendor ISO 27001 certified?" to reuse them across templates</p>
+                <p className="text-sm font-medium">No questions found</p>
+                <p className="text-xs text-muted-foreground mt-1">Add a new question or change the category filter</p>
                 <Button size="sm" className="mt-4" onClick={openAddLibQ}><Plus className="w-4 h-4 mr-1.5" />Add Question</Button>
               </CardContent>
             </Card>
@@ -529,18 +497,21 @@ export default function TprmQuestionnaireTemplatesPage() {
               <CardContent className="p-0">
                 <div className="divide-y divide-border/40">
                   {pagedLib.map(q => (
-                    <div key={q.id} className={`p-3 hover:bg-accent/10 transition-colors ${!q.isActive ? "opacity-60" : ""}`}>
+                    <div key={q.id} className={`p-3 hover:bg-accent/10 transition-colors ${!q.isActive ? "opacity-50" : ""}`}>
                       <div className="flex items-start gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm">{q.text}</p>
+                          <p className={`text-sm ${!q.isActive ? "line-through text-muted-foreground" : ""}`}>{q.text}</p>
                           <div className="flex gap-1.5 mt-1 flex-wrap">
                             <Badge variant="outline" className="text-[10px]">{QUESTION_TYPE_LABELS[q.type] ?? q.type}</Badge>
                             {q.category && <Badge variant="outline" className="text-[10px]">{q.category}</Badge>}
                             {q.required && <Badge variant="secondary" className="text-[10px]">Required</Badge>}
                             {(q.weight ?? 1) > 1 && <Badge variant="secondary" className="text-[10px]">Weight: {q.weight}</Badge>}
-                            {q.isGlobal && <Badge variant="secondary" className="text-[10px]">Global</Badge>}
-                            <Badge className={`text-[10px] ${q.isActive ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-slate-500/20 text-slate-400"}`}>
-                              {q.isActive ? "Active" : "Inactive"}
+                            {q.isGlobal
+                              ? <Badge className="text-[10px] bg-blue-500/15 text-blue-400 border-blue-500/30">Default</Badge>
+                              : <Badge variant="outline" className="text-[10px] text-violet-400 border-violet-500/30">Custom</Badge>
+                            }
+                            <Badge className={`text-[10px] ${q.isActive ? "bg-green-500/15 text-green-400 border-green-500/30" : "bg-slate-500/15 text-slate-400 border-slate-500/30"}`}>
+                              {q.isActive ? "Enabled" : "Disabled"}
                             </Badge>
                           </div>
                           {q.options && q.options.length > 0 && (
@@ -548,11 +519,20 @@ export default function TprmQuestionnaireTemplatesPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          <Switch checked={q.isActive} onCheckedChange={() => toggleLibQActive(q)} className="scale-75" title={q.isActive ? "Deactivate" : "Activate"} />
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditLibQ(q)} title="Edit">
+                          <Switch
+                            checked={q.isActive}
+                            onCheckedChange={() => toggleLibQActive(q)}
+                            className="scale-75"
+                            title={q.isActive ? "Disable question" : "Enable question"}
+                          />
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditLibQ(q)} title="Edit question">
                             <Edit2 className="w-3.5 h-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteLibQ(q)} title="Delete">
+                          <Button
+                            variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                            onClick={() => deleteLibQ(q)}
+                            title="Delete question"
+                          >
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
@@ -621,7 +601,7 @@ export default function TprmQuestionnaireTemplatesPage() {
                             <Badge variant="outline" className="text-[10px]">{QUESTION_TYPE_LABELS[q.type]}</Badge>
                             <Badge variant="outline" className="text-[10px]">{q.category}</Badge>
                             {q.required && <Badge variant="secondary" className="text-[10px]">Required</Badge>}
-                            {String(q.id).startsWith("lib_") && <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30">Custom</Badge>}
+                            <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30">Library</Badge>
                           </div>
                         </div>
                       </label>

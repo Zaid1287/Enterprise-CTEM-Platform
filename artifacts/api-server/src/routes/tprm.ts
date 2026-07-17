@@ -2626,6 +2626,37 @@ router.post("/tprm/question-library", requireAuth, requireTprm, async (req: Auth
   res.status(201).json(row);
 });
 
+router.post("/tprm/question-library/seed-defaults", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const existing = await db.select({ id: tprmQuestionLibraryTable.id })
+    .from(tprmQuestionLibraryTable)
+    .where(eq(tprmQuestionLibraryTable.isGlobal, true))
+    .limit(1);
+  if (existing.length > 0) {
+    res.json({ seeded: 0, message: "Default questions already exist" });
+    return;
+  }
+  const defaults = [
+    { text: "Does the vendor have an information security policy?",            type: "boolean",      category: "Governance",         required: true,  weight: 2, options: null },
+    { text: "Is the vendor ISO 27001 certified?",                              type: "boolean",      category: "Compliance",         required: true,  weight: 2, options: null },
+    { text: "Does the vendor perform annual penetration testing?",             type: "boolean",      category: "Testing",            required: true,  weight: 2, options: null },
+    { text: "Does the vendor encrypt data at rest?",                           type: "boolean",      category: "Data Protection",    required: true,  weight: 2, options: null },
+    { text: "Does the vendor encrypt data in transit?",                        type: "boolean",      category: "Data Protection",    required: true,  weight: 2, options: null },
+    { text: "Does the vendor have a formal incident response plan?",           type: "boolean",      category: "Incident Response",  required: true,  weight: 2, options: null },
+    { text: "Does the vendor perform background checks on employees?",         type: "boolean",      category: "HR Security",        required: false, weight: 1, options: null },
+    { text: "Does the vendor use multi-factor authentication?",                type: "boolean",      category: "Access Control",     required: true,  weight: 2, options: null },
+    { text: "Rate the vendor's overall security maturity level (1-5)",         type: "rating",       category: "Maturity",           required: false, weight: 3, options: null },
+    { text: "Does the vendor have SOC 2 Type II certification?",               type: "boolean",      category: "Compliance",         required: false, weight: 2, options: null },
+    { text: "What is the vendor's SLA for critical security incidents (hrs)?", type: "text",         category: "Incident Response",  required: false, weight: 1, options: null },
+    { text: "Does the vendor maintain a vulnerability disclosure program?",    type: "boolean",      category: "Vulnerability Mgmt", required: false, weight: 1, options: null },
+    { text: "Which compliance frameworks does the vendor adhere to?",          type: "multi_choice", category: "Compliance",         required: false, weight: 1, options: ["ISO 27001","SOC 2","PCI DSS","HIPAA","GDPR","NIST CSF","CIS Controls"] },
+    { text: "Please upload the latest third-party audit report",               type: "file_upload",  category: "Compliance",         required: false, weight: 2, options: null },
+  ];
+  const rows = await db.insert(tprmQuestionLibraryTable)
+    .values(defaults.map(d => ({ tenantId: null, text: d.text, type: d.type, category: d.category, required: d.required, weight: d.weight, options: d.options, isGlobal: true, isActive: true, createdBy: null as any })))
+    .returning();
+  res.status(201).json({ seeded: rows.length });
+});
+
 router.patch("/tprm/question-library/:id", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId, role } = req.user!;
   const qid = parseInt(req.params.id as string);
