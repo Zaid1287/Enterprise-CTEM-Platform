@@ -595,9 +595,29 @@ router.get("/threat-intel/malware/:id", requireAuth, async (req: AuthenticatedRe
 
 router.post("/threat-intel/malware", requireAuth, async (req: AuthenticatedRequest, res) => {
   if (!requireAdminOrSA(req, res)) return;
-  const { name, aliases, malwareType, description, platforms, targetIndustries, capabilities, mitreId } = req.body;
+  const {
+    name, aliases, malwareType, description, platforms, targetIndustries,
+    capabilities, mitreId, mitreUrl, actorIds, actorNames, campaignIds,
+    riskScore, iocCount, source,
+  } = req.body;
   if (!name) { res.status(400).json({ error: "name required" }); return; }
-  const [row] = await db.insert(tiMalwareTable).values({ name, aliases: aliases ?? [], malwareType: malwareType ?? "malware", description, platforms: platforms ?? [], targetIndustries: targetIndustries ?? [], capabilities: capabilities ?? [], mitreId, source: "manual" }).returning();
+  const [row] = await db.insert(tiMalwareTable).values({
+    name,
+    aliases:          aliases ?? [],
+    malwareType:      malwareType ?? "malware",
+    description,
+    platforms:        platforms ?? [],
+    targetIndustries: targetIndustries ?? [],
+    capabilities:     capabilities ?? [],
+    actorIds:         actorIds ?? [],
+    actorNames:       actorNames ?? [],
+    campaignIds:      campaignIds ?? [],
+    mitreId,
+    mitreUrl,
+    riskScore:        riskScore ?? 0,
+    iocCount:         iocCount ?? 0,
+    source:           source ?? "manual",
+  }).returning();
   res.status(201).json(row);
 });
 
