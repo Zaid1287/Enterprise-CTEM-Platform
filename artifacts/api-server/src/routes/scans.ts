@@ -335,7 +335,7 @@ router.post("/scans", requireAuth, async (req: AuthenticatedRequest, res): Promi
       }
     });
   }
-  await logAudit(req.user!, "create_scan", "scan", scan.id);
+  await logAudit(req.user!, "create_scan", "scan", scan.id, undefined, req);
   res.status(201).json(toScanResponse(scan));
 });
 

@@ -11,7 +11,7 @@ import {
   requireAuth,
   type AuthenticatedRequest,
 } from "../lib/auth";
-import { logAudit, getClientIp } from "../lib/audit";
+import { logAudit, getClientIp, parseBrowser, parseOs, parseDevice } from "../lib/audit";
 import { sendEmail, otpEmailHtml } from "../lib/email";
 import crypto from "crypto";
 import multer from "multer";
@@ -84,34 +84,6 @@ function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-function parseBrowser(ua: string): string {
-  if (/Edg\//i.test(ua)) return "Edge";
-  if (/OPR\//i.test(ua) || /Opera/i.test(ua)) return "Opera";
-  if (/Chrome\//i.test(ua)) return "Chrome";
-  if (/Firefox\//i.test(ua)) return "Firefox";
-  if (/Safari\//i.test(ua)) return "Safari";
-  if (/MSIE|Trident/i.test(ua)) return "Internet Explorer";
-  return "Unknown Browser";
-}
-
-function parseOs(ua: string): string {
-  if (/Windows NT 10/i.test(ua)) return "Windows 10/11";
-  if (/Windows NT/i.test(ua)) return "Windows";
-  if (/Mac OS X/i.test(ua)) return "macOS";
-  if (/iPhone/i.test(ua)) return "iOS";
-  if (/iPad/i.test(ua)) return "iPadOS";
-  if (/Android/i.test(ua)) return "Android";
-  if (/Linux/i.test(ua)) return "Linux";
-  return "Unknown OS";
-}
-
-function parseDevice(ua: string): string {
-  if (/iPhone/i.test(ua)) return "iPhone";
-  if (/iPad/i.test(ua)) return "iPad";
-  if (/Android.*Mobile/i.test(ua)) return "Android Phone";
-  if (/Android/i.test(ua)) return "Android Tablet";
-  return "Desktop";
-}
 
 function toUserResponse(user: typeof usersTable.$inferSelect) {
   return {
@@ -328,7 +300,7 @@ router.post("/auth/refresh", async (req, res): Promise<void> => {
 router.post("/auth/logout", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (req.user) {
     await db.update(usersTable).set({ refreshToken: null }).where(eq(usersTable.id, req.user.userId));
-    await logAudit(req.user, "logout", "user", req.user.userId, undefined, req.ip);
+    await logAudit(req.user, "logout", "user", req.user.userId, undefined, req);
   }
   res.sendStatus(204);
 });
@@ -734,7 +706,7 @@ router.post("/auth/accept-invitation", async (req, res): Promise<void> => {
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   }).onConflictDoNothing();
 
-  await logAudit(payload as any, "accept_invitation", "user", user.id, `role: ${inv.role}`, realIp);
+  await logAudit(payload as any, "accept_invitation", "user", user.id, `role: ${inv.role}`, req);
 
   res.status(201).json({ accessToken, refreshToken, user: toUserResponse(user) });
 });
@@ -893,7 +865,7 @@ router.post("/auth/plan-upgrade-request", requireAuth, async (req: Authenticated
     status: "pending",
   });
 
-  await logAudit(user, "plan_upgrade_requested", "tenant", user.tenantId, planName, getClientIp(req));
+  await logAudit(user, "plan_upgrade_requested", "tenant", user.tenantId, planName, req);
 
   res.status(201).json({ ok: true, message: "Plan upgrade request submitted. An admin will review it shortly." });
 });

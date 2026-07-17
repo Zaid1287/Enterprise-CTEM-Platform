@@ -488,7 +488,7 @@ router.patch("/findings/:findingId/fp-status", requireAuth, async (req: Authenti
     .where(eq(findingsTable.id, findingId))
     .returning();
 
-  await logAudit(req.user!, `finding.fp_${action}`, "finding", findingId, JSON.stringify({ action, note }), req.ip ?? "");
+  await logAudit(req.user!, `finding.fp_${action}`, "finding", findingId, JSON.stringify({ action, note }), req);
 
   if (updated?.assetId) {
     finalizeScannedAssets([updated.assetId], { updateLastScannedAt: false }).catch(() => {});
@@ -740,13 +740,12 @@ router.patch("/findings/:findingId", requireAuth, async (req: AuthenticatedReque
   if (parsed.data.status === "false_positive") {
     // Initial submission — record the analyst reason in the trail
     await logAudit(req.user!, "finding.fp_submitted", "finding", finding.id,
-      JSON.stringify({ action: "submitted", note: updateData.fpNote ?? null }), req.ip ?? "");
+      JSON.stringify({ action: "submitted", note: updateData.fpNote ?? null }), req);
   } else if (typeof req.body.fpNote === "string" && !parsed.data.status) {
-    // Standalone note update (no status change) — record in the trail
     await logAudit(req.user!, "finding.fp_note_updated", "finding", finding.id,
-      JSON.stringify({ action: "note_updated", note: updateData.fpNote ?? null }), req.ip ?? "");
+      JSON.stringify({ action: "note_updated", note: updateData.fpNote ?? null }), req);
   } else {
-    await logAudit(req.user!, "update_finding", "finding", finding.id, `status: ${parsed.data.status ?? "unchanged"}`);
+    await logAudit(req.user!, "update_finding", "finding", finding.id, `status: ${parsed.data.status ?? "unchanged"}`, req);
   }
 
   res.json(toFindingResponse(finding));
@@ -958,7 +957,7 @@ router.post("/findings/:findingId/suppress", requireAuth, async (req, res) => {
     updatedAt:           now,
   }).where(eq(findingsTable.id, findingId)).returning();
 
-  await logAudit((req as AuthenticatedRequest).user!, "finding.suppress", "finding", findingId, `suppressionId=${suppressionId} matchType=${matchType}`, req.ip ?? "");
+  await logAudit((req as AuthenticatedRequest).user!, "finding.suppress", "finding", findingId, `suppressionId=${suppressionId} matchType=${matchType}`, req);
 
   // Recalculate risk score for the asset (non-blocking)
   if (updated?.assetId) {

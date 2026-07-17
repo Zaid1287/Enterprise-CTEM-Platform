@@ -300,7 +300,7 @@ router.post("/tools", requireAuth, requireRole("admin", "super_admin"), async (r
     tenantId: platformId,
     createdBy: req.user!.userId,
   }).returning();
-  await logAudit(req.user!, "create_tool", "security_tool", tool.id);
+  await logAudit(req.user!, "create_tool", "security_tool", tool.id, undefined, req);
 
   // Auto-add new custom tool to the platform pipeline as last step (disabled by default).
   // SA can enable it via the Pipeline Config page — ensures the tool is immediately visible
@@ -379,7 +379,7 @@ router.delete("/tools/:toolId", requireAuth, requireRole("admin", "super_admin")
     .where(and(eq(securityToolsTable.id, p.data.toolId), eq(securityToolsTable.tenantId, platformId)))
     .returning();
   if (!tool) { res.status(404).json({ error: "Tool not found" }); return; }
-  await logAudit(req.user!, "delete_tool", "security_tool", tool.id);
+  await logAudit(req.user!, "delete_tool", "security_tool", tool.id, undefined, req);
   res.sendStatus(204);
 });
 
@@ -433,7 +433,7 @@ router.post("/tools/:toolId/run", requireAuth, async (req: AuthenticatedRequest,
     }
   }
 
-  await logAudit(req.user!, "run_tool", "security_tool", tool.id);
+  await logAudit(req.user!, "run_tool", "security_tool", tool.id, undefined, req);
 
   // Create an alert for each completed/failed tool run
   for (const run of runs) {
@@ -491,7 +491,7 @@ router.post("/assets/:assetId/run-pipeline", requireAuth, async (req: Authentica
     runs.push(run);
   }
 
-  await logAudit(req.user!, "run_pipeline", "asset", asset.id);
+  await logAudit(req.user!, "run_pipeline", "asset", asset.id, undefined, req);
   res.json(await enrichRuns(runs));
 });
 

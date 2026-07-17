@@ -50,7 +50,7 @@ router.post("/custom-scripts", requireAuth, async (req: AuthenticatedRequest, re
     tenantId, name, description, language, content, timeout: Number(timeout) || 60,
     createdBy: userId as any,
   }).returning();
-  await logAudit(req.user!, "custom_script_created", "custom_script", script.id, JSON.stringify({ name }), req.ip ?? "");
+  await logAudit(req.user!, "custom_script_created", "custom_script", script.id, JSON.stringify({ name }), req);
   res.status(201).json(script);
 });
 
@@ -90,7 +90,7 @@ router.delete("/custom-scripts/:id", requireAuth, async (req: AuthenticatedReque
   await db.delete(customScriptRunsTable).where(eq(customScriptRunsTable.scriptId, existing.id));
   await db.delete(customScriptAssignmentsTable).where(eq(customScriptAssignmentsTable.scriptId, existing.id));
   await db.delete(customScriptsTable).where(eq(customScriptsTable.id, existing.id));
-  await logAudit(req.user!, "custom_script_deleted", "custom_script", existing.id, "", req.ip ?? "");
+  await logAudit(req.user!, "custom_script_deleted", "custom_script", existing.id, "", req);
   res.status(204).send();
 });
 
@@ -241,7 +241,7 @@ router.post("/custom-nuclei-templates", requireAuth, async (req: AuthenticatedRe
   const [tmpl] = await db.insert(customNucleiTemplatesTable).values({
     tenantId, name, description, content, createdBy: userId as any,
   }).returning();
-  await logAudit(req.user!, "nuclei_template_created", "custom_nuclei_template", tmpl.id, JSON.stringify({ name }), req.ip ?? "");
+  await logAudit(req.user!, "nuclei_template_created", "custom_nuclei_template", tmpl.id, JSON.stringify({ name }), req);
   res.status(201).json(tmpl);
 });
 

@@ -49,7 +49,7 @@ router.delete("/suppressions/:id", requireAuth, async (req, res) => {
   if (!existing) { res.status(404).json({ error: "Not found" }); return; }
 
   await db.delete(scanSuppressionsTable).where(eq(scanSuppressionsTable.id, id));
-  await logAudit((req as AuthenticatedRequest).user!, "suppression.delete", "scan_suppression", id, undefined, req.ip ?? "");
+  await logAudit((req as AuthenticatedRequest).user!, "suppression.delete", "scan_suppression", id, undefined, req);
   res.json({ success: true });
 });
 

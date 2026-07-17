@@ -98,7 +98,7 @@ router.patch("/ai-mapper/module", requireAuth, async (req: AuthenticatedRequest,
   await db.insert(aiMapperModuleAssignmentsTable)
     .values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })
     .onConflictDoUpdate({ target: aiMapperModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
-  await logAudit(req.user!, isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
+  await logAudit(req.user!, isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req);
   res.json({ isEnabled });
 });
 
@@ -273,7 +273,7 @@ router.post("/ai-mapper/scans", requireAuth, requireAiMapper, async (req: Authen
   if (Number(c) >= 3) { res.status(429).json({ error: "Max 3 concurrent AI Mapper scans" }); return; }
   const { title = "AI Surface Scan", queryPresets = [], cidrScope } = req.body;
   const [scan] = await db.insert(aiMapperScansTable).values({ tenantId, title, status: "pending", progress: 0, queryPresets, cidrScope: cidrScope ?? null, createdBy: req.user!.userId as any }).returning();
-  await logAudit(req.user!, "ai_mapper_scan_created", "ai_mapper_scan", scan.id, JSON.stringify({ title, queryPresets }), req.ip ?? "");
+  await logAudit(req.user!, "ai_mapper_scan_created", "ai_mapper_scan", scan.id, JSON.stringify({ title, queryPresets }), req);
   setImmediate(() => runAiMapperScan(scan.id, tenantId).catch(e => logger.error({ err: e }, "AI Mapper scan error")));
   res.status(201).json(scan);
 });
@@ -401,7 +401,7 @@ router.post("/ai-mapper/scan-schedules", requireAuth, requireAiMapper, async (re
   const { name = "Scheduled AI Scan", frequency = "weekly", runTime = "02:00", dayOfWeek, dayOfMonth, queryPresets = [], cidrScope } = req.body;
   const nextRunAt = computeNextRunAt(frequency, runTime, dayOfWeek ?? null, dayOfMonth ?? null);
   const [sched] = await db.insert(aiMapperScanSchedulesTable).values({ tenantId, name, frequency, runTime, dayOfWeek: dayOfWeek ?? null, dayOfMonth: dayOfMonth ?? null, queryPresets: queryPresets as any, cidrScope: cidrScope ?? null, isActive: true, nextRunAt, createdBy: req.user!.userId as any }).returning();
-  await logAudit(req.user!, "ai_mapper_schedule_created", "ai_mapper_scan_schedule", sched.id, JSON.stringify({ name, frequency }), req.ip ?? "");
+  await logAudit(req.user!, "ai_mapper_schedule_created", "ai_mapper_scan_schedule", sched.id, JSON.stringify({ name, frequency }), req);
   res.status(201).json(sched);
 });
 
@@ -501,7 +501,7 @@ router.post("/ai-mapper/endpoints/:id/attack", requireAuth, requireAiMapper, asy
   const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, endpointId), eq(aiMapperEndpointsTable.tenantId, tenantId)));
   if (!ep) { res.status(404).json({ error: "Endpoint not found" }); return; }
   const [run] = await db.insert(aiMapperAttackRunsTable).values({ tenantId, endpointId, profile: ep.protocol, status: "running", startedAt: new Date(), createdBy: req.user!.userId as any }).returning();
-  await logAudit(req.user!, "ai_mapper_attack_launched", "ai_mapper_endpoint", endpointId, JSON.stringify({ attackRunId: run.id }), req.ip ?? "");
+  await logAudit(req.user!, "ai_mapper_attack_launched", "ai_mapper_endpoint", endpointId, JSON.stringify({ attackRunId: run.id }), req);
   setImmediate(() => runAttackSuite(run.id, ep, tenantId).catch(e => logger.error({ err: e }, "AI Mapper attack error")));
   res.status(201).json({ attackRunId: run.id });
 });
@@ -1400,7 +1400,7 @@ router.patch("/ai-mapper/client/:tenantId/module", requireAuth, async (req: Auth
   const targetTenantId = Number(req.params.tenantId);
   const isEnabled = !!req.body.isEnabled;
   await db.insert(aiMapperModuleAssignmentsTable).values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() }).onConflictDoUpdate({ target: aiMapperModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
-  await logAudit(req.user!, isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
+  await logAudit(req.user!, isEnabled ? "ai_mapper_enabled" : "ai_mapper_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req);
   res.json({ isEnabled });
 });
 
@@ -1441,7 +1441,7 @@ router.post("/ai-mapper/client/:tenantId/scans", requireAuth, async (req: Authen
   if (Number(c) >= 3) { res.status(429).json({ error: "Max 3 concurrent AI Mapper scans" }); return; }
   const { title = "AI Surface Scan", queryPresets = [], cidrScope } = req.body;
   const [scan] = await db.insert(aiMapperScansTable).values({ tenantId: targetTenantId, title, status: "pending", progress: 0, queryPresets, cidrScope: cidrScope ?? null, createdBy: req.user!.userId as any }).returning();
-  await logAudit(req.user!, "ai_mapper_scan_created", "ai_mapper_scan", scan.id, JSON.stringify({ targetTenantId, title, queryPresets }), req.ip ?? "");
+  await logAudit(req.user!, "ai_mapper_scan_created", "ai_mapper_scan", scan.id, JSON.stringify({ targetTenantId, title, queryPresets }), req);
   setImmediate(() => runAiMapperScan(scan.id, targetTenantId).catch(e => logger.error({ err: e }, "AI Mapper scan error")));
   res.status(201).json(scan);
 });
@@ -1496,7 +1496,7 @@ router.post("/ai-mapper/client/:tenantId/endpoints/:id/attack", requireAuth, asy
   const [ep] = await db.select().from(aiMapperEndpointsTable).where(and(eq(aiMapperEndpointsTable.id, endpointId), eq(aiMapperEndpointsTable.tenantId, targetTenantId)));
   if (!ep) { res.status(404).json({ error: "Endpoint not found" }); return; }
   const [run] = await db.insert(aiMapperAttackRunsTable).values({ tenantId: targetTenantId, endpointId, profile: ep.protocol, status: "running", startedAt: new Date(), createdBy: req.user!.userId as any }).returning();
-  await logAudit(req.user!, "ai_mapper_attack_launched", "ai_mapper_endpoint", endpointId, JSON.stringify({ attackRunId: run.id, targetTenantId }), req.ip ?? "");
+  await logAudit(req.user!, "ai_mapper_attack_launched", "ai_mapper_endpoint", endpointId, JSON.stringify({ attackRunId: run.id, targetTenantId }), req);
   setImmediate(() => runAttackSuite(run.id, ep, targetTenantId).catch(e => logger.error({ err: e }, "AI Mapper attack error")));
   res.status(201).json({ attackRunId: run.id });
 });

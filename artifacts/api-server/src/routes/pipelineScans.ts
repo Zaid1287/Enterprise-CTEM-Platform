@@ -4359,7 +4359,7 @@ router.post("/scans/schedules", requireAuth, async (req: AuthenticatedRequest, r
     runTime: runTime ?? "09:00", dayOfWeek, dayOfMonth, timezone, status: "active", nextRunAt,
     createdBy: userId as any, ...(groupId ? { groupId } : {}),
   } as any).returning();
-  await logAudit({ tenantId: scheduleTenantId, userId, email: "" } as any, "schedule.create", "scan_schedule", schedule.id, JSON.stringify({ name }));
+  await logAudit({ tenantId: scheduleTenantId, userId, email: req.user!.email } as any, "schedule.create", "scan_schedule", schedule.id, JSON.stringify({ name }), req);
   res.status(201).json(toScheduleResponse(schedule));
 });
 

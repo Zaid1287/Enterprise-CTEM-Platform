@@ -11,7 +11,7 @@ import { invalidateExecConfigCache } from "../lib/orchestratedExec.js";
 import { addWaterfallSseClient, removeWaterfallSseClient } from "../lib/sseManager.js";
 import { logger } from "../lib/logger.js";
 import { encryptCredential, decryptCredential, decryptCredentialWithSecret } from "../lib/proxyCredentialEncryption.js";
-import { logAudit, getClientIp } from "../lib/audit.js";
+import { logAudit } from "../lib/audit.js";
 
 const router = Router();
 
@@ -349,8 +349,7 @@ router.post("/scan-proxies/rotate-key", requireAuth, requireSuperAdmin, async (r
       "scan_proxy",
       undefined,
       JSON.stringify({ reencrypted, failed: failures.length }),
-      getClientIp(req),
-      { userAgent: req.headers["user-agent"] }
+      req,
     );
 
     res.json({ reencrypted, failed: failures.length, failures });

@@ -81,7 +81,7 @@ router.patch("/threat-intel/module", requireAuth, async (req: AuthenticatedReque
   await db.insert(threatIntelModuleAssignmentsTable)
     .values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })
     .onConflictDoUpdate({ target: threatIntelModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
-  await logAudit(req.user!, isEnabled ? "threat_intel_enabled" : "threat_intel_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
+  await logAudit(req.user!, isEnabled ? "threat_intel_enabled" : "threat_intel_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req);
   res.json({ isEnabled });
 });
 
@@ -368,7 +368,7 @@ router.post("/threat-intel/iocs", requireAuth, async (req: AuthenticatedRequest,
     exploitationStatus: exploitationStatus ?? "unknown",
     isActive: isActive !== undefined ? Boolean(isActive) : true,
   }).returning();
-  await logAudit(req.user!, "ti_ioc_created", "ti_ioc", row.id, JSON.stringify({ type, value }), req.ip ?? "");
+  await logAudit(req.user!, "ti_ioc_created", "ti_ioc", row.id, JSON.stringify({ type, value }), req);
   res.status(201).json(row);
 });
 
@@ -402,7 +402,7 @@ router.patch("/threat-intel/iocs/:id", requireAuth, async (req: AuthenticatedReq
   if (exploitationStatus !== undefined) patch.exploitationStatus = exploitationStatus;
   const [row] = await db.update(tiIocsTable).set(patch as any).where(eq(tiIocsTable.id, Number(req.params.id))).returning();
   if (!row) { res.status(404).json({ error: "IOC not found" }); return; }
-  await logAudit(req.user!, "ti_ioc_updated", "ti_ioc", row.id, JSON.stringify({ severity, isActive }), req.ip ?? "");
+  await logAudit(req.user!, "ti_ioc_updated", "ti_ioc", row.id, JSON.stringify({ severity, isActive }), req);
   res.json(row);
 });
 
@@ -488,7 +488,7 @@ router.post("/threat-intel/actors", requireAuth, async (req: AuthenticatedReques
       mitigation: mitigation ?? null,
       referenceUrls: Array.isArray(referenceUrls) ? referenceUrls : [],
     }).returning();
-    await logAudit(req.user!, "ti_actor_created", "ti_actor", row.id, JSON.stringify({ name }), req.ip ?? "");
+    await logAudit(req.user!, "ti_actor_created", "ti_actor", row.id, JSON.stringify({ name }), req);
     res.status(201).json({ actor: row });
   } catch (err: any) {
     if (err?.code === "23505") {

@@ -141,7 +141,7 @@ router.post("/reports", requireAuth, requireRole("manager", "admin", "super_admi
       downloadUrl: `/api/reports/${report.id}/download`,
     }).where(eq(reportsTable.id, report.id));
   }, 2000);
-  await logAudit(req.user!, "create_report", "report", report.id);
+  await logAudit(req.user!, "create_report", "report", report.id, undefined, req);
   res.status(201).json(toReportResponse(report));
 });
 
@@ -984,7 +984,7 @@ router.delete("/reports/:reportId", requireAuth, requireRole("admin", "super_adm
     .where(delReportWhere)
     .returning();
   if (!report) { res.status(404).json({ error: "Report not found" }); return; }
-  await logAudit(req.user!, "delete_report", "report", report.id);
+  await logAudit(req.user!, "delete_report", "report", report.id, undefined, req);
   res.sendStatus(204);
 });
 

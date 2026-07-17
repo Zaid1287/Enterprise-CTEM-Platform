@@ -239,7 +239,7 @@ router.patch("/shadow-it/assets/:id/triage", requireRole("manager", "admin", "su
       })
       .where(and(eq(shadowItAssetsTable.id, id), eq(shadowItAssetsTable.tenantId, tenantId)))
       .returning();
-    await logAudit(req.user! as any, "shadow_it.triage", "shadow_it_asset", id, JSON.stringify({ status, reviewNote, riskLevel }));
+    await logAudit(req.user! as any, "shadow_it.triage", "shadow_it_asset", id, JSON.stringify({ status, reviewNote, riskLevel }), req);
     res.json(updated);
   } catch (err) {
     logger.error({ err }, "PATCH /shadow-it/assets/:id/triage failed");
@@ -256,7 +256,7 @@ router.delete("/shadow-it/assets/:id", requireRole("admin", "super_admin"), asyn
       .where(and(eq(shadowItAssetsTable.id, id), eq(shadowItAssetsTable.tenantId, tenantId)))
       .returning({ id: shadowItAssetsTable.id });
     if (!deleted) { res.status(404).json({ error: "Not found" }); return; }
-    await logAudit(req.user! as any, "shadow_it.delete", "shadow_it_asset", id, "{}");
+    await logAudit(req.user! as any, "shadow_it.delete", "shadow_it_asset", id, "{}", req);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete" });
@@ -301,7 +301,7 @@ router.patch("/shadow-it/saas/:id", requireRole("manager", "admin", "super_admin
       .where(and(eq(shadowItSaasAppsTable.id, id), eq(shadowItSaasAppsTable.tenantId, tenantId)))
       .returning();
     if (!updated) { res.status(404).json({ error: "Not found" }); return; }
-    await logAudit(req.user! as any, "shadow_it.saas_update", "shadow_it_saas_app", id, JSON.stringify({ status, isSanctioned }));
+    await logAudit(req.user! as any, "shadow_it.saas_update", "shadow_it_saas_app", id, JSON.stringify({ status, isSanctioned }), req);
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: "Failed to update SaaS app" });
@@ -376,7 +376,7 @@ router.post("/shadow-it/idp-connections", requireRole("admin", "super_admin"), a
         isActive: true,
       })
       .returning();
-    await logAudit(req.user! as any, "shadow_it.idp_create", "shadow_it_idp_connection", conn.id, JSON.stringify({ provider }));
+    await logAudit(req.user! as any, "shadow_it.idp_create", "shadow_it_idp_connection", conn.id, JSON.stringify({ provider }), req);
     res.status(201).json(conn);
   } catch (err) {
     logger.error({ err }, "POST /shadow-it/idp-connections failed");
@@ -418,7 +418,7 @@ router.delete("/shadow-it/idp-connections/:id", requireRole("admin", "super_admi
       .where(and(eq(shadowItIdpConnectionsTable.id, id), eq(shadowItIdpConnectionsTable.tenantId, tenantId)))
       .returning({ id: shadowItIdpConnectionsTable.id });
     if (!deleted) { res.status(404).json({ error: "Not found" }); return; }
-    await logAudit(req.user! as any, "shadow_it.idp_delete", "shadow_it_idp_connection", id, "{}");
+    await logAudit(req.user! as any, "shadow_it.idp_delete", "shadow_it_idp_connection", id, "{}", req);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete IdP connection" });
@@ -511,7 +511,7 @@ router.patch("/shadow-it/oauth-apps/:id", requireRole("manager", "admin", "super
       .where(and(eq(shadowItOauthAppsTable.id, id), eq(shadowItOauthAppsTable.tenantId, tenantId)))
       .returning();
     if (!updated) { res.status(404).json({ error: "Not found" }); return; }
-    await logAudit(req.user! as any, "shadow_it.oauth_app_update", "shadow_it_oauth_app", id, JSON.stringify({ isSanctioned, status }));
+    await logAudit(req.user! as any, "shadow_it.oauth_app_update", "shadow_it_oauth_app", id, JSON.stringify({ isSanctioned, status }), req);
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: "Failed to update OAuth app" });
@@ -616,7 +616,7 @@ router.patch("/shadow-it/network-devices/:id", requireRole("manager", "admin", "
       .where(and(eq(shadowItNetworkDevicesTable.id, id), eq(shadowItNetworkDevicesTable.tenantId, tenantId)))
       .returning();
     if (!updated) { res.status(404).json({ error: "Not found" }); return; }
-    await logAudit(req.user! as any, "shadow_it.network_device_update", "shadow_it_network_device", id, JSON.stringify({ status, isManaged }));
+    await logAudit(req.user! as any, "shadow_it.network_device_update", "shadow_it_network_device", id, JSON.stringify({ status, isManaged }), req);
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: "Failed to update network device" });
@@ -767,7 +767,7 @@ router.put("/shadow-it/idp-credentials", requireRole("admin", "super_admin"), as
         });
       }
     }
-    await logAudit(req.user! as any, "shadow_it.idp_credential_save", "platform_setting", 0, JSON.stringify({ key }));
+    await logAudit(req.user! as any, "shadow_it.idp_credential_save", "platform_setting", 0, JSON.stringify({ key }), req);
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "PUT /shadow-it/idp-credentials failed");

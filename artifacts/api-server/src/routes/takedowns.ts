@@ -100,7 +100,7 @@ router.post("/takedowns", requireAuth, upload.array("evidenceFiles", 10), async 
     status: "submitted",
   }).returning();
 
-  await logAudit(req.user!, "takedown_request.create", "takedown_request", undefined, `Created takedown request: ${title}`, req.ip ?? "");
+  await logAudit(req.user!, "takedown_request.create", "takedown_request", undefined, `Created takedown request: ${title}`, req);
 
   res.status(201).json(row);
 });
@@ -139,7 +139,7 @@ router.patch("/takedowns/:id", requireAuth, async (req: AuthenticatedRequest, re
 
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
 
-  await logAudit(req.user!, "takedown_request.update", "takedown_request", id, `Updated takedown #${id} status: ${status}`, req.ip ?? "");
+  await logAudit(req.user!, "takedown_request.update", "takedown_request", id, `Updated takedown #${id} status: ${status}`, req);
 
   res.json(row);
 });

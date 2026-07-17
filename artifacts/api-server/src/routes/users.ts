@@ -104,7 +104,7 @@ router.post("/users", requireAuth, async (req: AuthenticatedRequest, res): Promi
   const [user] = await db.insert(usersTable).values({
     ...parsed.data, tenantId: targetTenantId, passwordHash,
   }).returning();
-  await logAudit(req.user! as any, "create_user", "user", user.id);
+  await logAudit(req.user! as any, "create_user", "user", user.id, undefined, req);
   res.status(201).json(toUserResponse(user));
 });
 
@@ -179,7 +179,7 @@ router.patch("/users/:userId", requireAuth, async (req: AuthenticatedRequest, re
 
   const [user] = await db.update(usersTable).set(updateData).where(whereClause!).returning();
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
-  await logAudit(req.user! as any, "update_user", "user", user.id);
+  await logAudit(req.user! as any, "update_user", "user", user.id, undefined, req);
 
   const [tenant] = (role === "super_admin" || role === "admin")
     ? await db.select({ name: tenantsTable.name }).from(tenantsTable).where(eq(tenantsTable.id, user.tenantId))
@@ -198,7 +198,7 @@ router.delete("/users/:userId", requireAuth, async (req: AuthenticatedRequest, r
 
   const [user] = await db.delete(usersTable).where(whereClause!).returning();
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
-  await logAudit(req.user! as any, "delete_user", "user", user.id);
+  await logAudit(req.user! as any, "delete_user", "user", user.id, undefined, req);
   res.sendStatus(204);
 });
 

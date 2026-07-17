@@ -133,7 +133,7 @@ router.patch("/tprm/module", requireAuth, async (req: AuthenticatedRequest, res)
   await db.insert(tprmModuleAssignmentsTable)
     .values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })
     .onConflictDoUpdate({ target: tprmModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
-  await logAudit(req.user!, isEnabled ? "tprm_enabled" : "tprm_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
+  await logAudit(req.user!, isEnabled ? "tprm_enabled" : "tprm_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req);
   res.json({ isEnabled });
 });
 
@@ -146,7 +146,7 @@ router.patch("/tprm/client/:tenantId/module", requireAuth, async (req: Authentic
   await db.insert(tprmModuleAssignmentsTable)
     .values({ tenantId: targetTenantId, isEnabled, enabledBy: req.user!.userId as any, enabledAt: new Date(), updatedAt: new Date() })
     .onConflictDoUpdate({ target: tprmModuleAssignmentsTable.tenantId, set: { isEnabled, enabledBy: req.user!.userId as any, updatedAt: new Date(), enabledAt: new Date() } });
-  await logAudit(req.user!, isEnabled ? "tprm_enabled" : "tprm_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req.ip ?? "");
+  await logAudit(req.user!, isEnabled ? "tprm_enabled" : "tprm_disabled", "tenant", targetTenantId, JSON.stringify({ targetTenantId, isEnabled }), req);
   res.json({ isEnabled, tenantId: targetTenantId });
 });
 
@@ -191,7 +191,7 @@ router.post("/tprm/admin/global-vendors", requireAuth, async (req: Authenticated
       isGlobal: true,
       status:   "pending",
     }).returning();
-    await logAudit(req.user!, "tprm_global_vendor_created", "vendor", vendor.id, JSON.stringify({ companyName, domain: cleanDomain }), req.ip ?? "");
+    await logAudit(req.user!, "tprm_global_vendor_created", "vendor", vendor.id, JSON.stringify({ companyName, domain: cleanDomain }), req);
     setImmediate(() => {
       runFullVendorScan(vendor.id, tenantId).catch(err => logger.error({ err, vendorId: vendor.id }, "TPRM global vendor scan failed"));
     });
@@ -233,7 +233,7 @@ router.delete("/tprm/admin/global-vendors/:id", requireAuth, async (req: Authent
     const [existing] = await db.select().from(tprmVendorsTable).where(and(eq(tprmVendorsTable.id, vendorId), eq(tprmVendorsTable.isGlobal, true)));
     if (!existing) { res.status(404).json({ error: "Global vendor not found" }); return; }
     await db.delete(tprmVendorsTable).where(eq(tprmVendorsTable.id, vendorId));
-    await logAudit(req.user!, "tprm_global_vendor_deleted", "vendor", vendorId, JSON.stringify({ companyName: existing.companyName }), req.ip ?? "");
+    await logAudit(req.user!, "tprm_global_vendor_deleted", "vendor", vendorId, JSON.stringify({ companyName: existing.companyName }), req);
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "TPRM admin global-vendor DELETE error");
@@ -532,7 +532,7 @@ router.post("/tprm/vendors", requireAuth, requireTprm, async (req: Authenticated
       createdBy:      userId as any,
     }).returning();
 
-    await logAudit(req.user!, "tprm_vendor_created", "vendor", vendor.id, JSON.stringify({ companyName, domain: cleanDomain }), req.ip ?? "");
+    await logAudit(req.user!, "tprm_vendor_created", "vendor", vendor.id, JSON.stringify({ companyName, domain: cleanDomain }), req);
 
     // Trigger background scan
     setImmediate(() => {
@@ -843,7 +843,7 @@ router.patch("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authenti
       .where(eq(tprmVendorsTable.id, vendorId))
       .returning();
     if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
-    await logAudit(req.user!, "tprm_vendor_updated", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName, domain: vendor.domain, inherentRisk: vendor.inherentRisk }), req.ip ?? "");
+    await logAudit(req.user!, "tprm_vendor_updated", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName, domain: vendor.domain, inherentRisk: vendor.inherentRisk }), req);
     res.json(vendor);
   } catch (err) {
     logger.error({ err }, "TPRM update vendor error");
@@ -861,7 +861,7 @@ router.delete("/tprm/vendors/:id", requireAuth, requireTprm, async (req: Authent
       res.status(403).json({ error: "Only super_admin or admin can delete global vendors" }); return;
     }
     await db.delete(tprmVendorsTable).where(eq(tprmVendorsTable.id, vendorId));
-    await logAudit(req.user!, "tprm_vendor_deleted", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName }), req.ip ?? "");
+    await logAudit(req.user!, "tprm_vendor_deleted", "vendor", vendorId, JSON.stringify({ companyName: vendor.companyName }), req);
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "TPRM delete vendor error");

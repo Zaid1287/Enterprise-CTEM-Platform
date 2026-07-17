@@ -199,7 +199,7 @@ router.patch("/compliance/controls/:controlId", requireAuth, async (req: Authent
   }
 
   await logAudit(req.user!, "update_compliance_control", "compliance", control.id,
-    `status: ${parsed.data.status ?? "unchanged"}${("assignedTo" in rawBody) ? ` | assignedTo: ${updatePayload.assignedTo ?? "cleared"}` : ""}`);
+    `status: ${parsed.data.status ?? "unchanged"}${("assignedTo" in rawBody) ? ` | assignedTo: ${updatePayload.assignedTo ?? "cleared"}` : ""}`, req);
 
   const [fw] = await db.select().from(complianceFrameworksTable).where(eq(complianceFrameworksTable.id, control.frameworkId));
   let groupName: string | null = null;
@@ -258,7 +258,7 @@ router.post(
       .where(and(eq(complianceControlsTable.id, controlId), eq(complianceControlsTable.tenantId, req.user!.tenantId)))
       .returning();
 
-    await logAudit(req.user!, "upload_compliance_evidence", "compliance", controlId, `${files.length} file(s) uploaded`);
+    await logAudit(req.user!, "upload_compliance_evidence", "compliance", controlId, `${files.length} file(s) uploaded`, req);
     res.json(toControlResponse(updated, row.frameworkName));
   },
 );
@@ -323,7 +323,7 @@ router.delete(
       .set({ evidence: JSON.stringify(files) })
       .where(eq(complianceControlsTable.id, controlId))
       .returning();
-    await logAudit(req.user!, "delete_compliance_evidence", "compliance", controlId, `${filename} deleted`);
+    await logAudit(req.user!, "delete_compliance_evidence", "compliance", controlId, `${filename} deleted`, req);
     res.json(toControlResponse(updated, row.frameworkName));
   },
 );
@@ -384,7 +384,7 @@ router.post(
     }
 
     await logAudit(req.user!, "create_compliance_control", "compliance", control.id,
-      `${fw.name}: ${controlId} — ${title}${tenantId === platformId ? " (propagated to clients)" : ""}`);
+      `${fw.name}: ${controlId} — ${title}${tenantId === platformId ? " (propagated to clients)" : ""}`, req);
     res.status(201).json(toControlResponse(control, fw.name));
   },
 );
@@ -427,7 +427,7 @@ router.delete(
       .where(and(eq(complianceControlsTable.id, controlId), eq(complianceControlsTable.tenantId, tenantId)));
 
     await logAudit(req.user!, "delete_compliance_control", "compliance", controlId,
-      tenantId === platformId ? "propagated deletion to client tenants" : undefined);
+      tenantId === platformId ? "propagated deletion to client tenants" : undefined, req);
     res.sendStatus(204);
   },
 );

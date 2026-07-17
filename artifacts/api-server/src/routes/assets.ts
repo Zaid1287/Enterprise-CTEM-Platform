@@ -306,7 +306,7 @@ router.post("/assets", requireAuth, async (req: AuthenticatedRequest, res): Prom
     verificationStatus: "unverified",
     scanFrequency: (req.body.scanFrequency as string) ?? "manual",
   }).returning();
-  await logAudit(req.user!, "create_asset", "asset", asset.id);
+  await logAudit(req.user!, "create_asset", "asset", asset.id, undefined, req);
   const [enriched] = await enrichAssets([asset]);
   res.status(201).json(enriched);
 });
@@ -385,7 +385,7 @@ router.patch("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest, 
     .where(eq(assetsTable.id, existingAsset.id))
     .returning();
   if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
-  await logAudit(req.user!, "update_asset", "asset", asset.id);
+  await logAudit(req.user!, "update_asset", "asset", asset.id, undefined, req);
   const [enriched] = await enrichAssets([asset]);
   res.json(enriched);
 });
@@ -427,7 +427,7 @@ router.delete("/assets/:assetId", requireAuth, async (req: AuthenticatedRequest,
   // 6. Delete asset (screenshots + technology_detections cascade via DB)
   await db.delete(assetsTable).where(eq(assetsTable.id, assetId));
 
-  await logAudit(req.user!, "delete_asset", "asset", asset.id);
+  await logAudit(req.user!, "delete_asset", "asset", asset.id, undefined, req);
   res.sendStatus(204);
 });
 
@@ -624,7 +624,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
         await db.update(assetsTable)
           .set({ verificationStatus: "verified" })
           .where(eq(assetsTable.id, params.data.assetId));
-        await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+        await logAudit(req.user!, "verify_asset", "asset", params.data.assetId, undefined, req);
         const synced = await syncDomainVerification(params.data.assetId, asset.value);
         res.json({ verified: true, message: `File found at ${fileUrl}. Asset ownership verified.${synced > 0 ? ` ${synced} matching asset(s) in other tenants also verified.` : ""}` });
       } else {
@@ -650,7 +650,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
           await db.update(assetsTable)
             .set({ verificationStatus: "verified" })
             .where(eq(assetsTable.id, params.data.assetId));
-          await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+          await logAudit(req.user!, "verify_asset", "asset", params.data.assetId, undefined, req);
           const synced = await syncDomainVerification(params.data.assetId, asset.value);
           res.json({ verified: true, message: `DNS TXT record found. Cloud asset ownership verified.${synced > 0 ? ` ${synced} matching asset(s) in other tenants also verified.` : ""}` });
           return;
@@ -667,7 +667,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
     await db.update(assetsTable)
       .set({ verificationStatus: "verified" })
       .where(eq(assetsTable.id, params.data.assetId));
-    await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+    await logAudit(req.user!, "verify_asset", "asset", params.data.assetId, undefined, req);
     const syncedCloud = await syncDomainVerification(params.data.assetId, asset.value);
     res.json({ verified: true, message: `Cloud asset ownership confirmed by administrator.${syncedCloud > 0 ? ` ${syncedCloud} matching asset(s) in other tenants also verified.` : ""}` });
     return;
@@ -682,7 +682,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
         await db.update(assetsTable)
           .set({ verificationStatus: "verified" })
           .where(eq(assetsTable.id, params.data.assetId));
-        await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+        await logAudit(req.user!, "verify_asset", "asset", params.data.assetId, undefined, req);
         const synced = await syncDomainVerification(params.data.assetId, asset.value);
         res.json({ verified: true, message: `DNS TXT record found. Asset ownership verified.${synced > 0 ? ` ${synced} matching asset(s) in other tenants also verified.` : ""}` });
       } else {
@@ -703,7 +703,7 @@ router.post("/assets/:assetId/verify/check", requireAuth, async (req: Authentica
   await db.update(assetsTable)
     .set({ verificationStatus: "verified" })
     .where(eq(assetsTable.id, params.data.assetId));
-  await logAudit(req.user!, "verify_asset", "asset", params.data.assetId);
+  await logAudit(req.user!, "verify_asset", "asset", params.data.assetId, undefined, req);
   const syncedFallback = await syncDomainVerification(params.data.assetId, asset.value);
   res.json({ verified: true, message: `Asset ownership successfully verified.${syncedFallback > 0 ? ` ${syncedFallback} matching asset(s) in other tenants also verified.` : ""}` });
 });
@@ -739,7 +739,7 @@ router.post("/assets/:assetId/verify/manual", requireAuth, async (req: Authentic
     .set({ verificationStatus: "verified", verificationToken: null })
     .where(eq(assetsTable.id, assetId));
 
-  await logAudit(req.user!, "manual_verify_asset", "asset", assetId);
+  await logAudit(req.user!, "manual_verify_asset", "asset", assetId, undefined, req);
   const syncedManual = isAdminRoleManual ? await syncDomainVerification(assetId, asset.value) : 0;
   res.json({
     verified: true,
@@ -818,7 +818,7 @@ router.post("/assets/:assetId/tech-scan", requireAuth, async (req: Authenticated
     ).returning();
   }
 
-  await logAudit(req.user!, "tech_scan", "asset", assetId);
+  await logAudit(req.user!, "tech_scan", "asset", assetId, undefined, req);
 
   res.json({
     technologies: inserted.map(r => ({
