@@ -16,6 +16,8 @@ import {
   tprmVendorQuestionnairesTable,
   tprmComplianceDocumentsTable,
   tprmComplianceRequirementsTable,
+  tprmVendorComplianceControlsTable,
+  tprmComplianceRemindersTable,
   tprmSbomUploadsTable,
   tenantsTable,
   platformSettingsTable,
@@ -2342,6 +2344,216 @@ router.post("/tprm/questionnaire-respond-file/:token/:questionId", upload.single
     logger.error({ err }, "TPRM: questionnaire file upload failed");
     res.status(500).json({ error: "Failed to upload file answer" });
   }
+});
+
+// ── Framework control seed data ───────────────────────────────────────────────
+const FRAMEWORK_CONTROLS: Record<string, { controlId: string; controlTitle: string; category: string }[]> = {
+  iso27001: [
+    { controlId: "A.5.1",  controlTitle: "Policies for information security",                        category: "Organizational" },
+    { controlId: "A.5.2",  controlTitle: "Information security roles & responsibilities",            category: "Organizational" },
+    { controlId: "A.5.9",  controlTitle: "Inventory of information & assets",                       category: "Organizational" },
+    { controlId: "A.5.15", controlTitle: "Access control",                                          category: "Organizational" },
+    { controlId: "A.5.23", controlTitle: "Information security for use of cloud services",          category: "Organizational" },
+    { controlId: "A.6.1",  controlTitle: "Screening",                                               category: "People"         },
+    { controlId: "A.6.3",  controlTitle: "Information security awareness, education & training",    category: "People"         },
+    { controlId: "A.6.8",  controlTitle: "Information security event reporting",                    category: "People"         },
+    { controlId: "A.7.1",  controlTitle: "Physical security perimeters",                            category: "Physical"       },
+    { controlId: "A.7.6",  controlTitle: "Working in secure areas",                                 category: "Physical"       },
+    { controlId: "A.8.2",  controlTitle: "Privileged access rights",                                category: "Technological"  },
+    { controlId: "A.8.5",  controlTitle: "Secure authentication",                                   category: "Technological"  },
+    { controlId: "A.8.7",  controlTitle: "Protection against malware",                              category: "Technological"  },
+    { controlId: "A.8.13", controlTitle: "Information backup",                                      category: "Technological"  },
+    { controlId: "A.8.16", controlTitle: "Monitoring activities",                                   category: "Technological"  },
+    { controlId: "A.8.24", controlTitle: "Use of cryptography",                                     category: "Technological"  },
+    { controlId: "A.8.25", controlTitle: "Secure development life cycle",                           category: "Technological"  },
+    { controlId: "A.8.28", controlTitle: "Secure coding",                                           category: "Technological"  },
+  ],
+  soc2: [
+    { controlId: "CC1.1", controlTitle: "Control environment — COSO principles",                    category: "Control Environment" },
+    { controlId: "CC1.4", controlTitle: "Commitment to competence",                                 category: "Control Environment" },
+    { controlId: "CC2.1", controlTitle: "Information & communication (internal)",                   category: "Communication"       },
+    { controlId: "CC2.2", controlTitle: "External communication of information",                    category: "Communication"       },
+    { controlId: "CC3.1", controlTitle: "Risk assessment process",                                  category: "Risk Assessment"     },
+    { controlId: "CC3.3", controlTitle: "Fraud risk assessment",                                    category: "Risk Assessment"     },
+    { controlId: "CC4.1", controlTitle: "Ongoing and/or separate evaluations",                      category: "Monitoring"          },
+    { controlId: "CC5.1", controlTitle: "Control activities — COSO principles",                     category: "Control Activities"  },
+    { controlId: "CC6.1", controlTitle: "Logical access security measures",                         category: "Logical Access"      },
+    { controlId: "CC6.2", controlTitle: "Prior to issuing system credentials",                      category: "Logical Access"      },
+    { controlId: "CC6.6", controlTitle: "Logical access to the organization's network",             category: "Logical Access"      },
+    { controlId: "CC6.7", controlTitle: "Transmission, movement & removal of information",          category: "Logical Access"      },
+    { controlId: "CC7.1", controlTitle: "System monitoring for anomalies & incidents",              category: "System Operations"   },
+    { controlId: "CC7.2", controlTitle: "Security incidents identified & responded to",             category: "System Operations"   },
+    { controlId: "CC8.1", controlTitle: "Change management processes",                              category: "Change Management"   },
+    { controlId: "CC9.1", controlTitle: "Risk mitigation activities",                               category: "Risk Mitigation"     },
+    { controlId: "A1.1",  controlTitle: "Availability — capacity & performance monitoring",         category: "Availability"        },
+    { controlId: "C1.1",  controlTitle: "Confidential information protection & disposal",           category: "Confidentiality"     },
+  ],
+  pcidss: [
+    { controlId: "Req-1",  controlTitle: "Install & maintain network security controls",              category: "Network Security"    },
+    { controlId: "Req-2",  controlTitle: "Apply secure configurations to all system components",      category: "Configuration"       },
+    { controlId: "Req-3",  controlTitle: "Protect stored account data",                               category: "Data Protection"     },
+    { controlId: "Req-4",  controlTitle: "Protect cardholder data in transit with strong cryptography", category: "Encryption"        },
+    { controlId: "Req-5",  controlTitle: "Protect all systems & networks against malicious software",  category: "Malware Protection"  },
+    { controlId: "Req-6",  controlTitle: "Develop & maintain secure systems & software",              category: "Secure Development"  },
+    { controlId: "Req-7",  controlTitle: "Restrict access to system components & cardholder data",    category: "Access Control"      },
+    { controlId: "Req-8",  controlTitle: "Identify users & authenticate access to system components", category: "Identity"            },
+    { controlId: "Req-9",  controlTitle: "Restrict physical access to cardholder data",               category: "Physical Security"   },
+    { controlId: "Req-10", controlTitle: "Log & monitor all access to system components",             category: "Logging & Monitoring"},
+    { controlId: "Req-11", controlTitle: "Test security of systems & networks regularly",             category: "Security Testing"    },
+    { controlId: "Req-12", controlTitle: "Support information security with organizational policies", category: "Policy"              },
+  ],
+  hipaa: [
+    { controlId: "164.308(a)(1)", controlTitle: "Security management process — risk analysis & management",  category: "Administrative" },
+    { controlId: "164.308(a)(2)", controlTitle: "Assigned security responsibility",                          category: "Administrative" },
+    { controlId: "164.308(a)(3)", controlTitle: "Workforce security — authorization, supervision",           category: "Administrative" },
+    { controlId: "164.308(a)(4)", controlTitle: "Information access management",                             category: "Administrative" },
+    { controlId: "164.308(a)(5)", controlTitle: "Security awareness & training",                             category: "Administrative" },
+    { controlId: "164.308(a)(6)", controlTitle: "Security incident procedures",                              category: "Administrative" },
+    { controlId: "164.308(a)(7)", controlTitle: "Contingency plan — backup, recovery, testing",              category: "Administrative" },
+    { controlId: "164.308(a)(8)", controlTitle: "Evaluation — periodic technical & non-technical review",    category: "Administrative" },
+    { controlId: "164.310(a)",    controlTitle: "Facility access controls",                                  category: "Physical"       },
+    { controlId: "164.310(c)",    controlTitle: "Workstation use & security",                                category: "Physical"       },
+    { controlId: "164.310(d)",    controlTitle: "Device & media controls",                                   category: "Physical"       },
+    { controlId: "164.312(a)",    controlTitle: "Access control — unique user IDs, emergency access, encryption", category: "Technical" },
+    { controlId: "164.312(b)",    controlTitle: "Audit controls — hardware, software, procedural",           category: "Technical"      },
+    { controlId: "164.312(c)",    controlTitle: "Integrity — authenticate & protect ePHI",                   category: "Technical"      },
+    { controlId: "164.312(e)",    controlTitle: "Transmission security — encryption & network controls",     category: "Technical"      },
+  ],
+  nist_csf: [
+    { controlId: "GV.OC-01", controlTitle: "Org mission & objectives aligned to cybersecurity risk strategy",      category: "Govern"   },
+    { controlId: "GV.RM-01", controlTitle: "Risk management objectives established & agreed upon",                 category: "Govern"   },
+    { controlId: "ID.AM-01", controlTitle: "Asset inventory of hardware & software maintained",                    category: "Identify" },
+    { controlId: "ID.AM-05", controlTitle: "Assets prioritized based on classification, criticality & resources",  category: "Identify" },
+    { controlId: "ID.RA-01", controlTitle: "Vulnerabilities in assets identified & documented",                    category: "Identify" },
+    { controlId: "ID.RA-05", controlTitle: "Threats, vulnerabilities, likelihoods & impacts used to prioritize",  category: "Identify" },
+    { controlId: "PR.AA-01", controlTitle: "Identities & credentials issued, managed, verified & revoked",        category: "Protect"  },
+    { controlId: "PR.AA-05", controlTitle: "Access permissions & authorizations managed",                         category: "Protect"  },
+    { controlId: "PR.DS-01", controlTitle: "Data-at-rest protected",                                              category: "Protect"  },
+    { controlId: "PR.DS-02", controlTitle: "Data-in-transit protected",                                           category: "Protect"  },
+    { controlId: "PR.PS-01", controlTitle: "Configs of hardware & software managed & maintained",                 category: "Protect"  },
+    { controlId: "DE.AE-02", controlTitle: "Potentially adverse events analyzed to characterize incidents",       category: "Detect"   },
+    { controlId: "DE.CM-01", controlTitle: "Networks & network services monitored for anomalous activity",        category: "Detect"   },
+    { controlId: "RS.MA-01", controlTitle: "Incidents reported and triaged by response personnel",                category: "Respond"  },
+    { controlId: "RS.CO-02", controlTitle: "Internal & external stakeholders notified of incidents",              category: "Respond"  },
+    { controlId: "RC.RP-01", controlTitle: "Recovery plan executed during or after incidents",                    category: "Recover"  },
+    { controlId: "RC.CO-03", controlTitle: "Recovery activities communicated to internal & external stakeholders", category: "Recover" },
+  ],
+};
+
+// ── Compliance Controls ───────────────────────────────────────────────────────
+
+router.get("/tprm/vendors/:id/compliance-controls", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const framework = req.query.framework as string | undefined;
+  const conds = [eq(tprmVendorComplianceControlsTable.vendorId, vendorId), eq(tprmVendorComplianceControlsTable.tenantId, tenantId)];
+  if (framework) conds.push(eq(tprmVendorComplianceControlsTable.framework, framework));
+  const controls = await db.select().from(tprmVendorComplianceControlsTable).where(and(...conds)).orderBy(asc(tprmVendorComplianceControlsTable.controlId));
+  res.json(controls);
+});
+
+// MUST be before /:cid to avoid seed being treated as a control ID
+router.post("/tprm/vendors/:id/compliance-controls/seed", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, userId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const { framework } = req.body;
+  const controls = FRAMEWORK_CONTROLS[framework];
+  if (!controls) { res.status(400).json({ error: `Unknown framework. Valid: ${Object.keys(FRAMEWORK_CONTROLS).join(", ")}` }); return; }
+  // Only insert controls not already present for this vendor+framework
+  const existing = await db.select({ controlId: tprmVendorComplianceControlsTable.controlId })
+    .from(tprmVendorComplianceControlsTable)
+    .where(and(eq(tprmVendorComplianceControlsTable.vendorId, vendorId), eq(tprmVendorComplianceControlsTable.tenantId, tenantId), eq(tprmVendorComplianceControlsTable.framework, framework)));
+  const existingIds = new Set(existing.map(e => e.controlId));
+  const toInsert = controls.filter(c => !existingIds.has(c.controlId));
+  if (toInsert.length === 0) { res.json({ inserted: 0, message: "All controls already exist for this framework" }); return; }
+  const rows = toInsert.map(c => ({ vendorId, tenantId, framework, controlId: c.controlId, controlTitle: c.controlTitle, category: c.category, status: "pending_review", createdBy: userId as any }));
+  await db.insert(tprmVendorComplianceControlsTable).values(rows);
+  res.status(201).json({ inserted: toInsert.length, message: `Seeded ${toInsert.length} controls for ${framework}` });
+});
+
+router.post("/tprm/vendors/:id/compliance-controls", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, userId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const { framework, controlId, controlTitle, category, status, evidence, notes, assignedTo, nextReviewAt } = req.body;
+  if (!framework || !controlId || !controlTitle) { res.status(400).json({ error: "framework, controlId, controlTitle are required" }); return; }
+  const [ctrl] = await db.insert(tprmVendorComplianceControlsTable).values({
+    vendorId, tenantId, framework, controlId, controlTitle, category: category ?? null,
+    status: status ?? "pending_review", evidence: evidence ?? null, notes: notes ?? null,
+    assignedTo: assignedTo ?? null, nextReviewAt: nextReviewAt ? new Date(nextReviewAt) : null,
+    createdBy: userId as any,
+  }).returning();
+  res.status(201).json(ctrl);
+});
+
+router.patch("/tprm/vendors/:id/compliance-controls/:cid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const cid = parseInt(req.params.cid as string);
+  const allowed = ["status", "evidence", "notes", "assignedTo", "nextReviewAt", "controlTitle", "category"];
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  for (const k of allowed) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
+  if (updates.status && ["compliant", "partial", "non_compliant"].includes(updates.status)) {
+    updates.reviewedAt = new Date();
+  }
+  const [ctrl] = await db.update(tprmVendorComplianceControlsTable).set(updates)
+    .where(and(eq(tprmVendorComplianceControlsTable.id, cid), eq(tprmVendorComplianceControlsTable.tenantId, tenantId))).returning();
+  if (!ctrl) { res.status(404).json({ error: "Control not found" }); return; }
+  res.json(ctrl);
+});
+
+router.delete("/tprm/vendors/:id/compliance-controls/:cid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const cid = parseInt(req.params.cid as string);
+  await db.delete(tprmVendorComplianceControlsTable).where(and(eq(tprmVendorComplianceControlsTable.id, cid), eq(tprmVendorComplianceControlsTable.tenantId, tenantId)));
+  res.json({ ok: true });
+});
+
+// ── Compliance Reminders ──────────────────────────────────────────────────────
+
+router.get("/tprm/vendors/:id/reminders", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const showAll = req.query.all === "true";
+  const conds = [eq(tprmComplianceRemindersTable.vendorId, vendorId), eq(tprmComplianceRemindersTable.tenantId, tenantId)];
+  if (!showAll) conds.push(eq(tprmComplianceRemindersTable.isDismissed, false));
+  const reminders = await db.select().from(tprmComplianceRemindersTable).where(and(...conds)).orderBy(asc(tprmComplianceRemindersTable.dueDate));
+  res.json(reminders);
+});
+
+router.post("/tprm/vendors/:id/reminders", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId, userId } = req.user!;
+  const vendorId = parseInt(req.params.id as string);
+  if (!await resolveVendor(vendorId, tenantId)) { res.status(404).json({ error: "Vendor not found" }); return; }
+  const { title, type, referenceId, referenceType, dueDate, notes } = req.body;
+  if (!title || !dueDate) { res.status(400).json({ error: "title and dueDate are required" }); return; }
+  const [reminder] = await db.insert(tprmComplianceRemindersTable).values({
+    vendorId, tenantId, title, type: type ?? "custom",
+    referenceId: referenceId ?? null, referenceType: referenceType ?? null,
+    dueDate, notes: notes ?? null, createdBy: userId as any,
+  }).returning();
+  res.status(201).json(reminder);
+});
+
+router.patch("/tprm/vendors/:id/reminders/:rid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const rid = parseInt(req.params.rid as string);
+  const allowed = ["title", "dueDate", "notes", "isDismissed", "type"];
+  const updates: Record<string, any> = {};
+  for (const k of allowed) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
+  const [reminder] = await db.update(tprmComplianceRemindersTable).set(updates)
+    .where(and(eq(tprmComplianceRemindersTable.id, rid), eq(tprmComplianceRemindersTable.tenantId, tenantId))).returning();
+  if (!reminder) { res.status(404).json({ error: "Reminder not found" }); return; }
+  res.json(reminder);
+});
+
+router.delete("/tprm/vendors/:id/reminders/:rid", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const rid = parseInt(req.params.rid as string);
+  await db.delete(tprmComplianceRemindersTable).where(and(eq(tprmComplianceRemindersTable.id, rid), eq(tprmComplianceRemindersTable.tenantId, tenantId)));
+  res.json({ ok: true });
 });
 
 export default router;

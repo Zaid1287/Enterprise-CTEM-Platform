@@ -17,6 +17,7 @@ import {
   CheckCircle2, Loader2, Upload, Plus, Mail, Phone, User,
   Building2, Clock, Download, Trash2, Send, ChevronRight, Eye, Zap, Lock, Database, Search,
   Flame, RadioTower, ScanSearch, ShieldAlert,
+  Bell, BellOff, ClipboardList, XCircle, BarChart3, ChevronDown, ChevronUp, Info,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
@@ -99,6 +100,27 @@ export default function TprmVendorDetailPage() {
   const [reqForm, setReqForm] = useState({ documentType: "", dueDate: "", reminderDays: "30", notes: "" });
   const [savingReq, setSavingReq] = useState(false);
 
+  // Compliance controls state
+  const [controls, setControls] = useState<any[]>([]);
+  const [controlFramework, setControlFramework] = useState("iso27001");
+  const [loadingControls, setLoadingControls] = useState(false);
+  const [seedingFramework, setSeedingFramework] = useState(false);
+  const [editingControl, setEditingControl] = useState<any | null>(null);
+  const [controlEditForm, setControlEditForm] = useState({ status: "", evidence: "", notes: "", assignedTo: "", nextReviewAt: "" });
+  const [savingControl, setSavingControl] = useState(false);
+  const [showAddControl, setShowAddControl] = useState(false);
+  const [addControlForm, setAddControlForm] = useState({ controlId: "", controlTitle: "", category: "", status: "pending_review", evidence: "", notes: "", assignedTo: "" });
+  const [savingAddControl, setSavingAddControl] = useState(false);
+
+  // Reminders state
+  const [reminders, setReminders] = useState<any[]>([]);
+  const [showAddReminder, setShowAddReminder] = useState(false);
+  const [reminderForm, setReminderForm] = useState({ title: "", dueDate: "", type: "custom", notes: "" });
+  const [savingReminder, setSavingReminder] = useState(false);
+
+  // Compliance sub-tab
+  const [complianceTab, setComplianceTab] = useState("controls");
+
   // AI parse state (per doc)
   const [parsingDocId, setParsingDocId] = useState<number | null>(null);
 
@@ -125,6 +147,87 @@ export default function TprmVendorDetailPage() {
     apiFetch<any[]>("/api/tprm/questionnaire-templates").then(setTemplates).catch(() => {});
     apiFetch<any[]>(`/api/tprm/vendors/${id}/compliance-requirements`).then(setRequirements).catch(() => {});
   }, [id]);
+
+  const loadControls = (fw?: string) => {
+    const framework = fw ?? controlFramework;
+    setLoadingControls(true);
+    apiFetch<any[]>(`/api/tprm/vendors/${id}/compliance-controls?framework=${framework}`)
+      .then(setControls).catch(() => {}).finally(() => setLoadingControls(false));
+  };
+
+  const loadReminders = () => {
+    apiFetch<any[]>(`/api/tprm/vendors/${id}/reminders`).then(setReminders).catch(() => {});
+  };
+
+  useEffect(() => {
+    if (tab !== "compliance") return;
+    loadControls();
+    loadReminders();
+  }, [tab, id]);
+
+  const seedFramework = async () => {
+    setSeedingFramework(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/compliance-controls/seed`, { method: "POST", body: JSON.stringify({ framework: controlFramework }) });
+      loadControls();
+    } catch { /* ignore */ }
+    setSeedingFramework(false);
+  };
+
+  const openEditControl = (ctrl: any) => {
+    setEditingControl(ctrl);
+    setControlEditForm({ status: ctrl.status, evidence: ctrl.evidence ?? "", notes: ctrl.notes ?? "", assignedTo: ctrl.assignedTo ?? "", nextReviewAt: ctrl.nextReviewAt ? ctrl.nextReviewAt.slice(0, 10) : "" });
+  };
+
+  const saveControl = async () => {
+    if (!editingControl) return;
+    setSavingControl(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/compliance-controls/${editingControl.id}`, { method: "PATCH", body: JSON.stringify(controlEditForm) });
+      setEditingControl(null);
+      loadControls();
+    } catch { /* ignore */ }
+    setSavingControl(false);
+  };
+
+  const deleteControl = async (cid: number) => {
+    await apiFetch(`/api/tprm/vendors/${id}/compliance-controls/${cid}`, { method: "DELETE" });
+    loadControls();
+  };
+
+  const addCustomControl = async () => {
+    if (!addControlForm.controlId || !addControlForm.controlTitle) return;
+    setSavingAddControl(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/compliance-controls`, { method: "POST", body: JSON.stringify({ ...addControlForm, framework: controlFramework }) });
+      setShowAddControl(false);
+      setAddControlForm({ controlId: "", controlTitle: "", category: "", status: "pending_review", evidence: "", notes: "", assignedTo: "" });
+      loadControls();
+    } catch { /* ignore */ }
+    setSavingAddControl(false);
+  };
+
+  const addReminder = async () => {
+    if (!reminderForm.title || !reminderForm.dueDate) return;
+    setSavingReminder(true);
+    try {
+      await apiFetch(`/api/tprm/vendors/${id}/reminders`, { method: "POST", body: JSON.stringify(reminderForm) });
+      setShowAddReminder(false);
+      setReminderForm({ title: "", dueDate: "", type: "custom", notes: "" });
+      loadReminders();
+    } catch { /* ignore */ }
+    setSavingReminder(false);
+  };
+
+  const dismissReminder = async (rid: number) => {
+    await apiFetch(`/api/tprm/vendors/${id}/reminders/${rid}`, { method: "PATCH", body: JSON.stringify({ isDismissed: true }) });
+    loadReminders();
+  };
+
+  const deleteReminder = async (rid: number) => {
+    await apiFetch(`/api/tprm/vendors/${id}/reminders/${rid}`, { method: "DELETE" });
+    loadReminders();
+  };
 
   // Pre-populate SLA form when vendor loads
   useEffect(() => {
@@ -963,106 +1066,277 @@ export default function TprmVendorDetailPage() {
 
         {/* Compliance */}
         <TabsContent value="compliance" className="mt-4 space-y-4">
-          {/* Requirements management section */}
-          <Card>
-            <CardHeader className="pb-2 pt-3">
-              <CardTitle className="text-sm flex items-center justify-between">
-                <span className="flex items-center gap-2"><FileText className="w-4 h-4" />Compliance Requirements ({requirements.length})</span>
-                <Button size="sm" variant="outline" onClick={() => setShowAddReq(true)}><Plus className="w-3.5 h-3.5 mr-1" />Add Requirement</Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pb-3">
-              {requirements.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-3 text-center">No requirements defined. Add required documents to track vendor compliance obligations.</p>
-              ) : (
-                <div className="space-y-2">
-                  {requirements.map((r: any) => (
-                    <div key={r.id} className="flex items-center gap-3 p-2 rounded bg-muted/30 border border-border/50">
+
+          {/* ── Active Reminders Banner ─────────────────────────────────────── */}
+          {reminders.length > 0 && (
+            <Card className="border-yellow-500/30 bg-yellow-500/5">
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-yellow-400"><Bell className="w-4 h-4" />Active Reminders ({reminders.length})</span>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddReminder(true)}>
+                    <Plus className="w-3 h-3 mr-1" />Add Reminder
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3 space-y-2">
+                {reminders.map((r: any) => {
+                  const due = new Date(r.dueDate);
+                  const daysUntil = Math.ceil((due.getTime() - Date.now()) / 86400000);
+                  const isOverdue = daysUntil < 0;
+                  return (
+                    <div key={r.id} className={`flex items-center gap-3 p-2 rounded border text-xs ${isOverdue ? "bg-red-500/10 border-red-500/30" : "bg-muted/30 border-border/50"}`}>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium">{r.documentType}</p>
-                        {r.dueDate && <p className="text-[10px] text-muted-foreground">Due: {new Date(r.dueDate).toLocaleDateString()}</p>}
-                        {r.notes && <p className="text-[10px] text-muted-foreground">{r.notes}</p>}
+                        <p className="font-medium">{r.title}</p>
+                        <p className={`text-[10px] mt-0.5 ${isOverdue ? "text-red-400" : "text-muted-foreground"}`}>
+                          {isOverdue ? `Overdue by ${Math.abs(daysUntil)}d` : `Due in ${daysUntil}d`} • {due.toLocaleDateString()} • {r.type.replace(/_/g, " ")}
+                        </p>
+                        {r.notes && <p className="text-[10px] text-muted-foreground truncate">{r.notes}</p>}
                       </div>
-                      <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 hover:text-blue-300" onClick={() => notifyRequirement(r.id)}>
-                        <Mail className="w-3 h-3 mr-1" />Notify
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-yellow-400 shrink-0" title="Dismiss" onClick={() => dismissReminder(r.id)}>
+                        <BellOff className="w-3 h-3" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteRequirement(r.id)}>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400 shrink-0" title="Delete" onClick={() => deleteReminder(r.id)}>
                         <Trash2 className="w-3 h-3" />
                       </Button>
                     </div>
-                  ))}
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
+          {reminders.length === 0 && (
+            <div className="flex justify-end">
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAddReminder(true)}>
+                <Bell className="w-3 h-3 mr-1" />Set Reminder
+              </Button>
+            </div>
+          )}
+
+          {/* ── Compliance Sub-tabs ─────────────────────────────────────────── */}
+          <div className="flex gap-1 border-b border-border/50 pb-0">
+            {(["controls", "documents", "requirements"] as const).map(st => (
+              <button key={st} onClick={() => setComplianceTab(st)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-t-md border-b-2 transition-colors capitalize ${complianceTab === st ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+                {st === "controls" ? `Controls (${controls.length})` : st === "documents" ? `Documents (${(vendor.complianceDocs ?? []).length})` : `Requirements (${requirements.length})`}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Controls sub-tab ───────────────────────────────────────────── */}
+          {complianceTab === "controls" && (
+            <div className="space-y-4">
+              {/* Framework selector + scorecard */}
+              <Card>
+                <CardContent className="py-3 space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Select value={controlFramework} onValueChange={v => { setControlFramework(v); loadControls(v); }}>
+                      <SelectTrigger className="h-8 text-xs w-40"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="iso27001">ISO 27001:2022</SelectItem>
+                        <SelectItem value="soc2">SOC 2</SelectItem>
+                        <SelectItem value="pcidss">PCI DSS v4.0</SelectItem>
+                        <SelectItem value="hipaa">HIPAA</SelectItem>
+                        <SelectItem value="nist_csf">NIST CSF 2.0</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" className="h-8 text-xs" onClick={seedFramework} disabled={seedingFramework}>
+                      {seedingFramework ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5 mr-1" />}
+                      Seed Framework Controls
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setShowAddControl(true)}>
+                      <Plus className="w-3.5 h-3.5 mr-1" />Add Custom Control
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8 text-xs ml-auto" onClick={() => loadControls()}>
+                      <RefreshCw className={`w-3.5 h-3.5 ${loadingControls ? "animate-spin" : ""}`} />
+                    </Button>
+                  </div>
+                  {/* Scorecard */}
+                  {controls.length > 0 && (() => {
+                    const total = controls.length;
+                    const compliant    = controls.filter(c => c.status === "compliant").length;
+                    const partial      = controls.filter(c => c.status === "partial").length;
+                    const nonCompliant = controls.filter(c => c.status === "non_compliant").length;
+                    const na           = controls.filter(c => c.status === "not_applicable").length;
+                    const pending      = controls.filter(c => c.status === "pending_review").length;
+                    const score = total - na > 0 ? Math.round(((compliant + partial * 0.5) / (total - na)) * 100) : 0;
+                    return (
+                      <div className="grid grid-cols-5 gap-2">
+                        {[
+                          { label: "Compliant",     count: compliant,    color: "text-green-400",  bg: "bg-green-500/10"  },
+                          { label: "Partial",        count: partial,      color: "text-yellow-400", bg: "bg-yellow-500/10" },
+                          { label: "Non-Compliant",  count: nonCompliant, color: "text-red-400",    bg: "bg-red-500/10"    },
+                          { label: "Pending Review", count: pending,      color: "text-blue-400",   bg: "bg-blue-500/10"   },
+                          { label: "Not Applicable", count: na,           color: "text-slate-400",  bg: "bg-slate-500/10"  },
+                        ].map(s => (
+                          <div key={s.label} className={`rounded p-2 text-center ${s.bg}`}>
+                            <p className={`text-lg font-bold ${s.color}`}>{s.count}</p>
+                            <p className="text-[10px] text-muted-foreground leading-tight">{s.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+
+              {/* Controls table */}
+              {loadingControls ? (
+                <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+              ) : controls.length === 0 ? (
+                <Card className="border-dashed">
+                  <CardContent className="py-10 text-center text-sm text-muted-foreground space-y-2">
+                    <ClipboardList className="w-8 h-8 mx-auto opacity-30" />
+                    <p>No controls loaded yet.</p>
+                    <p className="text-xs">Click <strong>Seed Framework Controls</strong> to populate {controlFramework.replace(/_/g, " ").toUpperCase()} controls, or add custom ones.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-1.5">
+                  {controls.map((ctrl: any) => {
+                    const statusMap: Record<string, { label: string; color: string; border: string }> = {
+                      compliant:       { label: "Compliant",       color: "text-green-400",  border: "border-green-500/30"  },
+                      partial:         { label: "Partial",         color: "text-yellow-400", border: "border-yellow-500/30" },
+                      non_compliant:   { label: "Non-Compliant",   color: "text-red-400",    border: "border-red-500/30"    },
+                      pending_review:  { label: "Pending Review",  color: "text-blue-400",   border: "border-blue-500/30"   },
+                      not_applicable:  { label: "N/A",             color: "text-slate-400",  border: "border-slate-500/30"  },
+                    };
+                    const sm = statusMap[ctrl.status] ?? statusMap.pending_review;
+                    return (
+                      <Card key={ctrl.id} className={`bg-card/60 border-l-2 ${sm.border}`}>
+                        <CardContent className="py-2.5 px-3">
+                          <div className="flex items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-mono font-semibold text-muted-foreground">{ctrl.controlId}</span>
+                                {ctrl.category && <Badge variant="outline" className="text-[10px] py-0 h-4">{ctrl.category}</Badge>}
+                                <Badge variant="outline" className={`text-[10px] py-0 h-4 ${sm.color} border-current`}>{sm.label}</Badge>
+                              </div>
+                              <p className="text-xs mt-0.5">{ctrl.controlTitle}</p>
+                              {ctrl.evidence && <p className="text-[10px] text-muted-foreground mt-0.5 truncate"><span className="font-medium">Evidence:</span> {ctrl.evidence}</p>}
+                              {ctrl.assignedTo && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Assigned:</span> {ctrl.assignedTo}</p>}
+                              {ctrl.nextReviewAt && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Next review:</span> {new Date(ctrl.nextReviewAt).toLocaleDateString()}</p>}
+                              {ctrl.notes && <p className="text-[10px] text-muted-foreground italic">{ctrl.notes}</p>}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 hover:text-blue-300 px-2" onClick={() => openEditControl(ctrl)}>Edit</Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteControl(ctrl.id)}><Trash2 className="w-3 h-3" /></Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Documents */}
-          <div className="flex justify-end gap-2">
-            {(vendor.complianceDocs ?? []).some((d: any) => d.status === "pending_review" && d.expiresAt) && (
-              <Button size="sm" variant="outline" onClick={async () => {
-                try {
-                  const r = await apiFetch<{ verified: number; message: string }>(`/api/tprm/vendors/${id}/compliance/auto-verify`, { method: "POST" });
-                  if (r.verified > 0) loadVendor();
-                } catch { /* ignore */ }
-              }}>
-                <CheckCircle2 className="w-4 h-4 mr-1.5" />Auto-Verify All
-              </Button>
-            )}
-            <Button size="sm" onClick={() => setShowUploadDoc(true)}><Upload className="w-4 h-4 mr-1.5" />Upload Document</Button>
-          </div>
-          {(vendor.complianceDocs ?? []).length === 0 ? (
-            <Card className="border-dashed"><CardContent className="py-10 text-center text-sm text-muted-foreground">No compliance documents uploaded</CardContent></Card>
-          ) : (
-            <div className="space-y-2">
-              {(vendor.complianceDocs ?? []).map((d: any) => {
-                const exp = d.expiresAt ? new Date(d.expiresAt) : null;
-                const days = exp ? Math.ceil((exp.getTime() - Date.now()) / 86400000) : null;
-                const statusColor = d.status === "valid" ? "border-green-500/40 text-green-400"
-                  : d.status === "expiring_soon" ? "border-yellow-500/40 text-yellow-400"
-                  : d.status === "expired" ? "border-red-500/40 text-red-400"
-                  : "border-muted-foreground/40 text-muted-foreground";
-                return (
-                  <Card key={d.id} className="bg-card/60">
-                    <CardContent className="py-3 flex items-center gap-3">
-                      <FileText className="w-5 h-5 text-muted-foreground shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">{d.title}</p>
-                        <p className="text-xs text-muted-foreground">{d.documentType}{d.auditor ? ` • ${d.auditor}` : ""}</p>
-                        {d.auditPeriodStart && <p className="text-xs text-muted-foreground">Period: {d.auditPeriodStart} → {d.auditPeriodEnd}</p>}
-                      </div>
-                      <div className="text-right shrink-0">
-                        {days !== null && (
-                          <p className={`text-xs ${days < 0 ? "text-red-400" : days < 30 ? "text-yellow-400" : "text-green-400"}`}>
-                            {days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d remaining`}
-                          </p>
-                        )}
-                        {d.status && <Badge variant="outline" className={`text-[10px] mt-0.5 ${statusColor}`}>{d.status.replace(/_/g, " ")}</Badge>}
-                      </div>
-                      {d.fileData && (
-                        <Button variant="ghost" size="sm" className="h-7 text-xs text-purple-400 hover:text-purple-300" onClick={() => aiParseDoc(d.id)} disabled={parsingDocId === d.id}>
-                          {parsingDocId === d.id ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1" />}AI Parse
-                        </Button>
-                      )}
-                      {d.status === "pending_review" && (
-                        <Button variant="ghost" size="sm" className="h-7 text-xs text-green-400 hover:text-green-300" onClick={async () => {
-                          try {
-                            await apiFetch(`/api/tprm/vendors/${id}/compliance/${d.id}`, { method: "PATCH", body: JSON.stringify({ status: "valid" }) });
-                            loadVendor();
-                          } catch { /* ignore */ }
-                        }}>
-                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" />Verify
-                        </Button>
-                      )}
-                      {d.fileName && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
-                          <a href={`/api/tprm/vendors/${id}/compliance/${d.id}/download`} download={d.fileName}><Download className="w-4 h-4" /></a>
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
             </div>
+          )}
+
+          {/* ── Documents sub-tab ──────────────────────────────────────────── */}
+          {complianceTab === "documents" && (
+            <div className="space-y-3">
+              <div className="flex justify-end gap-2">
+                {(vendor.complianceDocs ?? []).some((d: any) => d.status === "pending_review" && d.expiresAt) && (
+                  <Button size="sm" variant="outline" onClick={async () => {
+                    try {
+                      const r = await apiFetch<{ verified: number; message: string }>(`/api/tprm/vendors/${id}/compliance/auto-verify`, { method: "POST" });
+                      if (r.verified > 0) loadVendor();
+                    } catch { /* ignore */ }
+                  }}>
+                    <CheckCircle2 className="w-4 h-4 mr-1.5" />Auto-Verify All
+                  </Button>
+                )}
+                <Button size="sm" onClick={() => setShowUploadDoc(true)}><Upload className="w-4 h-4 mr-1.5" />Upload Document</Button>
+              </div>
+              {(vendor.complianceDocs ?? []).length === 0 ? (
+                <Card className="border-dashed"><CardContent className="py-10 text-center text-sm text-muted-foreground">No compliance documents uploaded yet</CardContent></Card>
+              ) : (
+                <div className="space-y-2">
+                  {(vendor.complianceDocs ?? []).map((d: any) => {
+                    const exp = d.expiresAt ? new Date(d.expiresAt) : null;
+                    const days = exp ? Math.ceil((exp.getTime() - Date.now()) / 86400000) : null;
+                    const statusColor = d.status === "valid" ? "border-green-500/40 text-green-400"
+                      : d.status === "expiring_soon" ? "border-yellow-500/40 text-yellow-400"
+                      : d.status === "expired" ? "border-red-500/40 text-red-400"
+                      : "border-muted-foreground/40 text-muted-foreground";
+                    return (
+                      <Card key={d.id} className="bg-card/60">
+                        <CardContent className="py-3 flex items-center gap-3">
+                          <FileText className="w-5 h-5 text-muted-foreground shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium">{d.title}</p>
+                            <p className="text-xs text-muted-foreground">{d.documentType}{d.auditor ? ` • ${d.auditor}` : ""}</p>
+                            {d.auditPeriodStart && <p className="text-xs text-muted-foreground">Period: {d.auditPeriodStart} → {d.auditPeriodEnd}</p>}
+                          </div>
+                          <div className="text-right shrink-0">
+                            {days !== null && (
+                              <p className={`text-xs ${days < 0 ? "text-red-400" : days < 30 ? "text-yellow-400" : "text-green-400"}`}>
+                                {days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d remaining`}
+                              </p>
+                            )}
+                            {d.status && <Badge variant="outline" className={`text-[10px] mt-0.5 ${statusColor}`}>{d.status.replace(/_/g, " ")}</Badge>}
+                          </div>
+                          {d.fileData && (
+                            <Button variant="ghost" size="sm" className="h-7 text-xs text-purple-400 hover:text-purple-300" onClick={() => aiParseDoc(d.id)} disabled={parsingDocId === d.id}>
+                              {parsingDocId === d.id ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1" />}AI Parse
+                            </Button>
+                          )}
+                          {d.status === "pending_review" && (
+                            <Button variant="ghost" size="sm" className="h-7 text-xs text-green-400 hover:text-green-300" onClick={async () => {
+                              try {
+                                await apiFetch(`/api/tprm/vendors/${id}/compliance/${d.id}`, { method: "PATCH", body: JSON.stringify({ status: "valid" }) });
+                                loadVendor();
+                              } catch { /* ignore */ }
+                            }}>
+                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />Verify
+                            </Button>
+                          )}
+                          {d.fileName && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
+                              <a href={`/api/tprm/vendors/${id}/compliance/${d.id}/download`} download={d.fileName}><Download className="w-4 h-4" /></a>
+                            </Button>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Requirements sub-tab ───────────────────────────────────────── */}
+          {complianceTab === "requirements" && (
+            <Card>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span className="flex items-center gap-2"><FileText className="w-4 h-4" />Document Requirements</span>
+                  <Button size="sm" variant="outline" onClick={() => setShowAddReq(true)}><Plus className="w-3.5 h-3.5 mr-1" />Add Requirement</Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3">
+                {requirements.length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-3 text-center">No requirements defined. Add required documents to track vendor compliance obligations.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {requirements.map((r: any) => (
+                      <div key={r.id} className="flex items-center gap-3 p-2 rounded bg-muted/30 border border-border/50">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium">{r.documentType}</p>
+                          {r.dueDate && <p className="text-[10px] text-muted-foreground">Due: {new Date(r.dueDate).toLocaleDateString()} • Reminder: {r.reminderDays}d before</p>}
+                          {r.notes && <p className="text-[10px] text-muted-foreground">{r.notes}</p>}
+                        </div>
+                        <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 hover:text-blue-300" onClick={() => notifyRequirement(r.id)}>
+                          <Mail className="w-3 h-3 mr-1" />Notify
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-400" onClick={() => deleteRequirement(r.id)}>
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 
@@ -1341,6 +1615,150 @@ export default function TprmVendorDetailPage() {
             <Button variant="outline" onClick={() => setShowUploadDoc(false)}>Cancel</Button>
             <Button onClick={uploadDoc} disabled={savingDoc || !docForm.documentType || !docForm.title}>
               {savingDoc && <Loader2 className="w-4 h-4 mr-1 animate-spin" />} Upload
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Compliance Control Dialog ───────────────────────────────── */}
+      <Dialog open={!!editingControl} onOpenChange={o => { if (!o) setEditingControl(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><ClipboardList className="w-4 h-4" />Update Control Status</DialogTitle></DialogHeader>
+          {editingControl && (
+            <div className="space-y-3">
+              <div className="p-2 rounded bg-muted/30 border border-border/40">
+                <p className="text-xs font-mono font-semibold text-muted-foreground">{editingControl.controlId}</p>
+                <p className="text-sm font-medium mt-0.5">{editingControl.controlTitle}</p>
+              </div>
+              <div>
+                <Label className="text-xs">Status *</Label>
+                <Select value={controlEditForm.status} onValueChange={v => setControlEditForm(f => ({ ...f, status: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending_review">Pending Review</SelectItem>
+                    <SelectItem value="compliant">Compliant</SelectItem>
+                    <SelectItem value="partial">Partial</SelectItem>
+                    <SelectItem value="non_compliant">Non-Compliant</SelectItem>
+                    <SelectItem value="not_applicable">Not Applicable</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Evidence / Reference</Label>
+                <Input className="mt-1 h-8 text-sm" placeholder="e.g. SOC2 report §6.1, policy doc link…" value={controlEditForm.evidence} onChange={e => setControlEditForm(f => ({ ...f, evidence: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Assigned To</Label>
+                <Input className="mt-1 h-8 text-sm" placeholder="Name or email" value={controlEditForm.assignedTo} onChange={e => setControlEditForm(f => ({ ...f, assignedTo: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Next Review Date</Label>
+                <Input type="date" className="mt-1 h-8 text-sm" value={controlEditForm.nextReviewAt} onChange={e => setControlEditForm(f => ({ ...f, nextReviewAt: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Notes</Label>
+                <Textarea className="mt-1 text-sm" rows={2} placeholder="Additional context, gaps, remediation plan…" value={controlEditForm.notes} onChange={e => setControlEditForm(f => ({ ...f, notes: e.target.value }))} />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingControl(null)}>Cancel</Button>
+            <Button onClick={saveControl} disabled={savingControl}>
+              {savingControl && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add Custom Control Dialog ─────────────────────────────────────── */}
+      <Dialog open={showAddControl} onOpenChange={setShowAddControl}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle className="text-base">Add Custom Control</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Control ID *</Label>
+                <Input className="mt-1 h-8 text-sm" placeholder="e.g. CUSTOM-1" value={addControlForm.controlId} onChange={e => setAddControlForm(f => ({ ...f, controlId: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Category</Label>
+                <Input className="mt-1 h-8 text-sm" placeholder="e.g. Access Control" value={addControlForm.category} onChange={e => setAddControlForm(f => ({ ...f, category: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Control Title *</Label>
+              <Input className="mt-1 h-8 text-sm" placeholder="Describe the control requirement" value={addControlForm.controlTitle} onChange={e => setAddControlForm(f => ({ ...f, controlTitle: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Initial Status</Label>
+              <Select value={addControlForm.status} onValueChange={v => setAddControlForm(f => ({ ...f, status: v }))}>
+                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending_review">Pending Review</SelectItem>
+                  <SelectItem value="compliant">Compliant</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                  <SelectItem value="non_compliant">Non-Compliant</SelectItem>
+                  <SelectItem value="not_applicable">Not Applicable</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Evidence / Reference</Label>
+              <Input className="mt-1 h-8 text-sm" placeholder="Policy doc, audit report link…" value={addControlForm.evidence} onChange={e => setAddControlForm(f => ({ ...f, evidence: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Assigned To</Label>
+              <Input className="mt-1 h-8 text-sm" placeholder="Name or email" value={addControlForm.assignedTo} onChange={e => setAddControlForm(f => ({ ...f, assignedTo: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Notes</Label>
+              <Textarea className="mt-1 text-sm" rows={2} placeholder="Additional context…" value={addControlForm.notes} onChange={e => setAddControlForm(f => ({ ...f, notes: e.target.value }))} />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Will be added to framework: <strong>{controlFramework.replace(/_/g, " ").toUpperCase()}</strong></p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddControl(false)}>Cancel</Button>
+            <Button onClick={addCustomControl} disabled={savingAddControl || !addControlForm.controlId || !addControlForm.controlTitle}>
+              {savingAddControl && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Add Control
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add Reminder Dialog ───────────────────────────────────────────── */}
+      <Dialog open={showAddReminder} onOpenChange={setShowAddReminder}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><Bell className="w-4 h-4" />Set Compliance Reminder</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Title *</Label>
+              <Input className="mt-1 h-8 text-sm" placeholder="e.g. SOC2 report renewal, annual pen-test review" value={reminderForm.title} onChange={e => setReminderForm(f => ({ ...f, title: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Type</Label>
+              <Select value={reminderForm.type} onValueChange={v => setReminderForm(f => ({ ...f, type: v }))}>
+                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="document_expiry">Document Expiry</SelectItem>
+                  <SelectItem value="control_review">Control Review</SelectItem>
+                  <SelectItem value="questionnaire_due">Questionnaire Due</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Due Date *</Label>
+              <Input type="date" className="mt-1 h-8 text-sm" value={reminderForm.dueDate} onChange={e => setReminderForm(f => ({ ...f, dueDate: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Notes</Label>
+              <Textarea className="mt-1 text-sm" rows={2} placeholder="Additional context or action needed…" value={reminderForm.notes} onChange={e => setReminderForm(f => ({ ...f, notes: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddReminder(false)}>Cancel</Button>
+            <Button onClick={addReminder} disabled={savingReminder || !reminderForm.title || !reminderForm.dueDate}>
+              {savingReminder && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Save Reminder
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -267,6 +267,40 @@ export const tprmComplianceRequirementsTable = pgTable("tprm_compliance_requirem
   createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const tprmVendorComplianceControlsTable = pgTable("tprm_vendor_compliance_controls", {
+  id:           serial("id").primaryKey(),
+  vendorId:     integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
+  tenantId:     integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  framework:    text("framework").notNull(),
+  controlId:    text("control_id").notNull(),
+  controlTitle: text("control_title").notNull(),
+  category:     text("category"),
+  status:       text("status").notNull().default("pending_review"),
+  evidence:     text("evidence"),
+  notes:        text("notes"),
+  assignedTo:   text("assigned_to"),
+  reviewedAt:   timestamp("reviewed_at", { withTimezone: true }),
+  nextReviewAt: timestamp("next_review_at", { withTimezone: true }),
+  createdBy:    integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:    timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const tprmComplianceRemindersTable = pgTable("tprm_compliance_reminders", {
+  id:            serial("id").primaryKey(),
+  vendorId:      integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
+  tenantId:      integer("tenant_id").notNull().references(() => tenantsTable.id, { onDelete: "cascade" }),
+  title:         text("title").notNull(),
+  type:          text("type").notNull().default("custom"),
+  referenceId:   integer("reference_id"),
+  referenceType: text("reference_type"),
+  dueDate:       date("due_date").notNull(),
+  notes:         text("notes"),
+  isDismissed:   boolean("is_dismissed").notNull().default(false),
+  createdBy:     integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt:     timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const tprmSbomUploadsTable = pgTable("tprm_sbom_uploads", {
   id:                      serial("id").primaryKey(),
   vendorId:                integer("vendor_id").notNull().references(() => tprmVendorsTable.id, { onDelete: "cascade" }),
@@ -295,5 +329,7 @@ export type TprmVendorContact            = typeof tprmVendorContactsTable.$infer
 export type TprmQuestionnaireTemplate    = typeof tprmQuestionnaireTemplatesTable.$inferSelect;
 export type TprmVendorQuestionnaire      = typeof tprmVendorQuestionnairesTable.$inferSelect;
 export type TprmComplianceDocument       = typeof tprmComplianceDocumentsTable.$inferSelect;
-export type TprmComplianceRequirement    = typeof tprmComplianceRequirementsTable.$inferSelect;
-export type TprmSbomUpload               = typeof tprmSbomUploadsTable.$inferSelect;
+export type TprmComplianceRequirement       = typeof tprmComplianceRequirementsTable.$inferSelect;
+export type TprmVendorComplianceControl     = typeof tprmVendorComplianceControlsTable.$inferSelect;
+export type TprmComplianceReminder          = typeof tprmComplianceRemindersTable.$inferSelect;
+export type TprmSbomUpload                  = typeof tprmSbomUploadsTable.$inferSelect;
