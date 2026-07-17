@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
+import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +51,7 @@ const SCORE_CATEGORIES = [
 const DOC_TYPES = ["SOC2 Type I", "SOC2 Type II", "ISO 27001", "ISO 27017", "ISO 27701", "PCI DSS", "HIPAA BAA", "GDPR DPA", "CSA STAR", "NIST CSF", "Other"];
 
 export default function TprmVendorDetailPage() {
+  const { toast } = useToast();
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const [vendor, setVendor] = useState<any>(null);
@@ -181,12 +183,16 @@ export default function TprmVendorDetailPage() {
 
   const saveControl = async () => {
     if (!editingControl) return;
+    if (!controlEditForm.status) { toast({ title: "Status is required", variant: "destructive" }); return; }
     setSavingControl(true);
     try {
-      await apiFetch(`/api/tprm/vendors/${id}/compliance-controls/${editingControl.id}`, { method: "PATCH", body: JSON.stringify(controlEditForm) });
+      const updated = await apiFetch<any>(`/api/tprm/vendors/${id}/compliance-controls/${editingControl.id}`, { method: "PATCH", body: JSON.stringify(controlEditForm) });
+      setControls(prev => prev.map(c => c.id === updated.id ? updated : c));
       setEditingControl(null);
-      loadControls();
-    } catch { /* ignore */ }
+      toast({ title: "Control updated", description: `${updated.controlId} — ${updated.status.replace(/_/g, " ")}` });
+    } catch (err: any) {
+      toast({ title: "Failed to save control", description: err?.message ?? "Server error — please try again", variant: "destructive" });
+    }
     setSavingControl(false);
   };
 
@@ -316,15 +322,21 @@ export default function TprmVendorDetailPage() {
   };
 
   const sendQuestionnaire = async () => {
-    if (!qForm.templateId) return;
+    if (!qForm.templateId) { toast({ title: "Template is required", variant: "destructive" }); return; }
+    if (!qForm.recipientEmail.trim()) { toast({ title: "Recipient email is required", variant: "destructive" }); return; }
+    const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRx.test(qForm.recipientEmail.trim())) { toast({ title: "Invalid email address", description: "Enter a valid email like vendor@company.com", variant: "destructive" }); return; }
     setSendingQ(true);
     try {
-      const r = await apiFetch<any>(`/api/tprm/vendors/${id}/questionnaires`, { method: "POST", body: JSON.stringify(qForm) });
+      const r = await apiFetch<any>(`/api/tprm/vendors/${id}/questionnaires`, { method: "POST", body: JSON.stringify({ ...qForm, recipientEmail: qForm.recipientEmail.trim() }) });
       setQPortalLink(r.portalLink ?? null);
       setShowSendQ(false);
       setQForm({ templateId: "", dueDate: "", recipientEmail: "" });
+      toast({ title: "Questionnaire sent", description: `Sent to ${qForm.recipientEmail.trim()}` });
       loadVendor();
-    } catch { /* ignore */ }
+    } catch (err: any) {
+      toast({ title: "Failed to send questionnaire", description: err?.message ?? "Server error — please try again", variant: "destructive" });
+    }
     setSendingQ(false);
   };
 
@@ -1782,13 +1794,28 @@ export default function TprmVendorDetailPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div><Label className="text-xs">Recipient Email</Label><Input type="email" className="mt-1" placeholder="vendor@company.com" value={qForm.recipientEmail} onChange={e => setQForm(f => ({ ...f, recipientEmail: e.target.value }))} /></div>
+            <div>
+              <Label className="text-xs">Recipient Email <span className="text-destructive">*</span></Label>
+              <Input
+                type="email"
+                className={`mt-1 ${qForm.recipientEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(qForm.recipientEmail) ? "border-destructive" : ""}`}
+                placeholder="vendor@company.com"
+                value={qForm.recipientEmail}
+                onChange={e => setQForm(f => ({ ...f, recipientEmail: e.target.value }))}
+              />
+              {qForm.recipientEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(qForm.recipientEmail) && (
+                <p className="text-[11px] text-destructive mt-0.5">Enter a valid email address</p>
+              )}
+            </div>
             <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1 h-8 text-sm" value={qForm.dueDate} onChange={e => setQForm(f => ({ ...f, dueDate: e.target.value }))} /></div>
             {templates.length === 0 && <p className="text-xs text-muted-foreground">Create a template at <Link href="/tprm/questionnaire-templates" className="text-primary underline">Questionnaire Templates</Link></p>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSendQ(false)}>Cancel</Button>
-            <Button onClick={sendQuestionnaire} disabled={sendingQ || !qForm.templateId}>
+            <Button
+              onClick={sendQuestionnaire}
+              disabled={sendingQ || !qForm.templateId || !qForm.recipientEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(qForm.recipientEmail)}
+            >
               {sendingQ && <Loader2 className="w-4 h-4 mr-1 animate-spin" />} Send
             </Button>
           </DialogFooter>

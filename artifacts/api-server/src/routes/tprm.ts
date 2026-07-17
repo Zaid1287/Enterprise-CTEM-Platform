@@ -2494,7 +2494,16 @@ router.patch("/tprm/vendors/:id/compliance-controls/:cid", requireAuth, requireT
   const cid = parseInt(req.params.cid as string);
   const allowed = ["status", "evidence", "notes", "assignedTo", "nextReviewAt", "controlTitle", "category"];
   const updates: Record<string, any> = { updatedAt: new Date() };
-  for (const k of allowed) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
+  for (const k of allowed) {
+    if (req.body[k] !== undefined) {
+      // Timestamp columns: convert empty string → null to avoid PG cast errors
+      if (k === "nextReviewAt") {
+        updates[k] = req.body[k] === "" || req.body[k] === null ? null : new Date(req.body[k]);
+      } else {
+        updates[k] = req.body[k];
+      }
+    }
+  }
   if (updates.status && ["compliant", "partial", "non_compliant"].includes(updates.status)) {
     updates.reviewedAt = new Date();
   }
