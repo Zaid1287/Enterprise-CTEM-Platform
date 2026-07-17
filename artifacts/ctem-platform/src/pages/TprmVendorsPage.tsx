@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Link, useLocation } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
 import { Badge } from "@/components/ui/badge";
@@ -688,15 +689,14 @@ export default function TprmVendorsPage() {
       )}
 
       {/* Pagination */}
-      {total > 30 && (
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Showing {Math.min((page - 1) * 30 + 1, total)}–{Math.min(page * 30, total)} of {total}</span>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
-            <Button variant="outline" size="sm" disabled={page * 30 >= total} onClick={() => setPage(p => p + 1)}>Next</Button>
-          </div>
-        </div>
-      )}
+      <SmartPagination
+        page={page}
+        totalPages={Math.max(1, Math.ceil(total / 30))}
+        totalItems={total}
+        pageSize={30}
+        itemLabel="vendors"
+        onPageChange={setPage}
+      />
 
       {/* ── Edit Vendor Dialog ────────────────────────────────────────────────────────── */}
       <Dialog open={showEdit} onOpenChange={o => { if (!o) { setShowEdit(false); setEditingVendor(null); } }}>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Link } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +84,8 @@ function AssessmentBreakdown({ label, data, total }: { label: string; data: { po
 export default function TprmDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [vsPage, setVsPage] = useState(1);
+  const VS_PAGE_SIZE = 15;
 
   const load = () => {
     setLoading(true);
@@ -93,6 +96,9 @@ export default function TprmDashboardPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const vsTotalPages = Math.max(1, Math.ceil((data?.vendorSummary.length ?? 0) / VS_PAGE_SIZE));
+  const vsPaged = data?.vendorSummary.slice((vsPage - 1) * VS_PAGE_SIZE, vsPage * VS_PAGE_SIZE) ?? [];
 
   const gradeData = data ? Object.entries(data.gradeMap).map(([grade, count]) => ({ grade, count, fill: gradeColor(grade) })) : [];
   const distData  = data ? [
@@ -283,6 +289,7 @@ export default function TprmDashboardPage() {
           {loading ? <div className="p-4"><Skeleton className="h-32" /></div> : (data?.vendorSummary.length ?? 0) === 0 ? (
             <p className="text-muted-foreground text-sm py-8 text-center">No vendors yet — <Link href="/tprm/vendors/new" className="text-primary underline">add your first vendor</Link></p>
           ) : (
+            <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[1100px]">
                 <thead>
@@ -307,7 +314,7 @@ export default function TprmDashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data!.vendorSummary.slice(0, 15).map((v: any) => {
+                  {vsPaged.map((v: any) => {
                     const scoreInc = v.scoreIncrease ?? 0;
                     return (
                       <tr key={v.id} className="border-b border-border/30 hover:bg-accent/20 transition-colors">
@@ -355,6 +362,16 @@ export default function TprmDashboardPage() {
                 </tbody>
               </table>
             </div>
+            <SmartPagination
+              page={vsPage}
+              totalPages={vsTotalPages}
+              totalItems={data?.vendorSummary.length ?? 0}
+              pageSize={VS_PAGE_SIZE}
+              itemLabel="vendors"
+              onPageChange={setVsPage}
+              className="px-4 py-3 border-t border-border/30"
+            />
+            </>
           )}
         </CardContent>
       </Card>

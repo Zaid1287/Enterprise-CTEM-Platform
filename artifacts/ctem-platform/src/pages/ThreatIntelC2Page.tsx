@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Radio, Search, RefreshCw, Plus, Trash2, X,
@@ -795,15 +796,14 @@ export default function ThreatIntelC2Page() {
       </div>
 
       {/* ── Pagination ── */}
-      {total > L && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Showing {page * L + 1}–{Math.min((page + 1) * L, total)} of {total.toLocaleString()}</span>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Prev</Button>
-            <Button size="sm" variant="outline" disabled={(page + 1) * L >= total} onClick={() => setPage(p => p + 1)}>Next</Button>
-          </div>
-        </div>
-      )}
+      <SmartPagination
+        page={page + 1}
+        totalPages={Math.max(1, Math.ceil(total / L))}
+        totalItems={total}
+        pageSize={L}
+        itemLabel="servers"
+        onPageChange={p => setPage(p - 1)}
+      />
     </div>
   );
 }

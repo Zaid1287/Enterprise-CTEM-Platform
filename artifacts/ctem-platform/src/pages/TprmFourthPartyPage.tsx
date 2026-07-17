@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { Link } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Building2, AlertTriangle, Shield, Globe, RefreshCw,
   Search, TrendingUp, Users, Layers, Loader2,
-  ChevronFirst, ChevronLast, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -66,23 +66,6 @@ function catBadge(cat: string) {
   );
 }
 
-// Smart pagination — always show page 1, last 3, and current ±2; fill with "..." between gaps
-function getPageNumbers(current: number, total: number): (number | "...")[] {
-  if (total <= 9) return Array.from({ length: total }, (_, i) => i + 1);
-  const always = new Set([1, total - 2, total - 1, total].filter(p => p >= 1));
-  const near   = new Set(
-    [current - 2, current - 1, current, current + 1, current + 2].filter(p => p >= 1 && p <= total)
-  );
-  const all = [...new Set([...always, ...near])].sort((a, b) => a - b);
-  const result: (number | "...")[] = [];
-  for (let i = 0; i < all.length; i++) {
-    result.push(all[i]);
-    if (i + 1 < all.length && (all[i + 1] as number) - (all[i] as number) > 1) {
-      result.push("...");
-    }
-  }
-  return result;
-}
 
 // Custom pie tooltip — uses solid hex colours so it's always readable in dark mode
 function PieTooltip({ active, payload }: any) {
@@ -229,8 +212,6 @@ export default function TprmFourthPartyPage() {
       </div>
     );
   }
-
-  const pageNumbers = getPageNumbers(safePage, totalPages);
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
@@ -573,74 +554,15 @@ export default function TprmFourthPartyPage() {
               </div>
 
               {/* ── Smart Pagination ── */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between px-4 py-3 border-t border-border/40">
-                  <p className="text-xs text-muted-foreground">
-                    Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length} providers
-                  </p>
-
-                  <div className="flex items-center gap-1">
-                    {/* Go to first */}
-                    <Button
-                      variant="ghost" size="icon"
-                      className="h-7 w-7"
-                      disabled={safePage === 1}
-                      onClick={() => setPage(1)}
-                      title="First page"
-                    >
-                      <ChevronFirst className="w-3.5 h-3.5" />
-                    </Button>
-
-                    {/* Previous */}
-                    <Button
-                      variant="ghost" size="icon"
-                      className="h-7 w-7"
-                      disabled={safePage === 1}
-                      onClick={() => setPage(p => Math.max(1, p - 1))}
-                    >
-                      <ChevronLeft className="w-3.5 h-3.5" />
-                    </Button>
-
-                    {/* Page numbers */}
-                    {pageNumbers.map((p, i) =>
-                      p === "..." ? (
-                        <span key={`ellipsis-${i}`} className="text-xs text-muted-foreground px-1 select-none">…</span>
-                      ) : (
-                        <Button
-                          key={p}
-                          variant={p === safePage ? "default" : "ghost"}
-                          size="icon"
-                          className="h-7 w-7 text-xs"
-                          onClick={() => setPage(p as number)}
-                        >
-                          {p}
-                        </Button>
-                      )
-                    )}
-
-                    {/* Next */}
-                    <Button
-                      variant="ghost" size="icon"
-                      className="h-7 w-7"
-                      disabled={safePage === totalPages}
-                      onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    >
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </Button>
-
-                    {/* Go to last */}
-                    <Button
-                      variant="ghost" size="icon"
-                      className="h-7 w-7"
-                      disabled={safePage === totalPages}
-                      onClick={() => setPage(totalPages)}
-                      title="Last page"
-                    >
-                      <ChevronLast className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              )}
+              <SmartPagination
+                page={safePage}
+                totalPages={totalPages}
+                totalItems={filtered.length}
+                pageSize={PAGE_SIZE}
+                itemLabel="providers"
+                onPageChange={setPage}
+                className="px-4 py-3 border-t border-border/40"
+              />
             </>
           )}
         </CardContent>

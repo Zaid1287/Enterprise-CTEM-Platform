@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
@@ -79,6 +80,8 @@ export default function AiMapperAdminPage() {
 
   const [search, setSearch]       = useState("");
   const [tab, setTab]             = useState<FilterTab>("all");
+  const [adminPage, setAdminPage] = useState(1);
+  const ADMIN_PAGE_SIZE = 15;
   const [sortCol, setSortCol]     = useState<SortCol>("endpoints");
   const [popoverTenantId, setPopoverTenantId] = useState<number | null>(null);
   const [pendingEnabled, setPendingEnabled]   = useState(false);
@@ -162,9 +165,12 @@ export default function AiMapperAdminPage() {
       return sortDir === "asc" ? (av ?? 0) - (bv ?? 0) : (bv ?? 0) - (av ?? 0);
     });
 
+  const adminTotalPages = Math.max(1, Math.ceil(filtered.length / ADMIN_PAGE_SIZE));
+  const adminPaged = filtered.slice((adminPage - 1) * ADMIN_PAGE_SIZE, adminPage * ADMIN_PAGE_SIZE);
+
   function toggleSort(col: SortCol) {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortCol(col); setSortDir("desc"); }
+    else { setSortCol(col); setSortDir("desc"); setAdminPage(1); }
   }
 
   const pieData = protocols.map(p => ({ name: p.protocol, value: p.count, color: PROTO_COLORS[p.protocol] ?? "#64748b" }));
@@ -312,12 +318,12 @@ export default function AiMapperAdminPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => { setSearch(e.target.value); setAdminPage(1); }}
                 placeholder="Search tenants…"
                 className="pl-8 h-8 text-sm w-56"
               />
             </div>
-            <Tabs value={tab} onValueChange={v => setTab(v as FilterTab)}>
+            <Tabs value={tab} onValueChange={v => { setTab(v as FilterTab); setAdminPage(1); }}>
               <TabsList className="h-8">
                 <TabsTrigger value="all"      className="text-xs h-6 px-3">All ({rows.length})</TabsTrigger>
                 <TabsTrigger value="enabled"  className="text-xs h-6 px-3">Enabled ({totalEnabled})</TabsTrigger>
@@ -336,6 +342,7 @@ export default function AiMapperAdminPage() {
           {isLoading ? (
             <div className="space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-14 rounded-xl" />)}</div>
           ) : (
+            <>
             <div className="bg-card border border-border rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
@@ -383,7 +390,7 @@ export default function AiMapperAdminPage() {
                       </td>
                     </tr>
                   )}
-                  {filtered.map(t => (
+                  {adminPaged.map(t => (
                     <tr key={t.id} className="border-b border-border/40 hover:bg-accent/20 transition-colors">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
@@ -496,6 +503,16 @@ export default function AiMapperAdminPage() {
                 </tbody>
               </table>
             </div>
+            <SmartPagination
+              page={adminPage}
+              totalPages={adminTotalPages}
+              totalItems={filtered.length}
+              pageSize={ADMIN_PAGE_SIZE}
+              itemLabel="tenants"
+              onPageChange={setAdminPage}
+              className="px-4 py-3 border-t border-border/40"
+            />
+            </>
           )}
         </div>
       </div>
