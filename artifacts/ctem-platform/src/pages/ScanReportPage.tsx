@@ -1888,19 +1888,19 @@ function EndpointsTab({ endpoints, isClient }: { endpoints: any[]; isClient?: bo
                     </div>
                   </td>
                   <td className="py-1.5 pr-2">
-                    {e.statusCode ? (
+                    {(() => { const sc = e.statusCode ?? e.status; return sc != null && sc > 0 ? (
                       <span className={cn(
                         "text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold tabular-nums",
-                        e.statusCode >= 200 && e.statusCode < 300 ? "bg-green-500/15 text-green-400 border-green-500/30" :
-                        e.statusCode >= 300 && e.statusCode < 400 ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
-                        e.statusCode === 401 || e.statusCode === 403 ? "bg-orange-500/15 text-orange-400 border-orange-500/30" :
-                        e.statusCode >= 400 && e.statusCode < 500 ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
-                        e.statusCode >= 500 ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                        sc >= 200 && sc < 300 ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                        sc >= 300 && sc < 400 ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                        sc === 401 || sc === 403 ? "bg-orange-500/15 text-orange-400 border-orange-500/30" :
+                        sc >= 400 && sc < 500 ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                        sc >= 500 ? "bg-red-500/15 text-red-400 border-red-500/30" :
                         "bg-accent/30 text-muted-foreground border-border"
-                      )}>{e.statusCode}</span>
+                      )}>{sc}</span>
                     ) : (
                       <span className="text-[10px] text-muted-foreground/40">—</span>
-                    )}
+                    ); })()}
                   </td>
                   <td className="py-1.5 pr-2">
                     <span className={cn("text-[10px] border rounded-lg px-2 py-0.5 font-semibold capitalize", CAT_STYLE[(e.category as string) ?? "other"] ?? CAT_STYLE.other)}>
@@ -3590,7 +3590,7 @@ function ParamDiscoveryTab({ paramDiscovery }: { paramDiscovery: any }) {
               {filtered.slice(0, 500).map((p: any, i: number) => {
                 const catMeta = PARAM_CAT_META[p.category] ?? PARAM_CAT_META.other;
                 const srcMeta = SOURCE_META[p.source] ?? { label: p.source, color: "text-muted-foreground border-border" };
-                const sc = p.statusCode as number | undefined;
+                const sc = (p.statusCode ?? p.status) as number | undefined;
                 return (
                   <div key={i} className="grid grid-cols-[1fr_auto_auto_auto_auto_2fr] gap-0 px-3 py-2 text-xs hover:bg-accent/20 transition-colors items-center">
                     <div className="flex items-center gap-2 min-w-0">
@@ -3609,7 +3609,7 @@ function ParamDiscoveryTab({ paramDiscovery }: { paramDiscovery: any }) {
                       <span className={cn("text-[10px] font-semibold", CONF_COLORS[p.confidence])}>{p.confidence}</span>
                     </div>
                     <div className="px-2">
-                      {sc ? (
+                      {sc != null && sc > 0 ? (
                         <span className={cn(
                           "text-[10px] border rounded px-1.5 py-0.5 font-mono font-bold tabular-nums",
                           sc >= 200 && sc < 300 ? "bg-green-500/15 text-green-400 border-green-500/30" :

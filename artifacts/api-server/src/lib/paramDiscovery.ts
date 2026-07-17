@@ -242,11 +242,12 @@ async function crawlForParams(baseUrl: string): Promise<DiscoveredParam[]> {
     if (visited.has(url)) continue;
     visited.add(url);
 
-    // Extract params already in the URL being crawled
+    // Collect params already embedded in the URL — status will be stamped after fetch
+    const preQueueParams: Array<{ name: string; ex?: string }> = [];
     for (const name of parseQueryParams(url)) {
       let ex: string | undefined;
       try { ex = new URL(url).searchParams.get(name) ?? undefined; } catch {}
-      addParam(name, url.split("?")[0], "crawl", "GET", ex);
+      preQueueParams.push({ name, ex });
     }
 
     // Fetch with status code capture
@@ -260,6 +261,12 @@ async function crawlForParams(baseUrl: string): Promise<DiscoveredParam[]> {
       pageStatus = res.status;
       if (res.ok) html = await res.text();
     } catch {}
+
+    // Now stamp the pre-queue params with the actual page status
+    for (const { name, ex } of preQueueParams) {
+      addParam(name, url.split("?")[0], "crawl", "GET", ex, pageStatus);
+    }
+
     if (!html) continue;
 
     // Form inputs (ParamSpider-style)
