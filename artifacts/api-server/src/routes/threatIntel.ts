@@ -1217,6 +1217,9 @@ router.get("/threat-intel/reports/:id/download", requireAuth, async (req: Authen
   const fmt = (req.query.format as string) ?? "json";
   const filename = `${row.title.replace(/[^a-z0-9]+/gi, "_")}_${row.id}`;
 
+  let data: any = {};
+  try { data = JSON.parse(row.content ?? "{}"); } catch {}
+
   if (fmt === "json") {
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}.json"`);
@@ -1224,27 +1227,146 @@ router.get("/threat-intel/reports/:id/download", requireAuth, async (req: Authen
     return;
   }
 
-  // Plain text format
-  let data: any = {};
-  try { data = JSON.parse(row.content ?? "{}"); } catch {}
+  if (fmt === "csv") {
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows: string[] = [];
+    rows.push([esc("Section"), esc("Category"), esc("Name / Metric"), esc("Value / Count"), esc("Details")].join(","));
+
+    // Overview metrics
+    const ov = data.overview ?? {};
+    for (const [k, v] of Object.entries(ov)) {
+      rows.push([esc("Overview"), esc("Metric"), esc(k), esc(v), esc("")].join(","));
+    }
+    if (data.riskScore != null) {
+      rows.push([esc("Overview"), esc("Risk Score"), esc("riskScore"), esc(data.riskScore), esc("/100")].join(","));
+    }
+
+    // Threat actors
+    for (const a of (data.threatActors ?? []) as any[]) {
+      rows.push([esc("Threat Actors"), esc(a.motivation ?? ""), esc(a.name ?? ""), esc(a.riskScore ?? ""), esc(a.country ?? "")].join(","));
+    }
+
+    // Campaigns
+    for (const c of (data.campaigns ?? []) as any[]) {
+      rows.push([esc("Campaigns"), esc(c.status ?? ""), esc(c.name ?? ""), esc(""), esc(c.actorName ?? "")].join(","));
+    }
+
+    // Malware
+    for (const m of (data.malware ?? []) as any[]) {
+      rows.push([esc("Malware"), esc(m.malwareType ?? ""), esc(m.name ?? ""), esc(m.iocCount ?? 0), esc((m.platforms ?? []).join(", "))].join(","));
+    }
+
+    // IOCs
+    for (const ioc of (data.iocs ?? []) as any[]) {
+      rows.push([esc("IOCs"), esc(ioc.type ?? ""), esc(ioc.value ?? ""), esc(""), esc(ioc.threat ?? "")].join(","));
+    }
+
+    // CVEs
+    for (const cve of (data.cves ?? []) as any[]) {
+      rows.push([esc("CVEs"), esc(cve.severity ?? ""), esc(cve.cveId ?? ""), esc(cve.cvss ?? ""), esc(cve.description?.slice(0, 120) ?? "")].join(","));
+    }
+
+    // Findings
+    for (const f of (data.findings ?? []) as any[]) {
+      rows.push([esc("Findings"), esc(f.severity ?? ""), esc(f.title ?? ""), esc(f.cve ?? ""), esc(f.asset ?? "")].join(","));
+    }
+
+    // Dark web mentions
+    for (const d of (data.darkWebMentions ?? []) as any[]) {
+      rows.push([esc("Dark Web"), esc(d.source ?? ""), esc(d.title ?? ""), esc(d.severity ?? ""), esc(d.assetDomain ?? "")].join(","));
+    }
+
+    // News
+    for (const n of (data.recentNews ?? []) as any[]) {
+      rows.push([esc("News"), esc(n.source ?? ""), esc(n.title ?? ""), esc(n.publishedAt?.split("T")[0] ?? ""), esc("")].join(","));
+    }
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}.csv"`);
+    res.send(rows.join("\r\n"));
+    return;
+  }
+
+  if (fmt === "pdf") {
+    const genDate = row.completedAt?.toISOString() ?? row.createdAt.toISOString();
+    const riskScore = data.riskScore ?? 0;
+    const riskColor = riskScore >= 70 ? "#ef4444" : riskScore >= 40 ? "#f97316" : "#22c55e";
+    const ov = data.overview ?? {};
+
+    function sectionHtml(title: string, items: any[], cols: { h: string; k: string }[]) {
+      if (!items?.length) return "";
+      const headerRow = cols.map(c => `<th>${c.h}</th>`).join("");
+      const bodyRows = items.slice(0, 50).map(item =>
+        `<tr>${cols.map(c => `<td>${String(item[c.k] ?? "—").slice(0, 120)}</td>`).join("")}</tr>`
+      ).join("");
+      return `<section><h2>${title} <span class="count">${items.length}</span></h2><table><thead><tr>${headerRow}</tr></thead><tbody>${bodyRows}</tbody></table></section>`;
+    }
+
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>${row.title}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;color:#1a1a2e;background:#fff;padding:20mm 15mm}
+  h1{font-size:22px;font-weight:700;margin-bottom:4px;color:#0f172a}
+  .meta{color:#64748b;font-size:11px;margin-bottom:24px;padding-bottom:12px;border-bottom:2px solid #e2e8f0}
+  .risk-badge{display:inline-block;padding:4px 12px;border-radius:6px;font-weight:700;font-size:18px;color:#fff;background:${riskColor};margin:8px 0 16px}
+  .overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}
+  .stat-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center}
+  .stat-box .num{font-size:20px;font-weight:700;color:#0f172a}
+  .stat-box .lbl{font-size:10px;color:#94a3b8;margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+  section{margin-bottom:24px;page-break-inside:avoid}
+  h2{font-size:13px;font-weight:700;color:#0f172a;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+  h2 .count{font-weight:400;color:#94a3b8;font-size:11px;text-transform:none;letter-spacing:0}
+  table{width:100%;border-collapse:collapse;font-size:10px}
+  th{background:#f1f5f9;padding:5px 8px;text-align:left;font-weight:600;color:#475569;border-bottom:1px solid #e2e8f0}
+  td{padding:5px 8px;border-bottom:1px solid #f1f5f9;color:#334155;vertical-align:top;word-break:break-word;max-width:200px}
+  tr:nth-child(even) td{background:#fafbfc}
+  .footer{margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
+  @media print{body{padding:10mm 8mm}section{page-break-inside:avoid}}
+</style></head><body>
+<h1>${row.title}</h1>
+<div class="meta">
+  Type: ${row.reportType.charAt(0).toUpperCase() + row.reportType.slice(1)} Report &nbsp;·&nbsp;
+  Generated: ${new Date(genDate).toLocaleString()} &nbsp;·&nbsp;
+  Sentinelware CTEM Platform
+</div>
+<div class="risk-badge">Risk Score: ${riskScore}/100</div>
+<div class="overview-grid">
+  ${Object.entries(ov).slice(0, 6).map(([k, v]) => `<div class="stat-box"><div class="num">${v}</div><div class="lbl">${k.replace(/([A-Z])/g," $1").trim()}</div></div>`).join("")}
+</div>
+${sectionHtml("Threat Actors", data.threatActors ?? [], [{ h: "Name", k: "name" }, { h: "Motivation", k: "motivation" }, { h: "Country", k: "country" }, { h: "Risk", k: "riskScore" }])}
+${sectionHtml("Campaigns", data.campaigns ?? [], [{ h: "Name", k: "name" }, { h: "Status", k: "status" }, { h: "Actor", k: "actorName" }])}
+${sectionHtml("Malware Families", data.malware ?? [], [{ h: "Name", k: "name" }, { h: "Type", k: "malwareType" }, { h: "Platforms", k: "platforms" }, { h: "IOCs", k: "iocCount" }])}
+${sectionHtml("IOCs", data.iocs ?? [], [{ h: "Type", k: "type" }, { h: "Value", k: "value" }, { h: "Threat", k: "threat" }])}
+${sectionHtml("CVE Intelligence", data.cves ?? [], [{ h: "CVE", k: "cveId" }, { h: "Severity", k: "severity" }, { h: "CVSS", k: "cvss" }, { h: "Description", k: "description" }])}
+${sectionHtml("Vulnerability Findings", data.findings ?? [], [{ h: "Title", k: "title" }, { h: "Severity", k: "severity" }, { h: "CVE", k: "cve" }, { h: "Asset", k: "asset" }])}
+${sectionHtml("Dark Web Mentions", data.darkWebMentions ?? [], [{ h: "Title", k: "title" }, { h: "Source", k: "source" }, { h: "Severity", k: "severity" }, { h: "Asset", k: "assetDomain" }])}
+${sectionHtml("Recent Threat News", data.recentNews ?? [], [{ h: "Title", k: "title" }, { h: "Source", k: "source" }, { h: "Date", k: "publishedAt" }])}
+<div class="footer">Generated by Sentinelware Continuous Threat Exposure Management Platform &nbsp;·&nbsp; ${new Date(genDate).toLocaleDateString()}</div>
+</body></html>`;
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}.html"`);
+    res.send(html);
+    return;
+  }
+
+  // Plain text fallback
   const lines: string[] = [
     `THREAT INTELLIGENCE REPORT`,
     `${"=".repeat(60)}`,
     `Title:     ${row.title}`,
     `Type:      ${row.reportType}`,
     `Generated: ${row.completedAt?.toISOString() ?? row.createdAt.toISOString()}`,
+    `Risk Score: ${data.riskScore ?? "N/A"}/100`,
     `${"=".repeat(60)}`,
     "",
-    `OVERVIEW`,
-    `${"─".repeat(40)}`,
   ];
-  const ov = data.overview ?? {};
-  for (const [k, v] of Object.entries(ov)) {
+  const ov2 = data.overview ?? {};
+  for (const [k, v] of Object.entries(ov2)) {
     if (typeof v === "number") lines.push(`${k}: ${v}`);
   }
-  lines.push("", `RISK SCORE: ${data.riskScore ?? "N/A"}/100`);
   lines.push("", `Generated by Sentinelware CTEM Platform`);
-
   res.setHeader("Content-Type", "text/plain");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}.txt"`);
   res.send(lines.join("\n"));

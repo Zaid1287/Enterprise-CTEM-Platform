@@ -900,8 +900,12 @@ export default function ThreatIntelActorsPage() {
   const actors = rawActors.map(a => overrides[a.id] ? { ...a, ...overrides[a.id] } : a);
   const total = data?.total ?? 0;
 
+  const activeCount = actors.filter(a => a.isActive).length;
+  const nationStateCount = actors.filter(a => a.motivation === "espionage" || a.motivation === "state-sponsored").length;
+  const highRiskCount = actors.filter(a => Math.round(Number(a.riskScore ?? 0)) >= 70).length;
+
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-6 space-y-5">
       {showAdd && <AddActorModal onClose={() => setShowAdd(false)} onDone={afterAdd} />}
       {editActor && (
         <EditActorModal
@@ -930,19 +934,23 @@ export default function ThreatIntelActorsPage() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Users className="w-5 h-5 text-purple-400" />
-          <div>
-            <h1 className="text-xl font-bold">Threat Actors</h1>
-            <p className="text-xs text-muted-foreground">{total.toLocaleString()} known threat actors</p>
+      {/* ── Page Header ── */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <div className="p-1.5 rounded-lg bg-purple-500/15 border border-purple-500/25">
+              <Users className="w-4 h-4 text-purple-400" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight">Threat Actors</h1>
           </div>
+          <p className="text-sm text-muted-foreground">
+            {total.toLocaleString()} adversaries tracked across MITRE ATT&CK, FS-ISAC, and open-source intelligence feeds
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 pt-0.5">
           {isAdmin && (
             <Button size="sm" onClick={() => setShowAdd(true)}>
-              <Plus className="w-3.5 h-3.5 mr-1" />Add Actor
+              <Plus className="w-3.5 h-3.5 mr-1.5" />Add Actor
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={() => refetch()}>
@@ -951,92 +959,176 @@ export default function ThreatIntelActorsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2">
-        <div className="relative w-60">
+      {/* ── Stat Cards ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-border bg-card px-4 py-3">
+          <p className="text-2xl font-bold tabular-nums text-foreground">{total.toLocaleString()}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Total Actors</p>
+        </div>
+        <div className="rounded-xl border border-green-500/25 bg-green-500/5 px-4 py-3">
+          <p className="text-2xl font-bold tabular-nums text-green-400">{activeCount}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Active (this page)</p>
+        </div>
+        <div className="rounded-xl border border-red-500/25 bg-red-500/5 px-4 py-3">
+          <p className="text-2xl font-bold tabular-nums text-red-400">{nationStateCount}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Nation-State</p>
+        </div>
+        <div className="rounded-xl border border-orange-500/25 bg-orange-500/5 px-4 py-3">
+          <p className="text-2xl font-bold tabular-nums text-orange-400">{highRiskCount}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">High Risk ≥ 70</p>
+        </div>
+      </div>
+
+      {/* ── Filter Bar ── */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input placeholder="Search actors…" value={q}
             onChange={e => { setQ(e.target.value); setPage(0); }}
-            className="h-8 pl-8 text-xs" />
+            className="h-8 pl-8 text-xs w-56" />
         </div>
         <Select value={motivation || "all"} onValueChange={v => { setMotivation(v === "all" ? "" : v); setPage(0); }}>
-          <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="Motivation" /></SelectTrigger>
+          <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="All motivations" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All motivations</SelectItem>
             {MOTIVATIONS.map(m => <SelectItem key={m} value={m} className="capitalize">{m}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Input placeholder="Filter by country…" value={country}
+        <Input placeholder="Country…" value={country}
           onChange={e => { setCountry(e.target.value); setPage(0); }}
-          className="h-8 w-40 text-xs" />
+          className="h-8 w-36 text-xs" />
         {(country || motivation || q) && (
           <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground"
             onClick={() => { setQ(""); setCountry(""); setMotivation(""); setPage(0); }}>
             <X className="w-3.5 h-3.5 mr-1" />Clear
           </Button>
         )}
+        {total > 0 && (
+          <span className="ml-auto text-xs text-muted-foreground">
+            {page * L + 1}–{Math.min((page + 1) * L, total)} of {total.toLocaleString()}
+          </span>
+        )}
       </div>
 
-      {/* Actor Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {isLoading
-          ? Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-xl" />)
-          : actors.map((a: any) => {
-              const score = Math.round(Number(a.riskScore ?? 0));
-              const scoreColor = score >= 70 ? "text-red-400" : score >= 40 ? "text-orange-400" : "text-yellow-400";
-              return (
-                <div key={a.id} className="bg-card border border-border rounded-xl p-4 hover:border-primary/40 transition-all group space-y-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1 cursor-pointer" onClick={() => navigate(`/threat-intel/actors/${a.id}`)}>
-                      <p className="font-semibold text-sm group-hover:text-primary transition-colors truncate">{a.name}</p>
-                      {((a.aliases as string[] | undefined) ?? []).length > 0 && (
-                        <p className="text-[10px] text-muted-foreground truncate">
-                          aka {(a.aliases as string[]).slice(0, 2).join(", ")}
-                        </p>
-                      )}
-                    </div>
-                    <div className={cn("text-lg font-bold tabular-nums shrink-0 leading-none mt-0.5", scoreColor)}>{score}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 cursor-pointer" onClick={() => navigate(`/threat-intel/actors/${a.id}`)}>
-                    {a.country && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted border border-border text-muted-foreground">{a.country}</span>}
-                    {a.motivation && <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium capitalize", MOT_COLOR[a.motivation] ?? "text-muted-foreground bg-muted border-border")}>{a.motivation}</span>}
-                    {a.sophistication && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted border border-border text-muted-foreground capitalize">{a.sophistication}</span>}
-                    {a.isActive && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400">Active</span>}
-                  </div>
-                  {((a.targetIndustries as string[] | undefined) ?? []).length > 0 && (
-                    <p className="text-[10px] text-muted-foreground truncate cursor-pointer" onClick={() => navigate(`/threat-intel/actors/${a.id}`)}>
-                      Targets: {(a.targetIndustries as string[]).slice(0, 3).join(", ")}
-                      {(a.targetIndustries as string[]).length > 3 && ` +${(a.targetIndustries as string[]).length - 3}`}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-1 pt-2 mt-1 border-t border-border/50">
-                    <button onClick={() => navigate(`/threat-intel/actors/${a.id}`)}
-                      className="flex-1 flex flex-col items-center py-1 text-[10px] text-muted-foreground hover:text-primary hover:bg-muted/40 rounded transition-colors gap-0.5">
-                      <Eye className="w-3.5 h-3.5" />View
-                    </button>
-                    {isAdmin && (
-                      <>
-                        <div className="w-px h-6 bg-border/50" />
-                        <button onClick={e => { e.stopPropagation(); setEditActor(a); }}
-                          className="flex-1 flex flex-col items-center py-1 text-[10px] text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 rounded transition-colors gap-0.5">
-                          <Pencil className="w-3.5 h-3.5" />Edit
-                        </button>
-                        <div className="w-px h-6 bg-border/50" />
-                        <button onClick={e => { e.stopPropagation(); setConfirmDelete({ id: a.id, name: a.name }); }}
-                          className="flex-1 flex flex-col items-center py-1 text-[10px] text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors gap-0.5">
-                          <Trash2 className="w-3.5 h-3.5" />Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+      {/* ── Data Table ── */}
+      <div className="rounded-xl border border-border overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border bg-muted/40">
+                <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">Actor</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wide text-[10px] hidden sm:table-cell">Country</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">Motivation</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wide text-[10px] hidden lg:table-cell">Sophistication</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wide text-[10px] hidden xl:table-cell">Primary Targets</th>
+                <th className="px-4 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">Risk</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wide text-[10px] hidden md:table-cell">Status</th>
+                <th className="px-4 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {isLoading
+                ? Array.from({ length: 12 }).map((_, i) => (
+                    <tr key={i}>
+                      <td colSpan={8} className="px-4 py-3">
+                        <div className="h-4 bg-muted/60 rounded animate-pulse" style={{ width: `${60 + (i % 3) * 15}%` }} />
+                      </td>
+                    </tr>
+                  ))
+                : actors.map((a: any) => {
+                    const score = Math.round(Number(a.riskScore ?? 0));
+                    const scoreColor = score >= 70 ? "text-red-400 bg-red-500/10" : score >= 40 ? "text-orange-400 bg-orange-500/10" : score > 0 ? "text-yellow-400 bg-yellow-500/10" : "text-muted-foreground/40 bg-transparent";
+                    return (
+                      <tr key={a.id}
+                        className="hover:bg-muted/20 transition-colors cursor-pointer group"
+                        onClick={() => navigate(`/threat-intel/actors/${a.id}`)}>
+                        <td className="px-4 py-3">
+                          <p className="font-semibold text-foreground group-hover:text-primary transition-colors leading-none">{a.name}</p>
+                          {((a.aliases as string[] | undefined) ?? []).length > 0 && (
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5 truncate max-w-[200px]">
+                              aka {(a.aliases as string[]).slice(0, 2).join(", ")}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 hidden sm:table-cell">
+                          <span className={a.country ? "text-muted-foreground" : "text-muted-foreground/25"}>
+                            {a.country ?? "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {a.motivation
+                            ? <span className={cn("px-1.5 py-0.5 rounded border font-medium capitalize text-[10px]", MOT_COLOR[a.motivation] ?? "text-muted-foreground bg-muted border-border")}>{a.motivation}</span>
+                            : <span className="text-muted-foreground/25">—</span>
+                          }
+                        </td>
+                        <td className="px-4 py-3 hidden lg:table-cell">
+                          <span className={a.sophistication ? "text-muted-foreground capitalize" : "text-muted-foreground/25"}>
+                            {a.sophistication ?? "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 hidden xl:table-cell max-w-[180px]">
+                          {((a.targetIndustries as string[] | undefined) ?? []).length > 0
+                            ? <span className="text-muted-foreground truncate block">
+                                {(a.targetIndustries as string[]).slice(0, 2).join(", ")}
+                                {(a.targetIndustries as string[]).length > 2 && <span className="text-muted-foreground/40"> +{(a.targetIndustries as string[]).length - 2}</span>}
+                              </span>
+                            : <span className="text-muted-foreground/25">—</span>
+                          }
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {score > 0
+                            ? <span className={cn("text-sm font-bold tabular-nums px-2 py-0.5 rounded-md", scoreColor)}>{score}</span>
+                            : <span className="text-muted-foreground/25">—</span>
+                          }
+                        </td>
+                        <td className="px-4 py-3 text-center hidden md:table-cell">
+                          {a.isActive
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400 font-medium">Active</span>
+                            : <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted border border-border text-muted-foreground/50">Inactive</span>
+                          }
+                        </td>
+                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-0.5">
+                            <button onClick={() => navigate(`/threat-intel/actors/${a.id}`)}
+                              title="View"
+                              className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors">
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            {isAdmin && (
+                              <>
+                                <button onClick={() => setEditActor(a)}
+                                  title="Edit"
+                                  className="p-1.5 rounded-md text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => setConfirmDelete({ id: a.id, name: a.name })}
+                                  title="Delete"
+                                  className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {!isLoading && actors.length === 0 && (
-        <div className="text-center py-12 text-sm text-muted-foreground">
-          No threat actors found. Run a MITRE ATT&CK feed refresh or adjust filters.
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20">
+            <Users className="w-8 h-8 text-purple-400" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">No threat actors found</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+              {q || country || motivation ? "Try adjusting your filters." : "Run a MITRE ATT&CK feed refresh to populate threat actor data."}
+            </p>
+          </div>
         </div>
       )}
 

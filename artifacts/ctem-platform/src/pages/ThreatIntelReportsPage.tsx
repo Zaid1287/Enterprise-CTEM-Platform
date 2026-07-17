@@ -152,10 +152,24 @@ function ReportViewer({ reportId, onClose }: { reportId: number; onClose: () => 
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {report?.status === "ready" && (
-              <a href={`${BASE}/api/threat-intel/reports/${reportId}/download?format=json`}
-                download className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-                <Download className="w-3.5 h-3.5" />JSON
-              </a>
+              <div className="flex items-center gap-2">
+                <a href={`${BASE}/api/threat-intel/reports/${reportId}/download?format=json`}
+                  download
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+                  <Download className="w-3 h-3" />JSON
+                </a>
+                <a href={`${BASE}/api/threat-intel/reports/${reportId}/download?format=csv`}
+                  download
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+                  <Download className="w-3 h-3" />CSV
+                </a>
+                <a href={`${BASE}/api/threat-intel/reports/${reportId}/download?format=pdf`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-primary/40 text-primary hover:bg-primary/10 transition-colors">
+                  <Download className="w-3 h-3" />PDF
+                </a>
+              </div>
             )}
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground ml-2">
               <X className="w-4 h-4" />

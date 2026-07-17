@@ -290,27 +290,31 @@ export default function ThreatIntelDarkWebPage() {
   return (
     <div className="p-6 space-y-4">
 
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Eye className="w-5 h-5 text-purple-400" />
-          <div>
-            <h1 className="text-xl font-bold">Dark Web Monitoring</h1>
-            <div className="flex items-center gap-3 mt-0.5">
-              <p className="text-xs text-muted-foreground">{total.toLocaleString()} findings across {allAssets.length} monitored assets</p>
-              <LastScanBadge lastRun={lastRun} />
+      {/* ── Page Header ── */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <div className="p-1.5 rounded-lg bg-purple-500/15 border border-purple-500/25">
+              <Eye className="w-4 h-4 text-purple-400" />
             </div>
+            <h1 className="text-xl font-bold tracking-tight">Dark Web Monitoring</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-sm text-muted-foreground">
+              {total.toLocaleString()} findings across {allAssets.length} monitored assets
+            </p>
+            <LastScanBadge lastRun={lastRun} />
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 pt-0.5">
           {isAdmin && (
             <Button size="sm"
               onClick={() => scanMutation.mutate()}
-              disabled={scanning || scanMutation.isPending}>
+              disabled={scanning || scanMutation.isPending}
+              className={scanning || scanMutation.isPending ? "" : "bg-purple-600 hover:bg-purple-700 text-white border-purple-600"}>
               {scanning || scanMutation.isPending
-                ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                : <Radio className="w-3.5 h-3.5 mr-1.5" />}
-              Run Scan
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />Scanning…</>
+                : <><Radio className="w-3.5 h-3.5 mr-1.5" />Run Scan</>}
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={() => refetch()}>
@@ -319,21 +323,35 @@ export default function ThreatIntelDarkWebPage() {
         </div>
       </div>
 
-      {/* ── Scanning banner ── */}
+      {/* ── Scanning Banner ── */}
       {scanning && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300">
-          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-          <span>Scanning all assets against HIBP, URLScan, ThreatFox, URLHaus, and crt.sh for dark web exposures and data breaches…</span>
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-xs text-purple-300">
+          <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse shrink-0" />
+          <span className="font-medium">Live scan in progress</span>
+          <span className="text-purple-400/60">·</span>
+          <span className="text-purple-400/80">Checking HIBP, URLScan, ThreatFox, URLHaus, and crt.sh for exposures and data breaches…</span>
         </div>
       )}
 
-      {/* ── Stats row ── */}
+      {/* ── Stats ── */}
       {total > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label="Total Findings" value={total} color="border-border bg-card" />
-          <StatCard label="Critical" value={critCount} color="border-red-500/20 bg-red-500/5" />
-          <StatCard label="High" value={highCount} color="border-orange-500/20 bg-orange-500/5" />
-          <StatCard label="Verified" value={verCount} color="border-green-500/20 bg-green-500/5" />
+          <div className="rounded-xl border border-border bg-card px-4 py-3">
+            <p className="text-2xl font-bold tabular-nums text-foreground">{total.toLocaleString()}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Total Findings</p>
+          </div>
+          <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
+            <p className="text-2xl font-bold tabular-nums text-red-400">{critCount}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Critical</p>
+          </div>
+          <div className="rounded-xl border border-orange-500/25 bg-orange-500/5 px-4 py-3">
+            <p className="text-2xl font-bold tabular-nums text-orange-400">{highCount}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">High</p>
+          </div>
+          <div className="rounded-xl border border-green-500/25 bg-green-500/5 px-4 py-3">
+            <p className="text-2xl font-bold tabular-nums text-green-400">{verCount}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Verified</p>
+          </div>
         </div>
       )}
 

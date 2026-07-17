@@ -580,19 +580,23 @@ export default function ThreatIntelCampaignsPage() {
         </div>
       )}
 
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Layers className="w-5 h-5 text-blue-400" />
-          <div>
-            <h1 className="text-xl font-bold">Campaigns</h1>
-            <p className="text-xs text-muted-foreground">{total.toLocaleString()} tracked campaigns</p>
+      {/* ── Page Header ── */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <div className="p-1.5 rounded-lg bg-blue-500/15 border border-blue-500/25">
+              <Layers className="w-4 h-4 text-blue-400" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight">Campaigns</h1>
           </div>
+          <p className="text-sm text-muted-foreground">
+            {total.toLocaleString()} adversary campaigns tracked from MITRE ATT&CK, CISA advisories, and threat intelligence feeds
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 pt-0.5">
           {isAdmin && (
             <Button size="sm" onClick={() => setShowAdd(true)}>
-              <Plus className="w-3.5 h-3.5 mr-1" />Add Campaign
+              <Plus className="w-3.5 h-3.5 mr-1.5" />Add Campaign
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={() => refetch()}>
@@ -601,15 +605,42 @@ export default function ThreatIntelCampaignsPage() {
         </div>
       </div>
 
-      {/* ── Filters ── */}
+      {/* ── Stat Cards ── */}
+      {(() => {
+        const activeC = campaigns.filter(c => c.status === "active").length;
+        const dormantC = campaigns.filter(c => c.status === "dormant").length;
+        const endedC = campaigns.filter(c => c.status === "ended" || c.status === "historical").length;
+        return (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-border bg-card px-4 py-3">
+              <p className="text-2xl font-bold tabular-nums text-foreground">{total.toLocaleString()}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Total Campaigns</p>
+            </div>
+            <div className="rounded-xl border border-green-500/25 bg-green-500/5 px-4 py-3">
+              <p className="text-2xl font-bold tabular-nums text-green-400">{activeC}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Active</p>
+            </div>
+            <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/5 px-4 py-3">
+              <p className="text-2xl font-bold tabular-nums text-yellow-400">{dormantC}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Dormant</p>
+            </div>
+            <div className="rounded-xl border border-border bg-card px-4 py-3">
+              <p className="text-2xl font-bold tabular-nums text-muted-foreground">{endedC}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Historical</p>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Filter Bar ── */}
       <div className="flex flex-wrap gap-2">
-        <div className="relative w-60">
+        <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             placeholder="Search campaigns…"
             value={q}
             onChange={e => { setQ(e.target.value); setPage(0); }}
-            className="h-8 pl-8 text-xs"
+            className="h-8 pl-8 text-xs w-60"
           />
         </div>
         <Select value={status || "all"} onValueChange={v => { setStatus(v === "all" ? "" : v); setPage(0); }}>
@@ -627,88 +658,91 @@ export default function ThreatIntelCampaignsPage() {
         )}
       </div>
 
-      {/* ── Campaign Grid ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {/* ── Campaign Cards ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {isLoading
-          ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-xl" />)
+          ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-52 rounded-xl" />)
           : campaigns.map((c: any) => {
-              const statusMeta = STATUS_META[c.status] ?? STATUS_META.ended;
+              const sm = STATUS_META[c.status] ?? STATUS_META.ended;
+              const borderAccent = c.status === "active" ? "border-l-green-500/60" : c.status === "dormant" ? "border-l-yellow-500/50" : "border-l-border";
               return (
-                <div
-                  key={c.id}
-                  className="bg-card border border-border rounded-xl p-4 space-y-2.5 hover:border-blue-500/30 transition-colors group"
-                >
-                  {/* ── Row 1: name + status badge ── */}
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-semibold text-sm leading-tight group-hover:text-primary transition-colors">{c.name}</p>
-                    <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-semibold capitalize shrink-0", statusMeta.badge)}>
-                      {statusMeta.label}
-                    </span>
-                  </div>
-
-                  {/* ── Row 2: Actor attribution ── */}
-                  {c.actorName && (
-                    <p className="text-xs text-muted-foreground">
-                      <Flag className="w-3 h-3 inline mr-1 text-purple-400" />
-                      <span className="text-foreground font-medium">{c.actorName}</span>
-                    </p>
-                  )}
-
-                  {/* ── Row 3: Description snippet ── */}
-                  {c.description && (
-                    <p className="text-xs text-muted-foreground line-clamp-2">{c.description}</p>
-                  )}
-
-                  {/* ── Row 4: Target industry tags ── */}
-                  {((c.targetIndustries as string[] | undefined) ?? []).length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {(c.targetIndustries as string[]).slice(0, 3).map((ind: string) => (
-                        <span key={ind} className="text-[10px] px-1.5 py-0.5 rounded bg-muted border border-border text-muted-foreground">{ind}</span>
-                      ))}
-                      {(c.targetIndustries as string[]).length > 3 && (
-                        <span className="text-[10px] text-muted-foreground/60">+{(c.targetIndustries as string[]).length - 3}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Row 5: Timeline + MITRE ID ── */}
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground/60">
-                    {(c.startDate || c.endDate) ? (
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {c.startDate ?? "?"} {c.endDate ? `→ ${c.endDate}` : "→ present"}
+                <div key={c.id}
+                  className={cn("bg-card border border-border border-l-2 rounded-xl overflow-hidden hover:border-blue-500/30 transition-all duration-200 group flex flex-col", borderAccent)}>
+                  {/* Card Header */}
+                  <div className="px-4 pt-4 pb-3 flex-1 space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-sm leading-snug group-hover:text-primary transition-colors">{c.name}</p>
+                        {((c.aliases as string[] | undefined) ?? []).length > 0 && (
+                          <p className="text-[10px] text-muted-foreground/60 mt-0.5 truncate">aka {(c.aliases as string[]).join(", ")}</p>
+                        )}
+                      </div>
+                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-semibold capitalize shrink-0", sm.badge)}>
+                        {sm.label}
                       </span>
-                    ) : <span />}
-                    {c.mitreId && (
-                      <span className="font-mono text-blue-400/70">{c.mitreId}</span>
+                    </div>
+
+                    {/* Actor attribution */}
+                    {c.actorName && (
+                      <div className="flex items-center gap-1.5">
+                        <Flag className="w-3 h-3 text-purple-400 shrink-0" />
+                        <span className="text-xs font-medium text-purple-300">{c.actorName}</span>
+                        {c.mitreId && <span className="text-[10px] font-mono text-blue-400/60 ml-auto">{c.mitreId}</span>}
+                      </div>
+                    )}
+                    {!c.actorName && c.mitreId && (
+                      <span className="text-[10px] font-mono text-blue-400/60">{c.mitreId}</span>
+                    )}
+
+                    {/* Description */}
+                    {c.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{c.description}</p>
+                    )}
+
+                    {/* Objectives */}
+                    {c.objectives && !c.description && (
+                      <p className="text-xs text-muted-foreground/70 line-clamp-2 italic">"{c.objectives}"</p>
+                    )}
+
+                    {/* Target industries */}
+                    {((c.targetIndustries as string[] | undefined) ?? []).length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {(c.targetIndustries as string[]).slice(0, 3).map((ind: string) => (
+                          <span key={ind} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/8 border border-blue-500/15 text-blue-400/80">{ind}</span>
+                        ))}
+                        {(c.targetIndustries as string[]).length > 3 && (
+                          <span className="text-[10px] text-muted-foreground/40 self-center">+{(c.targetIndustries as string[]).length - 3}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Timeline */}
+                    {(c.startDate || c.endDate) && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/50">
+                        <Calendar className="w-3 h-3" />
+                        <span>{c.startDate ?? "?"}</span>
+                        <span className="text-muted-foreground/25">→</span>
+                        <span>{c.endDate ?? "present"}</span>
+                      </div>
                     )}
                   </div>
 
-                  {/* ── Row 6: Action buttons ── */}
-                  <div className="flex items-center gap-1 pt-2 mt-0.5 border-t border-border/50">
-                    <button
-                      onClick={() => setViewCampaign(c)}
-                      className="flex-1 flex flex-col items-center py-1 text-[10px] text-muted-foreground hover:text-primary hover:bg-muted/40 rounded transition-colors gap-0.5"
-                      title="View details"
-                    >
-                      <Eye className="w-3.5 h-3.5" />View
+                  {/* Card Footer */}
+                  <div className="flex items-center gap-1 px-2 py-1.5 border-t border-border/50">
+                    <button onClick={() => setViewCampaign(c)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] text-muted-foreground hover:text-primary hover:bg-primary/8 rounded-md transition-colors">
+                      <Eye className="w-3.5 h-3.5" />View Details
                     </button>
                     {isAdmin && (
                       <>
-                        <div className="w-px h-6 bg-border/50" />
-                        <button
-                          onClick={() => setEditCampaign(c)}
-                          className="flex-1 flex flex-col items-center py-1 text-[10px] text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 rounded transition-colors gap-0.5"
-                          title="Edit campaign"
-                        >
+                        <div className="w-px h-5 bg-border/60" />
+                        <button onClick={() => setEditCampaign(c)}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] text-muted-foreground hover:text-blue-400 hover:bg-blue-500/8 rounded-md transition-colors">
                           <Pencil className="w-3.5 h-3.5" />Edit
                         </button>
-                        <div className="w-px h-6 bg-border/50" />
-                        <button
-                          onClick={() => setConfirmDelete({ id: c.id, name: c.name })}
-                          className="flex-1 flex flex-col items-center py-1 text-[10px] text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors gap-0.5"
-                          title="Delete campaign"
-                        >
+                        <div className="w-px h-5 bg-border/60" />
+                        <button onClick={() => setConfirmDelete({ id: c.id, name: c.name })}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] text-muted-foreground hover:text-destructive hover:bg-destructive/8 rounded-md transition-colors">
                           <Trash2 className="w-3.5 h-3.5" />Delete
                         </button>
                       </>
@@ -721,8 +755,16 @@ export default function ThreatIntelCampaignsPage() {
       </div>
 
       {!isLoading && campaigns.length === 0 && (
-        <div className="text-center py-12 text-sm text-muted-foreground">
-          No campaigns found. Run a MITRE ATT&CK feed refresh or adjust filters.
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/20">
+            <Layers className="w-8 h-8 text-blue-400" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">No campaigns found</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+              {q || status ? "Try adjusting your filters." : "Run a MITRE ATT&CK feed refresh to populate campaign data."}
+            </p>
+          </div>
         </div>
       )}
 
