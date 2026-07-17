@@ -58,7 +58,7 @@ export default function ThreatIntelActorDetailPage() {
   const malware: any[]   = data.malware    ?? [];
   const iocs: any[]      = data.iocs       ?? [];
 
-  const tactics = [...new Set(ttps.map((t: any) => t.tactic).filter(Boolean))];
+  const tactics = [...new Set(ttps.map((t: any) => t.tacticName).filter(Boolean))];
 
   return (
     <div className="p-6 space-y-5">
@@ -228,10 +228,19 @@ export default function ThreatIntelActorDetailPage() {
                 <tbody>
                   {ttps.map((t: any) => (
                     <tr key={t.id} className="border-b border-border/30 hover:bg-muted/20">
-                      <td className="p-3 font-mono text-blue-400 text-[10px]">{t.mitreId}</td>
-                      <td className="p-3 font-medium">{t.name}</td>
-                      <td className="p-3 text-muted-foreground capitalize hidden md:table-cell">{t.tactic}</td>
-                      <td className="p-3 text-muted-foreground/60 text-[10px] hidden lg:table-cell">{(t.platforms as string[] | undefined)?.join(", ") ?? "—"}</td>
+                      <td className="p-3 font-mono text-blue-400 text-[10px] whitespace-nowrap">
+                        {t.techniqueId ?? t.subtechniqueId ?? t.tacticId ?? "—"}
+                      </td>
+                      <td className="p-3 font-medium">
+                        {t.techniqueName ?? t.subtechniqueName ?? "—"}
+                        {t.subtechniqueName && t.techniqueName && t.subtechniqueName !== t.techniqueName && (
+                          <span className="ml-1 text-[10px] text-muted-foreground">› {t.subtechniqueName}</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-muted-foreground capitalize hidden md:table-cell">{t.tacticName ?? "—"}</td>
+                      <td className="p-3 text-muted-foreground/60 text-[10px] hidden lg:table-cell">
+                        {Array.isArray(t.platforms) ? t.platforms.join(", ") : (t.platforms ?? "—")}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
