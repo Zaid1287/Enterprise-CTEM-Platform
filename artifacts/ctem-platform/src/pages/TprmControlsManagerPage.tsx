@@ -162,7 +162,7 @@ export default function TprmControlsManagerPage() {
       category:     ctrl.category     ?? "",
       status:       ctrl.status       ?? "pending_review",
       evidence:     ctrl.evidence     ?? "",
-      assignedTo:   ctrl.assignedTo   ?? "",
+      assignedTo:   ctrl.assignedTo   ?? "__none__",
       notes:        ctrl.notes        ?? "",
       isActive:     ctrl.isActive     !== false,
     });
@@ -182,14 +182,33 @@ export default function TprmControlsManagerPage() {
             category:     editForm.category     || undefined,
             status:       editForm.status       || undefined,
             evidence:     editForm.evidence     || undefined,
-            assignedTo:   editForm.assignedTo   || undefined,
+            assignedTo:   editForm.assignedTo === "__none__" ? null : (editForm.assignedTo || undefined),
             notes:        editForm.notes        || undefined,
             isActive:     editForm.isActive,
           }),
         }
       );
       setControls(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
-      toast({ title: "Control updated" });
+
+      // Propagate controlId / controlTitle / category to ALL vendors with the same control
+      const idChanged    = editForm.controlId    !== editCtrl.controlId;
+      const titleChanged = editForm.controlTitle !== editCtrl.controlTitle;
+      const catChanged   = editForm.category     !== (editCtrl.category ?? "");
+      if (idChanged || titleChanged || catChanged) {
+        await apiFetch("/api/tprm/compliance-controls/rename-all", {
+          method: "PATCH",
+          body: JSON.stringify({
+            framework,
+            oldControlId: editCtrl.controlId,
+            controlId:    editForm.controlId    || undefined,
+            controlTitle: editForm.controlTitle || undefined,
+            category:     editForm.category     || undefined,
+          }),
+        });
+        toast({ title: "Control updated", description: "ID / title / category applied to all vendors." });
+      } else {
+        toast({ title: "Control updated" });
+      }
       setEditCtrl(null);
     } catch (err: any) {
       toast({ title: "Save failed", description: err?.message, variant: "destructive" });
@@ -215,7 +234,7 @@ export default function TprmControlsManagerPage() {
             category:     addForm.category.trim() || null,
             status:       addForm.status,
             evidence:     addForm.evidence  || null,
-            assignedTo:   addForm.assignedTo || null,
+            assignedTo:   addForm.assignedTo === "__none__" ? null : (addForm.assignedTo || null),
             notes:        addForm.notes     || null,
           }),
         }
@@ -543,7 +562,7 @@ export default function TprmControlsManagerPage() {
                 <Select value={editForm.assignedTo} onValueChange={v => setEditForm(f => ({ ...f, assignedTo: v }))}>
                   <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select user…" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— None —</SelectItem>
+                    <SelectItem value="__none__">— None —</SelectItem>
                     {users.map((u: any) => (
                       <SelectItem key={u.id} value={u.email}>
                         {u.name ?? u.email} {u.role === "account_manager" ? "(AM)" : u.role === "admin" ? "(Admin)" : ""}
@@ -565,6 +584,9 @@ export default function TprmControlsManagerPage() {
                 </div>
                 <Switch checked={editForm.isActive} onCheckedChange={v => setEditForm(f => ({ ...f, isActive: v }))} />
               </div>
+              <p className="text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded p-2">
+                Control ID, title, and category changes apply to this control across <strong>all vendors</strong>.
+              </p>
             </div>
           )}
           <DialogFooter>
@@ -623,7 +645,7 @@ export default function TprmControlsManagerPage() {
               <Select value={addForm.assignedTo} onValueChange={v => setAddForm(f => ({ ...f, assignedTo: v }))}>
                 <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select user…" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">— None —</SelectItem>
+                  <SelectItem value="__none__">— None —</SelectItem>
                   {users.map((u: any) => (
                     <SelectItem key={u.id} value={u.email}>
                       {u.name ?? u.email} {u.role === "account_manager" ? "(AM)" : u.role === "admin" ? "(Admin)" : ""}

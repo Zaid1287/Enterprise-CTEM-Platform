@@ -200,6 +200,7 @@ export default function TprmCompliancePage() {
   };
 
   useEffect(() => { loadMatrix(); }, []);
+  useEffect(() => { if (mainTab === "matrix") loadMatrix(); }, [mainTab]);
   useEffect(() => { if (mainTab === "controls") loadControls(); }, [mainTab]);
   useEffect(() => { if (mainTab === "documents") loadAllDocs(); }, [mainTab]);
 
@@ -239,7 +240,7 @@ export default function TprmCompliancePage() {
   // Quick-update compliance control (Status, Evidence, Assigned To, Notes only)
   const openEditCtrl = (ctrl: any) => {
     setEditingCtrl(ctrl);
-    setCtrlForm({ status: ctrl.status ?? "pending_review", evidence: ctrl.evidence ?? "", notes: ctrl.notes ?? "", assignedTo: ctrl.assignedTo ?? "" });
+    setCtrlForm({ status: ctrl.status ?? "pending_review", evidence: ctrl.evidence ?? "", notes: ctrl.notes ?? "", assignedTo: ctrl.assignedTo ?? "__none__" });
   };
 
   const saveCtrl = async () => {
@@ -249,15 +250,16 @@ export default function TprmCompliancePage() {
       const updated = await apiFetch<any>(`/api/tprm/vendors/${editingCtrl.vendorId}/compliance-controls/${editingCtrl.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          status:     ctrlForm.status     || undefined,
-          evidence:   ctrlForm.evidence   || undefined,
-          notes:      ctrlForm.notes      || undefined,
-          assignedTo: ctrlForm.assignedTo || undefined,
+          status:     ctrlForm.status || undefined,
+          evidence:   ctrlForm.evidence || undefined,
+          notes:      ctrlForm.notes || undefined,
+          assignedTo: ctrlForm.assignedTo === "__none__" ? null : (ctrlForm.assignedTo || undefined),
         }),
       });
       toast({ title: "Control updated" });
       setEditingCtrl(null);
       setAllControls(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated, vendorId: c.vendorId, vendorName: c.vendorName } : c));
+      loadMatrix();
     } catch (err: any) {
       toast({ title: "Save failed", description: err?.message, variant: "destructive" });
     }
@@ -564,11 +566,6 @@ export default function TprmCompliancePage() {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Link href={`/tprm/compliance/controls?vendor=${vid}&framework=${controlsFramework}`} onClick={e => e.stopPropagation()}>
-                              <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-400 px-2">
-                                <Settings className="w-3 h-3 mr-1" />Manage
-                              </Button>
-                            </Link>
                             <Link href={`/tprm/vendors/${vid}`} onClick={e => e.stopPropagation()}>
                               <Button variant="ghost" size="sm" className="h-6 text-[10px] text-muted-foreground px-2">
                                 <ExternalLink className="w-3 h-3 mr-1" />Vendor
@@ -602,14 +599,6 @@ export default function TprmCompliancePage() {
                                   {ctrl.assignedTo && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Assigned:</span> {ctrl.assignedTo}</p>}
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  <button
-                                    title={isDisabled ? "Enable control" : "Disable control"}
-                                    disabled={togglingCtrl === ctrl.id}
-                                    onClick={() => toggleCtrlActive(ctrl)}
-                                    className={`text-[10px] px-2 py-1 rounded border transition-colors ${isDisabled ? "border-green-500/40 text-green-400 hover:bg-green-500/10" : "border-slate-500/40 text-slate-400 hover:bg-slate-500/10"}`}
-                                  >
-                                    {togglingCtrl === ctrl.id ? <Loader2 className="w-3 h-3 animate-spin inline" /> : isDisabled ? "Enable" : "Disable"}
-                                  </button>
                                   <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 text-blue-400 hover:text-blue-300" onClick={() => openEditCtrl(ctrl)}>
                                     <Edit2 className="w-3 h-3 mr-0.5" />Update
                                   </Button>
@@ -810,7 +799,7 @@ export default function TprmCompliancePage() {
                 <Select value={ctrlForm.assignedTo} onValueChange={v => setCtrlForm(f => ({ ...f, assignedTo: v }))}>
                   <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select account manager…" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— None —</SelectItem>
+                    <SelectItem value="__none__">— None —</SelectItem>
                     {users.map((u: any) => (
                       <SelectItem key={u.id} value={u.email}>
                         {u.name ?? u.email}

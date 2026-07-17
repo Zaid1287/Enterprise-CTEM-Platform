@@ -2587,6 +2587,29 @@ router.delete("/tprm/vendors/:id/compliance-controls/:cid", requireAuth, require
   res.json({ ok: true });
 });
 
+// Bulk-rename: update controlId / controlTitle / category across ALL vendors for a given framework+controlId
+router.patch("/tprm/compliance-controls/rename-all", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const { framework, oldControlId, controlId, controlTitle, category } = req.body;
+  if (!framework || !oldControlId) {
+    res.status(400).json({ error: "framework and oldControlId are required" }); return;
+  }
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (controlId)              updates.controlId    = controlId;
+  if (controlTitle)           updates.controlTitle = controlTitle;
+  if (category !== undefined) updates.category     = category || null;
+  if (Object.keys(updates).length === 1) {
+    res.json({ updated: 0, message: "Nothing to rename" }); return;
+  }
+  const result = await db.update(tprmVendorComplianceControlsTable).set(updates)
+    .where(and(
+      eq(tprmVendorComplianceControlsTable.framework, framework),
+      eq(tprmVendorComplianceControlsTable.controlId, oldControlId),
+      eq(tprmVendorComplianceControlsTable.tenantId, tenantId),
+    )).returning({ id: tprmVendorComplianceControlsTable.id });
+  res.json({ updated: result.length });
+});
+
 // ── Compliance Reminders ──────────────────────────────────────────────────────
 
 router.get("/tprm/vendors/:id/reminders", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
