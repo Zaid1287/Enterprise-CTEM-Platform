@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Eye, RefreshCw, Shield, AlertTriangle, Calendar, Search,
   Loader2, ExternalLink, X, Globe, Server, CheckCircle2,
-  Clock, Radio, Building2, ChevronRight,
+  Clock, Radio, Building2, ChevronLeft, ChevronRight,
+  Activity, Database, Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,29 +18,22 @@ import { useToast } from "@/hooks/use-toast";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 /* ── Severity styles ─────────────────────────────────────────────────────── */
-const SEV: Record<string, string> = {
-  critical: "text-red-400 bg-red-500/10 border-red-500/25",
-  high:     "text-orange-400 bg-orange-500/10 border-orange-500/25",
-  medium:   "text-yellow-400 bg-yellow-500/10 border-yellow-500/25",
-  low:      "text-green-400 bg-green-500/10 border-green-500/25",
-};
-const SEV_CARD: Record<string, string> = {
-  critical: "border-red-500/30 bg-red-500/5",
-  high:     "border-orange-500/30 bg-orange-500/5",
-  medium:   "border-yellow-500/20 bg-card",
-  low:      "border-border bg-card",
+const SEV: Record<string, { badge: string; row: string; bar: string; dot: string }> = {
+  critical: { badge: "text-red-400 bg-red-500/10 border-red-500/25",     row: "border-l-red-500",    bar: "bg-red-500",    dot: "bg-red-400" },
+  high:     { badge: "text-orange-400 bg-orange-500/10 border-orange-500/25", row: "border-l-orange-500", bar: "bg-orange-500", dot: "bg-orange-400" },
+  medium:   { badge: "text-yellow-400 bg-yellow-500/10 border-yellow-500/25", row: "border-l-yellow-500", bar: "bg-yellow-400", dot: "bg-yellow-400" },
+  low:      { badge: "text-green-400 bg-green-500/10 border-green-500/25",  row: "border-l-green-500",  bar: "bg-green-500",  dot: "bg-green-400" },
 };
 
-/* ── Source badge styles ─────────────────────────────────────────────────── */
-const SRC_STYLE: Record<string, string> = {
-  "HIBP":      "text-blue-400 bg-blue-500/10 border-blue-500/20",
-  "URLScan":   "text-purple-400 bg-purple-500/10 border-purple-500/20",
-  "ThreatFox": "text-red-400 bg-red-500/10 border-red-500/20",
-  "URLHaus":   "text-orange-400 bg-orange-500/10 border-orange-500/20",
-  "crt.sh":    "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
+/* ── Source styles ───────────────────────────────────────────────────────── */
+const SRC: Record<string, { badge: string; icon: string }> = {
+  "HIBP":      { badge: "text-blue-400 bg-blue-500/10 border-blue-500/20",       icon: "💧" },
+  "URLScan":   { badge: "text-purple-400 bg-purple-500/10 border-purple-500/20",  icon: "🔍" },
+  "ThreatFox": { badge: "text-red-400 bg-red-500/10 border-red-500/20",           icon: "🦊" },
+  "URLHaus":   { badge: "text-orange-400 bg-orange-500/10 border-orange-500/20",  icon: "🏠" },
+  "crt.sh":    { badge: "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",        icon: "🔒" },
 };
 
-/* ── Mention type label ──────────────────────────────────────────────────── */
 const MENTION_TYPE_LABEL: Record<string, string> = {
   data_breach:      "Data Breach",
   malware_ioc:      "Malware IOC",
@@ -52,144 +46,192 @@ const MENTION_TYPE_LABEL: Record<string, string> = {
 /* ── Mention card ────────────────────────────────────────────────────────── */
 function MentionCard({ m }: { m: any }) {
   const sev = m.severity ?? m.riskLevel ?? "medium";
+  const sevMeta = SEV[sev] ?? SEV.medium;
   const src = m.source ?? m.sourceType ?? "";
+  const srcMeta = SRC[src];
   const url = m.sourceUrl ?? m.url ?? "";
   const snippet = m.content ?? m.snippet ?? "";
-  const title = m.title ?? m.sourceType ?? src ?? "Unknown";
+  const title = m.title ?? m.sourceType ?? src ?? "Unknown Finding";
 
   return (
-    <div className={cn("border rounded-xl p-4 space-y-2.5 transition-colors", SEV_CARD[sev] ?? SEV_CARD.medium)}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-1.5 mb-1">
-            <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium shrink-0", SRC_STYLE[src] ?? "text-muted-foreground bg-muted border-border")}>
-              {src}
-            </span>
-            <span className="text-[10px] text-muted-foreground/60 bg-muted/40 border border-border/50 px-1.5 py-0.5 rounded">
+    <div className={cn(
+      "bg-card border border-l-4 rounded-xl overflow-hidden transition-colors hover:border-primary/20",
+      sevMeta.row,
+    )}>
+      <div className="p-4 space-y-3">
+        {/* Top row: badges + severity + date */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {srcMeta ? (
+              <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold shrink-0", srcMeta.badge)}>
+                {src}
+              </span>
+            ) : src ? (
+              <span className="text-[10px] px-2 py-0.5 rounded-full border bg-muted border-border text-muted-foreground font-medium">
+                {src}
+              </span>
+            ) : null}
+            <span className="text-[10px] text-muted-foreground/60 bg-muted/40 border border-border/50 px-1.5 py-0.5 rounded-full">
               {MENTION_TYPE_LABEL[m.mentionType] ?? m.mentionType ?? "Mention"}
             </span>
             {m.isVerified && (
-              <span className="text-[10px] text-green-400 flex items-center gap-0.5">
+              <span className="text-[10px] text-green-400 flex items-center gap-0.5 font-medium">
                 <CheckCircle2 className="w-2.5 h-2.5" />Verified
               </span>
             )}
           </div>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold capitalize", sevMeta.badge)}>
+              {sev}
+            </span>
+            {(m.detectedAt ?? m.createdAt) && (
+              <span className="text-[10px] text-muted-foreground/50 flex items-center gap-1">
+                <Calendar className="w-2.5 h-2.5" />
+                {new Date(m.detectedAt ?? m.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Title + domain */}
+        <div>
           <p className="font-semibold text-sm leading-snug">{title}</p>
           {m.assetDomain && (
-            <p className="text-[10px] font-mono text-muted-foreground/70 flex items-center gap-1">
+            <p className="text-[10px] font-mono text-muted-foreground/60 flex items-center gap-1 mt-0.5">
               <Globe className="w-2.5 h-2.5" />{m.assetDomain}
-              {m.tenantName && <span className="ml-1 text-muted-foreground/40">· {m.tenantName}</span>}
+              {m.tenantName && <span className="text-muted-foreground/40">· {m.tenantName}</span>}
             </p>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
-          <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-semibold capitalize", SEV[sev] ?? SEV.medium)}>
-            {sev}
-          </span>
-          {(m.detectedAt ?? m.createdAt) && (
-            <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
-              <Calendar className="w-2.5 h-2.5" />
-              {new Date(m.detectedAt ?? m.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-            </span>
-          )}
-        </div>
-      </div>
 
-      {snippet && (
-        <div className="bg-muted/30 border border-border/40 rounded-lg p-2.5">
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{snippet}</p>
-        </div>
-      )}
+        {/* Snippet */}
+        {snippet && (
+          <div className="bg-muted/30 border border-border/40 rounded-lg p-2.5">
+            <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{snippet}</p>
+          </div>
+        )}
 
-      {m.keywords?.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {(m.keywords as string[]).slice(0, 8).map((k: string) => (
-            <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-400">{k}</span>
-          ))}
-        </div>
-      )}
+        {/* Keywords */}
+        {m.keywords?.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {(m.keywords as string[]).slice(0, 6).map((k: string) => (
+              <span key={k} className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/8 border border-red-500/20 text-red-400 font-mono">{k}</span>
+            ))}
+            {m.keywords.length > 6 && <span className="text-[9px] text-muted-foreground/40 self-center">+{m.keywords.length - 6}</span>}
+          </div>
+        )}
 
-      {url && (
-        <a href={url} target="_blank" rel="noopener noreferrer"
-          className="text-[11px] text-primary hover:underline flex items-center gap-1">
-          View source <ExternalLink className="w-3 h-3" />
-        </a>
-      )}
-    </div>
-  );
-}
-
-/* ── Assets panel ────────────────────────────────────────────────────────── */
-function AssetsPanel({
-  assets,
-  selectedDomain,
-  onSelect,
-}: {
-  assets: any[];
-  selectedDomain: string;
-  onSelect: (d: string) => void;
-}) {
-  const sorted = [...assets].sort((a, b) => b.mentionCount - a.mentionCount);
-
-  return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden">
-      <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-        <Server className="w-3.5 h-3.5 text-primary" />
-        <span className="text-xs font-semibold">Monitored Assets</span>
-        <span className="text-[10px] text-muted-foreground ml-auto">{assets.length} total</span>
-      </div>
-      <div className="divide-y divide-border/50 max-h-96 overflow-y-auto">
-        <button
-          onClick={() => onSelect("")}
-          className={cn("w-full text-left px-4 py-2.5 flex items-center justify-between text-xs transition-colors",
-            !selectedDomain ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/30")}>
-          All assets
-          <span className="text-[10px] text-muted-foreground">{assets.reduce((s, a) => s + a.mentionCount, 0)} mentions</span>
-        </button>
-        {sorted.map(a => (
-          <button key={a.id}
-            onClick={() => onSelect(selectedDomain === a.domain ? "" : (a.domain ?? ""))}
-            className={cn("w-full text-left px-4 py-2.5 flex items-center justify-between gap-2 text-xs transition-colors",
-              selectedDomain === a.domain ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/30")}>
-            <div className="min-w-0 flex-1">
-              <p className="font-mono truncate text-[10px]">{a.domain ?? a.value ?? a.name}</p>
-              {a.tenantName && <p className="text-[9px] text-muted-foreground/50 mt-0.5">{a.tenantName} · {a.type}</p>}
-            </div>
-            {a.mentionCount > 0
-              ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-400 shrink-0">{a.mentionCount}</span>
-              : <span className="text-[10px] text-muted-foreground/30 shrink-0">0</span>}
-          </button>
-        ))}
-        {assets.length === 0 && (
-          <div className="px-4 py-4 text-center text-xs text-muted-foreground">No assets found</div>
+        {/* Source link */}
+        {url && (
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            className="text-[11px] text-primary hover:underline flex items-center gap-1 w-fit">
+            View source <ExternalLink className="w-3 h-3" />
+          </a>
         )}
       </div>
     </div>
   );
 }
 
-/* ── Summary stats ───────────────────────────────────────────────────────── */
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+/* ── Asset sidebar ───────────────────────────────────────────────────────── */
+function AssetsSidebar({
+  assets, selectedDomain, onSelect,
+}: {
+  assets: any[];
+  selectedDomain: string;
+  onSelect: (d: string) => void;
+}) {
+  const sorted = [...assets].sort((a, b) => b.mentionCount - a.mentionCount);
+  const totalMentions = assets.reduce((s, a) => s + a.mentionCount, 0);
+
   return (
-    <div className={cn("rounded-xl border p-3 text-center", color)}>
-      <p className="text-xl font-bold">{value.toLocaleString()}</p>
-      <p className="text-[10px] mt-0.5 text-muted-foreground capitalize">{label}</p>
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="px-3 py-2.5 border-b border-border bg-muted/30">
+        <div className="flex items-center gap-2">
+          <Server className="w-3.5 h-3.5 text-primary shrink-0" />
+          <span className="text-xs font-semibold">Monitored Assets</span>
+          <span className="text-[10px] text-muted-foreground ml-auto bg-muted px-1.5 py-0.5 rounded">{assets.length}</span>
+        </div>
+      </div>
+
+      {/* All assets row */}
+      <button
+        onClick={() => onSelect("")}
+        className={cn(
+          "w-full text-left px-3 py-2.5 flex items-center justify-between text-xs transition-colors border-b border-border/50",
+          !selectedDomain ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/30",
+        )}>
+        <span className="font-medium">All assets</span>
+        <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded", !selectedDomain ? "bg-primary/20 text-primary" : "text-muted-foreground")}>
+          {totalMentions}
+        </span>
+      </button>
+
+      {/* Per-asset rows */}
+      <div className="divide-y divide-border/40 max-h-[420px] overflow-y-auto">
+        {sorted.map(a => {
+          const isSelected = selectedDomain === a.domain;
+          return (
+            <button key={a.id}
+              onClick={() => onSelect(isSelected ? "" : (a.domain ?? ""))}
+              className={cn(
+                "w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 transition-colors",
+                isSelected ? "bg-primary/10" : "hover:bg-muted/20",
+              )}>
+              <div className="min-w-0 flex-1">
+                <p className={cn("font-mono text-[10px] truncate font-medium", isSelected ? "text-primary" : "text-foreground")}>
+                  {a.domain ?? a.value ?? a.name}
+                </p>
+                {a.tenantName && (
+                  <p className="text-[9px] text-muted-foreground/50 mt-0.5 truncate">{a.tenantName} · {a.type}</p>
+                )}
+              </div>
+              {a.mentionCount > 0 ? (
+                <span className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded shrink-0 font-semibold",
+                  a.mentionCount >= 5 ? "bg-red-500/15 border border-red-500/20 text-red-400" : "bg-muted text-muted-foreground",
+                )}>{a.mentionCount}</span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground/25 shrink-0">0</span>
+              )}
+            </button>
+          );
+        })}
+        {assets.length === 0 && (
+          <div className="px-3 py-6 text-center text-xs text-muted-foreground">No assets found</div>
+        )}
+      </div>
     </div>
   );
 }
 
-/* ── Last scan badge ─────────────────────────────────────────────────────── */
-function LastScanBadge({ lastRun }: { lastRun: any }) {
-  if (!lastRun) return <span className="text-[10px] text-muted-foreground/50 flex items-center gap-1"><Clock className="w-3 h-3" />Never scanned</span>;
-  if (lastRun.status === "running") return <span className="text-[10px] text-blue-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Scanning…</span>;
-  if (lastRun.completedAt) return (
-    <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
-      <Clock className="w-3 h-3" />
-      Last scanned: {new Date(lastRun.completedAt).toLocaleString()}
-      {lastRun.recordsAdded > 0 && <span className="text-green-400 ml-1">+{lastRun.recordsAdded} new</span>}
-    </span>
+/* ── Source breakdown pill ───────────────────────────────────────────────── */
+function SourceBreakdown({ counts, active, onToggle }: { counts: Record<string, number>; active: string; onToggle: (s: string) => void }) {
+  const entries = Object.entries(counts).sort(([, a], [, b]) => b - a);
+  if (entries.length < 2) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {entries.map(([s, cnt]) => {
+        const meta = SRC[s];
+        const isActive = active === s;
+        return (
+          <button key={s}
+            onClick={() => onToggle(s)}
+            className={cn(
+              "text-[10px] px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all font-medium",
+              isActive
+                ? (meta?.badge ?? "bg-muted border-border text-foreground")
+                : "bg-muted/30 border-border/50 text-muted-foreground hover:bg-muted/60 hover:border-border",
+            )}>
+            <span>{meta?.icon ?? "•"}</span>
+            <span>{s}</span>
+            <span className={cn("font-bold", isActive ? "" : "text-muted-foreground/70")}>{cnt}</span>
+          </button>
+        );
+      })}
+    </div>
   );
-  return null;
 }
 
 /* ── Main page ───────────────────────────────────────────────────────────── */
@@ -234,10 +276,13 @@ export default function ThreatIntelDarkWebPage() {
   const lastRun = data?.lastRun ?? null;
   const hasFilters = !!(q || severity || source || assetDomain);
 
-  // Derived stats from all data (not just current page)
-  const critCount = mentions.filter(m => (m.severity ?? m.riskLevel) === "critical").length;
-  const highCount  = mentions.filter(m => (m.severity ?? m.riskLevel) === "high").length;
-  const verCount   = mentions.filter(m => m.isVerified).length;
+  const critCount   = (data?.severityCounts?.critical ?? mentions.filter(m => (m.severity ?? m.riskLevel) === "critical").length);
+  const highCount   = (data?.severityCounts?.high ?? mentions.filter(m => (m.severity ?? m.riskLevel) === "high").length);
+  const verCount    = mentions.filter(m => m.isVerified).length;
+
+  /* Source breakdown from current page */
+  const sourceCounts: Record<string, number> = {};
+  for (const m of mentions) { const s = m.source ?? m.sourceType ?? "?"; sourceCounts[s] = (sourceCounts[s] ?? 0) + 1; }
 
   /* ── Scan mutation ── */
   const scanMutation = useMutation({
@@ -248,8 +293,7 @@ export default function ThreatIntelDarkWebPage() {
     }),
     onSuccess: () => {
       setScanning(true);
-      toast({ title: "Dark web scan started", description: "Scanning all assets across HIBP, URLScan, ThreatFox & crt.sh. Results appear within 1–2 minutes." });
-      // Poll until lastRun status changes from running to completed
+      toast({ title: "Dark web scan started", description: "Checking HIBP, URLScan, ThreatFox, URLHaus & crt.sh. Results appear within 1–2 minutes." });
       pollingRef.current = setInterval(async () => {
         try {
           const result = await qc.fetchQuery({
@@ -262,59 +306,59 @@ export default function ThreatIntelDarkWebPage() {
             setScanning(false);
             await refetch();
             await qc.invalidateQueries({ queryKey: ["ti-dark-web-assets"] });
-            toast({ title: "Dark web scan complete", description: `Scan finished. ${run.recordsAdded ?? 0} new findings detected.` });
+            toast({ title: "Dark web scan complete", description: `${run.recordsAdded ?? 0} new findings detected.` });
           }
         } catch {}
       }, 5_000);
     },
-    onError: () => {
-      setScanning(false);
-      toast({ title: "Scan failed", variant: "destructive" });
-    },
+    onError: () => { setScanning(false); toast({ title: "Scan failed", variant: "destructive" }); },
   });
 
-  // Cleanup polling
   useEffect(() => () => { if (pollingRef.current) clearInterval(pollingRef.current); }, []);
-
-  // Auto-stop polling after 3min
   useEffect(() => {
     if (!scanning) return;
     const t = setTimeout(() => { clearInterval(pollingRef.current!); setScanning(false); refetch(); }, 180_000);
     return () => clearTimeout(t);
   }, [scanning]);
 
-  // Stats per source for breakdown
-  const sourceCounts: Record<string, number> = {};
-  for (const m of mentions) { const s = m.source ?? m.sourceType ?? "?"; sourceCounts[s] = (sourceCounts[s] ?? 0) + 1; }
+  const pages = Math.ceil(total / L);
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-6 space-y-6">
 
       {/* ── Page Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
-            <div className="p-1.5 rounded-lg bg-purple-500/15 border border-purple-500/25">
-              <Eye className="w-4 h-4 text-purple-400" />
+            <div className="p-2 rounded-xl bg-purple-500/15 border border-purple-500/25">
+              <Eye className="w-5 h-5 text-purple-400" />
             </div>
             <h1 className="text-xl font-bold tracking-tight">Dark Web Monitoring</h1>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-muted-foreground">
-              {total.toLocaleString()} findings across {allAssets.length} monitored assets
-            </p>
-            <LastScanBadge lastRun={lastRun} />
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span>{total.toLocaleString()} findings across {allAssets.length} monitored assets</span>
+            {lastRun?.completedAt && (
+              <span className="flex items-center gap-1 text-[11px]">
+                <Clock className="w-3 h-3" />
+                Last scan: {new Date(lastRun.completedAt).toLocaleString()}
+                {lastRun.recordsAdded > 0 && <span className="text-green-400 ml-1">+{lastRun.recordsAdded} new</span>}
+              </span>
+            )}
+            {!lastRun && <span className="text-[11px] flex items-center gap-1"><Clock className="w-3 h-3" />Never scanned</span>}
+            {lastRun?.status === "running" && (
+              <span className="text-[11px] text-blue-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Scanning…</span>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+        <div className="flex items-center gap-2 shrink-0 pt-1">
           {isAdmin && (
             <Button size="sm"
               onClick={() => scanMutation.mutate()}
               disabled={scanning || scanMutation.isPending}
-              className={scanning || scanMutation.isPending ? "" : "bg-purple-600 hover:bg-purple-700 text-white border-purple-600"}>
+              className={cn("gap-1.5", scanning || scanMutation.isPending ? "" : "bg-purple-600 hover:bg-purple-700 text-white border-purple-600")}>
               {scanning || scanMutation.isPending
-                ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />Scanning…</>
-                : <><Radio className="w-3.5 h-3.5 mr-1.5" />Run Scan</>}
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Scanning…</>
+                : <><Radio className="w-3.5 h-3.5" />Run Scan</>}
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={() => refetch()}>
@@ -323,60 +367,64 @@ export default function ThreatIntelDarkWebPage() {
         </div>
       </div>
 
-      {/* ── Scanning Banner ── */}
+      {/* ── Scanning banner ── */}
       {scanning && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-xs text-purple-300">
           <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse shrink-0" />
-          <span className="font-medium">Live scan in progress</span>
-          <span className="text-purple-400/60">·</span>
-          <span className="text-purple-400/80">Checking HIBP, URLScan, ThreatFox, URLHaus, and crt.sh for exposures and data breaches…</span>
+          <span className="font-semibold">Live scan in progress</span>
+          <span className="text-purple-400/50">·</span>
+          <span className="text-purple-400/80">Checking HIBP, URLScan, ThreatFox, URLHaus &amp; crt.sh for exposures and data breaches…</span>
         </div>
       )}
 
-      {/* ── Stats ── */}
-      {total > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="rounded-xl border border-border bg-card px-4 py-3">
-            <p className="text-2xl font-bold tabular-nums text-foreground">{total.toLocaleString()}</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Total Findings</p>
-          </div>
-          <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
-            <p className="text-2xl font-bold tabular-nums text-red-400">{critCount}</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Critical</p>
-          </div>
-          <div className="rounded-xl border border-orange-500/25 bg-orange-500/5 px-4 py-3">
-            <p className="text-2xl font-bold tabular-nums text-orange-400">{highCount}</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">High</p>
-          </div>
-          <div className="rounded-xl border border-green-500/25 bg-green-500/5 px-4 py-3">
-            <p className="text-2xl font-bold tabular-nums text-green-400">{verCount}</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Verified</p>
-          </div>
+      {/* ── Stat cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-border bg-card px-4 py-3">
+          <div className="flex items-center gap-2 mb-1"><Database className="w-3.5 h-3.5 text-muted-foreground" /></div>
+          <p className="text-2xl font-bold tabular-nums">{total.toLocaleString()}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Total Findings</p>
         </div>
-      )}
+        <div className="rounded-xl border border-l-4 border-red-500/25 border-l-red-500 bg-red-500/5 px-4 py-3">
+          <div className="flex items-center gap-2 mb-1"><AlertTriangle className="w-3.5 h-3.5 text-red-400" /></div>
+          <p className="text-2xl font-bold tabular-nums text-red-400">{critCount}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Critical</p>
+        </div>
+        <div className="rounded-xl border border-l-4 border-orange-500/25 border-l-orange-500 bg-orange-500/5 px-4 py-3">
+          <div className="flex items-center gap-2 mb-1"><Activity className="w-3.5 h-3.5 text-orange-400" /></div>
+          <p className="text-2xl font-bold tabular-nums text-orange-400">{highCount}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">High</p>
+        </div>
+        <div className="rounded-xl border border-l-4 border-green-500/25 border-l-green-500 bg-green-500/5 px-4 py-3">
+          <div className="flex items-center gap-2 mb-1"><CheckCircle2 className="w-3.5 h-3.5 text-green-400" /></div>
+          <p className="text-2xl font-bold tabular-nums text-green-400">{verCount}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Verified</p>
+        </div>
+      </div>
 
       {/* ── Empty state ── */}
       {!isLoading && total === 0 && !scanning && (
-        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-          <div className="p-4 rounded-2xl bg-green-500/10 border border-green-500/20">
-            <Shield className="w-8 h-8 text-green-400" />
+        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+          <div className="p-5 rounded-2xl bg-green-500/10 border border-green-500/20">
+            <Shield className="w-9 h-9 text-green-400" />
           </div>
           <div>
             <p className="text-sm font-semibold">
               {hasFilters ? "No findings match your filters" : "No dark web findings yet"}
             </p>
-            <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto leading-relaxed">
               {hasFilters
                 ? "Try adjusting your filters to see more results."
-                : "Dark web monitoring checks all your assets against HIBP data breaches, URLScan malicious detections, ThreatFox malware IOCs, URLHaus, and crt.sh lookalike domains."}
+                : "Dark web monitoring checks your assets against HIBP data breaches, URLScan malicious detections, ThreatFox malware IOCs, URLHaus, and crt.sh lookalike domains."}
             </p>
           </div>
           {isAdmin && !hasFilters && (
-            <Button size="sm" onClick={() => scanMutation.mutate()} disabled={scanning || scanMutation.isPending}>
+            <Button size="sm"
+              onClick={() => scanMutation.mutate()}
+              disabled={scanning || scanMutation.isPending}
+              className="bg-purple-600 hover:bg-purple-700 text-white">
               {scanning || scanMutation.isPending
-                ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                : <Radio className="w-3.5 h-3.5 mr-1.5" />}
-              Run First Scan
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />Scanning…</>
+                : <><Radio className="w-3.5 h-3.5 mr-1.5" />Run First Scan</>}
             </Button>
           )}
         </div>
@@ -384,29 +432,58 @@ export default function ThreatIntelDarkWebPage() {
 
       {/* ── Main layout ── */}
       {(total > 0 || isLoading || assetsLoading) && (
-        <div className="flex gap-4 items-start">
+        <div className="flex gap-5 items-start">
 
-          {/* Assets sidebar */}
-          <div className="w-64 shrink-0 hidden lg:block">
+          {/* ── Sidebar ── */}
+          <div className="w-56 shrink-0 hidden lg:block space-y-3">
             {assetsLoading
-              ? <Skeleton className="h-64 rounded-xl" />
-              : <AssetsPanel assets={allAssets} selectedDomain={assetDomain} onSelect={d => { setAssetDomain(d); setPage(0); }} />
+              ? <Skeleton className="h-72 rounded-xl" />
+              : <AssetsSidebar assets={allAssets} selectedDomain={assetDomain} onSelect={d => { setAssetDomain(d); setPage(0); }} />
             }
+
+            {/* Source breakdown (sidebar on lg) */}
+            {Object.keys(sourceCounts).length > 0 && (
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-3 py-2 border-b border-border bg-muted/30">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sources</span>
+                </div>
+                <div className="p-2 space-y-1">
+                  {Object.entries(sourceCounts).sort(([, a], [, b]) => b - a).map(([s, cnt]) => {
+                    const meta = SRC[s];
+                    const isActive = source === s;
+                    return (
+                      <button key={s}
+                        onClick={() => { setSrc(source === s ? "" : s); setPage(0); }}
+                        className={cn(
+                          "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors",
+                          isActive ? (meta?.badge ?? "bg-muted border border-border text-foreground") : "text-muted-foreground hover:bg-muted/40",
+                        )}>
+                        <span className="flex items-center gap-2">
+                          <span>{meta?.icon ?? "•"}</span>
+                          <span className="font-medium">{s}</span>
+                        </span>
+                        <span className="font-bold">{cnt}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Findings column */}
-          <div className="flex-1 min-w-0 space-y-3">
+          {/* ── Main findings column ── */}
+          <div className="flex-1 min-w-0 space-y-4">
 
-            {/* Filters */}
+            {/* Filter bar */}
             <div className="flex flex-wrap gap-2">
               <div className="relative flex-1 min-w-48">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
                 <Input placeholder="Search findings…" value={q}
                   onChange={e => { setQ(e.target.value); setPage(0); }}
-                  className="h-8 pl-8 text-xs" />
+                  className="h-9 pl-8 text-sm" />
               </div>
               <Select value={severity || "all"} onValueChange={v => { setSeverity(v === "all" ? "" : v); setPage(0); }}>
-                <SelectTrigger className="h-8 w-32 text-xs"><SelectValue placeholder="Severity" /></SelectTrigger>
+                <SelectTrigger className="h-9 w-32 text-sm"><SelectValue placeholder="Severity" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All severity</SelectItem>
                   {["critical", "high", "medium", "low"].map(s => (
@@ -414,8 +491,9 @@ export default function ThreatIntelDarkWebPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {/* Mobile source picker */}
               <Select value={source || "all"} onValueChange={v => { setSrc(v === "all" ? "" : v); setPage(0); }}>
-                <SelectTrigger className="h-8 w-32 text-xs"><SelectValue placeholder="Source" /></SelectTrigger>
+                <SelectTrigger className="h-9 w-32 text-sm lg:hidden"><SelectValue placeholder="Source" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All sources</SelectItem>
                   {["HIBP", "URLScan", "ThreatFox", "URLHaus", "crt.sh"].map(s => (
@@ -423,16 +501,16 @@ export default function ThreatIntelDarkWebPage() {
                   ))}
                 </SelectContent>
               </Select>
-              {/* Mobile asset filter */}
+              {/* Mobile asset picker */}
               <Select value={assetDomain || "all"} onValueChange={v => { setAssetDomain(v === "all" ? "" : v); setPage(0); }}>
-                <SelectTrigger className="h-8 w-40 text-xs lg:hidden"><SelectValue placeholder="Asset" /></SelectTrigger>
+                <SelectTrigger className="h-9 w-40 text-sm lg:hidden"><SelectValue placeholder="Asset" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All assets</SelectItem>
                   {allAssets.map(a => <SelectItem key={a.id} value={a.domain ?? ""}>{a.domain ?? a.name}</SelectItem>)}
                 </SelectContent>
               </Select>
               {hasFilters && (
-                <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground"
+                <Button size="sm" variant="ghost" className="h-9 text-xs text-muted-foreground"
                   onClick={() => { setQ(""); setSeverity(""); setSrc(""); setAssetDomain(""); setPage(0); }}>
                   <X className="w-3.5 h-3.5 mr-1" />Clear
                 </Button>
@@ -443,46 +521,81 @@ export default function ThreatIntelDarkWebPage() {
             {(assetDomain || source) && (
               <div className="flex flex-wrap gap-1.5">
                 {assetDomain && (
-                  <div className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border bg-muted border-border text-muted-foreground font-mono">
+                  <div className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg border bg-muted border-border text-muted-foreground font-mono">
                     <Globe className="w-2.5 h-2.5" />{assetDomain}
-                    <button onClick={() => { setAssetDomain(""); setPage(0); }}><X className="w-2.5 h-2.5" /></button>
+                    <button onClick={() => { setAssetDomain(""); setPage(0); }} className="ml-0.5 hover:text-foreground">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
                   </div>
                 )}
                 {source && (
-                  <div className={cn("flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border font-medium", SRC_STYLE[source] ?? "bg-muted border-border text-muted-foreground")}>
+                  <div className={cn("flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg border font-medium", SRC[source]?.badge ?? "bg-muted border-border text-muted-foreground")}>
                     {source}
-                    <button onClick={() => { setSrc(""); setPage(0); }}><X className="w-2.5 h-2.5" /></button>
+                    <button onClick={() => { setSrc(""); setPage(0); }} className="ml-0.5"><X className="w-2.5 h-2.5" /></button>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Source breakdown chips */}
-            {Object.keys(sourceCounts).length > 1 && (
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(sourceCounts).map(([s, cnt]) => (
-                  <button key={s}
-                    onClick={() => { setSrc(source === s ? "" : s); setPage(0); }}
-                    className={cn("text-[10px] px-2 py-0.5 rounded border flex items-center gap-1 transition-colors", source === s ? (SRC_STYLE[s] ?? "bg-muted border-border text-foreground") : "bg-muted/30 border-border/50 text-muted-foreground hover:bg-muted/60")}>
-                    {s} <span className="font-semibold">{cnt}</span>
-                  </button>
-                ))}
+            {/* Results count + source breakdown (mobile) */}
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                {total > 0 ? `${Math.min(page * L + 1, total)}–${Math.min((page + 1) * L, total)} of ${total.toLocaleString()} findings` : ""}
+              </p>
+              <div className="lg:hidden">
+                <SourceBreakdown counts={sourceCounts} active={source} onToggle={s => { setSrc(source === s ? "" : s); setPage(0); }} />
+              </div>
+            </div>
+
+            {/* Findings list */}
+            {isLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-xl" />)}
+              </div>
+            ) : mentions.length === 0 && !isLoading ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                <Lock className="w-8 h-8 text-muted-foreground/30" />
+                <p className="text-sm text-muted-foreground">No findings match your filters</p>
+                <Button size="sm" variant="ghost" className="text-xs text-muted-foreground"
+                  onClick={() => { setQ(""); setSeverity(""); setSrc(""); setAssetDomain(""); setPage(0); }}>
+                  Clear filters
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {mentions.map((m: any) => <MentionCard key={m.id} m={m} />)}
               </div>
             )}
 
-            {/* Findings list */}
-            {isLoading
-              ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)
-              : mentions.map((m: any) => <MentionCard key={m.id} m={m} />)
-            }
-
             {/* Pagination */}
             {total > L && (
-              <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
-                <span>Showing {page * L + 1}–{Math.min((page + 1) * L, total)} of {total.toLocaleString()}</span>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Prev</Button>
-                  <Button size="sm" variant="outline" disabled={(page + 1) * L >= total} onClick={() => setPage(p => p + 1)}>Next</Button>
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <span className="text-xs text-muted-foreground">
+                  Page {page + 1} of {pages}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Button size="sm" variant="outline" className="h-8 gap-1" disabled={page === 0}
+                    onClick={() => setPage(p => p - 1)}>
+                    <ChevronLeft className="w-3.5 h-3.5" />Prev
+                  </Button>
+                  {/* Page number chips */}
+                  {Array.from({ length: Math.min(pages, 5) }, (_, i) => {
+                    const pg = pages <= 5 ? i : Math.max(0, Math.min(page - 2, pages - 5)) + i;
+                    return (
+                      <button key={pg}
+                        onClick={() => setPage(pg)}
+                        className={cn(
+                          "h-8 w-8 text-xs rounded-lg border transition-colors",
+                          pg === page ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:bg-muted",
+                        )}>
+                        {pg + 1}
+                      </button>
+                    );
+                  })}
+                  <Button size="sm" variant="outline" className="h-8 gap-1" disabled={(page + 1) * L >= total}
+                    onClick={() => setPage(p => p + 1)}>
+                    Next<ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
                 </div>
               </div>
             )}
