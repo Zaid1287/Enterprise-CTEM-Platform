@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiFetch } from "@/lib/apiFetch";
@@ -531,9 +532,13 @@ export default function FalsePositivesPage() {
   const canReview = role === "super_admin" || role === "admin" || role === "account_manager";
   const showTenant = role === "super_admin" || role === "admin";
 
+  const FP_PAGE_SIZE = 15;
+  const [fpPage, setFpPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [search, setSearch] = useState("");
+
+  useEffect(() => { setFpPage(1); }, [statusFilter, severityFilter, search]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   // Review action dialog
@@ -557,6 +562,8 @@ export default function FalsePositivesPage() {
   });
 
   const findings   = data?.findings ?? [];
+  const fpTotalPages = Math.max(1, Math.ceil(findings.length / FP_PAGE_SIZE));
+  const pagedFindings = findings.slice((fpPage - 1) * FP_PAGE_SIZE, fpPage * FP_PAGE_SIZE);
   const submitted  = findings.filter(f => f.falsePositiveStatus === "submitted").length;
   const inProgress = findings.filter(f => f.falsePositiveStatus === "in_progress").length;
   const confirmed  = findings.filter(f => f.falsePositiveStatus === "confirmed").length;
@@ -775,7 +782,7 @@ export default function FalsePositivesPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-2 pb-6">
-          {findings.map(f => (
+          {pagedFindings.map(f => (
             <FpRow
               key={f.id}
               f={f}
@@ -787,6 +794,15 @@ export default function FalsePositivesPage() {
               onEditNote={openEditNote}
             />
           ))}
+          <SmartPagination
+            page={fpPage}
+            totalPages={fpTotalPages}
+            totalItems={findings.length}
+            pageSize={FP_PAGE_SIZE}
+            itemLabel="false positives"
+            onPageChange={setFpPage}
+            className="pt-2"
+          />
         </div>
       )}
 
