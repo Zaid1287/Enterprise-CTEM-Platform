@@ -220,6 +220,11 @@ export default function ComplianceAssetDetailPage() {
     }
   }
 
+  const { data: accountManagers = [] } = useQuery<{ id: number; email: string; name: string }[]>({
+    queryKey: ["compliance-account-managers"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/account-managers`),
+  });
+
   const enabledControls = useMemo(() => controls.filter(c => c.isEnabled), [controls]);
 
   const grouped = useMemo(() => {
@@ -240,13 +245,17 @@ export default function ComplianceAssetDetailPage() {
     return Object.values(byFramework).sort((a, b) => a.frameworkId - b.frameworkId);
   }, [enabledControls]);
 
-  const totalEnabled = enabledControls.length;
-  const compliantCount = enabledControls.filter(c => c.status === "compliant").length;
-  const inProgressCount = enabledControls.filter(c => c.status === "in_progress").length;
-  const nonCompliantCount = enabledControls.filter(c => c.status === "non_compliant").length;
-  const notApplicableCount = enabledControls.filter(c => c.status === "not_applicable").length;
-  const effectiveDenominator = totalEnabled - notApplicableCount || 1;
-  const overallScore = totalEnabled > 0 ? Math.round((compliantCount / effectiveDenominator) * 100) : 0;
+  const totalEnabled = enabledControls.length; // used for controls-section header count
+
+  // Overall metrics computed from summary (only counts explicitly scoped controls — accurate)
+  const compliantCount    = summary.reduce((a, s) => a + s.compliant,      0);
+  const inProgressCount   = summary.reduce((a, s) => a + s.inProgress,     0);
+  const nonCompliantCount = summary.reduce((a, s) => a + s.nonCompliant,   0);
+  const notApplicableCount = summary.reduce((a, s) => a + s.notApplicable, 0);
+  const scopedTotal       = summary.reduce((a, s) => a + s.total,          0);
+  const overallScore = scopedTotal > 0
+    ? Math.round((compliantCount / Math.max(1, scopedTotal - notApplicableCount)) * 100)
+    : 0;
   const scoreColor = overallScore >= 70 ? "text-green-400" : overallScore >= 40 ? "text-yellow-400" : "text-red-400";
 
   const handleRefresh = () => {
@@ -362,7 +371,7 @@ export default function ComplianceAssetDetailPage() {
               accent: "border-l-4 " + (overallScore >= 70 ? "border-l-green-500" : overallScore >= 40 ? "border-l-yellow-500" : "border-l-red-500"),
               sub: "compliance",
             },
-            { label: "Total Controls", value: <span className="text-2xl font-bold">{totalEnabled}</span>, sub: "in scope" },
+            { label: "Total Controls", value: <span className="text-2xl font-bold">{scopedTotal}</span>, sub: "in scope" },
             { label: "Compliant", value: <span className="text-2xl font-bold text-green-400">{compliantCount}</span>, sub: "passing" },
             { label: "In Progress", value: <span className="text-2xl font-bold text-yellow-400">{inProgressCount}</span>, sub: "being addressed" },
             { label: "Non-Compliant", value: <span className="text-2xl font-bold text-red-400">{nonCompliantCount}</span>, sub: "requires action" },
@@ -664,12 +673,20 @@ export default function ComplianceAssetDetailPage() {
                                             </div>
                                             <div>
                                               <Label className="text-xs mb-1.5 block">Assigned To</Label>
-                                              <Input
-                                                className="h-8 text-xs"
-                                                placeholder="Name or email…"
-                                                value={editForm.assignedTo}
-                                                onChange={e => setEditForm(f => ({ ...f, assignedTo: e.target.value }))}
-                                              />
+                                              <Select
+                                                value={editForm.assignedTo || "__none__"}
+                                                onValueChange={v => setEditForm(f => ({ ...f, assignedTo: v === "__none__" ? "" : v }))}
+                                              >
+                                                <SelectTrigger className="h-8 text-xs">
+                                                  <SelectValue placeholder="Select account manager…" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="__none__">— Unassigned —</SelectItem>
+                                                  {accountManagers.map(am => (
+                                                    <SelectItem key={am.id} value={am.email}>{am.name} ({am.email})</SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
                                             </div>
                                             <div>
                                               <Label className="text-xs mb-1.5 block">Notes</Label>

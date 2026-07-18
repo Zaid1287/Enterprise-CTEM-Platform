@@ -1,5 +1,5 @@
 import { Router, type NextFunction, type Response } from "express";
-import { eq, and, inArray, desc, sql } from "drizzle-orm";
+import { eq, and, inArray, or, desc, sql } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
 import {
@@ -364,23 +364,35 @@ router.get("/compliance/clients/overview", requireAuth, requireRole("admin", "su
 });
 
 // Returns verified assets for a specific client tenant (admin view for Assignments tab)
+// Assets are matched by:
+//  1. Assets directly in the client tenant (legacy)
+//  2. Assets in the platform tenant assigned to a user in the client tenant (via assignedClientId)
 router.get("/compliance/clients/:tenantId/assets", requireAuth, requireRole("admin", "super_admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
   const clientTenantId = parseInt(req.params.tenantId as string);
+
+  // Get all user IDs in the client tenant so we can match via assignedClientId
+  const clientUsers = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.tenantId, clientTenantId));
+  const clientUserIds = clientUsers.map(u => u.id);
+
+  const whereAsset = clientUserIds.length > 0
+    ? or(eq(assetsTable.tenantId, clientTenantId), inArray(assetsTable.assignedClientId, clientUserIds))
+    : eq(assetsTable.tenantId, clientTenantId);
+
   const rows = await db.select({
-    assetId:            assetsTable.id,
-    assetName:          assetsTable.name,
-    assetValue:         assetsTable.value,
-    assetType:          assetsTable.type,
-    verificationStatus: assetsTable.verificationStatus,
+    assetId:             assetsTable.id,
+    assetName:           assetsTable.name,
+    assetValue:          assetsTable.value,
+    assetType:           assetsTable.type,
+    verificationStatus:  assetsTable.verificationStatus,
     isComplianceEnabled: complianceAssetSettingsTable.isEnabled,
-    enabledAt:          complianceAssetSettingsTable.enabledAt,
+    enabledAt:           complianceAssetSettingsTable.enabledAt,
   }).from(assetsTable)
     .leftJoin(complianceAssetSettingsTable, eq(complianceAssetSettingsTable.assetId, assetsTable.id))
-    .where(and(
-      eq(assetsTable.tenantId, clientTenantId),
-      eq(assetsTable.verificationStatus, "verified"),
-    ))
+    .where(and(eq(assetsTable.verificationStatus, "verified"), whereAsset))
     .orderBy(assetsTable.name);
+
   res.json(rows.map(r => ({
     id: r.assetId, name: r.assetName, value: r.assetValue, type: r.assetType,
     verificationStatus: r.verificationStatus,
@@ -389,28 +401,63 @@ router.get("/compliance/clients/:tenantId/assets", requireAuth, requireRole("adm
   })));
 });
 
+// ── Account managers list (for Assigned To dropdown in asset detail page) ─────
+router.get("/compliance/account-managers", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+  const ams = await db.select({
+    id:        usersTable.id,
+    email:     usersTable.email,
+    firstName: usersTable.firstName,
+    lastName:  usersTable.lastName,
+  }).from(usersTable)
+    .where(and(eq(usersTable.tenantId, tenantId), eq(usersTable.role, "account_manager" as any)));
+  res.json(ams.map(u => ({
+    id: u.id,
+    email: u.email,
+    name: `${u.firstName} ${u.lastName}`.trim() || u.email,
+  })));
+});
+
 // ── Asset compliance settings: list enabled+verified assets ──────────────────
 // IMPORTANT: must be registered BEFORE /:assetId to avoid Express swallowing it
 router.get("/compliance/assets/enabled", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { tenantId } = req.user!;
   const rows = await db.select({
-    assetId:            assetsTable.id,
-    assetName:          assetsTable.name,
-    assetValue:         assetsTable.value,
-    assetType:          assetsTable.type,
-    assetRiskLevel:     assetsTable.riskLevel,
-    verificationStatus: assetsTable.verificationStatus,
-    isEnabled:          complianceAssetSettingsTable.isEnabled,
-    enabledAt:          complianceAssetSettingsTable.enabledAt,
+    assetId:                assetsTable.id,
+    assetName:              assetsTable.name,
+    assetValue:             assetsTable.value,
+    assetType:              assetsTable.type,
+    assetRiskLevel:         assetsTable.riskLevel,
+    verificationStatus:     assetsTable.verificationStatus,
+    isEnabled:              complianceAssetSettingsTable.isEnabled,
+    enabledAt:              complianceAssetSettingsTable.enabledAt,
+    assignedClientId:       assetsTable.assignedClientId,
+    assignedClientTenantId: usersTable.tenantId,
+    assignedClientFirstName: usersTable.firstName,
+    assignedClientLastName:  usersTable.lastName,
   }).from(assetsTable)
     .innerJoin(complianceAssetSettingsTable, eq(complianceAssetSettingsTable.assetId, assetsTable.id))
+    .leftJoin(usersTable, eq(usersTable.id, assetsTable.assignedClientId))
     .where(and(
       eq(assetsTable.tenantId, tenantId),
       eq(assetsTable.verificationStatus, "verified"),
       eq(complianceAssetSettingsTable.isEnabled, true),
     ))
     .orderBy(assetsTable.name);
-  res.json(rows.map(r => ({ id: r.assetId, name: r.assetName, domain: r.assetValue, type: r.assetType, riskLevel: r.assetRiskLevel, isEnabled: r.isEnabled, enabledAt: r.enabledAt })));
+  res.json(rows.map(r => ({
+    id: r.assetId,
+    name: r.assetName,
+    domain: r.assetValue,
+    type: r.assetType,
+    riskLevel: r.assetRiskLevel,
+    isEnabled: r.isEnabled,
+    enabledAt: r.enabledAt,
+    assignedClientId: r.assignedClientId ?? null,
+    assignedClientTenantId: r.assignedClientTenantId ?? null,
+    assignedClientName: r.assignedClientFirstName
+      ? `${r.assignedClientFirstName} ${r.assignedClientLastName ?? ""}`.trim()
+      : null,
+  })));
 });
 
 // ── Per-asset compliance settings (enable/disable for a specific asset) ────────
@@ -582,31 +629,35 @@ router.delete("/compliance/assets/:assetId/:globalControlId/evidence/:filename",
 });
 
 // Asset compliance summary (rollup per framework for a specific asset)
+// Only counts controls explicitly SCOPED to this asset (in complianceAssetControlsTable)
 router.get("/compliance/assets/:assetId/summary", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { tenantId } = req.user!;
   const assetId = parseInt(req.params.assetId as string);
 
   const frameworks = await db.select().from(complianceFrameworksTable);
-  const allControls = await db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true));
-  const assetControls = await db.select().from(complianceAssetControlsTable)
-    .where(and(eq(complianceAssetControlsTable.assetId, assetId), eq(complianceAssetControlsTable.tenantId, tenantId)));
-  const tenantAnswers = await db.select().from(complianceControlAnswersTable)
-    .where(eq(complianceControlAnswersTable.tenantId, tenantId));
 
-  const assetMap = new Map(assetControls.map(a => [a.globalControlId, a]));
-  const answerMap = new Map(tenantAnswers.map(a => [a.globalControlId, a]));
+  // Only join controls that are explicitly scoped to this asset
+  const scopedControls = await db.select({
+    status:      complianceAssetControlsTable.status,
+    frameworkId: complianceGlobalControlsTable.frameworkId,
+  }).from(complianceAssetControlsTable)
+    .innerJoin(complianceGlobalControlsTable, eq(complianceAssetControlsTable.globalControlId, complianceGlobalControlsTable.id))
+    .where(and(
+      eq(complianceAssetControlsTable.assetId, assetId),
+      eq(complianceAssetControlsTable.tenantId, tenantId),
+    ));
 
   const summary = frameworks.map(fw => {
-    const fwControls = allControls.filter(c => c.frameworkId === fw.id);
-    const statuses = fwControls.map(c => assetMap.get(c.id)?.status ?? answerMap.get(c.id)?.status ?? "non_compliant");
+    const fwControls = scopedControls.filter(c => c.frameworkId === fw.id);
     const total = fwControls.length;
-    const compliant = statuses.filter(s => s === "compliant").length;
-    const inProgress = statuses.filter(s => s === "in_progress").length;
-    const nonCompliant = statuses.filter(s => s === "non_compliant").length;
-    const notApplicable = statuses.filter(s => s === "not_applicable").length;
-    const score = total > 0 ? Math.round((compliant / (total - notApplicable || 1)) * 100) : 0;
+    const compliant    = fwControls.filter(c => c.status === "compliant").length;
+    const inProgress   = fwControls.filter(c => c.status === "in_progress").length;
+    const nonCompliant = fwControls.filter(c => c.status === "non_compliant").length;
+    const notApplicable = fwControls.filter(c => c.status === "not_applicable").length;
+    const score = total > 0 ? Math.round((compliant / Math.max(1, total - notApplicable)) * 100) : 0;
     return { frameworkId: fw.id, frameworkName: fw.name, shortName: fw.shortName, total, compliant, inProgress, nonCompliant, notApplicable, score };
-  });
+  }).filter(s => s.total > 0); // Only return frameworks with scoped controls
+
   res.json(summary);
 });
 

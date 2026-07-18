@@ -125,6 +125,9 @@ interface EnabledAsset {
   riskLevel: string | null;
   isEnabled: boolean;
   enabledAt: string | null;
+  assignedClientId: number | null;
+  assignedClientTenantId: number | null;
+  assignedClientName: string | null;
 }
 
 interface Asset {
@@ -1253,166 +1256,182 @@ function DocumentsTab() {
   );
 }
 
-// ── Client Asset Row (expandable inside a client card) ────────────────────────
-function EnabledAssetsPanel() {
-  const [, navigate] = useLocation();
-  const { data: assets = [], isLoading } = useQuery<EnabledAsset[]>({
-    queryKey: ["compliance-assets-enabled"],
-    queryFn: () => apiFetch(`${BASE}/api/compliance/assets/enabled`),
-  });
+const RISK_COLOR: Record<string, string> = {
+  critical: "text-red-400", high: "text-orange-400",
+  medium: "text-yellow-400", low: "text-green-400", info: "text-blue-400",
+};
 
-  if (isLoading) return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-      {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
-    </div>
-  );
-
-  if (assets.length === 0) return (
-    <div className="bg-card border border-dashed border-border rounded-xl px-6 py-8 text-center">
-      <ShieldCheck className="w-7 h-7 text-muted-foreground/30 mx-auto mb-2" />
-      <p className="text-sm font-medium text-muted-foreground">No compliance-enabled assets</p>
-      <p className="text-xs text-muted-foreground/70 mt-1">
-        Open an asset's detail page and enable compliance tracking to start monitoring.
-      </p>
-    </div>
-  );
-
-  const RISK_COLOR: Record<string, string> = {
-    critical: "text-red-400", high: "text-orange-400",
-    medium: "text-yellow-400", low: "text-green-400", info: "text-blue-400",
-  };
-
+// ── Small asset card used inside client cards ─────────────────────────────────
+function AssetCard({ asset, onClick }: { asset: EnabledAsset; onClick: () => void }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-      {assets.map(a => (
-        <div key={a.id}
-          className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 group hover:border-primary/40 hover:bg-muted/10 transition-all cursor-pointer"
-          onClick={() => navigate(`/compliance/assets/${a.id}`)}
-        >
-          <div className="w-8 h-8 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-4 h-4 text-green-400" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold truncate">{a.name}</p>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-[10px] text-muted-foreground capitalize">{a.type}</span>
-              {a.riskLevel && (
-                <>
-                  <span className="text-[10px] text-muted-foreground/40">·</span>
-                  <span className={cn("text-[10px] font-medium capitalize", RISK_COLOR[a.riskLevel] ?? "text-muted-foreground")}>
-                    {a.riskLevel} risk
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+    <div
+      className="flex items-center gap-3 bg-muted/20 border border-border/50 rounded-lg px-3 py-2.5 group hover:border-primary/40 hover:bg-muted/30 transition-all cursor-pointer"
+      onClick={onClick}
+    >
+      <div className="w-7 h-7 rounded-md bg-green-500/10 border border-green-500/20 flex items-center justify-center shrink-0">
+        <ShieldCheck className="w-3.5 h-3.5 text-green-400" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold truncate">{asset.name}</p>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-muted-foreground capitalize">{asset.type}</span>
+          {asset.riskLevel && (
+            <>
+              <span className="text-[10px] text-muted-foreground/40">·</span>
+              <span className={cn("text-[10px] font-medium capitalize", RISK_COLOR[asset.riskLevel] ?? "text-muted-foreground")}>
+                {asset.riskLevel} risk
+              </span>
+            </>
+          )}
         </div>
-      ))}
+      </div>
+      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
     </div>
   );
 }
 
 // ── Client Compliance Overview (admin/AM — shown in Overview tab) ─────────────
+// Merges client posture cards + their compliance-enabled assets in one unified section
 function ClientComplianceSection() {
-  const { data: clients = [], isLoading } = useQuery<ClientComplianceSummary[]>({
+  const [, navigate] = useLocation();
+
+  const { data: clients = [], isLoading: loadingClients } = useQuery<ClientComplianceSummary[]>({
     queryKey: ["compliance-clients-overview"],
     queryFn: () => apiFetch(`${BASE}/api/compliance/clients/overview`),
   });
 
+  const { data: allEnabledAssets = [], isLoading: loadingAssets } = useQuery<EnabledAsset[]>({
+    queryKey: ["compliance-assets-enabled"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/assets/enabled`),
+  });
+
+  const isLoading = loadingClients || loadingAssets;
+
+  // Group assets by assignedClientTenantId
+  const assetsByClient = useMemo(() => {
+    const map = new Map<number | null, EnabledAsset[]>();
+    for (const a of allEnabledAssets) {
+      const key = a.assignedClientTenantId ?? null;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(a);
+    }
+    return map;
+  }, [allEnabledAssets]);
+
+  // Assets with no client assignment
+  const unassignedAssets = assetsByClient.get(null) ?? [];
+
   if (isLoading) return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <Building2 className="w-4 h-4 text-primary" />Client Compliance Posture
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)}
-        </div>
-      </div>
-      <div>
-        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-primary" />Compliance-Enabled Assets
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
-        </div>
+    <div className="space-y-4">
+      <h3 className="text-sm font-semibold flex items-center gap-2">
+        <Building2 className="w-4 h-4 text-primary" />Client Compliance Posture
+      </h3>
+      <div className="space-y-4">
+        {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-52 rounded-xl" />)}
       </div>
     </div>
   );
 
+  if (clients.length === 0 && allEnabledAssets.length === 0) return null;
+
   return (
-    <div className="space-y-6">
-      {/* Client module status cards */}
-      {clients.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <Building2 className="w-4 h-4 text-primary" />
-            Client Compliance Posture
-            <span className="text-xs font-normal text-muted-foreground">
-              ({clients.length} client{clients.length !== 1 ? "s" : ""})
-            </span>
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {clients.map(c => {
-              const scoreColor = c.score >= 70 ? "text-green-400" : c.score >= 40 ? "text-yellow-400" : "text-red-400";
-              return (
-                <div key={c.tenantId} className="bg-card border border-border rounded-xl p-4 space-y-3">
-                  {/* Client header row */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold truncate">{c.tenantName}</p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        {c.moduleEnabled
-                          ? <Badge className="text-[10px] bg-green-500/15 text-green-400 border-green-500/30">Module Active</Badge>
-                          : <Badge className="text-[10px] bg-muted text-muted-foreground border-border">Module Off</Badge>
-                        }
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className={cn("text-2xl font-bold", scoreColor)}>{c.score}%</p>
-                      <p className="text-[10px] text-muted-foreground">compliance score</p>
-                    </div>
-                  </div>
+    <div className="space-y-4">
+      <h3 className="text-sm font-semibold flex items-center gap-2">
+        <Building2 className="w-4 h-4 text-primary" />
+        Client Compliance Posture
+        {clients.length > 0 && (
+          <span className="text-xs font-normal text-muted-foreground">
+            ({clients.length} client{clients.length !== 1 ? "s" : ""})
+          </span>
+        )}
+      </h3>
 
-                  {/* Status counters */}
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {([
-                      ["Compliant",  c.compliant,     "text-green-400",  "bg-green-500/10"],
-                      ["In Prog.",   c.inProgress,    "text-yellow-400", "bg-yellow-500/10"],
-                      ["Non-Comp.", c.nonCompliant,   "text-red-400",    "bg-red-500/10"],
-                      ["N/A",        c.notApplicable, "text-slate-400",  "bg-slate-500/10"],
-                    ] as [string, number, string, string][]).map(([label, val, cls, bg]) => (
-                      <div key={label} className={cn("rounded-lg px-1.5 py-2 text-center", bg)}>
-                        <p className={cn("text-sm font-bold", cls)}>{val}</p>
-                        <p className="text-[9px] text-muted-foreground leading-tight mt-0.5">{label}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="w-full bg-muted/30 rounded-full h-1.5">
-                    <div
-                      className={cn("h-1.5 rounded-full transition-all",
-                        c.score >= 70 ? "bg-green-500" : c.score >= 40 ? "bg-yellow-500" : "bg-red-500")}
-                      style={{ width: `${c.score}%` }}
-                    />
-                  </div>
+      {/* One card per client — shows their compliance stats + assigned assets */}
+      {clients.map(c => {
+        const clientAssets = assetsByClient.get(c.tenantId) ?? [];
+        const scoreColor = c.score >= 70 ? "text-green-400" : c.score >= 40 ? "text-yellow-400" : "text-red-400";
+        return (
+          <div key={c.tenantId} className="bg-card border border-border rounded-xl p-4 space-y-4">
+            {/* Client header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold truncate">{c.tenantName}</p>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  {c.moduleEnabled
+                    ? <Badge className="text-[10px] bg-green-500/15 text-green-400 border-green-500/30">Module Active</Badge>
+                    : <Badge className="text-[10px] bg-muted text-muted-foreground border-border">Module Off</Badge>
+                  }
+                  <span className="text-[10px] text-muted-foreground">
+                    {clientAssets.length} compliance-enabled asset{clientAssets.length !== 1 ? "s" : ""}
+                  </span>
                 </div>
-              );
-            })}
+              </div>
+              <div className="text-right shrink-0">
+                <p className={cn("text-2xl font-bold", scoreColor)}>{c.score}%</p>
+                <p className="text-[10px] text-muted-foreground">compliance score</p>
+              </div>
+            </div>
+
+            {/* Status counters */}
+            <div className="grid grid-cols-4 gap-1.5">
+              {([
+                ["Compliant",   c.compliant,     "text-green-400",  "bg-green-500/10"],
+                ["In Prog.",    c.inProgress,    "text-yellow-400", "bg-yellow-500/10"],
+                ["Non-Comp.",   c.nonCompliant,  "text-red-400",    "bg-red-500/10"],
+                ["N/A",         c.notApplicable, "text-slate-400",  "bg-slate-500/10"],
+              ] as [string, number, string, string][]).map(([label, val, cls, bg]) => (
+                <div key={label} className={cn("rounded-lg px-1.5 py-2 text-center", bg)}>
+                  <p className={cn("text-sm font-bold", cls)}>{val}</p>
+                  <p className="text-[9px] text-muted-foreground leading-tight mt-0.5">{label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Progress bar */}
+            <div className="w-full bg-muted/30 rounded-full h-1.5">
+              <div
+                className={cn("h-1.5 rounded-full transition-all",
+                  c.score >= 70 ? "bg-green-500" : c.score >= 40 ? "bg-yellow-500" : "bg-red-500")}
+                style={{ width: `${c.score}%` }}
+              />
+            </div>
+
+            {/* Inline asset cards for this client */}
+            <div className="border-t border-border/40 pt-3">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                Compliance-Enabled Assets
+              </p>
+              {clientAssets.length === 0 ? (
+                <p className="text-xs text-muted-foreground/70 italic">
+                  No compliance-enabled assets assigned to this client yet.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {clientAssets.map(a => (
+                    <AssetCard key={a.id} asset={a} onClick={() => navigate(`/compliance/assets/${a.id}`)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Unassigned enabled assets (not linked to any client) */}
+      {unassignedAssets.length > 0 && (
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            <p className="text-sm font-semibold">Unassigned Compliance-Enabled Assets</p>
+            <span className="text-xs text-muted-foreground">({unassignedAssets.length})</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {unassignedAssets.map(a => (
+              <AssetCard key={a.id} asset={a} onClick={() => navigate(`/compliance/assets/${a.id}`)} />
+            ))}
           </div>
         </div>
       )}
-
-      {/* Admin's own compliance-enabled assets — clickable, navigate to detail page */}
-      <div>
-        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-primary" />
-          Compliance-Enabled Assets
-        </h3>
-        <EnabledAssetsPanel />
-      </div>
     </div>
   );
 }
