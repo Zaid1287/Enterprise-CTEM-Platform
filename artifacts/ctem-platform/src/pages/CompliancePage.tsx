@@ -2115,12 +2115,12 @@ export default function CompliancePage() {
   });
 
   const selectedFw = summary.find(fw => fw.frameworkId === selectedFrameworkId);
-  // For admin/AM: overall score = avg of client avg-scores per framework (real client data)
-  // For clients:  overall score = avg of their own per-framework scores
-  const overallScore = isAdminOrAM && fwSummary.length > 0
-    ? Math.round(fwSummary.reduce((a, b) => a + b.avgScore, 0) / fwSummary.length)
-    : summary.length > 0
-    ? Math.round(summary.reduce((a, b) => a + b.score, 0) / summary.length)
+  // Overall score = avg of per-framework scores for frameworks where the tenant has any answers.
+  // /compliance/summary now merges asset-level + tenant-level answers so data is always real.
+  // Frameworks with no answers at all are excluded from the average (they would unfairly drag it to 0).
+  const answeredFrameworks = summary.filter(fw => fw.compliant > 0 || fw.inProgress > 0 || fw.notApplicable > 0);
+  const overallScore = answeredFrameworks.length > 0
+    ? Math.max(1, Math.round(answeredFrameworks.reduce((a, b) => a + b.score, 0) / answeredFrameworks.length))
     : 0;
 
   const tabs = [
@@ -2175,31 +2175,24 @@ export default function CompliancePage() {
         {/* OVERVIEW */}
         {activeTab === "overview" && (
           <div className="space-y-6">
+            {/* Aggregate control status bar — across all frameworks for this tenant */}
             {loadingSummary
-              ? <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-xl" />)}</div>
-              : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {summary.map(fw => (
-                    <FrameworkCard key={fw.frameworkId} fw={fw} isSelected={selectedFrameworkId === fw.frameworkId}
-                      onClick={() => { setSelectedFrameworkId(fw.frameworkId); setActiveTab("controls"); }} />
+              ? <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}</div>
+              : summary.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {([
+                    ["Total Controls", summary.reduce((a, b) => a + b.total, 0), "text-foreground"],
+                    ["Compliant", summary.reduce((a, b) => a + b.compliant, 0), "text-green-400"],
+                    ["In Progress", summary.reduce((a, b) => a + b.inProgress, 0), "text-yellow-400"],
+                    ["Non-Compliant", summary.reduce((a, b) => a + b.nonCompliant, 0), "text-red-400"],
+                  ] as [string, number, string][]).map(([label, val, cls]) => (
+                    <div key={label} className="bg-card border border-border rounded-xl p-4 text-center">
+                      <p className={cn("text-2xl font-bold", cls)}>{val}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{label}</p>
+                    </div>
                   ))}
                 </div>
               )}
-            {summary.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {([
-                  ["Total Controls", summary.reduce((a, b) => a + b.total, 0), "text-foreground"],
-                  ["Compliant", summary.reduce((a, b) => a + b.compliant, 0), "text-green-400"],
-                  ["In Progress", summary.reduce((a, b) => a + b.inProgress, 0), "text-yellow-400"],
-                  ["Non-Compliant", summary.reduce((a, b) => a + b.nonCompliant, 0), "text-red-400"],
-                ] as [string, number, string][]).map(([label, val, cls]) => (
-                  <div key={label} className="bg-card border border-border rounded-xl p-4 text-center">
-                    <p className={cn("text-2xl font-bold", cls)}>{val}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{label}</p>
-                  </div>
-                ))}
-              </div>
-            )}
             {isAdminOrAM && <ComplianceClientsOverview fwSummary={fwSummary} isLoading={loadingFwSummary} />}
             {isAdminOrAM && <ClientComplianceSection />}
           </div>

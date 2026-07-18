@@ -289,6 +289,30 @@ router.delete("/compliance/answers/:globalControlId/evidence/:filename", require
   res.json({ ok: true });
 });
 
+// Helper: priority map for "worst status wins" aggregation (non_compliant is worst)
+const STATUS_PRIORITY: Record<string, number> = { non_compliant: 4, in_progress: 3, compliant: 2, not_applicable: 1 };
+
+// Build effective status map for a tenant by merging asset-level + tenant-level answers.
+// Priority: tenantAnswer > worst assetControl status > non_compliant (default)
+function buildEffectiveStatusMap(
+  tenantAnswers: { globalControlId: number; status: string }[],
+  assetControls: { globalControlId: number; status: string }[],
+): Map<number, string> {
+  const map = new Map<number, string>();
+  // First layer: aggregate asset-level controls (worst status wins across assets)
+  for (const ac of assetControls) {
+    const existing = map.get(ac.globalControlId);
+    if (!existing || STATUS_PRIORITY[ac.status] > STATUS_PRIORITY[existing]) {
+      map.set(ac.globalControlId, ac.status);
+    }
+  }
+  // Second layer: tenant-level answers override asset-level
+  for (const ta of tenantAnswers) {
+    map.set(ta.globalControlId, ta.status);
+  }
+  return map;
+}
+
 // ── Compliance summary (per framework, per tenant) ────────────────────────────
 router.get("/compliance/summary", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { tenantId, role } = req.user!;
@@ -297,22 +321,27 @@ router.get("/compliance/summary", requireAuth, requireCompliance, async (req: Au
     targetTenantId = parseInt(req.query.tenantId as string);
   }
 
-  const frameworks = await db.select().from(complianceFrameworksTable);
-  // Get all global controls grouped by framework
-  const allControls = await db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true));
-  // Get answers for this tenant
-  const answers = await db.select().from(complianceControlAnswersTable).where(eq(complianceControlAnswersTable.tenantId, targetTenantId));
-  const answerMap = new Map(answers.map(a => [a.globalControlId, a]));
+  const [frameworks, allControls, answers, assetControls] = await Promise.all([
+    db.select().from(complianceFrameworksTable),
+    db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true)),
+    db.select({ globalControlId: complianceControlAnswersTable.globalControlId, status: complianceControlAnswersTable.status })
+      .from(complianceControlAnswersTable).where(eq(complianceControlAnswersTable.tenantId, targetTenantId)),
+    db.select({ globalControlId: complianceAssetControlsTable.globalControlId, status: complianceAssetControlsTable.status })
+      .from(complianceAssetControlsTable).where(eq(complianceAssetControlsTable.tenantId, targetTenantId)),
+  ]);
+
+  // Merge: asset-level first, then tenant-level overrides
+  const effectiveMap = buildEffectiveStatusMap(answers, assetControls);
 
   const summary = frameworks.map(fw => {
     const fwControls = allControls.filter(c => c.frameworkId === fw.id);
     const total = fwControls.length || fw.totalControls;
-    const statuses = fwControls.map(c => answerMap.get(c.id)?.status ?? "non_compliant");
-    const compliant = statuses.filter(s => s === "compliant").length;
-    const inProgress = statuses.filter(s => s === "in_progress").length;
+    const statuses = fwControls.map(c => effectiveMap.get(c.id) ?? "non_compliant");
+    const compliant    = statuses.filter(s => s === "compliant").length;
+    const inProgress   = statuses.filter(s => s === "in_progress").length;
     const nonCompliant = statuses.filter(s => s === "non_compliant").length;
     const notApplicable = statuses.filter(s => s === "not_applicable").length;
-    const score = total > 0 ? Math.round((compliant / (total - notApplicable || 1)) * 100) : 0;
+    const score = total > 0 ? Math.round((compliant / Math.max(1, total - notApplicable)) * 100) : 0;
     return {
       frameworkId: fw.id, frameworkName: fw.name, shortName: fw.shortName,
       version: fw.version, description: fw.description,
@@ -386,11 +415,14 @@ router.get("/compliance/clients/framework-summary", requireAuth, requireRole("ad
   const activeIds = activeAssignments.map(a => a.tenantId);
   if (activeIds.length === 0) { res.json([]); return; }
 
-  const [frameworks, allControls, tenants, allAnswers] = await Promise.all([
+  const [frameworks, allControls, tenants, allAnswers, allAssetControls] = await Promise.all([
     db.select().from(complianceFrameworksTable),
     db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true)),
     db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).where(inArray(tenantsTable.id, activeIds)),
-    db.select().from(complianceControlAnswersTable).where(inArray(complianceControlAnswersTable.tenantId, activeIds)),
+    db.select({ tenantId: complianceControlAnswersTable.tenantId, globalControlId: complianceControlAnswersTable.globalControlId, status: complianceControlAnswersTable.status })
+      .from(complianceControlAnswersTable).where(inArray(complianceControlAnswersTable.tenantId, activeIds)),
+    db.select({ tenantId: complianceAssetControlsTable.tenantId, globalControlId: complianceAssetControlsTable.globalControlId, status: complianceAssetControlsTable.status })
+      .from(complianceAssetControlsTable).where(inArray(complianceAssetControlsTable.tenantId, activeIds)),
   ]);
 
   const result = frameworks.map(fw => {
@@ -398,9 +430,12 @@ router.get("/compliance/clients/framework-summary", requireAuth, requireRole("ad
     const fwTotal = fwControls.length;
 
     const clientBreakdown = activeIds.map(tenantId => {
-      const tenantAnswers = allAnswers.filter(a => a.tenantId === tenantId);
-      const answerMap = new Map(tenantAnswers.map(a => [a.globalControlId, a]));
-      const statuses = fwControls.map(c => answerMap.get(c.id)?.status ?? "non_compliant");
+      // Merge: asset-level first (worst wins), then tenant-level overrides
+      const effectiveMap = buildEffectiveStatusMap(
+        allAnswers.filter(a => a.tenantId === tenantId),
+        allAssetControls.filter(a => a.tenantId === tenantId),
+      );
+      const statuses = fwControls.map(c => effectiveMap.get(c.id) ?? "non_compliant");
       const compliant    = statuses.filter(s => s === "compliant").length;
       const inProgress   = statuses.filter(s => s === "in_progress").length;
       const nonCompliant = statuses.filter(s => s === "non_compliant").length;
@@ -625,6 +660,7 @@ router.put("/compliance/assets/:assetId/:globalControlId", requireAuth, requireC
   const validStatuses = ["non_compliant", "in_progress", "compliant", "not_applicable"];
   const safeStatus = validStatuses.includes(status) ? status : "non_compliant";
 
+  // Write asset-level control answer
   const [answer] = await db.insert(complianceAssetControlsTable).values({
     tenantId, assetId, globalControlId, status: safeStatus,
     notes: notes || null, assignedTo: assignedTo || null, evidence: evidence || null,
@@ -632,6 +668,23 @@ router.put("/compliance/assets/:assetId/:globalControlId", requireAuth, requireC
     target: [complianceAssetControlsTable.tenantId, complianceAssetControlsTable.assetId, complianceAssetControlsTable.globalControlId],
     set: { status: safeStatus, notes: notes || null, assignedTo: assignedTo || null, evidence: evidence || null, updatedAt: new Date() },
   }).returning();
+
+  // Sync to tenant-level answer: tenant answer = worst status across all assets for this control
+  // This keeps /compliance/summary accurate even when read without per-asset joins
+  const allAssetStatuses = await db.select({ status: complianceAssetControlsTable.status })
+    .from(complianceAssetControlsTable)
+    .where(and(
+      eq(complianceAssetControlsTable.tenantId, tenantId),
+      eq(complianceAssetControlsTable.globalControlId, globalControlId),
+    ));
+  const worstStatus = allAssetStatuses.reduce<string>((worst, row) => {
+    return STATUS_PRIORITY[row.status] > STATUS_PRIORITY[worst] ? row.status : worst;
+  }, "not_applicable");
+  await db.insert(complianceControlAnswersTable).values({ tenantId, globalControlId, status: worstStatus })
+    .onConflictDoUpdate({
+      target: [complianceControlAnswersTable.tenantId, complianceControlAnswersTable.globalControlId],
+      set: { status: worstStatus, updatedAt: new Date() },
+    });
 
   res.json(answer);
 });
