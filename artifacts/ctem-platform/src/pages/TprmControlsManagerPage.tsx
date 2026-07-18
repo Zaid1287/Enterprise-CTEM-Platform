@@ -116,9 +116,8 @@ export default function TprmControlsManagerPage() {
         `/api/tprm/vendors/${vendorId}/compliance-controls?framework=${framework}`
       );
       setControls(ctrls);
-      // Expand all categories by default
-      const cats = new Set(ctrls.map((c: any) => c.category ?? "General"));
-      setExpandedCats(cats);
+      // All category cards collapsed by default — user clicks to expand
+      setExpandedCats(new Set());
     } catch { /* ignore */ }
     setCtrlsLoading(false);
   };
