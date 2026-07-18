@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { useSearch } from "wouter";
+import { useSearch, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
 import { useAuth } from "@/hooks/useAuth";
@@ -1243,18 +1243,81 @@ function DocumentsTab() {
   );
 }
 
+// ── Client Asset Row (expandable inside a client card) ────────────────────────
+function ClientAssetList({ tenantId }: { tenantId: number }) {
+  const [, navigate] = useLocation();
+  const { data: assets, isLoading } = useQuery<TenantAsset[]>({
+    queryKey: ["compliance-client-assets", tenantId],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/clients/${tenantId}/assets`),
+  });
+
+  const enabledAssets = assets?.filter(a => a.isComplianceEnabled) ?? [];
+  const verifiedOnly = assets?.filter(a => a.verificationStatus === "verified") ?? [];
+
+  if (isLoading) return (
+    <div className="pt-2 pb-1 space-y-1.5">
+      {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}
+    </div>
+  );
+
+  if (verifiedOnly.length === 0) return (
+    <p className="text-xs text-muted-foreground italic pt-2 pb-1">
+      No verified assets for this tenant.
+    </p>
+  );
+
+  if (enabledAssets.length === 0) return (
+    <p className="text-xs text-muted-foreground italic pt-2 pb-1">
+      No compliance-enabled assets yet. Enable compliance tracking from Asset Detail pages.
+    </p>
+  );
+
+  return (
+    <div className="pt-3 space-y-2">
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mb-1">
+        {enabledAssets.length} Compliance-Enabled Asset{enabledAssets.length !== 1 ? "s" : ""}
+      </p>
+      {enabledAssets.map(a => (
+        <div key={a.id}
+          className="flex items-center gap-2 bg-muted/20 border border-border/40 rounded-lg px-3 py-2 group hover:bg-muted/40 hover:border-primary/30 transition-all cursor-pointer"
+          onClick={() => navigate(`/compliance/assets/${a.id}`)}
+        >
+          <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-green-400" />
+          <span className="flex-1 text-xs font-medium truncate">{a.name}</span>
+          <span className="text-[10px] text-muted-foreground capitalize shrink-0">{a.type}</span>
+          <span className="text-[10px] text-primary opacity-0 group-hover:opacity-100 transition-opacity shrink-0 font-medium">
+            View Details →
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Client Compliance Overview (admin/AM — shown in Overview tab) ─────────────
 function ClientComplianceSection() {
+  const [expandedClients, setExpandedClients] = useState<Set<number>>(new Set());
+
   const { data: clients = [], isLoading } = useQuery<ClientComplianceSummary[]>({
     queryKey: ["compliance-clients-overview"],
     queryFn: () => apiFetch(`${BASE}/api/compliance/clients/overview`),
   });
 
+  const toggleClient = (id: number) => {
+    setExpandedClients(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   if (isLoading) return (
     <div>
-      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Building2 className="w-4 h-4 text-primary" />Client Compliance Posture</h3>
+      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+        <Building2 className="w-4 h-4 text-primary" />Client Compliance Posture
+      </h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-        {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}
+        {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)}
       </div>
     </div>
   );
@@ -1266,17 +1329,24 @@ function ClientComplianceSection() {
       <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
         <Building2 className="w-4 h-4 text-primary" />
         Client Compliance Posture
-        <span className="text-xs font-normal text-muted-foreground">({clients.length} client{clients.length !== 1 ? "s" : ""})</span>
+        <span className="text-xs font-normal text-muted-foreground">
+          ({clients.length} client{clients.length !== 1 ? "s" : ""})
+        </span>
       </h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
         {clients.map(c => {
           const scoreColor = c.score >= 70 ? "text-green-400" : c.score >= 40 ? "text-yellow-400" : "text-red-400";
+          const isExpanded = expandedClients.has(c.tenantId);
           return (
-            <div key={c.tenantId} className="bg-card border border-border rounded-xl p-4 space-y-3">
+            <div key={c.tenantId} className={cn(
+              "bg-card border rounded-xl p-4 space-y-3 transition-all",
+              isExpanded ? "border-primary/30" : "border-border",
+            )}>
+              {/* Client header row */}
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold truncate">{c.tenantName}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     {c.moduleEnabled
                       ? <Badge className="text-[10px] bg-green-500/15 text-green-400 border-green-500/30">Module Active</Badge>
                       : <Badge className="text-[10px] bg-muted text-muted-foreground border-border">Module Off</Badge>
@@ -1288,12 +1358,14 @@ function ClientComplianceSection() {
                   <p className="text-[10px] text-muted-foreground">compliance score</p>
                 </div>
               </div>
+
+              {/* Status counters */}
               <div className="grid grid-cols-4 gap-1.5">
                 {([
-                  ["Compliant", c.compliant, "text-green-400", "bg-green-500/10"],
-                  ["In Prog.", c.inProgress, "text-yellow-400", "bg-yellow-500/10"],
-                  ["Non-Comp.", c.nonCompliant, "text-red-400", "bg-red-500/10"],
-                  ["N/A", c.notApplicable, "text-slate-400", "bg-slate-500/10"],
+                  ["Compliant",  c.compliant,     "text-green-400",  "bg-green-500/10"],
+                  ["In Prog.",   c.inProgress,    "text-yellow-400", "bg-yellow-500/10"],
+                  ["Non-Comp.", c.nonCompliant,   "text-red-400",    "bg-red-500/10"],
+                  ["N/A",        c.notApplicable, "text-slate-400",  "bg-slate-500/10"],
                 ] as [string, number, string, string][]).map(([label, val, cls, bg]) => (
                   <div key={label} className={cn("rounded-lg px-1.5 py-2 text-center", bg)}>
                     <p className={cn("text-sm font-bold", cls)}>{val}</p>
@@ -1301,10 +1373,31 @@ function ClientComplianceSection() {
                   </div>
                 ))}
               </div>
+
+              {/* Progress bar */}
               <div className="w-full bg-muted/30 rounded-full h-1.5">
-                <div className={cn("h-1.5 rounded-full transition-all", c.score >= 70 ? "bg-green-500" : c.score >= 40 ? "bg-yellow-500" : "bg-red-500")}
-                  style={{ width: `${c.score}%` }} />
+                <div
+                  className={cn("h-1.5 rounded-full transition-all",
+                    c.score >= 70 ? "bg-green-500" : c.score >= 40 ? "bg-yellow-500" : "bg-red-500")}
+                  style={{ width: `${c.score}%` }}
+                />
               </div>
+
+              {/* Expand / collapse assets button */}
+              {c.moduleEnabled && (
+                <button
+                  onClick={() => toggleClient(c.tenantId)}
+                  className="w-full flex items-center justify-between gap-2 text-xs text-muted-foreground hover:text-primary transition-colors pt-1 border-t border-border/30"
+                >
+                  <span className="font-medium">
+                    {isExpanded ? "Hide assets" : "View compliance-enabled assets"}
+                  </span>
+                  <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", isExpanded ? "rotate-180" : "")} />
+                </button>
+              )}
+
+              {/* Expanded asset list */}
+              {isExpanded && <ClientAssetList tenantId={c.tenantId} />}
             </div>
           );
         })}

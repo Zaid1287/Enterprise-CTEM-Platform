@@ -22,6 +22,7 @@ const FindingDetailPage = lazy(() => import("@/pages/FindingDetailPage"));
 const FalsePositivesPage = lazy(() => import("@/pages/FalsePositivesPage"));
 const ScansPage = lazy(() => import("@/pages/ScansPage"));
 const CompliancePage = lazy(() => import("@/pages/CompliancePage"));
+const ComplianceAssetDetailPage = lazy(() => import("@/pages/ComplianceAssetDetailPage"));
 const AlertsPage = lazy(() => import("@/pages/AlertsPage"));
 const RiskPage = lazy(() => import("@/pages/RiskPage"));
 const AiCopilotPage = lazy(() => import("@/pages/AiCopilotPage"));
@@ -418,6 +419,7 @@ function Router() {
       <Route path="/findings/:id" component={() => <ProtectedRoute component={FindingDetailPage} />} />
       <Route path="/false-positives" component={() => <ProtectedRoute component={FalsePositivesPage} />} />
       <Route path="/scans" component={() => <ProtectedRoute component={ScansPage} />} />
+      <Route path="/compliance/assets/:assetId" component={() => <ComplianceRoute component={ComplianceAssetDetailPage} />} />
       <Route path="/compliance" component={() => <ComplianceRoute component={CompliancePage} />} />
       <Route path="/alerts" component={() => <ProtectedRoute component={AlertsPage} />} />
       <Route path="/risk" component={() => <ProtectedRoute component={RiskPage} />} />
