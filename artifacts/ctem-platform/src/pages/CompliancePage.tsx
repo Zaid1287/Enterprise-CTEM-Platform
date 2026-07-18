@@ -19,7 +19,7 @@ import {
   ShieldCheck, CheckCircle2, XCircle, Clock, MinusCircle,
   ChevronRight, ChevronDown, Upload, Download, Trash2, Plus, Search,
   FileText, ToggleLeft, ToggleRight, Pencil, X,
-  RefreshCw, Loader2, Info, BookOpen, Server, Building2,
+  RefreshCw, Loader2, Info, BookOpen, Server, Building2, ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -143,6 +143,56 @@ interface TenantAssignment {
   tenantName: string;
   isEnabled: boolean;
   enabledAt: string | null;
+}
+
+interface ClientFrameworkSummary {
+  frameworkId: number;
+  frameworkName: string;
+  shortName: string;
+  activeClients: number;
+  avgScore: number;
+  compliantClients: number;
+  inProgressClients: number;
+  nonCompliantClients: number;
+  totalCompliant: number;
+  totalInProgress: number;
+  totalNonCompliant: number;
+  totalNotApplicable: number;
+  clientBreakdown: {
+    tenantId: number;
+    tenantName: string;
+    score: number;
+    compliant: number;
+    inProgress: number;
+    nonCompliant: number;
+    notApplicable: number;
+  }[];
+}
+
+interface ClientDocumentControl {
+  globalControlId: number;
+  controlId: string;
+  controlTitle: string;
+  category: string | null;
+  status: string;
+  evidence: string | null;
+  updatedAt: string | null;
+}
+interface ClientDocumentFramework {
+  frameworkId: number;
+  frameworkName: string;
+  shortName: string;
+  controls: ClientDocumentControl[];
+}
+interface ClientDocumentAsset {
+  assetId: number;
+  assetName: string;
+  frameworks: ClientDocumentFramework[];
+}
+interface ClientDocumentGroup {
+  clientTenantId: number | null;
+  clientTenantName: string;
+  assets: ClientDocumentAsset[];
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -922,6 +972,290 @@ function AssetComplianceTab() {
 }
 
 // ── Asset Controls Accordion (Controls tab — asset-first view) ───────────────
+// ── Client Compliance by Framework ─────────────────────────────────────────────
+function ClientFrameworkSummarySection({ selectedFrameworkId }: { selectedFrameworkId?: number }) {
+  const { data: fwSummary = [], isLoading } = useQuery<ClientFrameworkSummary[]>({
+    queryKey: ["compliance-client-framework-summary"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/clients/framework-summary`),
+  });
+  const [expandedFw, setExpandedFw] = useState<number | null>(null);
+
+  const dataToShow = selectedFrameworkId ? fwSummary.filter(f => f.frameworkId === selectedFrameworkId) : fwSummary;
+
+  if (isLoading) return (
+    <div className="space-y-2">
+      {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
+    </div>
+  );
+  if (!isLoading && fwSummary.length === 0) return null;
+  if (dataToShow.length === 0) return null;
+
+  const activeClients = fwSummary[0]?.activeClients ?? 0;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Building2 className="w-4 h-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold">Client Compliance by Framework</h3>
+        <Badge className="text-xs bg-muted text-muted-foreground border-border">
+          {activeClients} active client{activeClients !== 1 ? "s" : ""}
+        </Badge>
+      </div>
+      <div className={cn(selectedFrameworkId ? "space-y-3" : "grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3")}>
+        {dataToShow.map(fw => (
+          <div key={fw.frameworkId} className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="flex items-center gap-4 p-4">
+              <ScoreRing score={fw.avgScore} size={52} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge className={cn("text-xs border font-mono shrink-0", fwColor(fw.shortName))}>{fw.shortName}</Badge>
+                  <span className="text-sm font-semibold truncate">{fw.frameworkName}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div>
+                    <p className="text-green-400 font-bold text-base">{fw.compliantClients}</p>
+                    <p className="text-muted-foreground text-[10px] leading-tight">Compliant</p>
+                  </div>
+                  <div>
+                    <p className="text-yellow-400 font-bold text-base">{fw.inProgressClients}</p>
+                    <p className="text-muted-foreground text-[10px] leading-tight">In Progress</p>
+                  </div>
+                  <div>
+                    <p className="text-red-400 font-bold text-base">{fw.nonCompliantClients}</p>
+                    <p className="text-muted-foreground text-[10px] leading-tight">Non-Compliant</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="px-4 pb-3 grid grid-cols-4 gap-2 border-t border-border pt-3 text-center">
+              {([
+                ["Compliant", fw.totalCompliant, "text-green-400"],
+                ["In Progress", fw.totalInProgress, "text-yellow-400"],
+                ["Non-Compliant", fw.totalNonCompliant, "text-red-400"],
+                ["N/A", fw.totalNotApplicable, "text-slate-400"],
+              ] as [string, number, string][]).map(([label, val, cls]) => (
+                <div key={label}>
+                  <p className={cn("text-sm font-bold", cls)}>{val}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
+                </div>
+              ))}
+            </div>
+            {fw.clientBreakdown.length > 0 && (
+              <>
+                <button
+                  onClick={() => setExpandedFw(expandedFw === fw.frameworkId ? null : fw.frameworkId)}
+                  className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-muted-foreground hover:text-foreground bg-muted/20 border-t border-border transition-colors"
+                >
+                  <ChevronDown className={cn("w-3 h-3 transition-transform", expandedFw === fw.frameworkId && "rotate-180")} />
+                  {expandedFw === fw.frameworkId ? "Hide" : "View"} per-client breakdown
+                </button>
+                {expandedFw === fw.frameworkId && (
+                  <div className="border-t border-border divide-y divide-border/50">
+                    {fw.clientBreakdown.map(c => (
+                      <div key={c.tenantId} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/10">
+                        <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="flex-1 text-xs font-medium truncate">{c.tenantName}</span>
+                        <div className="flex items-center gap-3 text-[10px]">
+                          <span className="text-green-400">{c.compliant} ✓</span>
+                          <span className="text-yellow-400">{c.inProgress} ~</span>
+                          <span className="text-red-400">{c.nonCompliant} ✗</span>
+                        </div>
+                        <ScoreRing score={c.score} size={28} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── All Documents Grouped by Client → Asset → Framework ────────────────────────
+function ClientDocumentsTab() {
+  const [expandedClients, setExpandedClients] = useState<Set<string>>(() => new Set());
+  const [expandedAssets, setExpandedAssets] = useState<Set<string>>(() => new Set());
+  const [search, setSearch] = useState("");
+
+  const { data: groups = [], isLoading } = useQuery<ClientDocumentGroup[]>({
+    queryKey: ["compliance-documents-by-client"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/documents/by-client`),
+  });
+
+  const toggleClient = (key: string) =>
+    setExpandedClients(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+  const toggleAsset = (key: string) =>
+    setExpandedAssets(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+
+  const filtered = useMemo(() => {
+    if (!search) return groups;
+    const q = search.toLowerCase();
+    return groups.map(g => ({
+      ...g,
+      assets: g.assets.map(a => ({
+        ...a,
+        frameworks: a.frameworks.map(fw => ({
+          ...fw,
+          controls: fw.controls.filter(c =>
+            c.controlTitle.toLowerCase().includes(q) ||
+            c.controlId.toLowerCase().includes(q) ||
+            fw.frameworkName.toLowerCase().includes(q) ||
+            g.clientTenantName.toLowerCase().includes(q)
+          ),
+        })).filter(fw => fw.controls.length > 0),
+      })).filter(a => a.frameworks.length > 0),
+    })).filter(g => g.assets.length > 0);
+  }, [groups, search]);
+
+  const totalFiles = useMemo(() =>
+    groups.reduce((sum, g) =>
+      sum + g.assets.reduce((s2, a) =>
+        s2 + a.frameworks.reduce((s3, fw) =>
+          s3 + fw.controls.reduce((s4, c) => s4 + parseEvidence(c.evidence).length, 0), 0), 0), 0),
+  [groups]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by client, framework, control…" className="h-8 pl-8 text-xs" />
+        </div>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground ml-auto">
+          <span>{groups.length} client{groups.length !== 1 ? "s" : ""}</span>
+          <span className="text-border">·</span>
+          <span>{totalFiles} file{totalFiles !== 1 ? "s" : ""} total</span>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-card border border-border rounded-xl p-12 text-center">
+          <FileText className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground font-medium">
+            {groups.length === 0 ? "No evidence documents uploaded yet" : "No matches"}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {groups.length === 0
+              ? "Upload evidence files via the Controls tab → open an asset → update a control status."
+              : "Try a different search term."}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(client => {
+            const cKey = String(client.clientTenantId ?? "unassigned");
+            const isOpen = expandedClients.has(cKey);
+            const clientFiles = client.assets.reduce((s, a) =>
+              s + a.frameworks.reduce((s2, fw) =>
+                s2 + fw.controls.reduce((s3, c) => s3 + parseEvidence(c.evidence).length, 0), 0), 0);
+
+            return (
+              <div key={cKey} className="bg-card border border-border rounded-xl overflow-hidden">
+                <button
+                  onClick={() => toggleClient(cKey)}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/20 text-left transition-colors"
+                >
+                  <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform shrink-0", isOpen && "rotate-90")} />
+                  <Building2 className="w-4 h-4 text-primary shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold">{client.clientTenantName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {client.assets.length} asset{client.assets.length !== 1 ? "s" : ""} · {clientFiles} file{clientFiles !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  <Badge className="text-xs bg-muted text-muted-foreground border-border shrink-0">
+                    {clientFiles} file{clientFiles !== 1 ? "s" : ""}
+                  </Badge>
+                </button>
+
+                {isOpen && (
+                  <div className="border-t border-border divide-y divide-border/50">
+                    {client.assets.map(asset => {
+                      const aKey = `${cKey}-${asset.assetId}`;
+                      const isAssetOpen = expandedAssets.has(aKey);
+                      const assetFiles = asset.frameworks.reduce((s, fw) =>
+                        s + fw.controls.reduce((s2, c) => s2 + parseEvidence(c.evidence).length, 0), 0);
+
+                      return (
+                        <div key={asset.assetId}>
+                          <button
+                            onClick={() => toggleAsset(aKey)}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 pl-10 hover:bg-muted/10 text-left transition-colors"
+                          >
+                            <ChevronRight className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0", isAssetOpen && "rotate-90")} />
+                            <Server className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span className="flex-1 text-sm font-medium truncate">{asset.assetName}</span>
+                            <span className="text-xs text-muted-foreground shrink-0">{assetFiles} file{assetFiles !== 1 ? "s" : ""}</span>
+                          </button>
+
+                          {isAssetOpen && (
+                            <div className="border-t border-border/50">
+                              {asset.frameworks.map(fw => (
+                                <div key={fw.frameworkId} className="pl-14 pr-4 py-3 border-b border-border/30 last:border-0">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <Badge className={cn("text-xs border font-mono shrink-0", fwColor(fw.shortName))}>
+                                      {fw.shortName}
+                                    </Badge>
+                                    <span className="text-xs font-semibold">{fw.frameworkName}</span>
+                                  </div>
+                                  <div className="space-y-3">
+                                    {fw.controls.map(ctrl => {
+                                      const files = parseEvidence(ctrl.evidence);
+                                      const scfg = STATUS_CONFIG[ctrl.status as StatusKey] ?? STATUS_CONFIG.non_compliant;
+                                      const SIcon = scfg.icon;
+                                      return (
+                                        <div key={ctrl.globalControlId}>
+                                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                            <span className="text-[10px] font-mono text-muted-foreground shrink-0">{ctrl.controlId}</span>
+                                            <span className="text-xs font-medium flex-1">{ctrl.controlTitle}</span>
+                                            <Badge className={cn("text-[10px] border shrink-0 gap-1 px-1.5 py-0.5", scfg.bg, scfg.color)}>
+                                              <SIcon className="w-2.5 h-2.5" />{scfg.label}
+                                            </Badge>
+                                          </div>
+                                          <div className="flex flex-wrap gap-2">
+                                            {files.map(f => (
+                                              <a
+                                                key={f.path}
+                                                href={`${BASE}/api/compliance/assets/${asset.assetId}/${ctrl.globalControlId}/evidence/${encodeURIComponent(f.path)}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="flex items-center gap-1.5 bg-muted/40 hover:bg-muted/70 border border-border rounded-lg px-3 py-1.5 text-xs transition"
+                                              >
+                                                <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+                                                <span className="truncate max-w-[200px]">{f.name}</span>
+                                                <Download className="w-3 h-3 text-muted-foreground shrink-0" />
+                                              </a>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface AssetControlItem {
   globalControlId: number;
   controlId: string;
@@ -975,30 +1309,41 @@ function AssetControlRow({
   const enabled = controls.filter(c => c.isEnabled);
   const compliantCount = enabled.filter(c => c.status === "compliant").length;
 
+  const [, navigate] = useLocation();
+
   return (
     <div className="border-b border-border last:border-0">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/20 text-left transition-colors"
-      >
-        <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform shrink-0", open && "rotate-90")} />
-        <Server className="w-4 h-4 text-muted-foreground shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{asset.name}</p>
-          <p className="text-xs text-muted-foreground">{asset.type}{asset.domain ? ` · ${asset.domain}` : ""}</p>
-        </div>
-        {open && controls.length > 0 && (
-          <span className="text-xs text-muted-foreground shrink-0">
-            {compliantCount}/{enabled.length} compliant
-          </span>
-        )}
-        {asset.riskLevel && (
-          <Badge className={cn("text-xs border shrink-0", riskColors[asset.riskLevel] ?? "bg-muted text-muted-foreground border-border")}>
-            {asset.riskLevel}
-          </Badge>
-        )}
-        <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0", open && "rotate-180")} />
-      </button>
+      <div className="flex items-center hover:bg-muted/20 transition-colors pr-2">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex-1 flex items-center gap-3 px-4 py-3 text-left"
+        >
+          <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform shrink-0", open && "rotate-90")} />
+          <Server className="w-4 h-4 text-muted-foreground shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium truncate">{asset.name}</p>
+            <p className="text-xs text-muted-foreground">{asset.type}{asset.domain ? ` · ${asset.domain}` : ""}</p>
+          </div>
+          {open && controls.length > 0 && (
+            <span className="text-xs text-muted-foreground shrink-0">
+              {compliantCount}/{enabled.length} compliant
+            </span>
+          )}
+          {asset.riskLevel && (
+            <Badge className={cn("text-xs border shrink-0", riskColors[asset.riskLevel] ?? "bg-muted text-muted-foreground border-border")}>
+              {asset.riskLevel}
+            </Badge>
+          )}
+          <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0", open && "rotate-180")} />
+        </button>
+        <button
+          onClick={e => { e.stopPropagation(); navigate(`/compliance/assets/${asset.id}`); }}
+          title="Open asset compliance detail"
+          className="p-2 text-muted-foreground hover:text-primary rounded hover:bg-muted/40 shrink-0"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+        </button>
+      </div>
 
       {open && (
         <div className="bg-muted/5 border-t border-border">
@@ -1678,6 +2023,7 @@ export default function CompliancePage() {
               </div>
             )}
             {isAdminOrAM && <ClientComplianceSection />}
+            {isAdminOrAM && <ClientFrameworkSummarySection />}
           </div>
         )}
 
@@ -1721,6 +2067,8 @@ export default function CompliancePage() {
               </div>
             )}
 
+            {isAdminOrAM && <ClientFrameworkSummarySection selectedFrameworkId={selectedFrameworkId} />}
+
             <AssetControlsAccordion
               frameworkId={selectedFrameworkId}
               isAdmin={isAdmin}
@@ -1732,7 +2080,7 @@ export default function CompliancePage() {
         )}
 
         {/* DOCUMENTS */}
-        {activeTab === "documents" && <DocumentsTab />}
+        {activeTab === "documents" && (isAdminOrAM ? <ClientDocumentsTab /> : <DocumentsTab />)}
 
         {/* LIBRARY */}
         {activeTab === "library" && (

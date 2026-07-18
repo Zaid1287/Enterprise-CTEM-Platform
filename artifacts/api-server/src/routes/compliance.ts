@@ -363,6 +363,76 @@ router.get("/compliance/clients/overview", requireAuth, requireRole("admin", "su
   res.json(result);
 });
 
+// ── Per-framework aggregated stats across all active compliance clients ─────────
+// Used by Overview + Controls tabs (admin/AM only)
+router.get("/compliance/clients/framework-summary", requireAuth, requireRole("admin", "super_admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { userId, role } = req.user!;
+
+  let clientTenantIds: number[];
+  if (role === "account_manager") {
+    clientTenantIds = await getAmClientTenantIds(userId);
+  } else {
+    clientTenantIds = await getPrivilegedTenantIds(req.user!);
+  }
+  if (clientTenantIds.length === 0) { res.json([]); return; }
+
+  // Only count tenants with compliance module enabled
+  const activeAssignments = await db.select({ tenantId: complianceModuleAssignmentsTable.tenantId })
+    .from(complianceModuleAssignmentsTable)
+    .where(and(
+      inArray(complianceModuleAssignmentsTable.tenantId, clientTenantIds),
+      eq(complianceModuleAssignmentsTable.isEnabled, true),
+    ));
+  const activeIds = activeAssignments.map(a => a.tenantId);
+  if (activeIds.length === 0) { res.json([]); return; }
+
+  const [frameworks, allControls, tenants, allAnswers] = await Promise.all([
+    db.select().from(complianceFrameworksTable),
+    db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true)),
+    db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).where(inArray(tenantsTable.id, activeIds)),
+    db.select().from(complianceControlAnswersTable).where(inArray(complianceControlAnswersTable.tenantId, activeIds)),
+  ]);
+
+  const result = frameworks.map(fw => {
+    const fwControls = allControls.filter(c => c.frameworkId === fw.id);
+    const fwTotal = fwControls.length;
+
+    const clientBreakdown = activeIds.map(tenantId => {
+      const tenantAnswers = allAnswers.filter(a => a.tenantId === tenantId);
+      const answerMap = new Map(tenantAnswers.map(a => [a.globalControlId, a]));
+      const statuses = fwControls.map(c => answerMap.get(c.id)?.status ?? "non_compliant");
+      const compliant    = statuses.filter(s => s === "compliant").length;
+      const inProgress   = statuses.filter(s => s === "in_progress").length;
+      const nonCompliant = statuses.filter(s => s === "non_compliant").length;
+      const notApplicable = statuses.filter(s => s === "not_applicable").length;
+      const score = fwTotal > 0 ? Math.round((compliant / Math.max(1, fwTotal - notApplicable)) * 100) : 0;
+      return { tenantId, tenantName: tenants.find(t => t.id === tenantId)?.name ?? String(tenantId), compliant, inProgress, nonCompliant, notApplicable, score };
+    });
+
+    const avgScore = clientBreakdown.length > 0
+      ? Math.round(clientBreakdown.reduce((a, b) => a + b.score, 0) / clientBreakdown.length)
+      : 0;
+
+    return {
+      frameworkId:        fw.id,
+      frameworkName:      fw.name,
+      shortName:          fw.shortName,
+      activeClients:      activeIds.length,
+      avgScore,
+      compliantClients:   clientBreakdown.filter(c => c.score >= 70).length,
+      inProgressClients:  clientBreakdown.filter(c => c.score > 0 && c.score < 70).length,
+      nonCompliantClients: clientBreakdown.filter(c => c.score === 0).length,
+      totalCompliant:     clientBreakdown.reduce((a, b) => a + b.compliant, 0),
+      totalInProgress:    clientBreakdown.reduce((a, b) => a + b.inProgress, 0),
+      totalNonCompliant:  clientBreakdown.reduce((a, b) => a + b.nonCompliant, 0),
+      totalNotApplicable: clientBreakdown.reduce((a, b) => a + b.notApplicable, 0),
+      clientBreakdown,
+    };
+  });
+
+  res.json(result);
+});
+
 // Returns verified assets for a specific client tenant (admin view for Assignments tab)
 // Assets are matched by:
 //  1. Assets directly in the client tenant (legacy)
@@ -846,7 +916,80 @@ router.delete("/compliance/controls/:controlId", requireAuth, requireRole("admin
   res.sendStatus(204);
 });
 
-// ── All evidence documents for the tenant ─────────────────────────────────────
+// ── Documents grouped by client tenant → asset → framework → controls ──────────
+// IMPORTANT: must be registered BEFORE /compliance/documents (static vs general)
+router.get("/compliance/documents/by-client", requireAuth, requireRole("admin", "super_admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+
+  const rows = await db.select({
+    assetId:          assetsTable.id,
+    assetName:        assetsTable.name,
+    globalControlId:  complianceAssetControlsTable.globalControlId,
+    controlStatus:    complianceAssetControlsTable.status,
+    controlEvidence:  complianceAssetControlsTable.evidence,
+    controlUpdatedAt: complianceAssetControlsTable.updatedAt,
+    controlId:        complianceGlobalControlsTable.controlId,
+    controlTitle:     complianceGlobalControlsTable.title,
+    category:         complianceGlobalControlsTable.category,
+    frameworkId:      complianceGlobalControlsTable.frameworkId,
+    frameworkName:    complianceFrameworksTable.name,
+    frameworkShortName: complianceFrameworksTable.shortName,
+    clientTenantId:   usersTable.tenantId,
+    clientTenantName: tenantsTable.name,
+  }).from(complianceAssetControlsTable)
+    .innerJoin(assetsTable, eq(assetsTable.id, complianceAssetControlsTable.assetId))
+    .innerJoin(complianceGlobalControlsTable, eq(complianceGlobalControlsTable.id, complianceAssetControlsTable.globalControlId))
+    .leftJoin(complianceFrameworksTable, eq(complianceFrameworksTable.id, complianceGlobalControlsTable.frameworkId))
+    .leftJoin(usersTable, eq(usersTable.id, assetsTable.assignedClientId))
+    .leftJoin(tenantsTable, eq(tenantsTable.id, usersTable.tenantId))
+    .where(eq(assetsTable.tenantId, tenantId));
+
+  // Only rows with uploaded evidence files
+  const withEvidence = rows.filter(r => {
+    if (!r.controlEvidence) return false;
+    try { const f = JSON.parse(r.controlEvidence); return Array.isArray(f) && f.length > 0; } catch { return false; }
+  });
+
+  // Group by clientTenantId → assetId → frameworkId
+  type CtrlEntry = { globalControlId: number; controlId: string; controlTitle: string; category: string | null; status: string; evidence: string | null; updatedAt: Date | null };
+  type FwEntry   = { frameworkId: number; frameworkName: string; shortName: string; controls: CtrlEntry[] };
+  type AssetEntry = { assetId: number; assetName: string; frameworks: Map<number, FwEntry> };
+  type ClientEntry = { clientTenantName: string; assets: Map<number, AssetEntry> };
+
+  const clientMap = new Map<number | null, ClientEntry>();
+
+  for (const r of withEvidence) {
+    const cKey = r.clientTenantId ?? null;
+    if (!clientMap.has(cKey)) clientMap.set(cKey, { clientTenantName: r.clientTenantName ?? "Unassigned", assets: new Map() });
+    const cli = clientMap.get(cKey)!;
+
+    if (!cli.assets.has(r.assetId)) cli.assets.set(r.assetId, { assetId: r.assetId, assetName: r.assetName, frameworks: new Map() });
+    const ast = cli.assets.get(r.assetId)!;
+
+    const fKey = r.frameworkId ?? 0;
+    if (!ast.frameworks.has(fKey)) ast.frameworks.set(fKey, { frameworkId: fKey, frameworkName: r.frameworkName ?? "", shortName: r.frameworkShortName ?? "", controls: [] });
+    ast.frameworks.get(fKey)!.controls.push({
+      globalControlId: r.globalControlId,
+      controlId:       r.controlId,
+      controlTitle:    r.controlTitle,
+      category:        r.category,
+      status:          r.controlStatus ?? "non_compliant",
+      evidence:        r.controlEvidence,
+      updatedAt:       r.controlUpdatedAt,
+    });
+  }
+
+  res.json(Array.from(clientMap.entries()).map(([clientTenantId, cli]) => ({
+    clientTenantId,
+    clientTenantName: cli.clientTenantName,
+    assets: Array.from(cli.assets.values()).map(ast => ({
+      assetId:   ast.assetId,
+      assetName: ast.assetName,
+      frameworks: Array.from(ast.frameworks.values()),
+    })),
+  })));
+});
+
 router.get("/compliance/documents", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { tenantId } = req.user!;
 
