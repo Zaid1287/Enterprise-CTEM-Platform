@@ -247,14 +247,15 @@ export default function ComplianceAssetDetailPage() {
 
   const totalEnabled = enabledControls.length; // used for controls-section header count
 
-  // Overall metrics computed from summary (only counts explicitly scoped controls — accurate)
+  // Overall metrics computed from summary — uses ALL framework controls as denominator
+  // (identical methodology to Overview tab so scores match)
   const compliantCount    = summary.reduce((a, s) => a + s.compliant,      0);
   const inProgressCount   = summary.reduce((a, s) => a + s.inProgress,     0);
   const nonCompliantCount = summary.reduce((a, s) => a + s.nonCompliant,   0);
   const notApplicableCount = summary.reduce((a, s) => a + s.notApplicable, 0);
-  const scopedTotal       = summary.reduce((a, s) => a + s.total,          0);
-  const overallScore = scopedTotal > 0
-    ? Math.round((compliantCount / Math.max(1, scopedTotal - notApplicableCount)) * 100)
+  const totalControls     = summary.reduce((a, s) => a + s.total,          0);
+  const overallScore = totalControls > 0
+    ? Math.round((compliantCount / Math.max(1, totalControls - notApplicableCount)) * 100)
     : 0;
   const scoreColor = overallScore >= 70 ? "text-green-400" : overallScore >= 40 ? "text-yellow-400" : "text-red-400";
 
@@ -369,9 +370,9 @@ export default function ComplianceAssetDetailPage() {
               label: "Overall Score",
               value: <span className={cn("text-3xl font-bold", scoreColor)}>{overallScore}%</span>,
               accent: "border-l-4 " + (overallScore >= 70 ? "border-l-green-500" : overallScore >= 40 ? "border-l-yellow-500" : "border-l-red-500"),
-              sub: `scoped controls only`,
+              sub: `all framework controls`,
             },
-            { label: "Total Controls", value: <span className="text-2xl font-bold">{scopedTotal}</span>, sub: `${scopedTotal} scoped to this asset` },
+            { label: "Total Controls", value: <span className="text-2xl font-bold">{totalControls}</span>, sub: `across all frameworks` },
             { label: "Compliant", value: <span className="text-2xl font-bold text-green-400">{compliantCount}</span>, sub: "passing" },
             { label: "In Progress", value: <span className="text-2xl font-bold text-yellow-400">{inProgressCount}</span>, sub: "being addressed" },
             { label: "Non-Compliant", value: <span className="text-2xl font-bold text-red-400">{nonCompliantCount}</span>, sub: "requires action" },
@@ -399,10 +400,10 @@ export default function ComplianceAssetDetailPage() {
                 — click a framework to filter controls below
               </span>
             </p>
-            {scopedTotal > 0 && (
+            {totalControls > 0 && (
               <p className="text-[10px] text-muted-foreground shrink-0 mt-0.5">
-                Based on <span className="text-foreground font-medium">{scopedTotal}</span> controls scoped to this asset
-                {" "}(overall: <span className="text-foreground font-medium">{overallScore}%</span>)
+                Across all <span className="text-foreground font-medium">{totalControls}</span> framework controls
+                {" "}· overall: <span className="text-foreground font-medium">{overallScore}%</span>
               </p>
             )}
           </div>

@@ -826,31 +826,41 @@ router.delete("/compliance/assets/:assetId/:globalControlId/evidence/:filename",
 });
 
 // Asset compliance summary (rollup per framework for a specific asset)
-// Only counts controls explicitly SCOPED to this asset (in complianceAssetControlsTable)
+// Uses ALL global controls as the denominator (same methodology as /compliance/summary)
+// so scores are consistent between the Overview page and Asset Detail page.
+// Scoped controls (complianceAssetControlsTable) provide the per-asset answers;
+// any control without an explicit answer defaults to non_compliant.
 router.get("/compliance/assets/:assetId/summary", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { tenantId } = req.user!;
   const assetId = parseInt(req.params.assetId as string);
 
-  const frameworks = await db.select().from(complianceFrameworksTable);
+  const [frameworks, allControls, scopedControls] = await Promise.all([
+    db.select().from(complianceFrameworksTable),
+    db.select({ id: complianceGlobalControlsTable.id, frameworkId: complianceGlobalControlsTable.frameworkId })
+      .from(complianceGlobalControlsTable)
+      .where(eq(complianceGlobalControlsTable.isEnabled, true)),
+    // Fetch per-asset answers (no tenantId filter — stored under asset's owning tenant)
+    db.select({
+      globalControlId: complianceAssetControlsTable.globalControlId,
+      status:          complianceAssetControlsTable.status,
+    }).from(complianceAssetControlsTable)
+      .where(eq(complianceAssetControlsTable.assetId, assetId)),
+  ]);
 
-  // Fetch controls for this asset (no tenantId filter — data belongs to the asset's owning tenant)
-  const scopedControls = await db.select({
-    status:      complianceAssetControlsTable.status,
-    frameworkId: complianceGlobalControlsTable.frameworkId,
-  }).from(complianceAssetControlsTable)
-    .innerJoin(complianceGlobalControlsTable, eq(complianceAssetControlsTable.globalControlId, complianceGlobalControlsTable.id))
-    .where(eq(complianceAssetControlsTable.assetId, assetId));
+  // Build quick lookup: globalControlId → status (from per-asset answers)
+  const answerMap = new Map(scopedControls.map(c => [c.globalControlId, c.status]));
 
   const summary = frameworks.map(fw => {
-    const fwControls = scopedControls.filter(c => c.frameworkId === fw.id);
-    const total = fwControls.length;
-    const compliant    = fwControls.filter(c => c.status === "compliant").length;
-    const inProgress   = fwControls.filter(c => c.status === "in_progress").length;
-    const nonCompliant = fwControls.filter(c => c.status === "non_compliant").length;
-    const notApplicable = fwControls.filter(c => c.status === "not_applicable").length;
+    const fwControls = allControls.filter(c => c.frameworkId === fw.id);
+    const total = fwControls.length || fw.totalControls;
+    // Unanswered controls default to non_compliant (same as Overview)
+    const statuses    = fwControls.map(c => answerMap.get(c.id) ?? "non_compliant");
+    const compliant    = statuses.filter(s => s === "compliant").length;
+    const inProgress   = statuses.filter(s => s === "in_progress").length;
+    const nonCompliant = statuses.filter(s => s === "non_compliant").length;
+    const notApplicable = statuses.filter(s => s === "not_applicable").length;
     const score = total > 0 ? Math.round((compliant / Math.max(1, total - notApplicable)) * 100) : 0;
     return { frameworkId: fw.id, frameworkName: fw.name, shortName: fw.shortName, total, compliant, inProgress, nonCompliant, notApplicable, score };
-  }).filter(s => s.total > 0); // Only return frameworks with scoped controls
+  }).filter(s => s.total > 0); // Only include frameworks that have controls defined
 
   res.json(summary);
 });
