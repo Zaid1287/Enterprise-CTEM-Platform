@@ -447,11 +447,11 @@ export default function ComplianceAssetDetailPage() {
                   <div className="grid grid-cols-2 gap-1">
                     <div className="bg-green-500/10 rounded px-1 py-1 text-center">
                       <p className="text-xs font-bold text-green-400">{fw.compliant}</p>
-                      <p className="text-[9px] text-muted-foreground">OK</p>
+                      <p className="text-[9px] text-muted-foreground">Compliant</p>
                     </div>
                     <div className="bg-red-500/10 rounded px-1 py-1 text-center">
                       <p className="text-xs font-bold text-red-400">{fw.nonCompliant}</p>
-                      <p className="text-[9px] text-muted-foreground">Fail</p>
+                      <p className="text-[9px] text-muted-foreground">Non-Compliant</p>
                     </div>
                   </div>
                   {fw.total > 0 && (
@@ -576,7 +576,7 @@ export default function ComplianceAssetDetailPage() {
                         <div className="hidden sm:flex items-center gap-4 shrink-0 mr-2">
                           <span className="text-xs text-green-400">{fwSummary.compliant} compliant</span>
                           <span className="text-xs text-yellow-400">{fwSummary.inProgress} in progress</span>
-                          <span className="text-xs text-red-400">{fwSummary.nonCompliant} failing</span>
+                          <span className="text-xs text-red-400">{fwSummary.nonCompliant} non-compliant</span>
                           <span className="text-xs text-muted-foreground">{fw.controls.length} total</span>
                         </div>
                       )}
