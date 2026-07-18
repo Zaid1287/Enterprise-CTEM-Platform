@@ -89,6 +89,14 @@ export default function AssetDetailPage() {
   const [assignedAmId, setAssignedAmId]               = useState<string>("_none_");
   const [savingAssignment, setSavingAssignment]       = useState(false);
   const [cancellingId, setCancellingId]               = useState<number | null>(null);
+  // Fix 4: brand intel source filter on findings list
+  const [findingsSource, setFindingsSource]           = useState<"all" | "scan" | "brand_intel">("all");
+  // Fix 2: brand watchlist management form state
+  const [showWatchlistForm, setShowWatchlistForm]     = useState(false);
+  const [wlType, setWlType]                           = useState<string>("domain");
+  const [wlValue, setWlValue]                         = useState("");
+  const [wlSubmitting, setWlSubmitting]               = useState(false);
+  const [scanningItemId, setScanningItemId]           = useState<number | null>(null);
 
   const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -183,6 +191,13 @@ export default function AssetDetailPage() {
   const { data: brandThreats } = useListBrandThreats({
     query: { enabled: !!id, queryKey: getListBrandThreatsQueryKey(), staleTime: 30_000 },
   });
+  // Fix 6: fetch watchlist items and match by assetId (reliable) rather than by domain string
+  const { data: watchlistItemsRaw, refetch: refetchWatchlist } = useQuery({
+    queryKey: ["brand-watchlist-for-asset", id],
+    queryFn: () => apiFetch<any[]>(`${BASE_URL}/api/brand-watchlist`),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
 
   const { data: portsData } = useListAssetPorts(id, {
     query: { enabled: !!id, queryKey: getListAssetPortsQueryKey(id) },
@@ -267,14 +282,33 @@ export default function AssetDetailPage() {
     return val.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]!.split("?")[0]!;
   }
 
+  // Fix 6: assetId-based watchlist item matching (primary); string-based fallback (secondary)
+  const allWatchlistItems = (watchlistItemsRaw as any[]) ?? [];
+  const assetWatchlistItems = allWatchlistItems.filter((item: any) => item.assetId === id);
+  const assetWatchlistItemIds = new Set(assetWatchlistItems.map((item: any) => item.id));
+
+  const allScans = (brandThreats as any[]) ?? [];
   const assetDomain = a?.value ? normalizeDomain(String(a.value)) : null;
-  const matchingBrandScan = assetDomain
-    ? ((brandThreats as any[]) ?? []).find(
-        (s: any) =>
-          normalizeDomain(s.domain) === assetDomain &&
-          ((s.phishingCount ?? 0) > 0 || (s.dataLeakCount ?? 0) > 0)
-      )
-    : null;
+
+  // Fix 6: Find matching brand threat scan — prefer assetId-based watchlist match, fall back to domain string match
+  const matchingBrandScan = (() => {
+    // Primary: scan linked to a watchlist item that points to this asset
+    if (assetWatchlistItemIds.size > 0) {
+      const byWatchlist = allScans.find(
+        (s: any) => s.watchlistItemId && assetWatchlistItemIds.has(s.watchlistItemId) &&
+          (s.watchlistItemType === "domain" || s.watchlistItemType === "subdomain" || s.watchlistItemType === "url") &&
+          ((s.phishingCount ?? 0) > 0 || (s.dataLeakCount ?? 0) > 0),
+      );
+      if (byWatchlist) return byWatchlist;
+    }
+    // Fallback: domain string match (for scans not linked via watchlist)
+    if (!assetDomain) return null;
+    return allScans.find(
+      (s: any) =>
+        normalizeDomain(s.domain) === assetDomain &&
+        ((s.phishingCount ?? 0) > 0 || (s.dataLeakCount ?? 0) > 0),
+    ) ?? null;
+  })();
 
   const users = (usersData as any[]) ?? [];
   const clientUsers = users.filter((u: any) => u.role === "client");
@@ -661,20 +695,11 @@ export default function AssetDetailPage() {
         )}
       </div>
 
-      {/* Watchlist Scans */}
+      {/* Fix 2 + Fix 3 + Fix 6: Brand Watchlist Monitoring — asset-scoped management */}
       {(() => {
-        const allScans = (brandThreats as any[]) ?? [];
-        const assetVal = a?.value ? normalizeDomain(String(a.value)) : "";
-        const watchlistScans = assetVal
-          ? allScans.filter((s: any) => {
-              const d = (s.domain ?? "").toLowerCase().replace(/^www\./, "");
-              const v = (s.watchlistItemValue ?? "").toLowerCase();
-              return d === assetVal || v === assetVal || (s.watchlistItemId && v && assetVal.includes(v.replace(/^@/, "")));
-            })
-          : [];
-        const nonDomainWatchlist = watchlistScans.filter((s: any) => s.watchlistItemType && s.watchlistItemType !== "domain");
-        if (!nonDomainWatchlist.length) return null;
-        const TYPE_ICON: Record<string, React.ReactNode> = {
+        const WL_TYPE_ICON: Record<string, React.ReactNode> = {
+          domain:        <BookmarkCheck className="w-3.5 h-3.5 text-primary" />,
+          subdomain:     <Network className="w-3.5 h-3.5 text-blue-400" />,
           social_handle: <AtSign className="w-3.5 h-3.5 text-pink-400" />,
           mobile_app:    <Smartphone className="w-3.5 h-3.5 text-orange-400" />,
           email:         <Mail className="w-3.5 h-3.5 text-blue-400" />,
@@ -682,48 +707,203 @@ export default function AssetDetailPage() {
           logo_url:      <Image className="w-3.5 h-3.5 text-violet-400" />,
           ip:            <Server className="w-3.5 h-3.5 text-slate-400" />,
         };
-        const STATUS_COLOR: Record<string, string> = {
+        const WL_STATUS_COLOR: Record<string, string> = {
           done:    "bg-green-500/15 text-green-400 border-green-500/30",
-          running: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+          running: "bg-blue-500/15 text-blue-400 border-blue-500/30 animate-pulse",
           pending: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
           error:   "bg-red-500/15 text-red-400 border-red-500/30",
         };
+
+        // For each watchlist item, find its most recent scan by watchlistItemId
+        const scanByItemId = new Map<number, any>();
+        for (const s of allScans) {
+          if (s.watchlistItemId && !scanByItemId.has(s.watchlistItemId)) {
+            scanByItemId.set(s.watchlistItemId, s);
+          }
+        }
+
+        async function handleWatchlistScan(itemId: number) {
+          setScanningItemId(itemId);
+          try {
+            await apiFetch(`${BASE_URL}/api/brand-watchlist/${itemId}/scan`, { method: "POST" });
+            await refetchWatchlist();
+            queryClient.invalidateQueries({ queryKey: getListBrandThreatsQueryKey() });
+            toast({ title: "Brand threat scan started" });
+          } catch (e: any) {
+            toast({ title: e?.message ?? "Scan failed", variant: "destructive" });
+          } finally {
+            setScanningItemId(null);
+          }
+        }
+
+        async function handleAddToWatchlist(e: React.FormEvent) {
+          e.preventDefault();
+          if (!wlValue.trim()) return;
+          setWlSubmitting(true);
+          try {
+            await apiFetch(`${BASE_URL}/api/brand-watchlist`, {
+              method: "POST",
+              body: JSON.stringify({ type: wlType, value: wlValue.trim(), assetId: id }),
+            });
+            setWlValue(""); setShowWatchlistForm(false);
+            await refetchWatchlist();
+            toast({ title: "Added to watchlist" });
+          } catch (e: any) {
+            toast({ title: e?.message ?? "Failed to add", variant: "destructive" });
+          } finally {
+            setWlSubmitting(false);
+          }
+        }
+
+        async function handleRemoveFromWatchlist(itemId: number) {
+          try {
+            await apiFetch(`${BASE_URL}/api/brand-watchlist/${itemId}`, { method: "DELETE" });
+            await refetchWatchlist();
+            toast({ title: "Removed from watchlist" });
+          } catch (e: any) {
+            toast({ title: e?.message ?? "Failed to remove", variant: "destructive" });
+          }
+        }
+
         return (
           <div className="bg-card border border-border rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <BookmarkCheck className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-medium">Brand Watchlist Scans</h3>
-              <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium">{nonDomainWatchlist.length}</span>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <BookmarkCheck className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-medium">Brand Watchlist Monitoring</h3>
+                {assetWatchlistItems.length > 0 && (
+                  <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-medium">{assetWatchlistItems.length}</span>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-xs gap-1.5"
+                onClick={() => setShowWatchlistForm(v => !v)}
+              >
+                {showWatchlistForm ? <X className="w-3 h-3" /> : <><ClipboardCheck className="w-3 h-3" /> Add to Watchlist</>}
+              </Button>
             </div>
+
+            {/* Add to watchlist form */}
+            {showWatchlistForm && (
+              <form onSubmit={handleAddToWatchlist} className="mb-3 flex gap-2 flex-wrap items-end">
+                <div className="flex-1 min-w-36">
+                  <label className="text-[10px] text-muted-foreground mb-1 block">Type</label>
+                  <select
+                    value={wlType}
+                    onChange={e => setWlType(e.target.value)}
+                    className="w-full h-8 text-xs bg-background border border-border rounded px-2 text-foreground outline-none"
+                  >
+                    {["domain", "subdomain", "keyword", "email", "social_handle", "mobile_app", "logo_url", "ip"].map(t => (
+                      <option key={t} value={t} className="bg-card">{t.replace(/_/g, " ")}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex-[2] min-w-48">
+                  <label className="text-[10px] text-muted-foreground mb-1 block">Value</label>
+                  <input
+                    type="text"
+                    value={wlValue}
+                    onChange={e => setWlValue(e.target.value)}
+                    placeholder={wlType === "domain" ? "example.com" : wlType === "email" ? "user@example.com" : "Enter value…"}
+                    className="w-full h-8 text-xs bg-background border border-border rounded px-2.5 text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary"
+                  />
+                </div>
+                <Button type="submit" size="sm" className="h-8 text-xs" disabled={wlSubmitting || !wlValue.trim()}>
+                  {wlSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Add"}
+                </Button>
+              </form>
+            )}
+
+            {assetWatchlistItems.length === 0 && !showWatchlistForm && (
+              <p className="text-xs text-muted-foreground">No watchlist items linked to this asset. Click "Add to Watchlist" to start monitoring for brand threats.</p>
+            )}
+
             <div className="space-y-2">
-              {nonDomainWatchlist.map((s: any) => (
-                <div key={s.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
-                  <span className="shrink-0">{TYPE_ICON[s.watchlistItemType ?? ""] ?? <ShieldAlert className="w-3.5 h-3.5 text-muted-foreground" />}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs font-medium font-mono truncate">{s.watchlistItemValue ?? s.domain}</span>
-                      <span className="text-[10px] text-muted-foreground capitalize shrink-0">{(s.watchlistItemType ?? "domain").replace(/_/g, " ")}</span>
+              {assetWatchlistItems.map((item: any) => {
+                const latestScan = scanByItemId.get(item.id);
+                // Fix 3: show prevScanSummary delta
+                const delta = item.prevScanSummary as any;
+                const hasDelta = delta && (
+                  (delta.newLeaks ?? 0) > 0 || (delta.newAbuse ?? 0) > 0 ||
+                  (delta.newPhishing ?? 0) > 0 || (delta.newLive ?? 0) > 0
+                );
+                return (
+                  <div key={item.id} className="flex items-center gap-3 py-2.5 border-b border-border last:border-0">
+                    <span className="shrink-0">{WL_TYPE_ICON[item.type] ?? <ShieldAlert className="w-3.5 h-3.5 text-muted-foreground" />}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                        <span className="text-xs font-medium font-mono truncate">{item.value}</span>
+                        <span className="text-[10px] text-muted-foreground capitalize shrink-0">{item.type.replace(/_/g, " ")}</span>
+                        {hasDelta && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25 font-bold shrink-0">
+                            {[
+                              (delta.newPhishing ?? 0) > 0 && `+${delta.newPhishing} phishing`,
+                              (delta.newLive ?? 0) > 0 && `+${delta.newLive} live`,
+                              (delta.newLeaks ?? 0) > 0 && `+${delta.newLeaks} leaks`,
+                              (delta.newAbuse ?? 0) > 0 && `+${delta.newAbuse} abuse`,
+                            ].filter(Boolean).join(" · ")} new since last scan
+                          </span>
+                        )}
+                      </div>
+                      {latestScan && (
+                        <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                          {(latestScan.phishingCount ?? 0) > 0 && (
+                            <span className="text-[10px] text-red-400">{latestScan.phishingCount} phishing</span>
+                          )}
+                          {(latestScan.dataLeakCount ?? 0) > 0 && (
+                            <span className="text-[10px] text-orange-400">{latestScan.dataLeakCount} leaks</span>
+                          )}
+                          {(latestScan.brandAbuseCount ?? 0) > 0 && (
+                            <span className="text-[10px] text-yellow-400">{latestScan.brandAbuseCount} abuse</span>
+                          )}
+                          {(latestScan.liveCount ?? 0) > 0 && (
+                            <span className="text-[10px] text-muted-foreground">{latestScan.liveCount} live</span>
+                          )}
+                          {(latestScan.phishingCount ?? 0) === 0 && (latestScan.dataLeakCount ?? 0) === 0 && (latestScan.brandAbuseCount ?? 0) === 0 && (
+                            <span className="text-[10px] text-muted-foreground/50">No threats found</span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                      {(s.brandAbuseCount ?? 0) > 0 && (
-                        <span className="text-[10px] text-orange-400">{s.brandAbuseCount} abuse</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {latestScan && (
+                        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium capitalize", WL_STATUS_COLOR[latestScan.status] ?? "bg-muted text-muted-foreground border-border")}>
+                          {latestScan.status}
+                        </span>
                       )}
-                      {(s.dataLeakCount ?? 0) > 0 && (
-                        <span className="text-[10px] text-red-400">{s.dataLeakCount} leaks</span>
+                      {latestScan && (
+                        <Link href={`/brand-threats/${latestScan.id}`}>
+                          <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px]">
+                            <ExternalLink className="w-3 h-3" />
+                          </Button>
+                        </Link>
                       )}
-                      {(s.brandAbuseCount ?? 0) === 0 && (s.dataLeakCount ?? 0) === 0 && (
-                        <span className="text-[10px] text-muted-foreground/60">No threats found</span>
-                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-[10px] gap-1"
+                        disabled={scanningItemId === item.id || latestScan?.status === "running" || latestScan?.status === "pending"}
+                        onClick={() => handleWatchlistScan(item.id)}
+                      >
+                        {scanningItemId === item.id
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : <RefreshCw className="w-3 h-3" />
+                        }
+                        Scan
+                      </Button>
+                      <button
+                        onClick={() => handleRemoveFromWatchlist(item.id)}
+                        className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
+                        title="Remove from watchlist"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
-                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium shrink-0 capitalize", STATUS_COLOR[s.status] ?? "bg-muted text-muted-foreground border-border")}>{s.status}</span>
-                  <Link href={`/brand-threats/${s.id}`}>
-                    <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] shrink-0">
-                      <ExternalLink className="w-3 h-3 mr-1" /> View
-                    </Button>
-                  </Link>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
@@ -801,37 +981,66 @@ export default function AssetDetailPage() {
       {/* Findings */}
       {(() => {
         const FINDINGS_PER_PAGE = 10;
-        const allF = (findings as any[]) ?? [];
+        const rawF = (findings as any[]) ?? [];
+        // Fix 4: source filter
+        const allF = findingsSource === "brand_intel"
+          ? rawF.filter((f: any) => String(f.evidence ?? "").startsWith("btw:"))
+          : findingsSource === "scan"
+          ? rawF.filter((f: any) => !String(f.evidence ?? "").startsWith("btw:"))
+          : rawF;
+        const brandIntelCount = rawF.filter((f: any) => String(f.evidence ?? "").startsWith("btw:")).length;
         const totalPages = Math.max(1, Math.ceil(allF.length / FINDINGS_PER_PAGE));
         const paged = allF.slice(findingsPage * FINDINGS_PER_PAGE, (findingsPage + 1) * FINDINGS_PER_PAGE);
         return (
           <div className="bg-card border border-border rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h3 className="text-sm font-medium">
                 Findings
-                {allF.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground font-normal">({allF.length})</span>}
+                {rawF.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground font-normal">({allF.length}{allF.length !== rawF.length ? ` of ${rawF.length}` : ""})</span>}
               </h3>
-              {totalPages > 1 && (
-                <div className="flex items-center gap-0.5">
-                  <button
-                    onClick={() => setFindingsPage(p => Math.max(0, p - 1))}
-                    disabled={findingsPage === 0}
-                    className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="text-xs text-muted-foreground px-1.5 tabular-nums">
-                    {findingsPage + 1} / {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setFindingsPage(p => Math.min(totalPages - 1, p + 1))}
-                    disabled={findingsPage >= totalPages - 1}
-                    className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center gap-1.5">
+                {/* Fix 4: source filter tabs */}
+                {brandIntelCount > 0 && (
+                  <div className="flex rounded-md overflow-hidden border border-border text-[10px] font-medium">
+                    {(["all", "scan", "brand_intel"] as const).map(src => (
+                      <button
+                        key={src}
+                        onClick={() => { setFindingsSource(src); setFindingsPage(0); }}
+                        className={cn(
+                          "px-2.5 py-1 transition-colors",
+                          findingsSource === src
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-muted",
+                        )}
+                      >
+                        {src === "all" ? "All" : src === "scan" ? "Scan" : "Brand Intel"}
+                        {src === "brand_intel" && <span className="ml-1 text-[9px]">{brandIntelCount}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => setFindingsPage(p => Math.max(0, p - 1))}
+                      disabled={findingsPage === 0}
+                      className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-xs text-muted-foreground px-1.5 tabular-nums">
+                      {findingsPage + 1} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setFindingsPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={findingsPage >= totalPages - 1}
+                      className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="space-y-2">
               {paged.map((f: any) => {

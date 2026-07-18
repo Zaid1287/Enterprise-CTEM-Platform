@@ -1463,6 +1463,7 @@ export async function triggerBrandThreatScan(
   tenantId: number,
   domain: string,
   pipelineScanId?: number,
+  watchlistMeta?: { id: number; type: string; value: string },
 ): Promise<typeof brandThreatScansTable.$inferSelect | null> {
   // Find the most recent scan for this tenant+domain
   const [latest] = await db
@@ -1519,7 +1520,13 @@ export async function triggerBrandThreatScan(
       scanCount:         sql`scan_count + 1`,
       pipelineScanId:    pipelineScanId ?? latest.pipelineScanId,
       createdAt:         new Date(),
-    }).where(eq(brandThreatScansTable.id, latest.id));
+      // Fix 10: apply watchlist metadata atomically on reset — no separate UPDATE race
+      ...(watchlistMeta ? {
+        watchlistItemId:    watchlistMeta.id,
+        watchlistItemType:  watchlistMeta.type,
+        watchlistItemValue: watchlistMeta.value,
+      } : {}),
+    } as any).where(eq(brandThreatScansTable.id, latest.id));
 
     logger.info(
       { scanId: latest.id, domain, scanCount: (latest.scanCount ?? 1) + 1, pipelineScanId },
@@ -1537,7 +1544,13 @@ export async function triggerBrandThreatScan(
     status:    "pending",
     scanCount: 1,
     pipelineScanId: pipelineScanId ?? null,
-  }).returning();
+    // Fix 10: apply watchlist metadata atomically on insert — no separate UPDATE race
+    ...(watchlistMeta ? {
+      watchlistItemId:    watchlistMeta.id,
+      watchlistItemType:  watchlistMeta.type,
+      watchlistItemValue: watchlistMeta.value,
+    } : {}),
+  } as any).returning();
 
   logger.info({ scanId: scan!.id, domain, pipelineScanId }, "New brand threat scan created");
   setImmediate(() => { void runBrandThreatScan(scan!.id, domain); });

@@ -23,6 +23,145 @@ const STUCK_SCAN_THRESHOLD_MS = 120 * 60 * 1000; // 2 hours — brand threat sca
 const router = Router();
 router.use(denyExternalMembers);
 
+// ── Fix 5: Mirror domain watchlist scan findings → asset findings ─────────────
+// Polls until the brand threat scan is done (up to 90 min), then mirrors
+// phishing detections + high-risk typosquatting results into the standard
+// findings table so they appear in asset detail alongside regular scan findings.
+async function mirrorDomainWatchlistFindingsToAsset(
+  scanId: number,
+  itemId: number,
+  assetId: number,
+  tenantId: number,
+): Promise<void> {
+  const MAX_POLLS     = 180;  // 90 min × 30 s each
+  const POLL_INTERVAL = 30_000;
+  let polls = 0;
+
+  while (polls < MAX_POLLS) {
+    await new Promise<void>(r => setTimeout(r, POLL_INTERVAL));
+    polls++;
+
+    const [row] = await db
+      .select({ status: brandThreatScansTable.status })
+      .from(brandThreatScansTable)
+      .where(eq(brandThreatScansTable.id, scanId));
+
+    if (!row) return; // scan was deleted
+    if (row.status !== "done" && row.status !== "error") continue;
+
+    const evidencePrefix = `btw:${itemId}:domain:`;
+
+    // Phishing detections for this scan
+    const phishing = await db
+      .select()
+      .from(phishingDetectionsTable)
+      .where(eq(phishingDetectionsTable.scanId, scanId));
+
+    // High-risk permutations (riskScore ≥ 70)
+    const allPerms = await db
+      .select()
+      .from(brandThreatResultsTable)
+      .where(and(
+        eq(brandThreatResultsTable.scanId, scanId),
+        isNull(brandThreatResultsTable.archivedAt),
+      ));
+    const highRiskPerms = allPerms.filter((p: any) => (p.riskScore ?? 0) >= 70);
+
+    // Build fingerprinted findings list
+    const toWrite: Array<{ title: string; severity: string; description: string; fp: string }> = [];
+
+    for (const p of phishing as any[]) {
+      const fp = Buffer.from(`phishing:${String(p.url ?? "").slice(0, 60)}`).toString("base64url").slice(0, 40);
+      toWrite.push({
+        title:       `Phishing site targeting brand domain: ${p.url}`,
+        severity:    "high",
+        description: `A confirmed phishing page impersonating this domain was detected via ${p.source ?? "PhishTank/OpenPhish"}.\n\nURL: ${p.url}\nThreat type: ${p.threatType ?? "phishing"}\n\nSource: Brand Intelligence — Phishing Detection`,
+        fp,
+      });
+    }
+    for (const t of highRiskPerms as any[]) {
+      const fp = Buffer.from(`typosquat:${String(t.permutation ?? "").slice(0, 60)}`).toString("base64url").slice(0, 40);
+      toWrite.push({
+        title:       `Typosquat domain detected: ${t.permutation}`,
+        severity:    (t.riskScore ?? 0) >= 85 ? "high" : "medium",
+        description: `A lookalike/typosquat domain was detected impersonating this brand.\n\nDomain: ${t.permutation}\nRisk score: ${t.riskScore ?? "?"}/100\nDNS A: ${((t.dnsA ?? []) as string[]).join(", ") || "none"}\nFuzzer: ${t.fuzzer ?? "dnstwist"}\n\nSource: Brand Intelligence — Typosquatting`,
+        fp,
+      });
+    }
+
+    // Load existing brand-intel findings for this asset+item
+    const existing = await db
+      .select({ id: findingsTable.id, evidence: findingsTable.evidence, status: findingsTable.status })
+      .from(findingsTable)
+      .where(and(
+        eq(findingsTable.tenantId, tenantId),
+        eq(findingsTable.assetId, assetId),
+        like(findingsTable.evidence, `${evidencePrefix}%`),
+      ));
+
+    const existingMap = new Map<string, number>(
+      existing.map(f => [String(f.evidence ?? "").slice(evidencePrefix.length), f.id]),
+    );
+
+    const toInsert: typeof findingsTable.$inferInsert[] = [];
+    const toMarkSeen: number[] = [];
+    const seenFps = new Set<string>();
+
+    for (const w of toWrite) {
+      if (seenFps.has(w.fp)) continue;
+      seenFps.add(w.fp);
+      if (existingMap.has(w.fp)) {
+        toMarkSeen.push(existingMap.get(w.fp)!);
+      } else {
+        toInsert.push({
+          tenantId,
+          assetId,
+          scanId:            null,
+          title:             w.title,
+          description:       w.description,
+          severity:          w.severity,
+          status:            "open",
+          evidence:          `${evidencePrefix}${w.fp}`,
+          remediation:       `Review in Brand Threat Intelligence. Scan ID: ${scanId}.`,
+          lastSeenAt:        new Date(),
+        } as any);
+      }
+    }
+
+    if (toInsert.length) {
+      for (let i = 0; i < toInsert.length; i += 50) {
+        await db.insert(findingsTable).values(toInsert.slice(i, i + 50));
+      }
+    }
+    if (toMarkSeen.length) {
+      await db.update(findingsTable)
+        .set({ lastSeenAt: new Date(), status: "open" } as any)
+        .where(and(eq(findingsTable.tenantId, tenantId), inArray(findingsTable.id, toMarkSeen)));
+    }
+
+    // Auto-mitigate vanished findings
+    const allExistingIds = Array.from(existingMap.values());
+    const vanishedIds = allExistingIds.filter(id => !toMarkSeen.includes(id));
+    if (vanishedIds.length) {
+      await db.update(findingsTable)
+        .set({ status: "mitigated" } as any)
+        .where(and(
+          eq(findingsTable.tenantId, tenantId),
+          inArray(findingsTable.id, vanishedIds),
+          eq(findingsTable.status, "open"),
+        ));
+    }
+
+    logger.info(
+      { scanId, itemId, assetId, inserted: toInsert.length, updated: toMarkSeen.length, vanished: vanishedIds.length },
+      "Domain brand threat findings mirrored to asset findings table",
+    );
+    return;
+  }
+
+  logger.warn({ scanId, itemId, assetId, polls }, "Domain watchlist findings mirror timed out after 90 minutes");
+}
+
 /**
  * Build a WHERE clause that restricts brand threat scan access by role.
  * - super_admin / admin: unrestricted (operator view, same as assets list)
@@ -600,6 +739,16 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
   const rawAssetId = req.body?.assetId != null ? parseInt(String(req.body.assetId), 10) : null;
   const assetId = rawAssetId && !isNaN(rawAssetId) ? rawAssetId : null;
 
+  // Fix 7: validate assetId belongs to this tenant
+  if (assetId) {
+    const [linkedAsset] = await db.select({ id: assetsTable.id })
+      .from(assetsTable)
+      .where(and(eq(assetsTable.id, assetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+    if (!linkedAsset) {
+      res.status(400).json({ error: "Asset not found or not accessible" }); return;
+    }
+  }
+
   const [item] = await db.insert(brandWatchlistItemsTable).values({
     tenantId: req.user!.tenantId,
     type,
@@ -643,7 +792,17 @@ router.patch("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedReque
   if (req.body?.notes !== undefined) updates.notes = String(req.body.notes).trim() || null;
   if (req.body?.assetId !== undefined) {
     const rawAid = req.body.assetId != null ? parseInt(String(req.body.assetId), 10) : null;
-    (updates as any).assetId = rawAid && !isNaN(rawAid) ? rawAid : null;
+    const newAssetId = rawAid && !isNaN(rawAid) ? rawAid : null;
+    // Fix 7: validate assetId belongs to this tenant before updating
+    if (newAssetId) {
+      const [linkedAsset] = await db.select({ id: assetsTable.id })
+        .from(assetsTable)
+        .where(and(eq(assetsTable.id, newAssetId), eq(assetsTable.tenantId, req.user!.tenantId)));
+      if (!linkedAsset) {
+        res.status(400).json({ error: "Asset not found or not accessible" }); return;
+      }
+    }
+    (updates as any).assetId = newAssetId;
   }
 
   // Schedule fields
@@ -707,18 +866,46 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
       try { domain = new URL(item.value.startsWith("http") ? item.value : `https://${item.value}`).hostname; } catch { /* keep as-is */ }
     }
     domain = domain.replace(/^www\./, "");
-    const scan = await triggerBrandThreatScan(tenantId, domain);
+
+    // Fix 1: Asset verification gate — if watchlist item is linked to an asset, require ownership verified
+    if (item.assetId) {
+      const [linkedAsset] = await db
+        .select({ id: assetsTable.id, verificationStatus: assetsTable.verificationStatus })
+        .from(assetsTable)
+        .where(and(eq(assetsTable.id, item.assetId), eq(assetsTable.tenantId, tenantId)));
+      if (linkedAsset && (linkedAsset as any).verificationStatus !== "verified") {
+        res.status(422).json({
+          error: "The asset linked to this watchlist item must be verified before running a brand threat scan. Please verify asset ownership first.",
+        });
+        return;
+      }
+    }
+
+    // Fix 10: Pass watchlist metadata atomically into triggerBrandThreatScan — no separate UPDATE
+    const scan = await triggerBrandThreatScan(
+      tenantId,
+      domain,
+      undefined,
+      { id: item.id, type: item.type, value: item.value },
+    );
     if (!scan) {
       res.status(409).json({ error: "A scan is already running for this domain" });
       return;
     }
-    // Tag scan with watchlist item metadata
-    await db.update(brandThreatScansTable)
-      .set({ watchlistItemId: item.id, watchlistItemType: item.type, watchlistItemValue: item.value } as any)
-      .where(eq(brandThreatScansTable.id, scan.id));
     await db.update(brandWatchlistItemsTable)
       .set({ lastScanAt: new Date(), lastScanId: scan.id })
       .where(eq(brandWatchlistItemsTable.id, item.id));
+
+    // Fix 5: Mirror findings to asset when domain scan completes (only when assetId is set)
+    if (item.assetId) {
+      const assetId = item.assetId;
+      const scanId  = scan.id;
+      const iid     = item.id;
+      setImmediate(() => {
+        void mirrorDomainWatchlistFindingsToAsset(scanId, iid, assetId, tenantId);
+      });
+    }
+
     res.json({ ...scan, watchlistItemId: item.id, watchlistItemType: item.type, watchlistItemValue: item.value });
     return;
   }
@@ -915,9 +1102,10 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
       // each meaningful finding into the core findings table so they appear in
       // the asset detail page alongside regular scan findings.
       if (item.assetId) {
+        // Fix 8: removed duplicate "no_breach_found"
         const SKIP_TYPES = new Set([
           "osint_reference", "email_rep_clean", "mx_record_found", "no_breach_found",
-          "no_mx_record", "no_breach_found",
+          "no_mx_record",
         ]);
         const SKIP_SEVERITIES = new Set(["info"]);
 

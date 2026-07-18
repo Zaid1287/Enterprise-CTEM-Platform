@@ -258,6 +258,8 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
   const isHigh     = isDone && scan.phishingRisk === "high";
   const isMedium   = isDone && scan.phishingRisk === "medium";
   const hasStats   = isDone || (scan.status === "error" && (liveCount > 0 || (scan.phishingCount ?? 0) > 0 || (scan.dataLeakCount ?? 0) > 0 || (scan.brandAbuseCount ?? 0) > 0));
+  // Fix 9: non-domain watchlist items don't have permutation/live metrics
+  const isNonDomainWatchlist = scan.watchlistItemType && scan.watchlistItemType !== "domain" && scan.watchlistItemType !== "subdomain" && scan.watchlistItemType !== "url";
 
   return (
     <div className={cn(
@@ -372,7 +374,33 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
         {/* ── Stats grid ── */}
         {hasStats && (
           <div className="grid grid-cols-3 gap-2">
-            {[
+            {(isNonDomainWatchlist ? [
+              // Fix 9: non-domain types — only show intelligence-gathered stats, hide permutation/live metrics
+              {
+                icon: <Database className="w-2.5 h-2.5" />,
+                label: "Leaks",
+                value: scan.dataLeakCount ?? 0,
+                positive: (scan.dataLeakCount ?? 0) > 0,
+                activeColor: "text-yellow-400",
+                activeBg: "bg-yellow-500/8 border-yellow-500/20",
+              },
+              {
+                icon: <Target className="w-2.5 h-2.5" />,
+                label: "Abuse",
+                value: scan.brandAbuseCount ?? 0,
+                positive: (scan.brandAbuseCount ?? 0) > 0,
+                activeColor: "text-yellow-500",
+                activeBg: "bg-yellow-500/10 border-yellow-500/25",
+              },
+              {
+                icon: <Megaphone className="w-2.5 h-2.5" />,
+                label: "Mal. Ads",
+                value: scan.adMonitoringCount ?? 0,
+                positive: (scan.adMonitoringCount ?? 0) > 0,
+                activeColor: "text-violet-400",
+                activeBg: "bg-violet-500/10 border-violet-500/25",
+              },
+            ] : [
               {
                 icon: <Activity className="w-2.5 h-2.5" />,
                 label: "Live",
@@ -421,7 +449,7 @@ function ScanCard({ scan, onDelete, onView, onRetry, deleting, retrying }: {
                 activeColor: "text-violet-400",
                 activeBg: "bg-violet-500/10 border-violet-500/25",
               },
-            ].map(item => (
+            ]).map(item => (
               <div key={item.label} className={cn(
                 "rounded-xl p-2.5 text-center border transition-colors",
                 item.positive ? item.activeBg : "bg-background/60 border-border/50",

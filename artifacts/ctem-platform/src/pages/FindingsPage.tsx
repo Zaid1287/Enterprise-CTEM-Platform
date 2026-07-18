@@ -1144,6 +1144,8 @@ export default function FindingsPage() {
   const [page, setPage]       = useState(1);
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const [groupFilter, setGroupFilter]   = useState<number | null>(null);
+  // Fix 4: brand intel source filter
+  const [sourceFilter, setSourceFilter] = useState<"all" | "scan" | "brand_intel">("all");
   const { user } = useAuth();
 
   const { data: allGroups } = useListAssetGroups({
@@ -1240,6 +1242,9 @@ export default function FindingsPage() {
     if (groupMemberIdSet) l = l.filter((f: any) => groupMemberIdSet.has(f.assetId));
     if (newOnly)          l = l.filter((f: any) => f.isNewSinceLastScan);
     if (staleOnly)        l = l.filter((f: any) => (f.consecutiveMissedScans ?? 0) > 0);
+    // Fix 4: source filter
+    if (sourceFilter === "brand_intel") l = l.filter((f: any) => String(f.evidence ?? "").startsWith("btw:"));
+    if (sourceFilter === "scan")        l = l.filter((f: any) => !String(f.evidence ?? "").startsWith("btw:"));
     if (sortBy === "threat_score") {
       l = [...l].sort((a: any, b: any) => (b.tiScore ?? -1) - (a.tiScore ?? -1));
     } else if (sortBy === "severity") {
@@ -1400,6 +1405,15 @@ export default function FindingsPage() {
             </SelectContent>
           </Select>
         )}
+        {/* Fix 4: Source filter */}
+        <Select value={sourceFilter} onValueChange={v => { setSourceFilter(v as any); resetPage(); }}>
+          <SelectTrigger className="w-40 h-8 text-sm"><SelectValue placeholder="Source" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Sources</SelectItem>
+            <SelectItem value="scan">Scan Findings</SelectItem>
+            <SelectItem value="brand_intel">Brand Intelligence</SelectItem>
+          </SelectContent>
+        </Select>
         <Select value={sortBy || "_none_"} onValueChange={v => { setSortBy(v === "_none_" ? "" : v); resetPage(); }}>
           <SelectTrigger className="w-44 h-8 text-sm"><SelectValue placeholder="Sort by…" /></SelectTrigger>
           <SelectContent>
@@ -1409,7 +1423,7 @@ export default function FindingsPage() {
             {tiEnabled && <SelectItem value="threat_score">Threat Score (high first)</SelectItem>}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); setGroupFilter(null); setNewOnly(false); setStaleOnly(false); setSortBy(""); resetPage(); }}>
+        <Button variant="outline" size="sm" onClick={() => { setSeverity(""); setStatus(""); setSearch(""); setTenantFilter(null); setGroupFilter(null); setNewOnly(false); setStaleOnly(false); setSortBy(""); setSourceFilter("all"); resetPage(); }}>
           Clear
         </Button>
         {isPrivileged && <TenantFilter value={tenantFilter} onChange={(t) => { setTenantFilter(t); setGroupFilter(null); resetPage(); }} />}
