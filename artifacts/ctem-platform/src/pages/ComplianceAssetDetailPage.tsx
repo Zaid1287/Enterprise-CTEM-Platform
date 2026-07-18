@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiFetch";
@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import {
   ArrowLeft, ShieldCheck, CheckCircle2, XCircle, Clock, MinusCircle,
   Globe, ChevronDown, ChevronUp, Loader2, RefreshCw, BookOpen, Server,
-  AlertTriangle,
+  AlertTriangle, Upload, Download, Trash2, Paperclip, Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -74,8 +74,22 @@ interface AssetControl {
   assetStatus: string | null;
   assetNotes: string | null;
   assetAssignedTo: string | null;
+  assetEvidence: string | null;
   tenantStatus: string;
   status: string;
+}
+
+interface EvidenceFile {
+  name: string;
+  path: string;
+  size: number;
+  uploadedAt: string;
+}
+
+interface Framework {
+  id: number;
+  name: string;
+  shortName: string;
 }
 
 interface FrameworkSummary {
@@ -116,11 +130,19 @@ export default function ComplianceAssetDetailPage() {
   const [editForm, setEditForm] = useState<{ status: string; notes: string; assignedTo: string }>({
     status: "non_compliant", notes: "", assignedTo: "",
   });
+  const [scopeFrameworkId, setScopeFrameworkId] = useState<string>("");
+  const [uploadingControlId, setUploadingControlId] = useState<number | null>(null);
+  const evidenceInputRef = useRef<HTMLInputElement>(null);
 
   const { data: asset, isError: assetError } = useQuery<AssetDetail>({
     queryKey: ["asset-detail", assetIdNum],
     queryFn: () => apiFetch(`${BASE}/api/assets/${assetIdNum}`),
     retry: false,
+  });
+
+  const { data: frameworks = [] } = useQuery<Framework[]>({
+    queryKey: ["compliance-frameworks"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/frameworks`),
   });
 
   const { data: summary = [], isLoading: loadingSummary, refetch: refetchSummary } = useQuery<FrameworkSummary[]>({
@@ -151,6 +173,52 @@ export default function ComplianceAssetDetailPage() {
     },
     onError: (e: any) => toast({ title: "Error updating control", description: e.message, variant: "destructive" }),
   });
+
+  const scopeFramework = useMutation({
+    mutationFn: (frameworkId: number) =>
+      apiFetch(`${BASE}/api/compliance/assets/${assetIdNum}/scope`, {
+        method: "POST",
+        body: JSON.stringify({ frameworkId }),
+      }),
+    onSuccess: (data: any) => {
+      qc.invalidateQueries({ queryKey: ["asset-compliance-controls", assetIdNum] });
+      qc.invalidateQueries({ queryKey: ["asset-compliance-summary", assetIdNum] });
+      setScopeFrameworkId("");
+      toast({ title: "Framework scoped", description: `${data.count} controls added to this asset.` });
+    },
+    onError: (e: any) => toast({ title: "Failed to scope framework", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteEvidence = useMutation({
+    mutationFn: ({ globalControlId, filename }: { globalControlId: number; filename: string }) =>
+      apiFetch(`${BASE}/api/compliance/assets/${assetIdNum}/${globalControlId}/evidence/${encodeURIComponent(filename)}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["asset-compliance-controls", assetIdNum] });
+      toast({ title: "Evidence file removed" });
+    },
+    onError: (e: any) => toast({ title: "Failed to delete evidence", description: e.message, variant: "destructive" }),
+  });
+
+  async function handleEvidenceUpload(globalControlId: number, files: FileList | null) {
+    if (!files?.length) return;
+    setUploadingControlId(globalControlId);
+    const fd = new FormData();
+    for (const f of Array.from(files)) fd.append("files", f);
+    try {
+      await apiFetch(`${BASE}/api/compliance/assets/${assetIdNum}/${globalControlId}/evidence`, {
+        method: "POST",
+        body: fd,
+      });
+      qc.invalidateQueries({ queryKey: ["asset-compliance-controls", assetIdNum] });
+      toast({ title: "Evidence uploaded", description: `${files.length} file${files.length !== 1 ? "s" : ""} uploaded.` });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    } finally {
+      setUploadingControlId(null);
+    }
+  }
 
   const enabledControls = useMemo(() => controls.filter(c => c.isEnabled), [controls]);
 
@@ -413,6 +481,41 @@ export default function ComplianceAssetDetailPage() {
             </div>
           </div>
 
+          {/* Scope Framework Panel */}
+          <div className="bg-card border border-border/60 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Plus className="w-4 h-4 text-primary shrink-0" />
+              <h4 className="text-sm font-semibold">Scope a Framework</h4>
+              <span className="text-xs text-muted-foreground">
+                Add all controls from a compliance framework to this asset.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={scopeFrameworkId} onValueChange={setScopeFrameworkId}>
+                <SelectTrigger className="h-8 text-xs flex-1 max-w-xs">
+                  <SelectValue placeholder="Select framework…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {frameworks.map(fw => (
+                    <SelectItem key={fw.id} value={String(fw.id)}>
+                      {fw.name} ({fw.shortName})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                className="h-8 text-xs px-4 shrink-0"
+                disabled={!scopeFrameworkId || scopeFramework.isPending}
+                onClick={() => scopeFramework.mutate(parseInt(scopeFrameworkId))}
+              >
+                {scopeFramework.isPending
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <><Plus className="w-3.5 h-3.5 mr-1" />Scope Controls</>}
+              </Button>
+            </div>
+          </div>
+
           {loadingControls ? (
             <div className="space-y-3">
               {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
@@ -422,7 +525,7 @@ export default function ComplianceAssetDetailPage() {
               <ShieldCheck className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
               <p className="text-sm text-muted-foreground font-medium">No controls in scope for this asset</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Go to the Asset Compliance tab and scope a framework to this asset to begin tracking.
+                Select a framework above and click "Scope Controls" to begin tracking.
               </p>
             </div>
           ) : (
@@ -535,62 +638,141 @@ export default function ComplianceAssetDetailPage() {
                                     </div>
 
                                     {/* Inline edit form */}
-                                    {isEditing && (
-                                      <div className="mt-3 ml-7 grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-lg bg-muted/20 border border-border/50">
-                                        <div>
-                                          <Label className="text-xs mb-1.5 block">Status</Label>
-                                          <Select
-                                            value={editForm.status}
-                                            onValueChange={v => setEditForm(f => ({ ...f, status: v }))}
-                                          >
-                                            <SelectTrigger className="h-8 text-xs">
-                                              <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                              <SelectItem value="non_compliant">Non-Compliant</SelectItem>
-                                              <SelectItem value="in_progress">In Progress</SelectItem>
-                                              <SelectItem value="compliant">Compliant</SelectItem>
-                                              <SelectItem value="not_applicable">Not Applicable</SelectItem>
-                                            </SelectContent>
-                                          </Select>
-                                        </div>
-                                        <div>
-                                          <Label className="text-xs mb-1.5 block">Assigned To</Label>
-                                          <Input
-                                            className="h-8 text-xs"
-                                            placeholder="Name or email…"
-                                            value={editForm.assignedTo}
-                                            onChange={e => setEditForm(f => ({ ...f, assignedTo: e.target.value }))}
-                                          />
-                                        </div>
-                                        <div>
-                                          <Label className="text-xs mb-1.5 block">Notes</Label>
-                                          <div className="flex gap-2">
-                                            <Input
-                                              className="h-8 text-xs flex-1"
-                                              placeholder="Notes…"
-                                              value={editForm.notes}
-                                              onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
-                                            />
-                                            <Button
-                                              size="sm"
-                                              className="h-8 text-xs shrink-0 px-3"
-                                              disabled={updateControl.isPending}
-                                              onClick={() => updateControl.mutate({
-                                                globalControlId: ctrl.globalControlId,
-                                                status: editForm.status,
-                                                notes: editForm.notes,
-                                                assignedTo: editForm.assignedTo,
-                                              })}
-                                            >
-                                              {updateControl.isPending
-                                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                : "Save"}
-                                            </Button>
+                                    {isEditing && (() => {
+                                      let evidenceFiles: EvidenceFile[] = [];
+                                      try { if (ctrl.assetEvidence) evidenceFiles = JSON.parse(ctrl.assetEvidence); } catch {}
+                                      return (
+                                        <div className="mt-3 ml-7 space-y-3 p-4 rounded-lg bg-muted/20 border border-border/50">
+                                          {/* Status / Assigned / Notes row */}
+                                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            <div>
+                                              <Label className="text-xs mb-1.5 block">Status</Label>
+                                              <Select
+                                                value={editForm.status}
+                                                onValueChange={v => setEditForm(f => ({ ...f, status: v }))}
+                                              >
+                                                <SelectTrigger className="h-8 text-xs">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="non_compliant">Non-Compliant</SelectItem>
+                                                  <SelectItem value="in_progress">In Progress</SelectItem>
+                                                  <SelectItem value="compliant">Compliant</SelectItem>
+                                                  <SelectItem value="not_applicable">Not Applicable</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+                                            <div>
+                                              <Label className="text-xs mb-1.5 block">Assigned To</Label>
+                                              <Input
+                                                className="h-8 text-xs"
+                                                placeholder="Name or email…"
+                                                value={editForm.assignedTo}
+                                                onChange={e => setEditForm(f => ({ ...f, assignedTo: e.target.value }))}
+                                              />
+                                            </div>
+                                            <div>
+                                              <Label className="text-xs mb-1.5 block">Notes</Label>
+                                              <div className="flex gap-2">
+                                                <Input
+                                                  className="h-8 text-xs flex-1"
+                                                  placeholder="Notes…"
+                                                  value={editForm.notes}
+                                                  onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                                                />
+                                                <Button
+                                                  size="sm"
+                                                  className="h-8 text-xs shrink-0 px-3"
+                                                  disabled={updateControl.isPending}
+                                                  onClick={() => updateControl.mutate({
+                                                    globalControlId: ctrl.globalControlId,
+                                                    status: editForm.status,
+                                                    notes: editForm.notes,
+                                                    assignedTo: editForm.assignedTo,
+                                                  })}
+                                                >
+                                                  {updateControl.isPending
+                                                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    : "Save"}
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          {/* Evidence section */}
+                                          <div className="border-t border-border/40 pt-3">
+                                            <div className="flex items-center justify-between mb-2">
+                                              <Label className="text-xs flex items-center gap-1.5">
+                                                <Paperclip className="w-3 h-3" />
+                                                Evidence Files
+                                                {evidenceFiles.length > 0 && (
+                                                  <span className="text-muted-foreground">({evidenceFiles.length})</span>
+                                                )}
+                                              </Label>
+                                              <div>
+                                                <input
+                                                  ref={evidenceInputRef}
+                                                  type="file"
+                                                  multiple
+                                                  className="hidden"
+                                                  onChange={e => handleEvidenceUpload(ctrl.globalControlId, e.target.files)}
+                                                />
+                                                <Button
+                                                  size="sm"
+                                                  variant="outline"
+                                                  className="h-7 text-xs gap-1.5"
+                                                  disabled={uploadingControlId === ctrl.globalControlId}
+                                                  onClick={() => {
+                                                    if (evidenceInputRef.current) {
+                                                      evidenceInputRef.current.value = "";
+                                                      evidenceInputRef.current.click();
+                                                    }
+                                                  }}
+                                                >
+                                                  {uploadingControlId === ctrl.globalControlId
+                                                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                                                    : <><Upload className="w-3 h-3" />Upload</>}
+                                                </Button>
+                                              </div>
+                                            </div>
+
+                                            {evidenceFiles.length === 0 ? (
+                                              <p className="text-[11px] text-muted-foreground italic">
+                                                No evidence files yet. Upload documents, screenshots, or reports.
+                                              </p>
+                                            ) : (
+                                              <div className="space-y-1.5">
+                                                {evidenceFiles.map(ef => (
+                                                  <div key={ef.path} className="flex items-center gap-2 bg-background/60 border border-border/40 rounded-lg px-2.5 py-1.5 group">
+                                                    <Paperclip className="w-3 h-3 text-muted-foreground shrink-0" />
+                                                    <span className="flex-1 text-xs truncate min-w-0">{ef.name}</span>
+                                                    <span className="text-[10px] text-muted-foreground shrink-0">
+                                                      {(ef.size / 1024).toFixed(0)} KB
+                                                    </span>
+                                                    <a
+                                                      href={`${BASE}/api/compliance/assets/${assetIdNum}/${ctrl.globalControlId}/evidence/${encodeURIComponent(ef.path)}`}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className="p-1 rounded hover:bg-muted transition-colors shrink-0"
+                                                      title="Download"
+                                                    >
+                                                      <Download className="w-3 h-3 text-muted-foreground" />
+                                                    </a>
+                                                    <button
+                                                      className="p-1 rounded hover:bg-red-500/10 transition-colors shrink-0"
+                                                      title="Delete"
+                                                      onClick={() => deleteEvidence.mutate({ globalControlId: ctrl.globalControlId, filename: ef.path })}
+                                                    >
+                                                      <Trash2 className="w-3 h-3 text-muted-foreground hover:text-red-400" />
+                                                    </button>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
                                           </div>
                                         </div>
-                                      </div>
-                                    )}
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })}

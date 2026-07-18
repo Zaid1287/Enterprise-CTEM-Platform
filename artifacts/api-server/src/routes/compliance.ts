@@ -492,6 +492,7 @@ router.get("/compliance/assets/:assetId", requireAuth, requireCompliance, async 
     assetStatus: assetControl?.status ?? null,
     assetNotes: assetControl?.notes ?? null,
     assetAssignedTo: assetControl?.assignedTo ?? null,
+    assetEvidence: assetControl?.evidence ?? null,
     // Tenant-level answer
     tenantStatus: tenantAnswer?.status ?? "non_compliant",
     // Effective: asset-level takes priority
@@ -516,6 +517,68 @@ router.put("/compliance/assets/:assetId/:globalControlId", requireAuth, requireC
   }).returning();
 
   res.json(answer);
+});
+
+// ── Asset-level evidence upload/download/delete ───────────────────────────────
+router.post("/compliance/assets/:assetId/:globalControlId/evidence", requireAuth, requireCompliance, upload.array("files", 10), async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+  const assetId = parseInt(req.params.assetId as string);
+  const globalControlId = parseInt(req.params.globalControlId as string);
+  if (isNaN(assetId) || isNaN(globalControlId)) { res.status(400).json({ error: "Invalid ids" }); return; }
+  const files = req.files as Express.Multer.File[];
+  if (!files?.length) { res.status(400).json({ error: "No files uploaded" }); return; }
+  const newFiles = files.map(f => ({ name: f.originalname, path: f.filename, size: f.size, uploadedAt: new Date().toISOString() }));
+  const [existing] = await db.select().from(complianceAssetControlsTable)
+    .where(and(eq(complianceAssetControlsTable.tenantId, tenantId), eq(complianceAssetControlsTable.assetId, assetId), eq(complianceAssetControlsTable.globalControlId, globalControlId)));
+  let existingFiles: object[] = [];
+  try { if (existing?.evidence) existingFiles = JSON.parse(existing.evidence); } catch {}
+  const updatedEvidence = JSON.stringify([...existingFiles, ...newFiles]);
+  const [updated] = await db.insert(complianceAssetControlsTable).values({
+    tenantId, assetId, globalControlId, status: existing?.status ?? "non_compliant",
+    notes: existing?.notes ?? null, assignedTo: existing?.assignedTo ?? null, evidence: updatedEvidence,
+  }).onConflictDoUpdate({
+    target: [complianceAssetControlsTable.tenantId, complianceAssetControlsTable.assetId, complianceAssetControlsTable.globalControlId],
+    set: { evidence: updatedEvidence, updatedAt: new Date() },
+  }).returning();
+  res.json(updated);
+});
+
+router.get("/compliance/assets/:assetId/:globalControlId/evidence/:filename", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+  const assetId = parseInt(req.params.assetId as string);
+  const globalControlId = parseInt(req.params.globalControlId as string);
+  const filename = req.params.filename as string;
+  if (isNaN(assetId) || isNaN(globalControlId) || !filename || filename.includes("..") || filename.includes("/")) { res.status(400).json({ error: "Invalid" }); return; }
+  const [row] = await db.select().from(complianceAssetControlsTable)
+    .where(and(eq(complianceAssetControlsTable.tenantId, tenantId), eq(complianceAssetControlsTable.assetId, assetId), eq(complianceAssetControlsTable.globalControlId, globalControlId)));
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  let files: { name: string; path: string }[] = [];
+  try { if (row.evidence) files = JSON.parse(row.evidence); } catch {}
+  const entry = files.find(f => f.path === filename);
+  if (!entry) { res.status(404).json({ error: "File not found" }); return; }
+  const filePath = path.join(EVIDENCE_DIR, filename);
+  if (!fs.existsSync(filePath)) { res.status(404).json({ error: "File missing" }); return; }
+  res.download(filePath, entry.name);
+});
+
+router.delete("/compliance/assets/:assetId/:globalControlId/evidence/:filename", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const { tenantId } = req.user!;
+  const assetId = parseInt(req.params.assetId as string);
+  const globalControlId = parseInt(req.params.globalControlId as string);
+  const filename = req.params.filename as string;
+  if (isNaN(assetId) || isNaN(globalControlId) || !filename || filename.includes("..") || filename.includes("/")) { res.status(400).json({ error: "Invalid" }); return; }
+  const [row] = await db.select().from(complianceAssetControlsTable)
+    .where(and(eq(complianceAssetControlsTable.tenantId, tenantId), eq(complianceAssetControlsTable.assetId, assetId), eq(complianceAssetControlsTable.globalControlId, globalControlId)));
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  let files: { name: string; path: string; size: number; uploadedAt: string }[] = [];
+  try { if (row.evidence) files = JSON.parse(row.evidence); } catch {}
+  const idx = files.findIndex(f => f.path === filename);
+  if (idx === -1) { res.status(404).json({ error: "File not found" }); return; }
+  files.splice(idx, 1);
+  try { fs.unlinkSync(path.join(EVIDENCE_DIR, filename)); } catch {}
+  await db.update(complianceAssetControlsTable).set({ evidence: JSON.stringify(files), updatedAt: new Date() })
+    .where(and(eq(complianceAssetControlsTable.tenantId, tenantId), eq(complianceAssetControlsTable.assetId, assetId), eq(complianceAssetControlsTable.globalControlId, globalControlId)));
+  res.json({ ok: true });
 });
 
 // Asset compliance summary (rollup per framework for a specific asset)
