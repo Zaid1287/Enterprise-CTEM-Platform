@@ -130,6 +130,9 @@ export default function TprmVendorDetailPage() {
   const [reminderForm, setReminderForm] = useState({ title: "", dueDate: "", type: "custom", notes: "" });
   const [savingReminder, setSavingReminder] = useState(false);
 
+  // Account managers list (for "Assigned To" dropdowns)
+  const [amUsers, setAmUsers] = useState<any[]>([]);
+
   // Compliance sub-tab
   const [complianceTab, setComplianceTab] = useState("controls");
 
@@ -158,6 +161,7 @@ export default function TprmVendorDetailPage() {
   useEffect(() => {
     apiFetch<any[]>("/api/tprm/questionnaire-templates").then(setTemplates).catch(() => {});
     apiFetch<any[]>(`/api/tprm/vendors/${id}/compliance-requirements`).then(setRequirements).catch(() => {});
+    apiFetch<any[]>("/api/users").then(all => setAmUsers(all.filter((u: any) => u.role === "account_manager"))).catch(() => {});
   }, [id]);
 
   const loadControls = (fw?: string) => {
@@ -531,120 +535,107 @@ export default function TprmVendorDetailPage() {
   }));
 
   return (
-    <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
-      {/* Header */}
-      <div className="flex items-start gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/tprm/vendors")}><ArrowLeft className="w-4 h-4" /></Button>
-        <div className="flex items-center gap-3 flex-1">
-          {vendor.logoUrl ? (
-            <img src={vendor.logoUrl} alt={vendor.companyName} className="w-12 h-12 rounded bg-white/10 object-contain p-1 shrink-0" />
-          ) : (
-            <div className="w-12 h-12 rounded bg-muted flex items-center justify-center text-lg font-bold shrink-0">{vendor.companyName[0]}</div>
-          )}
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold">{vendor.companyName}</h1>
-              {gradeBadge(vendor.riskGrade)}
-              {vendor.isGlobal && <Badge variant="secondary" className="text-[10px]">Global</Badge>}
+    <div className="flex flex-col w-full min-h-full">
+      {/* ── Hero Header ───────────────────────────────────────────────────── */}
+      <div className="border-b border-border/60 bg-gradient-to-b from-card/70 to-background px-6 pt-5 pb-5">
+        {/* Top row: Back + Identity + Actions */}
+        <div className="flex items-start gap-4 mb-5">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/tprm/vendors")} className="shrink-0 mt-0.5"><ArrowLeft className="w-4 h-4" /></Button>
+          <div className="flex items-center gap-4 flex-1 min-w-0">
+            {vendor.logoUrl ? (
+              <img src={vendor.logoUrl} alt={vendor.companyName} className="w-14 h-14 rounded-lg bg-white/10 object-contain p-1.5 border border-border/40 shrink-0" />
+            ) : (
+              <div className="w-14 h-14 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-2xl font-bold text-primary shrink-0">{vendor.companyName[0]}</div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-bold tracking-tight">{vendor.companyName}</h1>
+                {gradeBadge(vendor.riskGrade)}
+                {vendor.isGlobal && <Badge variant="secondary" className="text-[10px]">Global</Badge>}
+                {vendor.assessmentType === "continuous" && <Badge className="text-[10px] bg-blue-500/20 text-blue-400 border-blue-500/30">Continuous Monitoring</Badge>}
+              </div>
+              <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground flex-wrap">
+                <span className="flex items-center gap-1"><Globe className="w-3.5 h-3.5" />{vendor.domain}</span>
+                {vendor.industry && <span>{vendor.industry}</span>}
+                {vendor.location && <span className="flex items-center gap-1"><Building2 className="w-3.5 h-3.5" />{vendor.location}</span>}
+                {vendor.lastScannedAt && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />Last scan {new Date(vendor.lastScannedAt).toLocaleDateString()}</span>}
+              </div>
             </div>
-            <p className="text-sm text-muted-foreground flex items-center gap-1"><Globe className="w-3.5 h-3.5" />{vendor.domain}</p>
           </div>
+          <Button size="sm" variant="outline" onClick={triggerScan} disabled={scanning} className="shrink-0">
+            {scanning ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
+            {scanning ? "Scanning…" : "Scan Now"}
+          </Button>
         </div>
-        <Button size="sm" variant="outline" onClick={triggerScan} disabled={scanning}>
-          {scanning ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
-          {scanning ? "Scanning…" : "Scan Now"}
-        </Button>
-      </div>
 
-      {/* Score overview */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <Card className="bg-card/60 col-span-2 md:col-span-1">
-          <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center h-full gap-1">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Overall Score</p>
-            <p className="text-4xl font-bold">{vendor.riskScore}</p>
-            {gradeBadge(vendor.riskGrade)}
-          </CardContent>
-        </Card>
-        {SCORE_CATEGORIES.slice(0, 3).map(cat => (
-          <Card key={cat.key} className="bg-card/50">
-            <CardContent className="pt-3 pb-3">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{cat.label}</p>
-              <p className="text-xl font-semibold">{latestScore?.[cat.key] ?? "—"}</p>
-              {latestScore && <Progress value={latestScore[cat.key]} className="h-1 mt-1" />}
-            </CardContent>
-          </Card>
-        ))}
-        <Card className="bg-card/50">
-          <CardContent className="pt-3 pb-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Dark Web Mentions</p>
-            <p className={`text-xl font-semibold ${(vendor.darkWebMentions ?? 0) > 0 ? "text-red-400" : ""}`}>{vendor.darkWebMentions ?? 0}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">{vendor.assessmentType === "continuous" ? "Continuous" : vendor.assessmentType === "one_time" ? "One-Time" : "—"} scan</p>
-          </CardContent>
-        </Card>
-      </div>
+        {/* Metrics strip — full width */}
+        {(() => {
+          const curr = vendor.riskScores?.[0];
+          const prev = vendor.riskScores?.[1];
+          const delta = curr && prev ? curr.overallScore - prev.overallScore : null;
+          const openFindings = (vendor.findings ?? []).filter((f: any) => f.status === "open");
+          const mitigated    = (vendor.findings ?? []).filter((f: any) => f.status === "mitigated");
+          const criticalCount = openFindings.filter((f: any) => f.severity === "critical").length;
+          const highCount     = openFindings.filter((f: any) => f.severity === "high").length;
+          const medCount      = openFindings.filter((f: any) => f.severity === "medium").length;
+          const hasWarning    = criticalCount > 0 || highCount > 0 || (delta !== null && delta > 5);
 
-      {/* Score delta stats + Insights from last scan */}
-      {(() => {
-        const curr = vendor.riskScores?.[0];
-        const prev = vendor.riskScores?.[1];
-        const delta = curr && prev ? curr.overallScore - prev.overallScore : null;
-        const openFindings   = (vendor.findings ?? []).filter((f: any) => f.status === "open");
-        const mitigated      = (vendor.findings ?? []).filter((f: any) => f.status === "mitigated");
-        const criticalCount  = openFindings.filter((f: any) => f.severity === "critical").length;
-        return (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              {[
-                {
-                  label: "Score Change",
-                  value: delta !== null ? (delta >= 0 ? `+${delta}` : `${delta}`) : "—",
-                  sub: delta !== null ? (delta > 0 ? "Increased" : delta < 0 ? "Improved" : "No change") : "Need 2+ scans",
-                  color: delta !== null ? (delta > 0 ? "text-red-400" : delta < 0 ? "text-green-400" : "text-muted-foreground") : "text-muted-foreground",
-                  icon: delta !== null && delta > 0 ? "↑" : delta !== null && delta < 0 ? "↓" : "—",
-                },
-                { label: "Open Issues",   value: openFindings.length,  sub: "Active findings",         color: openFindings.length > 0 ? "text-red-400" : "text-green-400",    icon: "!" },
-                { label: "Issues Solved", value: mitigated.length,     sub: "Mitigated",               color: mitigated.length > 0 ? "text-green-400" : "text-muted-foreground", icon: "✓" },
-                { label: "Total Issues",  value: (vendor.findings ?? []).length, sub: "All findings",  color: "text-foreground",     icon: "#" },
-                { label: "Total Assets",  value: (vendor.assets ?? []).length,   sub: "Discovered",   color: "text-blue-400",       icon: "◈" },
-              ].map(s => (
-                <Card key={s.label} className="bg-card/50">
-                  <CardContent className="pt-3 pb-3">
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{s.label}</p>
-                    <p className={`text-2xl font-bold mt-0.5 ${s.color}`}>{s.value}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{s.sub}</p>
-                  </CardContent>
-                </Card>
-              ))}
+          const metricCards = [
+            {
+              label: "Overall Score",
+              value: <><span className="text-3xl font-bold">{vendor.riskScore}</span><span className="ml-2 mt-1">{gradeBadge(vendor.riskGrade)}</span></>,
+              accent: "border-l-4 border-l-primary",
+            },
+            {
+              label: "Score Change",
+              value: <span className={`text-2xl font-bold ${delta !== null ? (delta > 0 ? "text-red-400" : delta < 0 ? "text-green-400" : "text-muted-foreground") : "text-muted-foreground"}`}>{delta !== null ? (delta >= 0 ? `+${delta}` : `${delta}`) : "—"}</span>,
+              sub: delta !== null ? (delta > 0 ? "Risk increased" : delta < 0 ? "Risk improved" : "Stable") : "Need 2+ scans",
+            },
+            { label: "Open Issues",   value: <span className={`text-2xl font-bold ${openFindings.length > 0 ? "text-red-400" : "text-green-400"}`}>{openFindings.length}</span>, sub: "Active findings" },
+            { label: "Mitigated",     value: <span className={`text-2xl font-bold ${mitigated.length > 0 ? "text-green-400" : "text-muted-foreground"}`}>{mitigated.length}</span>, sub: "Issues solved" },
+            { label: "Total Findings", value: <span className="text-2xl font-bold">{(vendor.findings ?? []).length}</span>, sub: "All time" },
+            { label: "Assets",        value: <span className="text-2xl font-bold text-blue-400">{(vendor.assets ?? []).length}</span>, sub: "Discovered" },
+            { label: "Dark Web",      value: <span className={`text-2xl font-bold ${(vendor.darkWebMentions ?? 0) > 0 ? "text-red-400" : ""}`}>{vendor.darkWebMentions ?? 0}</span>, sub: "Mentions" },
+            ...SCORE_CATEGORIES.slice(0, 3).map(cat => ({
+              label: cat.label,
+              value: <><span className="text-2xl font-bold">{latestScore?.[cat.key] ?? "—"}</span>{latestScore && <Progress value={latestScore[cat.key]} className="h-1 mt-1.5 w-full" />}</>,
+            })),
+          ];
+
+          return (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-3">
+                {metricCards.map((m, i) => (
+                  <div key={i} className={`bg-card/60 border border-border/50 rounded-lg px-3 py-2.5 ${(m as any).accent ?? ""}`}>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{m.label}</p>
+                    <div className="flex items-end gap-1">{m.value}</div>
+                    {(m as any).sub && <p className="text-[10px] text-muted-foreground mt-0.5">{(m as any).sub}</p>}
+                  </div>
+                ))}
+              </div>
+              {/* Insights banner */}
+              {(openFindings.length > 0 || mitigated.length > 0 || delta !== null) && (
+                <div className={`rounded-lg border px-4 py-2.5 flex flex-wrap items-center gap-2 ${hasWarning ? "border-orange-500/30 bg-orange-500/5" : "border-green-500/30 bg-green-500/5"}`}>
+                  <span className={`text-xs font-semibold shrink-0 ${hasWarning ? "text-orange-300" : "text-green-300"}`}>Scan Insights:</span>
+                  {criticalCount > 0 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded text-xs">{criticalCount} critical finding{criticalCount > 1 ? "s" : ""} — immediate attention</span>}
+                  {highCount > 0 && <span className="bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded text-xs">{highCount} high severity open</span>}
+                  {medCount > 0 && <span className="bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded text-xs">{medCount} medium severity</span>}
+                  {mitigated.length > 0 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded text-xs">{mitigated.length} issue{mitigated.length > 1 ? "s" : ""} mitigated</span>}
+                  {delta !== null && delta > 5 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded text-xs">Risk score ↑ {delta} pts since last scan</span>}
+                  {delta !== null && delta < -5 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded text-xs">Risk score ↓ {Math.abs(delta)} pts improved</span>}
+                  {delta !== null && delta >= -5 && delta <= 5 && <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded text-xs">Score stable (Δ {delta >= 0 ? "+" : ""}{delta})</span>}
+                  {openFindings.length === 0 && mitigated.length === 0 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded text-xs">No open findings — clean</span>}
+                </div>
+              )}
             </div>
-            {/* Insights from last scan — always show when any findings or score change */}
-            {(openFindings.length > 0 || mitigated.length > 0 || delta !== null) && (() => {
-              const highCount  = openFindings.filter((f: any) => f.severity === "high").length;
-              const medCount   = openFindings.filter((f: any) => f.severity === "medium").length;
-              const hasWarning = criticalCount > 0 || highCount > 0 || (delta !== null && delta > 5);
-              return (
-                <Card className={hasWarning ? "border-orange-500/30 bg-orange-500/5" : "border-green-500/30 bg-green-500/5"}>
-                  <CardContent className="py-3">
-                    <p className={`text-xs font-semibold mb-1.5 ${hasWarning ? "text-orange-300" : "text-green-300"}`}>Insights from last scan</p>
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      {criticalCount > 0 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">{criticalCount} critical finding{criticalCount > 1 ? "s" : ""} require immediate attention</span>}
-                      {highCount > 0 && <span className="bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded">{highCount} high severity issue{highCount > 1 ? "s" : ""} open</span>}
-                      {medCount > 0 && <span className="bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded">{medCount} medium severity issue{medCount > 1 ? "s" : ""}</span>}
-                      {mitigated.length > 0 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">{mitigated.length} issue{mitigated.length > 1 ? "s" : ""} mitigated</span>}
-                      {delta !== null && delta > 5 && <span className="bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded">Risk score increased by {delta} points since last scan</span>}
-                      {delta !== null && delta < -5 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">Risk score improved by {Math.abs(delta)} points</span>}
-                      {delta !== null && delta >= -5 && delta <= 5 && <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded">Risk score stable (Δ {delta >= 0 ? "+" : ""}{delta})</span>}
-                      {openFindings.length === 0 && mitigated.length === 0 && <span className="bg-green-500/20 text-green-300 border border-green-500/30 px-2 py-0.5 rounded">No open findings — clean scan</span>}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })()}
-          </div>
-        );
-      })()}
+          );
+        })()}
+      </div>
 
+      {/* ── Main content ──────────────────────────────────────────────────── */}
+      <div className="flex-1 px-6 py-5">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-8 text-xs flex-wrap gap-0.5">
+        <TabsList className="h-9 text-xs flex-wrap gap-0.5 mb-1">
           <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
           <TabsTrigger value="findings" className="text-xs">Findings ({vendor.findings?.length ?? 0})</TabsTrigger>
           <TabsTrigger value="remediation" className="text-xs">Remediation & Tasks</TabsTrigger>
@@ -1820,8 +1811,17 @@ export default function TprmVendorDetailPage() {
                 <Input className="mt-1 h-8 text-sm" placeholder="e.g. SOC2 report §6.1, policy doc link…" value={controlEditForm.evidence} onChange={e => setControlEditForm(f => ({ ...f, evidence: e.target.value }))} />
               </div>
               <div>
-                <Label className="text-xs">Assigned To</Label>
-                <Input className="mt-1 h-8 text-sm" placeholder="Name or email" value={controlEditForm.assignedTo} onChange={e => setControlEditForm(f => ({ ...f, assignedTo: e.target.value }))} />
+                <Label className="text-xs">Assigned To (Account Manager)</Label>
+                <Select value={controlEditForm.assignedTo || "__none__"} onValueChange={v => setControlEditForm(f => ({ ...f, assignedTo: v === "__none__" ? "" : v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select account manager…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Unassigned —</SelectItem>
+                    {amUsers.map(u => (
+                      <SelectItem key={u.id} value={u.email}>{u.name || u.email}</SelectItem>
+                    ))}
+                    {amUsers.length === 0 && <SelectItem value="__loading__" disabled>No account managers found</SelectItem>}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label className="text-xs">Next Review Date</Label>
@@ -1879,8 +1879,17 @@ export default function TprmVendorDetailPage() {
               <Input className="mt-1 h-8 text-sm" placeholder="Policy doc, audit report link…" value={addControlForm.evidence} onChange={e => setAddControlForm(f => ({ ...f, evidence: e.target.value }))} />
             </div>
             <div>
-              <Label className="text-xs">Assigned To</Label>
-              <Input className="mt-1 h-8 text-sm" placeholder="Name or email" value={addControlForm.assignedTo} onChange={e => setAddControlForm(f => ({ ...f, assignedTo: e.target.value }))} />
+              <Label className="text-xs">Assigned To (Account Manager)</Label>
+              <Select value={addControlForm.assignedTo || "__none__"} onValueChange={v => setAddControlForm(f => ({ ...f, assignedTo: v === "__none__" ? "" : v }))}>
+                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select account manager…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Unassigned —</SelectItem>
+                  {amUsers.map(u => (
+                    <SelectItem key={u.id} value={u.email}>{u.name || u.email}</SelectItem>
+                  ))}
+                  {amUsers.length === 0 && <SelectItem value="__loading__" disabled>No account managers found</SelectItem>}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Notes</Label>
@@ -2136,6 +2145,7 @@ export default function TprmVendorDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>{/* end flex-1 main content */}
     </div>
   );
 }
