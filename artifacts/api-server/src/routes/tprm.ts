@@ -2587,26 +2587,24 @@ router.delete("/tprm/vendors/:id/compliance-controls/:cid", requireAuth, require
   res.json({ ok: true });
 });
 
-// Bulk-rename: update controlId / controlTitle / category across ALL vendors for a given framework+controlId
-// Also inserts the control into any vendor that doesn't have it yet (full cross-vendor sync)
+// Bulk-rename: update controlId / controlTitle / category across vendors that already have this control.
+// Does NOT insert into vendors that don't have the control — editing only changes existing rows.
 router.patch("/tprm/compliance-controls/rename-all", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const { framework, oldControlId, controlId, controlTitle, category } = req.body;
   if (!framework || !oldControlId) {
     res.status(400).json({ error: "framework and oldControlId are required" }); return;
   }
-  const newControlId    = (controlId    || oldControlId) as string;
-  const newControlTitle = (controlTitle || null)         as string | null;
 
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (controlId)              updates.controlId    = controlId;
   if (controlTitle)           updates.controlTitle = controlTitle;
   if (category !== undefined) updates.category     = category || null;
   if (Object.keys(updates).length === 1) {
-    res.json({ updated: 0, inserted: 0, message: "Nothing to rename" }); return;
+    res.json({ updated: 0, message: "Nothing to rename" }); return;
   }
 
-  // Step 1: UPDATE all vendors that already have this control
+  // UPDATE only vendors that already have this exact control — never insert into new vendors
   const updatedRows = await db.update(tprmVendorComplianceControlsTable).set(updates)
     .where(and(
       eq(tprmVendorComplianceControlsTable.framework, framework),
@@ -2614,36 +2612,7 @@ router.patch("/tprm/compliance-controls/rename-all", requireAuth, requireTprm, a
       eq(tprmVendorComplianceControlsTable.tenantId, tenantId),
     )).returning({ vendorId: tprmVendorComplianceControlsTable.vendorId });
 
-  const updatedVendorIds = new Set(updatedRows.map(r => r.vendorId));
-
-  // Step 2: find all tenant vendors
-  const allVendors = await db.select({ id: tprmVendorsTable.id })
-    .from(tprmVendorsTable)
-    .where(eq(tprmVendorsTable.tenantId, tenantId));
-
-  // Step 3: INSERT the control into vendors that don't have it yet (only if we have a title)
-  let inserted = 0;
-  if (newControlTitle) {
-    const missingVendors = allVendors.filter(v => !updatedVendorIds.has(v.id));
-    if (missingVendors.length > 0) {
-      const insertRows = missingVendors.map(v => ({
-        vendorId:     v.id,
-        tenantId,
-        framework,
-        controlId:    newControlId,
-        controlTitle: newControlTitle,
-        category:     (category || null) as string | null,
-        status:       "pending_review",
-        isActive:     true,
-      }));
-      const insertResult = await db.insert(tprmVendorComplianceControlsTable)
-        .values(insertRows)
-        .returning({ id: tprmVendorComplianceControlsTable.id });
-      inserted = insertResult.length;
-    }
-  }
-
-  res.json({ updated: updatedRows.length, inserted });
+  res.json({ updated: updatedRows.length });
 });
 
 // Add a control to ALL vendors in the tenant for a given framework (upsert — skips vendors that already have it)

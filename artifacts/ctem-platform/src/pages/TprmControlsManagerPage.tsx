@@ -25,6 +25,15 @@ const FRAMEWORKS = [
   { value: "nist_csf", label: "NIST CSF 2.0" },
 ];
 
+const CATEGORIES_BY_FRAMEWORK: Record<string, string[]> = {
+  iso27001: ["Organizational", "People", "Physical", "Technological"],
+  soc2:     ["Security", "Availability", "Confidentiality", "Processing Integrity", "Privacy"],
+  pcidss:   ["Network Security", "Access Control", "Data Protection", "Monitoring", "Vulnerability Management", "Physical Security", "Policy & Procedures"],
+  hipaa:    ["Administrative", "Physical", "Technical", "Organizational", "Policies & Procedures"],
+  nist_csf: ["Govern", "Identify", "Protect", "Detect", "Respond", "Recover"],
+};
+const DEFAULT_CATEGORIES = ["Organizational", "People", "Physical", "Technological", "Technical", "Administrative", "Policy & Procedures"];
+
 const CTRL_STATUS_MAP: Record<string, { label: string; color: string; border: string }> = {
   compliant:      { label: "Compliant",     color: "text-green-400",  border: "border-green-500/30"  },
   partial:        { label: "Partial",        color: "text-yellow-400", border: "border-yellow-500/30" },
@@ -189,13 +198,13 @@ export default function TprmControlsManagerPage() {
       );
       setControls(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
 
-      // Always propagate identity fields (controlId / controlTitle / category) to ALL vendors.
-      // rename-all UPDATE existing rows AND inserts into vendors that don't have the control yet.
+      // Propagate identity-field changes (controlId / controlTitle / category) to other vendors
+      // that already have this same control — never inserts into vendors that don't have it.
       const idChanged    = editForm.controlId    !== editCtrl.controlId;
       const titleChanged = editForm.controlTitle !== editCtrl.controlTitle;
       const catChanged   = editForm.category     !== (editCtrl.category ?? "");
       if (idChanged || titleChanged || catChanged) {
-        const result = await apiFetch<{ updated: number; inserted: number }>("/api/tprm/compliance-controls/rename-all", {
+        const result = await apiFetch<{ updated: number }>("/api/tprm/compliance-controls/rename-all", {
           method: "PATCH",
           body: JSON.stringify({
             framework,
@@ -205,10 +214,10 @@ export default function TprmControlsManagerPage() {
             category:     editForm.category     || undefined,
           }),
         });
-        const { updated: upd = 0, inserted: ins = 0 } = result ?? {};
+        const { updated: upd = 0 } = result ?? {};
         toast({
-          title: "Control updated across all vendors",
-          description: `Updated ${upd} vendor${upd !== 1 ? "s" : ""}${ins > 0 ? `, added to ${ins} new vendor${ins !== 1 ? "s" : ""}` : ""}.`,
+          title: "Control updated",
+          description: upd > 1 ? `Title/ID/category synced across ${upd} vendor${upd !== 1 ? "s" : ""} that had this control.` : "Changes saved.",
         });
       } else {
         toast({ title: "Control updated" });
@@ -220,14 +229,13 @@ export default function TprmControlsManagerPage() {
     setSaving(false);
   };
 
-  // Add new control — adds to the current vendor first, then propagates to ALL other vendors
+  // Add new control — adds only to the currently selected vendor
   const addControl = async () => {
     if (!addForm.controlId.trim() || !addForm.controlTitle.trim()) {
       toast({ title: "Control ID and Title are required", variant: "destructive" }); return;
     }
     setAdding(true);
     try {
-      // 1. Add to the currently selected vendor
       const ctrl = await apiFetch<any>(
         `/api/tprm/vendors/${vendorId}/compliance-controls`,
         {
@@ -245,29 +253,7 @@ export default function TprmControlsManagerPage() {
         }
       );
       setControls(prev => [...prev, ctrl].sort((a, b) => a.controlId.localeCompare(b.controlId)));
-
-      // 2. Propagate to ALL other vendors in the tenant (insert with pending_review status)
-      const propagateResult = await apiFetch<{ inserted: number; skipped: number }>(
-        "/api/tprm/compliance-controls/add-all",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            framework,
-            controlId:    addForm.controlId.trim(),
-            controlTitle: addForm.controlTitle.trim(),
-            category:     addForm.category.trim() || null,
-            status:       "pending_review",
-          }),
-        }
-      ).catch(() => ({ inserted: 0, skipped: 0 }));
-
-      const { inserted = 0 } = propagateResult ?? {};
-      toast({
-        title: "Control added to all vendors",
-        description: inserted > 0
-          ? `Added to ${inserted} additional vendor${inserted !== 1 ? "s" : ""} with Pending Review status.`
-          : "Already present on all other vendors.",
-      });
+      toast({ title: "Control added" });
       setShowAdd(false);
       setAddForm(BLANK_FORM);
     } catch (err: any) {
@@ -562,7 +548,15 @@ export default function TprmControlsManagerPage() {
               {/* Category */}
               <div>
                 <Label className="text-xs">Category</Label>
-                <Input className="mt-1 h-8 text-sm" value={editForm.category} onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))} placeholder="e.g. Organizational, Technical, People…" />
+                <Select value={editForm.category || "__none__"} onValueChange={v => setEditForm(f => ({ ...f, category: v === "__none__" ? "" : v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select category…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— None —</SelectItem>
+                    {(CATEGORIES_BY_FRAMEWORK[framework] ?? DEFAULT_CATEGORIES).map(cat => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               {/* Status */}
               <div>
@@ -611,8 +605,8 @@ export default function TprmControlsManagerPage() {
                 </div>
                 <Switch checked={editForm.isActive} onCheckedChange={v => setEditForm(f => ({ ...f, isActive: v }))} />
               </div>
-              <p className="text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded p-2">
-                Control ID, title, and category changes apply to this control across <strong>all vendors</strong>.
+              <p className="text-[10px] text-muted-foreground bg-muted/20 border border-border/40 rounded p-2">
+                Changes apply only to this vendor's copy of the control.
               </p>
             </div>
           )}
@@ -648,7 +642,15 @@ export default function TprmControlsManagerPage() {
             </div>
             <div>
               <Label className="text-xs">Category</Label>
-              <Input className="mt-1 h-8 text-sm" value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} placeholder="e.g. Organizational, Technical, People…" />
+              <Select value={addForm.category || "__none__"} onValueChange={v => setAddForm(f => ({ ...f, category: v === "__none__" ? "" : v }))}>
+                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select category…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— None —</SelectItem>
+                  {(CATEGORIES_BY_FRAMEWORK[framework] ?? DEFAULT_CATEGORIES).map(cat => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Initial Status</Label>
