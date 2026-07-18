@@ -197,31 +197,7 @@ export default function TprmControlsManagerPage() {
         }
       );
       setControls(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
-
-      // Propagate identity-field changes (controlId / controlTitle / category) to other vendors
-      // that already have this same control — never inserts into vendors that don't have it.
-      const idChanged    = editForm.controlId    !== editCtrl.controlId;
-      const titleChanged = editForm.controlTitle !== editCtrl.controlTitle;
-      const catChanged   = editForm.category     !== (editCtrl.category ?? "");
-      if (idChanged || titleChanged || catChanged) {
-        const result = await apiFetch<{ updated: number }>("/api/tprm/compliance-controls/rename-all", {
-          method: "PATCH",
-          body: JSON.stringify({
-            framework,
-            oldControlId: editCtrl.controlId,
-            controlId:    editForm.controlId    || undefined,
-            controlTitle: editForm.controlTitle || undefined,
-            category:     editForm.category     || undefined,
-          }),
-        });
-        const { updated: upd = 0 } = result ?? {};
-        toast({
-          title: "Control updated",
-          description: upd > 1 ? `Title/ID/category synced across ${upd} vendor${upd !== 1 ? "s" : ""} that had this control.` : "Changes saved.",
-        });
-      } else {
-        toast({ title: "Control updated" });
-      }
+      toast({ title: "Control updated", description: "Changes saved to this vendor only." });
       setEditCtrl(null);
     } catch (err: any) {
       toast({ title: "Save failed", description: err?.message, variant: "destructive" });
