@@ -1796,7 +1796,7 @@ function ClientComplianceSection() {
                       No compliance-enabled assets assigned to this client yet.
                     </p>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                       {clientAssets.map(a => (
                         <AssetCard key={a.id} asset={a} onClick={() => navigate(`/compliance/assets/${a.id}`)} />
                       ))}
@@ -1831,7 +1831,7 @@ function ClientComplianceSection() {
               </p>
             </div>
           </div>
-          <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             {unassignedAssets.map(a => (
               <AssetCard key={a.id} asset={a} onClick={() => navigate(`/compliance/assets/${a.id}`)} />
             ))}
@@ -1940,6 +1940,113 @@ function AssignmentsTab() {
   );
 }
 
+// ── Compliance Clients Overview (admin/AM — top of Overview tab) ──────────────
+// Shows active client count + per-framework control status totals across all clients
+function ComplianceClientsOverview({ fwSummary, isLoading }: { fwSummary: ClientFrameworkSummary[]; isLoading: boolean }) {
+  if (isLoading) return (
+    <div className="space-y-3">
+      <Skeleton className="h-16 rounded-xl" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}
+      </div>
+    </div>
+  );
+  if (fwSummary.length === 0) return null;
+
+  const activeClients = fwSummary[0]?.activeClients ?? 0;
+  const totalCompliant   = fwSummary.reduce((s, f) => s + f.totalCompliant, 0);
+  const totalInProgress  = fwSummary.reduce((s, f) => s + f.totalInProgress, 0);
+  const totalNonCompliant = fwSummary.reduce((s, f) => s + f.totalNonCompliant, 0);
+  const totalNA          = fwSummary.reduce((s, f) => s + f.totalNotApplicable, 0);
+
+  return (
+    <div className="space-y-3">
+      {/* Header stat bar */}
+      <div className="bg-card border border-border rounded-xl px-5 py-4 flex flex-wrap items-center gap-6">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+            <Building2 className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Active Compliance Clients</p>
+            <p className="text-2xl font-bold">{activeClients}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-6 flex-wrap">
+          {([
+            ["Compliant Controls",    totalCompliant,    "text-green-400"],
+            ["In Progress",           totalInProgress,   "text-yellow-400"],
+            ["Non-Compliant",         totalNonCompliant, "text-red-400"],
+            ["N/A",                   totalNA,           "text-slate-400"],
+          ] as [string, number, string][]).map(([label, val, cls]) => (
+            <div key={label} className="text-center">
+              <p className={cn("text-xl font-bold tabular-nums", cls)}>{val}</p>
+              <p className="text-[10px] text-muted-foreground">{label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Per-framework grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {fwSummary.map(fw => {
+          const total = fw.totalCompliant + fw.totalInProgress + fw.totalNonCompliant + fw.totalNotApplicable;
+          const pct = (n: number) => total > 0 ? (n / total) * 100 : 0;
+          return (
+            <div key={fw.frameworkId} className="bg-card border border-border rounded-xl p-4 space-y-3">
+              {/* Framework header */}
+              <div className="flex items-center gap-2">
+                <Badge className={cn("text-xs border font-mono shrink-0", fwColor(fw.shortName))}>
+                  {fw.shortName}
+                </Badge>
+                <span className="text-xs font-semibold truncate text-muted-foreground">{fw.frameworkName}</span>
+              </div>
+
+              {/* Avg score + client count */}
+              <div className="flex items-center gap-3">
+                <ScoreRing score={fw.avgScore} size={44} />
+                <div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Avg across <span className="text-foreground font-semibold">{fw.activeClients}</span> client{fw.activeClients !== 1 ? "s" : ""}
+                  </p>
+                  <div className="flex items-center gap-2 mt-0.5 text-[10px]">
+                    <span className="text-green-400">{fw.compliantClients} ✓</span>
+                    <span className="text-yellow-400">{fw.inProgressClients} ~</span>
+                    <span className="text-red-400">{fw.nonCompliantClients} ✗</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stacked bar */}
+              <div className="flex h-1.5 rounded-full overflow-hidden w-full bg-muted/30">
+                {pct(fw.totalCompliant)     > 0 && <div className="bg-green-500"  style={{ width: `${pct(fw.totalCompliant)}%` }} />}
+                {pct(fw.totalInProgress)    > 0 && <div className="bg-yellow-500" style={{ width: `${pct(fw.totalInProgress)}%` }} />}
+                {pct(fw.totalNonCompliant)  > 0 && <div className="bg-red-500"    style={{ width: `${pct(fw.totalNonCompliant)}%` }} />}
+                {pct(fw.totalNotApplicable) > 0 && <div className="bg-slate-500"  style={{ width: `${pct(fw.totalNotApplicable)}%` }} />}
+              </div>
+
+              {/* Control counts */}
+              <div className="grid grid-cols-4 gap-1 text-center">
+                {([
+                  [fw.totalCompliant,    "text-green-400",  "bg-green-500/10",  "Compliant"],
+                  [fw.totalInProgress,   "text-yellow-400", "bg-yellow-500/10", "In Prog."],
+                  [fw.totalNonCompliant, "text-red-400",    "bg-red-500/10",    "Non-Comp."],
+                  [fw.totalNotApplicable,"text-slate-400",  "bg-slate-500/10",  "N/A"],
+                ] as [number, string, string, string][]).map(([val, cls, bg, label]) => (
+                  <div key={label} className={cn("rounded px-1 py-1.5", bg)}>
+                    <p className={cn("text-sm font-bold tabular-nums", cls)}>{val}</p>
+                    <p className="text-[9px] text-muted-foreground leading-tight">{label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 type TabId = "overview" | "controls" | "library" | "assets" | "assignments" | "documents";
 
@@ -1981,6 +2088,12 @@ export default function CompliancePage() {
     queryFn: () => apiFetch(`${BASE}/api/compliance/summary`),
   });
 
+  const { data: fwSummary = [], isLoading: loadingFwSummary } = useQuery<ClientFrameworkSummary[]>({
+    queryKey: ["compliance-clients-framework-summary"],
+    queryFn: () => apiFetch(`${BASE}/api/compliance/clients/framework-summary`),
+    enabled: isAdminOrAM,
+  });
+
   const toggleGlobalEnabled = useMutation({
     mutationFn: ({ id, isEnabled }: { id: number; isEnabled: boolean }) =>
       apiFetch(`${BASE}/api/compliance/library/${id}`, { method: "PATCH", body: JSON.stringify({ isEnabled }) }),
@@ -2002,7 +2115,11 @@ export default function CompliancePage() {
   });
 
   const selectedFw = summary.find(fw => fw.frameworkId === selectedFrameworkId);
-  const overallScore = summary.length > 0
+  // For admin/AM: overall score = avg of client avg-scores per framework (real client data)
+  // For clients:  overall score = avg of their own per-framework scores
+  const overallScore = isAdminOrAM && fwSummary.length > 0
+    ? Math.round(fwSummary.reduce((a, b) => a + b.avgScore, 0) / fwSummary.length)
+    : summary.length > 0
     ? Math.round(summary.reduce((a, b) => a + b.score, 0) / summary.length)
     : 0;
 
@@ -2083,8 +2200,8 @@ export default function CompliancePage() {
                 ))}
               </div>
             )}
+            {isAdminOrAM && <ComplianceClientsOverview fwSummary={fwSummary} isLoading={loadingFwSummary} />}
             {isAdminOrAM && <ClientComplianceSection />}
-            {isAdminOrAM && <ClientFrameworkSummarySection />}
           </div>
         )}
 
