@@ -2002,22 +2002,20 @@ function ComplianceClientsOverview({ fwSummary, isLoading }: { fwSummary: Client
                 <span className="text-xs font-semibold truncate text-muted-foreground">{fw.frameworkName}</span>
               </div>
 
-              {/* Avg score + client count */}
+              {/* Score + client count + control totals */}
               <div className="flex items-center gap-3">
                 <ScoreRing score={fw.avgScore} size={44} />
-                <div>
-                  <p className="text-[11px] text-muted-foreground">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] text-muted-foreground leading-tight">
                     Avg across <span className="text-foreground font-semibold">{fw.activeClients}</span> client{fw.activeClients !== 1 ? "s" : ""}
                   </p>
-                  <div className="flex items-center gap-2 mt-0.5 text-[10px]">
-                    <span className="text-green-400">{fw.compliantClients} ✓</span>
-                    <span className="text-yellow-400">{fw.inProgressClients} ~</span>
-                    <span className="text-red-400">{fw.nonCompliantClients} ✗</span>
-                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {fw.compliantClients} fully compliant · {fw.inProgressClients} in prog. · {fw.nonCompliantClients} not started
+                  </p>
                 </div>
               </div>
 
-              {/* Stacked bar */}
+              {/* Stacked progress bar */}
               <div className="flex h-1.5 rounded-full overflow-hidden w-full bg-muted/30">
                 {pct(fw.totalCompliant)     > 0 && <div className="bg-green-500"  style={{ width: `${pct(fw.totalCompliant)}%` }} />}
                 {pct(fw.totalInProgress)    > 0 && <div className="bg-yellow-500" style={{ width: `${pct(fw.totalInProgress)}%` }} />}
@@ -2025,7 +2023,7 @@ function ComplianceClientsOverview({ fwSummary, isLoading }: { fwSummary: Client
                 {pct(fw.totalNotApplicable) > 0 && <div className="bg-slate-500"  style={{ width: `${pct(fw.totalNotApplicable)}%` }} />}
               </div>
 
-              {/* Control counts */}
+              {/* Control counts — actual per-control status breakdown */}
               <div className="grid grid-cols-4 gap-1 text-center">
                 {([
                   [fw.totalCompliant,    "text-green-400",  "bg-green-500/10",  "Compliant"],
@@ -2200,46 +2198,58 @@ export default function CompliancePage() {
 
         {/* CONTROLS */}
         {activeTab === "controls" && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {(loadingFw ? [] : frameworks).map(fw => (
-                <button key={fw.id} onClick={() => setSelectedFrameworkId(fw.id)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
-                    selectedFrameworkId === fw.id ? fwColor(fw.shortName) : "border-border text-muted-foreground hover:border-primary/30",
-                  )}>
-                  {fw.shortName}
-                  {selectedFw?.frameworkId === fw.id && <span className="ml-1.5 opacity-70">{selectedFw.score}%</span>}
-                </button>
-              ))}
-            </div>
-
-            {selectedFw && (
-              <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-6">
-                <ScoreRing score={selectedFw.score} size={60} />
-                <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {([
-                    ["Compliant", selectedFw.compliant, "text-green-400"],
-                    ["In Progress", selectedFw.inProgress, "text-yellow-400"],
-                    ["Non-Compliant", selectedFw.nonCompliant, "text-red-400"],
-                    ["N/A", selectedFw.notApplicable, "text-slate-400"],
-                  ] as [string, number, string][]).map(([label, val, cls]) => (
-                    <div key={label}>
-                      <p className={cn("text-lg font-bold", cls)}>{val}</p>
-                      <p className="text-xs text-muted-foreground">{label}</p>
-                    </div>
+          <div className="space-y-3">
+            {/* Framework selector + stats — single compact bar */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              {/* Framework pills row */}
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border flex-wrap">
+                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">Framework</span>
+                <div className="flex flex-wrap gap-1.5 flex-1">
+                  {(loadingFw ? [] : frameworks).map(fw => (
+                    <button key={fw.id} onClick={() => setSelectedFrameworkId(fw.id)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all",
+                        selectedFrameworkId === fw.id
+                          ? fwColor(fw.shortName)
+                          : "border-border text-muted-foreground hover:border-primary/30 hover:text-foreground",
+                      )}>
+                      {fw.shortName}
+                    </button>
                   ))}
                 </div>
                 {isAdmin && (
-                  <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 shrink-0" onClick={() => setActiveTab("library")}>
-                    <BookOpen className="w-3.5 h-3.5" />Manage Library
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5 shrink-0" onClick={() => setActiveTab("library")}>
+                    <BookOpen className="w-3.5 h-3.5" />Control Library
                   </Button>
                 )}
               </div>
-            )}
 
-            {isAdminOrAM && <ClientFrameworkSummarySection selectedFrameworkId={selectedFrameworkId} />}
+              {/* Selected framework stats bar */}
+              {selectedFw && (
+                <div className="flex items-center gap-4 px-4 py-3">
+                  <ScoreRing score={selectedFw.score} size={48} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold">{selectedFw.frameworkName}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{selectedFw.total} total controls</p>
+                  </div>
+                  <div className="flex items-center gap-5">
+                    {([
+                      [selectedFw.compliant,      "text-green-400",  "bg-green-500/10",  "Compliant"],
+                      [selectedFw.inProgress,     "text-yellow-400", "bg-yellow-500/10", "In Progress"],
+                      [selectedFw.nonCompliant,   "text-red-400",    "bg-red-500/10",    "Non-Compliant"],
+                      [selectedFw.notApplicable,  "text-slate-400",  "bg-slate-500/10",  "N/A"],
+                    ] as [number, string, string, string][]).map(([val, cls, bg, label]) => (
+                      <div key={label} className={cn("rounded-lg px-3 py-1.5 text-center min-w-[56px]", bg)}>
+                        <p className={cn("text-base font-bold tabular-nums leading-tight", cls)}>{val}</p>
+                        <p className="text-[9px] text-muted-foreground leading-tight">{label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
+            {/* Asset controls accordion — full width */}
             <AssetControlsAccordion
               frameworkId={selectedFrameworkId}
               isAdmin={isAdmin}
