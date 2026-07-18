@@ -190,12 +190,13 @@ export default function TprmControlsManagerPage() {
       );
       setControls(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
 
-      // Propagate controlId / controlTitle / category to ALL vendors with the same control
+      // Always propagate identity fields (controlId / controlTitle / category) to ALL vendors.
+      // rename-all UPDATE existing rows AND inserts into vendors that don't have the control yet.
       const idChanged    = editForm.controlId    !== editCtrl.controlId;
       const titleChanged = editForm.controlTitle !== editCtrl.controlTitle;
       const catChanged   = editForm.category     !== (editCtrl.category ?? "");
       if (idChanged || titleChanged || catChanged) {
-        await apiFetch("/api/tprm/compliance-controls/rename-all", {
+        const result = await apiFetch<{ updated: number; inserted: number }>("/api/tprm/compliance-controls/rename-all", {
           method: "PATCH",
           body: JSON.stringify({
             framework,
@@ -205,7 +206,11 @@ export default function TprmControlsManagerPage() {
             category:     editForm.category     || undefined,
           }),
         });
-        toast({ title: "Control updated", description: "ID / title / category applied to all vendors." });
+        const { updated: upd = 0, inserted: ins = 0 } = result ?? {};
+        toast({
+          title: "Control updated across all vendors",
+          description: `Updated ${upd} vendor${upd !== 1 ? "s" : ""}${ins > 0 ? `, added to ${ins} new vendor${ins !== 1 ? "s" : ""}` : ""}.`,
+        });
       } else {
         toast({ title: "Control updated" });
       }
@@ -216,13 +221,14 @@ export default function TprmControlsManagerPage() {
     setSaving(false);
   };
 
-  // Add new control
+  // Add new control — adds to the current vendor first, then propagates to ALL other vendors
   const addControl = async () => {
     if (!addForm.controlId.trim() || !addForm.controlTitle.trim()) {
       toast({ title: "Control ID and Title are required", variant: "destructive" }); return;
     }
     setAdding(true);
     try {
+      // 1. Add to the currently selected vendor
       const ctrl = await apiFetch<any>(
         `/api/tprm/vendors/${vendorId}/compliance-controls`,
         {
@@ -240,7 +246,29 @@ export default function TprmControlsManagerPage() {
         }
       );
       setControls(prev => [...prev, ctrl].sort((a, b) => a.controlId.localeCompare(b.controlId)));
-      toast({ title: "Control added" });
+
+      // 2. Propagate to ALL other vendors in the tenant (insert with pending_review status)
+      const propagateResult = await apiFetch<{ inserted: number; skipped: number }>(
+        "/api/tprm/compliance-controls/add-all",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            framework,
+            controlId:    addForm.controlId.trim(),
+            controlTitle: addForm.controlTitle.trim(),
+            category:     addForm.category.trim() || null,
+            status:       "pending_review",
+          }),
+        }
+      ).catch(() => ({ inserted: 0, skipped: 0 }));
+
+      const { inserted = 0 } = propagateResult ?? {};
+      toast({
+        title: "Control added to all vendors",
+        description: inserted > 0
+          ? `Added to ${inserted} additional vendor${inserted !== 1 ? "s" : ""} with Pending Review status.`
+          : "Already present on all other vendors.",
+      });
       setShowAdd(false);
       setAddForm(BLANK_FORM);
     } catch (err: any) {

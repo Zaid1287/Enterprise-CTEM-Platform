@@ -2588,26 +2588,108 @@ router.delete("/tprm/vendors/:id/compliance-controls/:cid", requireAuth, require
 });
 
 // Bulk-rename: update controlId / controlTitle / category across ALL vendors for a given framework+controlId
+// Also inserts the control into any vendor that doesn't have it yet (full cross-vendor sync)
 router.patch("/tprm/compliance-controls/rename-all", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
   const { tenantId } = req.user!;
   const { framework, oldControlId, controlId, controlTitle, category } = req.body;
   if (!framework || !oldControlId) {
     res.status(400).json({ error: "framework and oldControlId are required" }); return;
   }
+  const newControlId    = (controlId    || oldControlId) as string;
+  const newControlTitle = (controlTitle || null)         as string | null;
+
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (controlId)              updates.controlId    = controlId;
   if (controlTitle)           updates.controlTitle = controlTitle;
   if (category !== undefined) updates.category     = category || null;
   if (Object.keys(updates).length === 1) {
-    res.json({ updated: 0, message: "Nothing to rename" }); return;
+    res.json({ updated: 0, inserted: 0, message: "Nothing to rename" }); return;
   }
-  const result = await db.update(tprmVendorComplianceControlsTable).set(updates)
+
+  // Step 1: UPDATE all vendors that already have this control
+  const updatedRows = await db.update(tprmVendorComplianceControlsTable).set(updates)
     .where(and(
       eq(tprmVendorComplianceControlsTable.framework, framework),
       eq(tprmVendorComplianceControlsTable.controlId, oldControlId),
       eq(tprmVendorComplianceControlsTable.tenantId, tenantId),
-    )).returning({ id: tprmVendorComplianceControlsTable.id });
-  res.json({ updated: result.length });
+    )).returning({ vendorId: tprmVendorComplianceControlsTable.vendorId });
+
+  const updatedVendorIds = new Set(updatedRows.map(r => r.vendorId));
+
+  // Step 2: find all tenant vendors
+  const allVendors = await db.select({ id: tprmVendorsTable.id })
+    .from(tprmVendorsTable)
+    .where(eq(tprmVendorsTable.tenantId, tenantId));
+
+  // Step 3: INSERT the control into vendors that don't have it yet (only if we have a title)
+  let inserted = 0;
+  if (newControlTitle) {
+    const missingVendors = allVendors.filter(v => !updatedVendorIds.has(v.id));
+    if (missingVendors.length > 0) {
+      const insertRows = missingVendors.map(v => ({
+        vendorId:     v.id,
+        tenantId,
+        framework,
+        controlId:    newControlId,
+        controlTitle: newControlTitle,
+        category:     (category || null) as string | null,
+        status:       "pending_review",
+        isActive:     true,
+      }));
+      const insertResult = await db.insert(tprmVendorComplianceControlsTable)
+        .values(insertRows)
+        .returning({ id: tprmVendorComplianceControlsTable.id });
+      inserted = insertResult.length;
+    }
+  }
+
+  res.json({ updated: updatedRows.length, inserted });
+});
+
+// Add a control to ALL vendors in the tenant for a given framework (upsert — skips vendors that already have it)
+router.post("/tprm/compliance-controls/add-all", requireAuth, requireTprm, async (req: AuthenticatedRequest, res) => {
+  const { tenantId } = req.user!;
+  const { framework, controlId, controlTitle, category, status } = req.body;
+  if (!framework || !controlId || !controlTitle) {
+    res.status(400).json({ error: "framework, controlId, and controlTitle are required" }); return;
+  }
+
+  // All vendors for this tenant
+  const allVendors = await db.select({ id: tprmVendorsTable.id })
+    .from(tprmVendorsTable)
+    .where(eq(tprmVendorsTable.tenantId, tenantId));
+
+  // Vendors that already have this control
+  const existing = await db.select({ vendorId: tprmVendorComplianceControlsTable.vendorId })
+    .from(tprmVendorComplianceControlsTable)
+    .where(and(
+      eq(tprmVendorComplianceControlsTable.tenantId, tenantId),
+      eq(tprmVendorComplianceControlsTable.framework, framework),
+      eq(tprmVendorComplianceControlsTable.controlId, controlId.trim()),
+    ));
+
+  const existingIds = new Set(existing.map(r => r.vendorId));
+  const missing = allVendors.filter(v => !existingIds.has(v.id));
+
+  let inserted = 0;
+  if (missing.length > 0) {
+    const rows = missing.map(v => ({
+      vendorId:     v.id,
+      tenantId,
+      framework,
+      controlId:    controlId.trim(),
+      controlTitle: controlTitle.trim(),
+      category:     (category?.trim() || null) as string | null,
+      status:       (status || "pending_review") as string,
+      isActive:     true,
+    }));
+    const result = await db.insert(tprmVendorComplianceControlsTable)
+      .values(rows)
+      .returning({ id: tprmVendorComplianceControlsTable.id });
+    inserted = result.length;
+  }
+
+  res.json({ inserted, skipped: existingIds.size });
 });
 
 // ── Compliance Reminders ──────────────────────────────────────────────────────
