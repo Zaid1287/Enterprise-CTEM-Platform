@@ -59,3 +59,4 @@
 - [Pipeline scan bugs and fixes](pipeline-scan-bugs.md) — Phase 3 needs 10-min timeout; endpoint findings need body-verification; finalizeScannedAssets must be awaited; auto-mitigation default=2 not 3.
 - [Admin user management parity](admin-user-mgmt-parity.md) — admin needs isAdminOrSA (not isSuperAdmin) for Tenant ID field + handleSave; platform admin bypasses parentTenantId check.
 - [dnstwist DNS resolver sandboxed](dnstwist-dns-sandbox.md) — dnstwist binary runs fine in Replit but its internal DNS resolver is blocked; all permutations return empty dns_a/mx/ns. Fix: after runDnstwistBinary(), enrich zero-DNS results via Node.js checkDNSFull() with 20 concurrent workers.
+- [Compliance global tenancy model](compliance-global-tenancy.md) — compliance data stored under asset's owning tenantId, NOT caller's tenantId. Reads must use assetId IN effectiveAssetIds (not tenantId). Writes (PUT/POST) must look up assetRow.tenantId as ownerTenantId.

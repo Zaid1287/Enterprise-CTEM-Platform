@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Response } from "express";
 import { eq, and, inArray, or, desc, sql } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
-import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter } from "../lib/tenantScoping";
+import { getPrivilegedTenantIds, resolvePrivilegedTenantFilter, getEffectiveAssetIdsForTenant } from "../lib/tenantScoping";
 import {
   db, complianceFrameworksTable, complianceControlsTable, complianceControlAssetsTable,
   complianceModuleAssignmentsTable, complianceGlobalControlsTable,
@@ -363,13 +363,20 @@ router.get("/compliance/summary", requireAuth, requireCompliance, async (req: Au
     targetTenantId = parseInt(req.query.tenantId as string);
   }
 
+  // Resolve all assets for this tenant (direct ownership + platform-assigned assets)
+  // This makes compliance data global: admin and client always see the same asset controls.
+  const effectiveAssetIds = await getEffectiveAssetIdsForTenant(targetTenantId);
+
   const [frameworks, allControls, answers, assetControls] = await Promise.all([
     db.select().from(complianceFrameworksTable),
     db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true)),
     db.select({ globalControlId: complianceControlAnswersTable.globalControlId, status: complianceControlAnswersTable.status })
       .from(complianceControlAnswersTable).where(eq(complianceControlAnswersTable.tenantId, targetTenantId)),
-    db.select({ globalControlId: complianceAssetControlsTable.globalControlId, status: complianceAssetControlsTable.status })
-      .from(complianceAssetControlsTable).where(eq(complianceAssetControlsTable.tenantId, targetTenantId)),
+    // Query by assetId (NOT tenantId) — asset controls may be stored under any owning tenant
+    effectiveAssetIds.length > 0
+      ? db.select({ globalControlId: complianceAssetControlsTable.globalControlId, status: complianceAssetControlsTable.status })
+          .from(complianceAssetControlsTable).where(inArray(complianceAssetControlsTable.assetId, effectiveAssetIds))
+      : Promise.resolve([] as { globalControlId: number; status: string }[]),
   ]);
 
   // Merge: asset-level first, then tenant-level overrides
@@ -684,7 +691,7 @@ router.get("/compliance/assets/:assetId", requireAuth, requireCompliance, async 
     .leftJoin(complianceAssetControlsTable, and(
       eq(complianceAssetControlsTable.globalControlId, complianceGlobalControlsTable.id),
       eq(complianceAssetControlsTable.assetId, assetId),
-      eq(complianceAssetControlsTable.tenantId, tenantId),
+      // No tenantId filter — asset controls belong to the asset's owning tenant, not the caller's
     ))
     .leftJoin(complianceControlAnswersTable, and(
       eq(complianceControlAnswersTable.globalControlId, complianceGlobalControlsTable.id),
@@ -716,34 +723,38 @@ router.get("/compliance/assets/:assetId", requireAuth, requireCompliance, async 
 });
 
 router.put("/compliance/assets/:assetId/:globalControlId", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { tenantId } = req.user!;
+  const { tenantId: callerTenantId } = req.user!;
   const assetId = parseInt(req.params.assetId as string);
   const globalControlId = parseInt(req.params.globalControlId as string);
   const { status, notes, assignedTo, evidence } = req.body;
   const validStatuses = ["non_compliant", "in_progress", "compliant", "not_applicable"];
   const safeStatus = validStatuses.includes(status) ? status : "non_compliant";
 
-  // Write asset-level control answer
+  // Always store under the asset's owning tenantId (not the caller's).
+  // This keeps compliance data global: admin and assigned client both read/write the same row.
+  const [assetRow] = await db.select({ tenantId: assetsTable.tenantId }).from(assetsTable).where(eq(assetsTable.id, assetId));
+  const ownerTenantId = assetRow?.tenantId ?? callerTenantId;
+
+  // Write asset-level control answer (keyed by ownerTenantId + assetId + globalControlId)
   const [answer] = await db.insert(complianceAssetControlsTable).values({
-    tenantId, assetId, globalControlId, status: safeStatus,
+    tenantId: ownerTenantId, assetId, globalControlId, status: safeStatus,
     notes: notes || null, assignedTo: assignedTo || null, evidence: evidence || null,
   }).onConflictDoUpdate({
     target: [complianceAssetControlsTable.tenantId, complianceAssetControlsTable.assetId, complianceAssetControlsTable.globalControlId],
     set: { status: safeStatus, notes: notes || null, assignedTo: assignedTo || null, evidence: evidence || null, updatedAt: new Date() },
   }).returning();
 
-  // Sync to tenant-level answer: tenant answer = worst status across all assets for this control
-  // This keeps /compliance/summary accurate even when read without per-asset joins
+  // Sync to tenant-level answer (keyed by ownerTenantId): worst status across all assets for this control
   const allAssetStatuses = await db.select({ status: complianceAssetControlsTable.status })
     .from(complianceAssetControlsTable)
     .where(and(
-      eq(complianceAssetControlsTable.tenantId, tenantId),
+      eq(complianceAssetControlsTable.tenantId, ownerTenantId),
       eq(complianceAssetControlsTable.globalControlId, globalControlId),
     ));
   const worstStatus = allAssetStatuses.reduce<string>((worst, row) => {
     return STATUS_PRIORITY[row.status] > STATUS_PRIORITY[worst] ? row.status : worst;
   }, "not_applicable");
-  await db.insert(complianceControlAnswersTable).values({ tenantId, globalControlId, status: worstStatus })
+  await db.insert(complianceControlAnswersTable).values({ tenantId: ownerTenantId, globalControlId, status: worstStatus })
     .onConflictDoUpdate({
       target: [complianceControlAnswersTable.tenantId, complianceControlAnswersTable.globalControlId],
       set: { status: worstStatus, updatedAt: new Date() },
@@ -822,16 +833,13 @@ router.get("/compliance/assets/:assetId/summary", requireAuth, requireCompliance
 
   const frameworks = await db.select().from(complianceFrameworksTable);
 
-  // Only join controls that are explicitly scoped to this asset
+  // Fetch controls for this asset (no tenantId filter — data belongs to the asset's owning tenant)
   const scopedControls = await db.select({
     status:      complianceAssetControlsTable.status,
     frameworkId: complianceGlobalControlsTable.frameworkId,
   }).from(complianceAssetControlsTable)
     .innerJoin(complianceGlobalControlsTable, eq(complianceAssetControlsTable.globalControlId, complianceGlobalControlsTable.id))
-    .where(and(
-      eq(complianceAssetControlsTable.assetId, assetId),
-      eq(complianceAssetControlsTable.tenantId, tenantId),
-    ));
+    .where(eq(complianceAssetControlsTable.assetId, assetId));
 
   const summary = frameworks.map(fw => {
     const fwControls = scopedControls.filter(c => c.frameworkId === fw.id);
@@ -849,10 +857,14 @@ router.get("/compliance/assets/:assetId/summary", requireAuth, requireCompliance
 
 // Bulk assign controls to asset (scope controls to assets)
 router.post("/compliance/assets/:assetId/scope", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { tenantId } = req.user!;
+  const { tenantId: callerTenantId } = req.user!;
   const assetId = parseInt(req.params.assetId as string);
   const { frameworkId } = req.body;
   if (!frameworkId) { res.status(400).json({ error: "frameworkId required" }); return; }
+
+  // Store under the asset's owning tenantId so data is shared globally across platform + client
+  const [assetRow] = await db.select({ tenantId: assetsTable.tenantId }).from(assetsTable).where(eq(assetsTable.id, assetId));
+  const ownerTenantId = assetRow?.tenantId ?? callerTenantId;
 
   // Add all controls from this framework to this asset (non_compliant by default)
   const controls = await db.select({ id: complianceGlobalControlsTable.id })
@@ -860,7 +872,7 @@ router.post("/compliance/assets/:assetId/scope", requireAuth, requireCompliance,
     .where(and(eq(complianceGlobalControlsTable.frameworkId, parseInt(frameworkId)), eq(complianceGlobalControlsTable.isEnabled, true)));
 
   for (const ctrl of controls) {
-    await db.insert(complianceAssetControlsTable).values({ tenantId, assetId, globalControlId: ctrl.id, status: "non_compliant" })
+    await db.insert(complianceAssetControlsTable).values({ tenantId: ownerTenantId, assetId, globalControlId: ctrl.id, status: "non_compliant" })
       .onConflictDoNothing();
   }
   res.json({ ok: true, count: controls.length });
