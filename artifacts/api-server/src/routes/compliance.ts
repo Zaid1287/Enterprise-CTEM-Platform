@@ -313,6 +313,48 @@ function buildEffectiveStatusMap(
   return map;
 }
 
+// Helper: resolve assets for a set of client tenant IDs.
+// An asset belongs to a client if:
+//   (a) assets.tenantId = clientTenantId  (direct ownership), OR
+//   (b) assets.assignedClientId IN (user IDs of that client tenant)  (platform-owned, assigned)
+// Returns clientToAssets: Map<clientTenantId, assetId[]>
+async function resolveClientAssets(clientTenantIds: number[]): Promise<Map<number, number[]>> {
+  if (clientTenantIds.length === 0) return new Map();
+
+  // All users in the client tenants
+  const clientUsers = await db.select({ id: usersTable.id, tenantId: usersTable.tenantId })
+    .from(usersTable)
+    .where(inArray(usersTable.tenantId, clientTenantIds));
+
+  const clientUserIds = clientUsers.map(u => u.id);
+  const userToTenant = new Map(clientUsers.map(u => [u.id, u.tenantId]));
+
+  // Assets: direct OR assigned
+  const whereClause = clientUserIds.length > 0
+    ? or(inArray(assetsTable.tenantId, clientTenantIds), inArray(assetsTable.assignedClientId, clientUserIds))
+    : inArray(assetsTable.tenantId, clientTenantIds);
+
+  const assets = await db.select({
+    id: assetsTable.id, tenantId: assetsTable.tenantId, assignedClientId: assetsTable.assignedClientId,
+  }).from(assetsTable).where(whereClause);
+
+  const clientToAssets = new Map<number, number[]>(clientTenantIds.map(id => [id, []]));
+
+  for (const asset of assets) {
+    let clientId: number | undefined;
+    if (clientTenantIds.includes(asset.tenantId!)) {
+      clientId = asset.tenantId!;                                          // direct (tenantId is NOT NULL in DB)
+    } else {
+      const aci = asset.assignedClientId;                                  // narrow null away
+      if (aci !== null && aci !== undefined && userToTenant.has(aci)) {
+        clientId = userToTenant.get(aci);                                  // platform-assigned
+      }
+    }
+    if (clientId !== undefined) clientToAssets.get(clientId)?.push(asset.id);
+  }
+  return clientToAssets;
+}
+
 // ── Compliance summary (per framework, per tenant) ────────────────────────────
 router.get("/compliance/summary", requireAuth, requireCompliance, async (req: AuthenticatedRequest, res): Promise<void> => {
   const { tenantId, role } = req.user!;
@@ -352,40 +394,53 @@ router.get("/compliance/summary", requireAuth, requireCompliance, async (req: Au
 });
 
 // ── Client compliance overview (admin/SA/AM) ──────────────────────────────────
-// Returns per-tenant compliance scores so admin can see client posture in Overview
+// Returns per-tenant compliance scores so admin can see client posture in Overview.
+// Assets are resolved by direct ownership OR platform assignedClientId → client user.
 router.get("/compliance/clients/overview", requireAuth, requireRole("admin", "super_admin", "account_manager"), async (req: AuthenticatedRequest, res): Promise<void> => {
-  const { userId, role } = req.user!;
+  const { userId, role, tenantId: callerTenantId } = req.user!;
   let clientTenantIds: number[];
   if (role === "account_manager") {
     clientTenantIds = await getAmClientTenantIds(userId);
   } else {
-    const privIds = await getPrivilegedTenantIds(req.user!);
-    clientTenantIds = privIds;
+    const all = await getPrivilegedTenantIds(req.user!);
+    // clients/overview shows CLIENT posture — exclude the platform's own tenant
+    // (getPrivilegedTenantIds always includes the caller's own tenantId, but it is not a "client")
+    clientTenantIds = all.filter(id => id !== callerTenantId);
   }
   if (clientTenantIds.length === 0) { res.json([]); return; }
 
-  const tenants = await db.select({ id: tenantsTable.id, name: tenantsTable.name })
-    .from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds));
+  // Resolve which assets belong to each client (direct + platform-assigned)
+  const clientToAssets = await resolveClientAssets(clientTenantIds);
+  const allClientAssetIds = Array.from(clientToAssets.values()).flat();
 
-  const allControls = await db.select().from(complianceGlobalControlsTable)
-    .where(eq(complianceGlobalControlsTable.isEnabled, true));
-
-  const allAnswers = await db.select().from(complianceControlAnswersTable)
-    .where(inArray(complianceControlAnswersTable.tenantId, clientTenantIds));
-
-  const assignments = await db.select().from(complianceModuleAssignmentsTable)
-    .where(inArray(complianceModuleAssignmentsTable.tenantId, clientTenantIds));
+  const [tenants, allControls, allAnswers, assignments, allAssetControls] = await Promise.all([
+    db.select({ id: tenantsTable.id, name: tenantsTable.name })
+      .from(tenantsTable).where(inArray(tenantsTable.id, clientTenantIds)),
+    db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true)),
+    db.select({ tenantId: complianceControlAnswersTable.tenantId, globalControlId: complianceControlAnswersTable.globalControlId, status: complianceControlAnswersTable.status })
+      .from(complianceControlAnswersTable).where(inArray(complianceControlAnswersTable.tenantId, clientTenantIds)),
+    db.select().from(complianceModuleAssignmentsTable).where(inArray(complianceModuleAssignmentsTable.tenantId, clientTenantIds)),
+    // Query by asset_id (NOT tenant_id) — data may be stored under platform tenant 1
+    allClientAssetIds.length > 0
+      ? db.select({ assetId: complianceAssetControlsTable.assetId, globalControlId: complianceAssetControlsTable.globalControlId, status: complianceAssetControlsTable.status })
+          .from(complianceAssetControlsTable).where(inArray(complianceAssetControlsTable.assetId, allClientAssetIds))
+      : Promise.resolve([] as { assetId: number; globalControlId: number; status: string }[]),
+  ]);
 
   const result = tenants.map(t => {
-    const answers = allAnswers.filter(a => a.tenantId === t.id);
-    const answerMap = new Map(answers.map(a => [a.globalControlId, a]));
+    const clientAssetIds = clientToAssets.get(t.id) ?? [];
+    // Asset controls for this client's assets (regardless of stored tenant_id)
+    const assetControls = allAssetControls.filter(ac => clientAssetIds.includes(ac.assetId));
+    const tenantAnswers = allAnswers.filter(a => a.tenantId === t.id);
+    const effectiveMap = buildEffectiveStatusMap(tenantAnswers, assetControls);
+
     const total = allControls.length;
-    const statuses = allControls.map(c => answerMap.get(c.id)?.status ?? "non_compliant");
-    const compliant = statuses.filter(s => s === "compliant").length;
-    const inProgress = statuses.filter(s => s === "in_progress").length;
+    const statuses = allControls.map(c => effectiveMap.get(c.id) ?? "non_compliant");
+    const compliant    = statuses.filter(s => s === "compliant").length;
+    const inProgress   = statuses.filter(s => s === "in_progress").length;
     const nonCompliant = statuses.filter(s => s === "non_compliant").length;
     const notApplicable = statuses.filter(s => s === "not_applicable").length;
-    const score = total > 0 ? Math.round((compliant / (total - notApplicable || 1)) * 100) : 0;
+    const score = total > 0 ? Math.round((compliant / Math.max(1, total - notApplicable)) * 100) : 0;
     const moduleEnabled = assignments.find(a => a.tenantId === t.id)?.isEnabled ?? false;
     return { tenantId: t.id, tenantName: t.name, moduleEnabled, total, compliant, inProgress, nonCompliant, notApplicable, score };
   });
@@ -415,14 +470,21 @@ router.get("/compliance/clients/framework-summary", requireAuth, requireRole("ad
   const activeIds = activeAssignments.map(a => a.tenantId);
   if (activeIds.length === 0) { res.json([]); return; }
 
+  // Resolve assets for each active client (direct ownership + platform-assigned)
+  const clientToAssets = await resolveClientAssets(activeIds);
+  const allClientAssetIds = Array.from(clientToAssets.values()).flat();
+
   const [frameworks, allControls, tenants, allAnswers, allAssetControls] = await Promise.all([
     db.select().from(complianceFrameworksTable),
     db.select().from(complianceGlobalControlsTable).where(eq(complianceGlobalControlsTable.isEnabled, true)),
     db.select({ id: tenantsTable.id, name: tenantsTable.name }).from(tenantsTable).where(inArray(tenantsTable.id, activeIds)),
     db.select({ tenantId: complianceControlAnswersTable.tenantId, globalControlId: complianceControlAnswersTable.globalControlId, status: complianceControlAnswersTable.status })
       .from(complianceControlAnswersTable).where(inArray(complianceControlAnswersTable.tenantId, activeIds)),
-    db.select({ tenantId: complianceAssetControlsTable.tenantId, globalControlId: complianceAssetControlsTable.globalControlId, status: complianceAssetControlsTable.status })
-      .from(complianceAssetControlsTable).where(inArray(complianceAssetControlsTable.tenantId, activeIds)),
+    // Query by asset_id (NOT tenant_id) — controls may be stored under platform tenant 1
+    allClientAssetIds.length > 0
+      ? db.select({ assetId: complianceAssetControlsTable.assetId, globalControlId: complianceAssetControlsTable.globalControlId, status: complianceAssetControlsTable.status })
+          .from(complianceAssetControlsTable).where(inArray(complianceAssetControlsTable.assetId, allClientAssetIds))
+      : Promise.resolve([] as { assetId: number; globalControlId: number; status: string }[]),
   ]);
 
   const result = frameworks.map(fw => {
@@ -430,10 +492,11 @@ router.get("/compliance/clients/framework-summary", requireAuth, requireRole("ad
     const fwTotal = fwControls.length;
 
     const clientBreakdown = activeIds.map(tenantId => {
-      // Merge: asset-level first (worst wins), then tenant-level overrides
+      const clientAssetIds = clientToAssets.get(tenantId) ?? [];
+      // Asset controls for this client's assets (by asset_id, regardless of stored tenant_id)
       const effectiveMap = buildEffectiveStatusMap(
         allAnswers.filter(a => a.tenantId === tenantId),
-        allAssetControls.filter(a => a.tenantId === tenantId),
+        allAssetControls.filter(ac => clientAssetIds.includes(ac.assetId)),
       );
       const statuses = fwControls.map(c => effectiveMap.get(c.id) ?? "non_compliant");
       const compliant    = statuses.filter(s => s === "compliant").length;
