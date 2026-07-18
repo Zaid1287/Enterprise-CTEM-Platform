@@ -584,16 +584,16 @@ export default function TprmControlsManagerPage() {
                 <Label className="text-xs">Evidence / Reference</Label>
                 <Input className="mt-1 h-8 text-sm" value={editForm.evidence} onChange={e => setEditForm(f => ({ ...f, evidence: e.target.value }))} placeholder="e.g. SOC2 report §6.1, policy doc URL…" />
               </div>
-              {/* Assigned To — dropdown of users */}
+              {/* Assigned To — account managers only */}
               <div>
                 <Label className="text-xs">Assigned To</Label>
                 <Select value={editForm.assignedTo} onValueChange={v => setEditForm(f => ({ ...f, assignedTo: v }))}>
-                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select user…" /></SelectTrigger>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select account manager…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— None —</SelectItem>
-                    {users.map((u: any) => (
+                    {users.filter((u: any) => u.role === "account_manager").map((u: any) => (
                       <SelectItem key={u.id} value={u.email}>
-                        {u.name ?? u.email} {u.role === "account_manager" ? "(AM)" : u.role === "admin" ? "(Admin)" : ""}
+                        {u.name ?? u.email}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -671,12 +671,12 @@ export default function TprmControlsManagerPage() {
             <div>
               <Label className="text-xs">Assigned To</Label>
               <Select value={addForm.assignedTo} onValueChange={v => setAddForm(f => ({ ...f, assignedTo: v }))}>
-                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select user…" /></SelectTrigger>
+                <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select account manager…" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— None —</SelectItem>
-                  {users.map((u: any) => (
+                  {users.filter((u: any) => u.role === "account_manager").map((u: any) => (
                     <SelectItem key={u.id} value={u.email}>
-                      {u.name ?? u.email} {u.role === "account_manager" ? "(AM)" : u.role === "admin" ? "(Admin)" : ""}
+                      {u.name ?? u.email}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -800,10 +800,9 @@ export default function TprmCompliancePage() {
                   <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Select account manager…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— None —</SelectItem>
-                    {users.map((u: any) => (
+                    {users.filter((u: any) => u.role === "account_manager").map((u: any) => (
                       <SelectItem key={u.id} value={u.email}>
                         {u.name ?? u.email}
-                        {u.role === "account_manager" ? " (AM)" : u.role === "admin" ? " (Admin)" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
