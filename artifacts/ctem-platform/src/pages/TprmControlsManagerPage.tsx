@@ -295,7 +295,7 @@ export default function TprmControlsManagerPage() {
   };
 
   return (
-    <div className="p-6 space-y-5 max-w-[1200px] mx-auto">
+    <div className="p-6 space-y-5">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Link href="/tprm/compliance">

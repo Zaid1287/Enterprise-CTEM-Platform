@@ -301,7 +301,7 @@ export default function TprmVendorsPage() {
   const isScanning = (v: Vendor) => scanningIds.has(v.id) || v.status === "pending" || v.status === "scanning";
 
   return (
-    <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold">3rd Party Companies</h1>

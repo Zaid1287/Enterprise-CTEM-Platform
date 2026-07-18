@@ -110,6 +110,17 @@ function SmartPagination({ page, totalPages, total, pageSize, onPage }: { page: 
 const PAGE_SIZE = 10;
 const LIB_PAGE_SIZE = 15;
 
+const TPRM_QUESTION_CATEGORIES: { value: string; label: string }[] = [
+  { value: "general",        label: "General" },
+  { value: "security",       label: "Security" },
+  { value: "privacy",        label: "Privacy & Data Protection" },
+  { value: "compliance",     label: "Compliance & Legal" },
+  { value: "operational",    label: "Operational" },
+  { value: "technical",      label: "Technical" },
+  { value: "financial",      label: "Financial & Business" },
+  { value: "organizational", label: "Organizational" },
+];
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function TprmQuestionnaireTemplatesPage() {
@@ -301,7 +312,7 @@ export default function TprmQuestionnaireTemplatesPage() {
 
   // ── Library CRUD ──────────────────────────────────────────────────────────
   const openAddLibQ = () => {
-    setLibQForm({ text: "", type: "boolean", category: "", required: false, weight: 1, options: [], isGlobal: false });
+    setLibQForm({ text: "", type: "boolean", category: "general", required: false, weight: 1, options: [], isGlobal: false });
     setLibOptionInput(""); setEditingLibQ(null); setShowAddLibQ(true);
   };
 
@@ -352,7 +363,7 @@ export default function TprmQuestionnaireTemplatesPage() {
   const canEditGlobal = isSuperAdmin;
 
   return (
-    <div className="p-6 space-y-5 max-w-[1200px] mx-auto">
+    <div className="p-6 space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -629,7 +640,12 @@ export default function TprmQuestionnaireTemplatesPage() {
                       </div>
                       <div>
                         <Label className="text-[10px]">Category</Label>
-                        <Input className="mt-1 h-7 text-xs" value={newQ.category} onChange={e => setNewQ(q => ({ ...q, category: e.target.value }))} placeholder="e.g. access_control" />
+                        <Select value={newQ.category || "general"} onValueChange={v => setNewQ(q => ({ ...q, category: v }))}>
+                          <SelectTrigger className="mt-1 h-7 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {TPRM_QUESTION_CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div>
                         <Label className="text-[10px]">Weight (1–5)</Label>
@@ -744,7 +760,12 @@ export default function TprmQuestionnaireTemplatesPage() {
               </div>
               <div>
                 <Label className="text-xs">Category</Label>
-                <Input className="mt-1 h-8 text-sm" value={libQForm.category} onChange={e => setLibQForm(f => ({ ...f, category: e.target.value }))} placeholder="e.g. Compliance, Access Control" />
+                <Select value={libQForm.category || "general"} onValueChange={v => setLibQForm(f => ({ ...f, category: v }))}>
+                  <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {TPRM_QUESTION_CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label className="text-xs">Weight (1–5)</Label>
