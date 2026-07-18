@@ -2002,7 +2002,7 @@ function ComplianceClientsOverview({ fwSummary, isLoading }: { fwSummary: Client
                 <span className="text-xs font-semibold truncate text-muted-foreground">{fw.frameworkName}</span>
               </div>
 
-              {/* Score + client count + control totals */}
+              {/* Score + client count */}
               <div className="flex items-center gap-3">
                 <ScoreRing score={fw.avgScore} size={44} />
                 <div className="flex-1 min-w-0">
@@ -2010,7 +2010,7 @@ function ComplianceClientsOverview({ fwSummary, isLoading }: { fwSummary: Client
                     Avg across <span className="text-foreground font-semibold">{fw.activeClients}</span> client{fw.activeClients !== 1 ? "s" : ""}
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {fw.compliantClients} fully compliant · {fw.inProgressClients} in prog. · {fw.nonCompliantClients} not started
+                    {fw.frameworkName} controls only
                   </p>
                 </div>
               </div>
@@ -2113,12 +2113,13 @@ export default function CompliancePage() {
   });
 
   const selectedFw = summary.find(fw => fw.frameworkId === selectedFrameworkId);
-  // Overall score = avg of per-framework scores for frameworks where the tenant has any answers.
-  // /compliance/summary now merges asset-level + tenant-level answers so data is always real.
-  // Frameworks with no answers at all are excluded from the average (they would unfairly drag it to 0).
-  const answeredFrameworks = summary.filter(fw => fw.compliant > 0 || fw.inProgress > 0 || fw.notApplicable > 0);
-  const overallScore = answeredFrameworks.length > 0
-    ? Math.max(1, Math.round(answeredFrameworks.reduce((a, b) => a + b.score, 0) / answeredFrameworks.length))
+  // Overall score = weighted ratio: totalCompliant / (totalControls - totalNA)
+  // This matches the same formula used in Client Compliance Posture so scores are consistent.
+  const scoreTotalCompliant  = summary.reduce((a, b) => a + b.compliant, 0);
+  const scoreTotalNA         = summary.reduce((a, b) => a + b.notApplicable, 0);
+  const scoreTotalControls   = summary.reduce((a, b) => a + b.total, 0);
+  const overallScore = scoreTotalControls > 0
+    ? Math.round((scoreTotalCompliant / Math.max(1, scoreTotalControls - scoreTotalNA)) * 100)
     : 0;
 
   const tabs = [

@@ -369,9 +369,9 @@ export default function ComplianceAssetDetailPage() {
               label: "Overall Score",
               value: <span className={cn("text-3xl font-bold", scoreColor)}>{overallScore}%</span>,
               accent: "border-l-4 " + (overallScore >= 70 ? "border-l-green-500" : overallScore >= 40 ? "border-l-yellow-500" : "border-l-red-500"),
-              sub: "compliance",
+              sub: `scoped controls only`,
             },
-            { label: "Total Controls", value: <span className="text-2xl font-bold">{scopedTotal}</span>, sub: "in scope" },
+            { label: "Total Controls", value: <span className="text-2xl font-bold">{scopedTotal}</span>, sub: `${scopedTotal} scoped to this asset` },
             { label: "Compliant", value: <span className="text-2xl font-bold text-green-400">{compliantCount}</span>, sub: "passing" },
             { label: "In Progress", value: <span className="text-2xl font-bold text-yellow-400">{inProgressCount}</span>, sub: "being addressed" },
             { label: "Non-Compliant", value: <span className="text-2xl font-bold text-red-400">{nonCompliantCount}</span>, sub: "requires action" },
@@ -391,13 +391,21 @@ export default function ComplianceAssetDetailPage() {
 
         {/* Framework Summary Cards */}
         <div>
-          <p className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-primary" />
-            Framework Compliance Scores
-            <span className="text-xs font-normal text-muted-foreground">
-              — click a framework to filter controls below
-            </span>
-          </p>
+          <div className="flex items-start justify-between mb-3 gap-4">
+            <p className="text-sm font-semibold flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-primary" />
+              Framework Compliance Scores
+              <span className="text-xs font-normal text-muted-foreground">
+                — click a framework to filter controls below
+              </span>
+            </p>
+            {scopedTotal > 0 && (
+              <p className="text-[10px] text-muted-foreground shrink-0 mt-0.5">
+                Based on <span className="text-foreground font-medium">{scopedTotal}</span> controls scoped to this asset
+                {" "}(overall: <span className="text-foreground font-medium">{overallScore}%</span>)
+              </p>
+            )}
+          </div>
 
           {loadingSummary ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
