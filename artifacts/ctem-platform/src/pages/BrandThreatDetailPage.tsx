@@ -2264,6 +2264,8 @@ function WatchlistDetailTab({
   adMonitoringResults = [],
   watchlistItemType,
   watchlistItemValue,
+  watchlistGroups,
+  watchlistGroupsLoading = false,
 }: {
   items: any[];
   scanDomain: string;
@@ -2272,6 +2274,8 @@ function WatchlistDetailTab({
   adMonitoringResults?: any[];
   watchlistItemType?: string;
   watchlistItemValue?: string;
+  watchlistGroups?: any[];
+  watchlistGroupsLoading?: boolean;
 }) {
   const [, navigate] = useLocation();
   const normalizedScanDomain = scanDomain?.toLowerCase().replace(/^www\./, "") ?? "";
@@ -2288,6 +2292,184 @@ function WatchlistDetailTab({
   const hasScanFindings = lookalikeDomains.length > 0 || confirmedPhishing.length > 0 ||
     socialFindings.length > 0 || dataLeaks.length > 0 || adMonitoringResults.length > 0 || suspCerts.length > 0;
   const isWatchlistScan = !!watchlistItemType;
+
+  // ── Asset-linked scan mode: aggregate results from watchlist items on this asset ──
+  if (watchlistGroups !== undefined) {
+    if (watchlistGroupsLoading) {
+      return (
+        <div className="flex items-center justify-center h-48">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+    if (watchlistGroups.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 text-center">
+          <BookmarkCheck className="w-10 h-10 text-muted-foreground/20 mb-3" />
+          <p className="text-sm font-medium text-muted-foreground">No watchlist items assigned to this asset</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            Assign watchlist items in the Brand Threats Watchlist tab.
+          </p>
+          <button
+            onClick={() => navigate("/brand-threats")}
+            className="mt-4 inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Go to Brand Threats
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center gap-2 pb-2 border-b border-border">
+          <BookmarkCheck className="w-4 h-4 text-blue-400" />
+          <span className="text-sm font-semibold">Watchlist Monitoring</span>
+          <span className="text-xs text-muted-foreground bg-muted/40 border border-border px-2 py-0.5 rounded-full">
+            {watchlistGroups.length} item{watchlistGroups.length !== 1 ? "s" : ""} monitored
+          </span>
+        </div>
+        {watchlistGroups.map((g: any) => {
+          const typeMeta = WATCHLIST_TYPE_META[g.item.type] ?? WATCHLIST_TYPE_META["keyword"]!;
+          const totalFindings =
+            (g.dataLeaks?.length ?? 0) +
+            (g.brandAbuse?.length ?? 0) +
+            (g.adMonitoring?.length ?? 0);
+          const scanStatus: string | undefined = g.scan?.status;
+          return (
+            <div key={g.item.id} className="border border-border rounded-xl overflow-hidden">
+              {/* ── Item header ── */}
+              <div className="flex items-center gap-3 px-4 py-3 bg-muted/20">
+                <div className={cn("w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 bg-muted/40 border-border", typeMeta.color)}>
+                  {typeMeta.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{typeMeta.label}</span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">Watchlist</span>
+                    {scanStatus === "done" && totalFindings === 0 && (
+                      <span className="flex items-center gap-1 text-[10px] text-green-400"><CheckCircle2 className="w-3 h-3" />Clean</span>
+                    )}
+                    {scanStatus === "done" && totalFindings > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] text-orange-400"><ShieldAlert className="w-3 h-3" />{totalFindings} finding{totalFindings !== 1 ? "s" : ""}</span>
+                    )}
+                    {scanStatus === "running" && (
+                      <span className="flex items-center gap-1 text-[10px] text-blue-400"><Loader2 className="w-3 h-3 animate-spin" />Scanning…</span>
+                    )}
+                    {scanStatus === "error" && (
+                      <span className="flex items-center gap-1 text-[10px] text-red-400"><XCircle className="w-3 h-3" />Error</span>
+                    )}
+                    {!g.scan && (
+                      <span className="text-[10px] text-muted-foreground">Not yet scanned</span>
+                    )}
+                  </div>
+                  <p className="text-xs font-mono font-semibold mt-0.5 truncate">{g.item.value}</p>
+                  {g.item.lastScanAt && (
+                    <span className="text-[10px] text-muted-foreground">Last scan: {formatDate(g.item.lastScanAt)}</span>
+                  )}
+                </div>
+                {g.scan && (
+                  <a
+                    href={`/brand-threats/${g.scan.id}`}
+                    className="shrink-0 text-[11px] text-primary/70 hover:text-primary transition-colors flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" />View Full
+                  </a>
+                )}
+              </div>
+              {/* ── Findings ── */}
+              {totalFindings > 0 && (
+                <div className="p-4 space-y-4 border-t border-border">
+                  {/* Data Leaks */}
+                  {(g.dataLeaks?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Database className="w-3.5 h-3.5 text-orange-400" />
+                        <span className="text-xs font-semibold text-orange-300">Data Leaks & Breaches</span>
+                        <span className="text-[10px] bg-orange-500/10 border border-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded-full font-bold">{g.dataLeaks.length}</span>
+                      </div>
+                      {g.dataLeaks.map((l: any) => (
+                        <div key={l.id} className="bg-card border border-orange-500/15 rounded-xl p-3 space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-1.5 py-0.5 rounded-full font-semibold shrink-0">{l.source ?? "Breach"}</span>
+                              <span className="text-sm font-medium truncate">{l.title}</span>
+                            </div>
+                            <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border font-semibold shrink-0 capitalize", l.severity === "critical" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20")}>{l.severity ?? "medium"}</span>
+                          </div>
+                          {l.description && <p className="text-xs text-muted-foreground line-clamp-2">{l.description}</p>}
+                          {l.url && <a href={l.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate"><ExternalLink className="w-3 h-3 shrink-0" />{l.url}</a>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Brand Abuse */}
+                  {(g.brandAbuse?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldAlert className="w-3.5 h-3.5 text-pink-400" />
+                        <span className="text-xs font-semibold text-pink-300">Brand Abuse & Mentions</span>
+                        <span className="text-[10px] bg-pink-500/10 border border-pink-500/20 text-pink-400 px-1.5 py-0.5 rounded-full font-bold">{g.brandAbuse.length}</span>
+                      </div>
+                      {g.brandAbuse.map((a: any) => (
+                        <div key={a.id} className="bg-card border border-border rounded-xl p-3 space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[10px] bg-pink-500/10 text-pink-400 border border-pink-500/20 px-1.5 py-0.5 rounded-full font-semibold shrink-0">{a.platform ?? a.type}</span>
+                              <span className="text-sm font-medium truncate">{a.title ?? a.type}</span>
+                            </div>
+                            <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border font-semibold shrink-0 capitalize", a.risk === "high" || a.risk === "critical" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-yellow-500/10 text-yellow-400 border-yellow-500/20")}>{a.risk ?? "medium"}</span>
+                          </div>
+                          {a.description && <p className="text-xs text-muted-foreground line-clamp-2">{a.description}</p>}
+                          {a.evidenceSnippet && <p className="text-xs font-mono text-foreground/60 bg-muted/40 rounded px-2 py-1 line-clamp-2">{a.evidenceSnippet}</p>}
+                          {a.url && <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate"><ExternalLink className="w-3 h-3 shrink-0" />{a.url}</a>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Ad Monitoring */}
+                  {(g.adMonitoring?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Megaphone className="w-3.5 h-3.5 text-violet-400" />
+                        <span className="text-xs font-semibold text-violet-300">Ad Monitoring</span>
+                        <span className="text-[10px] bg-violet-500/10 border border-violet-500/20 text-violet-400 px-1.5 py-0.5 rounded-full font-bold">{g.adMonitoring.length}</span>
+                      </div>
+                      {g.adMonitoring.map((a: any) => (
+                        <div key={a.id} className="bg-card border border-violet-500/15 rounded-xl p-3 space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20 px-1.5 py-0.5 rounded-full font-semibold shrink-0">{a.platform}</span>
+                              <span className="text-sm font-medium truncate">{a.title ?? a.adId ?? "Ad"}</span>
+                            </div>
+                            <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border font-semibold shrink-0 capitalize", a.risk === "high" || a.risk === "critical" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-violet-500/10 text-violet-400 border-violet-500/20")}>{a.risk ?? "medium"}</span>
+                          </div>
+                          {a.body && <p className="text-xs text-muted-foreground line-clamp-2">{a.body}</p>}
+                          {a.sourceUrl && <a href={a.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate"><ExternalLink className="w-3 h-3 shrink-0" />{a.sourceUrl}</a>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Clean result */}
+              {totalFindings === 0 && scanStatus === "done" && (
+                <div className="px-4 py-3 flex items-center gap-2 text-sm text-green-400/80 bg-green-500/5 border-t border-green-500/10">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  No threats detected. All checked sources returned clean results.
+                </div>
+              )}
+              {/* Not scanned yet */}
+              {!g.scan && (
+                <div className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
+                  Run a scan from the Brand Threats Watchlist to populate results.
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   if (items.length === 0 && !hasScanFindings) {
     return (
@@ -2627,6 +2809,8 @@ export default function BrandThreatDetailPage() {
   const [tabAutoSet, setTabAutoSet] = useState(false);
   const [watchlistItem, setWatchlistItem] = useState<any | null>(null);
   const [allWatchlistItems, setAllWatchlistItems] = useState<any[]>([]);
+  const [watchlistGroups, setWatchlistGroups] = useState<any[]>([]);
+  const [watchlistGroupsLoading, setWatchlistGroupsLoading] = useState(false);
   const [confirmDeleteScan, setConfirmDeleteScan] = useState(false);
   const [falsePositives, setFalsePositives] = useState<FalsePositive[]>([]);
 
@@ -2695,6 +2879,17 @@ export default function BrandThreatDetailPage() {
       })
       .catch(() => {});
   }, [s?.domain, s?.watchlistItemId, s?.watchlistItemType, s?.watchlistItemValue]);
+
+  // Fetch watchlist results for asset-linked brand-threat scans
+  useEffect(() => {
+    if (!id || !s?.assetId) return;
+    setWatchlistGroupsLoading(true);
+    void apiFetch(`/api/brand-threats/${id}/watchlist-results`)
+      .then(r => (r as any).ok ? (r as any).json() : { items: [] })
+      .then((data: any) => setWatchlistGroups(data?.items ?? []))
+      .catch(() => {})
+      .finally(() => setWatchlistGroupsLoading(false));
+  }, [id, s?.assetId]);
 
   // Auto-select the most relevant tab for non-domain watchlist item scans
   useEffect(() => {
@@ -2805,7 +3000,9 @@ export default function BrandThreatDetailPage() {
   const socialCount       = brandAbuse.filter((a: any) => SOCIAL_TYPES.includes(a.type)).length;
   const logoCount         = brandAbuse.filter((a: any) => LOGO_TYPES.includes(a.type)).length;
   const adLibraryLinks    = brandAbuse.filter((a: any) => AD_LIBRARY_TYPES.includes(a.type));
-  const watchlistCount    = allWatchlistItems.length;
+  const watchlistTotalFindings = watchlistGroups.reduce((acc: number, g: any) =>
+    acc + (g.dataLeaks?.length ?? 0) + (g.brandAbuse?.length ?? 0) + (g.adMonitoring?.length ?? 0), 0);
+  const watchlistCount = s?.assetId ? watchlistGroups.length : allWatchlistItems.length;
 
   const TABS: { id: TabMode; label: string; icon: React.ReactNode; count?: number; color?: string }[] = [
     { id: "typosquatting",   label: "Typosquatting",   icon: <Globe className="w-3.5 h-3.5" />,      count: results.length },
@@ -2818,7 +3015,7 @@ export default function BrandThreatDetailPage() {
     ...(logoCount > 0 ? [{ id: "logo_brand" as TabMode, label: "Logo & Brand", icon: <Tag className="w-3.5 h-3.5" />, count: logoCount, color: "text-cyan-400" }] : []),
     ...(hasFaviconData ? [{ id: "favicon_clones" as TabMode, label: "Favicon Clones", icon: <Fingerprint className="w-3.5 h-3.5" />, count: shodanCloneCount, color: shodanCloneCount > 0 ? "text-violet-400" : undefined }] : []),
     ...(pipelineSubdomains.length > 0 ? [{ id: "subdomains" as TabMode, label: "Subdomains", icon: <Server className="w-3.5 h-3.5" />, count: pipelineSubdomains.length, color: "text-blue-400" }] : []),
-    { id: "watchlist",       label: "Watchlist",       icon: <BookmarkCheck className="w-3.5 h-3.5" />, count: watchlistCount, color: watchlistCount > 0 ? "text-blue-400" : undefined },
+    { id: "watchlist",       label: "Watchlist",       icon: <BookmarkCheck className="w-3.5 h-3.5" />, count: watchlistCount, color: (s?.assetId ? watchlistTotalFindings > 0 : watchlistCount > 0) ? "text-blue-400" : undefined },
     { id: "takedowns",       label: "Takedowns",       icon: <Shield className="w-3.5 h-3.5" /> },
   ];
 
@@ -3407,6 +3604,8 @@ export default function BrandThreatDetailPage() {
               adMonitoringResults={adMonitoringResults}
               watchlistItemType={s.watchlistItemType ?? undefined}
               watchlistItemValue={s.watchlistItemValue ?? undefined}
+              watchlistGroups={s?.assetId ? watchlistGroups : undefined}
+              watchlistGroupsLoading={watchlistGroupsLoading}
             />
           </div>
         )}

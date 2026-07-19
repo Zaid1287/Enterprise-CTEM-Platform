@@ -45,6 +45,11 @@ export const brandThreatScansTable = pgTable("brand_threat_scans", {
   watchlistItemId:    integer("watchlist_item_id"),
   watchlistItemType:  text("watchlist_item_type"),   // keyword | email | social_handle | mobile_app | logo_url | domain | ip
   watchlistItemValue: text("watchlist_item_value"),  // original item value (the keyword, email, handle, etc.)
+  // Asset link — set when this scan is created from POST /brand-threats with assetId,
+  // OR when a watchlist item scan is created for an item linked to an asset.
+  // Watchlist scans with assetId set are excluded from the main list and shown in
+  // the asset's brand-threat detail page (Watchlist tab) instead.
+  assetId:            integer("asset_id"),
 
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:       timestamp("completed_at", { withTimezone: true }),

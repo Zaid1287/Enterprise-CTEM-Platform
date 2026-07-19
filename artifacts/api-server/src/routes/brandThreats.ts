@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, desc, inArray, isNull, isNotNull, sql, like } from "drizzle-orm";
+import { eq, and, or, desc, inArray, isNull, isNotNull, sql, like } from "drizzle-orm";
 import { getAmClientTenantIds } from "../lib/amScoping";
 import {
   db,
@@ -353,14 +353,23 @@ router.get("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res)
     const allScans = await db.select().from(brandThreatScansTable)
       .where(eq(brandThreatScansTable.tenantId, req.user!.tenantId))
       .orderBy(desc(brandThreatScansTable.createdAt));
-    const filtered = allScans.filter(s => assignedDomains.has(s.domain.toLowerCase().replace(/^www\./, ""))).map(toScanResponse);
+    const filtered = allScans.filter(s =>
+      assignedDomains.has(s.domain.toLowerCase().replace(/^www\./, "")) &&
+      !(s.watchlistItemId && (s as any).assetId)
+    ).map(toScanResponse);
     res.json(await enrichScanList(filtered));
     return;
   } else {
     btWhere = eq(brandThreatScansTable.tenantId, req.user!.tenantId);
   }
+  // Exclude watchlist scans linked to an inventory asset — those surface in the
+  // asset's brand-threat detail page (Watchlist tab), not in the main list.
+  const excludeLinked = or(
+    isNull(brandThreatScansTable.watchlistItemId),
+    isNull((brandThreatScansTable as any).assetId),
+  );
   const scans = await db.select().from(brandThreatScansTable)
-    .where(btWhere)
+    .where(btWhere ? and(btWhere, excludeLinked) : excludeLinked)
     .orderBy(desc(brandThreatScansTable.createdAt));
   res.json(await enrichScanList(scans.map(toScanResponse)));
 });
@@ -436,6 +445,13 @@ router.post("/brand-threats", requireAuth, async (req: AuthenticatedRequest, res
       .limit(1);
     res.status(202).json({ ...(active ? toScanResponse(active) : {}), _alreadyRunning: true });
     return;
+  }
+  // Link the scan to the asset so the Watchlist tab can surface watchlist items for it
+  if (assetId) {
+    await db.update(brandThreatScansTable)
+      .set({ assetId } as any)
+      .where(eq(brandThreatScansTable.id, scan.id));
+    (scan as any).assetId = assetId;
   }
   res.json(toScanResponse(scan));
 });
@@ -569,6 +585,83 @@ router.delete("/brand-threats/:id", requireAuth, async (req: AuthenticatedReques
   if (!existing) { res.status(404).json({ error: "Scan not found" }); return; }
   await db.delete(brandThreatScansTable).where(eq(brandThreatScansTable.id, id));
   res.json({ success: true });
+});
+
+// ── GET /brand-threats/:id/watchlist-results ──────────────────────────────────
+// Returns aggregated results from all watchlist items linked to the same asset
+// as this scan. Used by the Watchlist tab in brand-threat detail when assetId is set.
+router.get("/brand-threats/:id/watchlist-results", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+  const filter = await btScanAccessFilter(id, req.user!);
+  if (!filter) { res.status(404).json({ error: "Scan not found" }); return; }
+  const [scan] = await db.select().from(brandThreatScansTable).where(filter);
+  if (!scan) { res.status(404).json({ error: "Scan not found" }); return; }
+
+  const assetId = (scan as any).assetId as number | null;
+  if (!assetId) { res.json({ items: [] }); return; }
+
+  // Find all watchlist items linked to this asset
+  const items = await db.select()
+    .from(brandWatchlistItemsTable)
+    .where(and(
+      eq(brandWatchlistItemsTable.tenantId, scan.tenantId),
+      eq(brandWatchlistItemsTable.assetId, assetId),
+    ));
+
+  if (items.length === 0) { res.json({ items: [] }); return; }
+
+  // For each item, fetch its most recent watchlist scan + results
+  const grouped = await Promise.all(items.map(async (item) => {
+    const [watchlistScan] = await db.select()
+      .from(brandThreatScansTable)
+      .where(and(
+        eq(brandThreatScansTable.tenantId, scan.tenantId),
+        eq(brandThreatScansTable.watchlistItemId, item.id),
+      ))
+      .orderBy(desc(brandThreatScansTable.id))
+      .limit(1);
+
+    if (!watchlistScan) {
+      return {
+        item: {
+          id: item.id, type: item.type, value: item.value,
+          notes: item.notes, lastScanAt: item.lastScanAt?.toISOString() ?? null,
+          lastScanId: item.lastScanId,
+        },
+        scan: null,
+        dataLeaks: [],
+        brandAbuse: [],
+        adMonitoring: [],
+      };
+    }
+
+    const [dataLeaks, brandAbuse, adMonitoring] = await Promise.all([
+      db.select().from(dataLeakResultsTable)
+        .where(eq(dataLeakResultsTable.scanId, watchlistScan.id))
+        .orderBy(desc(dataLeakResultsTable.createdAt)),
+      db.select().from(brandAbuseResultsTable)
+        .where(eq(brandAbuseResultsTable.scanId, watchlistScan.id))
+        .orderBy(desc(brandAbuseResultsTable.createdAt)),
+      db.select().from(adMonitoringResultsTable)
+        .where(eq(adMonitoringResultsTable.scanId, watchlistScan.id))
+        .orderBy(desc(adMonitoringResultsTable.createdAt)),
+    ]);
+
+    return {
+      item: {
+        id: item.id, type: item.type, value: item.value,
+        notes: item.notes, lastScanAt: item.lastScanAt?.toISOString() ?? null,
+        lastScanId: item.lastScanId,
+      },
+      scan: toScanResponse(watchlistScan),
+      dataLeaks: dataLeaks.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+      brandAbuse: brandAbuse.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+      adMonitoring: adMonitoring.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    };
+  }));
+
+  res.json({ items: grouped });
 });
 
 // ── GET /brand-threats/:id/typosquatting ─────────────────────────────────────
@@ -921,6 +1014,7 @@ router.post("/brand-watchlist/:id/scan", requireAuth, async (req: AuthenticatedR
     watchlistItemId: item.id,
     watchlistItemType: item.type,
     watchlistItemValue: item.value,
+    assetId: item.assetId ?? null,  // link to asset → hidden from main list, shown in asset detail Watchlist tab
   } as any).returning();
 
   if (!newScan) { res.status(500).json({ error: "Failed to create scan record" }); return; }
