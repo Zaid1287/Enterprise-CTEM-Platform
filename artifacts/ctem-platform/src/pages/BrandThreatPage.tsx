@@ -581,7 +581,7 @@ const WATCHLIST_TYPE_ICONS: Record<string, React.ReactNode> = {
   mobile_app:    <Smartphone className="w-3.5 h-3.5" />,
 };
 
-const WATCHLIST_TYPES = ["keyword","logo_url","domain","ip","email","social_handle","mobile_app"] as const;
+const WATCHLIST_TYPES = ["keyword","logo_url","email","social_handle","mobile_app"] as const;
 
 const FREQ_LABELS: Record<string, string> = {
   none:    "No schedule",
@@ -641,7 +641,7 @@ function WatchlistItem({
   // Inline item edit state
   const [editingItem, setEditingItem] = useState(false);
   const [editValue, setEditValue] = useState(item.value ?? "");
-  const [editType, setEditType] = useState(item.type ?? "domain");
+  const [editType, setEditType] = useState(item.type ?? "keyword");
   const [editNotes, setEditNotes] = useState(item.notes ?? "");
   const [editAssetId, setEditAssetId] = useState<number | null>(item.assetId ?? null);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -843,8 +843,7 @@ function WatchlistItem({
                  editType === "email" ? "Email Address" :
                  editType === "social_handle" ? "Social Handle" :
                  editType === "mobile_app" ? "App Name" :
-                 editType === "logo_url" ? "Logo URL" :
-                 editType === "ip" ? "IP Address" : "Domain"}
+                 editType === "logo_url" ? "Logo URL" : "Value"}
               </span>
               <input
                 value={editValue}
@@ -1096,7 +1095,7 @@ function WatchlistSection() {
   }
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, assetId: null as number | null });
+  const [form, setForm] = useState({ value: "", type: "keyword", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, assetId: null as number | null });
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const { data: watchlistAssets = [] } = useListAssets({}, { query: { queryKey: ["assets", "watchlist-form"], staleTime: 60_000 } });
 
@@ -1136,7 +1135,7 @@ function WatchlistSection() {
       if (!res.ok) throw new Error("Failed");
       toast({ title: "Watchlist item added" });
       setShowForm(false);
-      setForm({ value: "", type: "domain", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, assetId: null });
+      setForm({ value: "", type: "keyword", notes: "", frequency: "none", scanTime: "03:00", dayOfWeek: 1, dayOfMonth: 1, assetId: null });
       void fetchItems();
     } catch {
       toast({ title: "Failed to add watchlist item", variant: "destructive" });
@@ -1280,10 +1279,9 @@ function WatchlistSection() {
                   {form.type === "keyword" ? "Brand Keyword *" :
                    form.type === "email" ? "Email Address *" :
                    form.type === "social_handle" ? "Social Handle *" :
-                   form.type === "mobile_app" ? "App Name *" :
-                   form.type === "logo_url" ? "Logo URL *" :
-                   form.type === "ip" ? "IP Address *" :
-                   "Domain *"}
+                   form.type === "mobile_app" ? "App Name / Bundle ID *" :
+                   form.type === "logo_url" ? "Logo Image URL *" :
+                   "Value *"}
                 </label>
                 <input
                   value={form.value}
@@ -1295,14 +1293,6 @@ function WatchlistSection() {
             </div>
             {/* Per-type hint + scan preview */}
             {form.value.trim() && (() => {
-              if (form.type === "ip") {
-                return (
-                  <p className="text-[11px] text-muted-foreground/70 flex items-center gap-1.5 -mt-1">
-                    <Target className="w-3 h-3 shrink-0" />
-                    {TYPE_HINTS[form.type]?.hint}
-                  </p>
-                );
-              }
               const { domain, osintLabel, error } = extractScanDomain({ type: form.type, value: form.value });
               if (domain) {
                 return (
@@ -1333,7 +1323,7 @@ function WatchlistSection() {
             {!form.value.trim() && TYPE_HINTS[form.type] && (
               <p className="text-[11px] text-muted-foreground/60 -mt-1">{TYPE_HINTS[form.type]!.hint}</p>
             )}
-            {form.type !== "ip" && (
+            {(
               <div className="space-y-2">
                 <label className="text-xs text-muted-foreground block mb-1">
                   <span className="flex items-center gap-1"><CalendarClock className="w-3 h-3" /> Auto-scan Schedule</span>

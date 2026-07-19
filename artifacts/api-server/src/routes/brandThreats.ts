@@ -815,9 +815,9 @@ router.post("/brand-watchlist", requireAuth, async (req: AuthenticatedRequest, r
   if (!type || !value) {
     res.status(400).json({ error: "type and value are required" }); return;
   }
-  const validTypes = ["keyword", "logo_url", "domain", "ip", "email", "social_handle", "mobile_app"];
+  const validTypes = ["keyword", "logo_url", "email", "social_handle", "mobile_app"];
   if (!validTypes.includes(type)) {
-    res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` }); return;
+    res.status(400).json({ error: `Watchlist items must be one of: ${validTypes.join(", ")}. Domain, URL, and IP assets are not allowed as watchlist items — use Brand Threats for domain scanning instead.` }); return;
   }
   const validFrequencies = ["none", "daily", "weekly", "monthly"];
   if (!validFrequencies.includes(frequency)) {
@@ -875,10 +875,10 @@ router.patch("/brand-watchlist/:id", requireAuth, async (req: AuthenticatedReque
     updates.value = val;
   }
   if (req.body?.type !== undefined) {
-    const validTypes = ["keyword", "logo_url", "domain", "ip", "email", "social_handle", "mobile_app"];
+    const validTypes = ["keyword", "logo_url", "email", "social_handle", "mobile_app"];
     const t = String(req.body.type).trim();
     if (!validTypes.includes(t)) {
-      res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` }); return;
+      res.status(400).json({ error: `Watchlist item type must be one of: ${validTypes.join(", ")}` }); return;
     }
     updates.type = t;
   }
