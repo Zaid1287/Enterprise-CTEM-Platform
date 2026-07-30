@@ -10,9 +10,9 @@ import { getRedis, setRuntimeRedisUrl } from "./lib/redis";
 import { startScanWorker } from "./workers/scanWorker";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startBeatScheduler } from "./workers/beatScheduler";
-import { db, platformSettingsTable, brandThreatScansTable, orchestratorConfigTable, scanFingerprintProfilesTable, tenantsTable } from "@workspace/db";
+import { db, platformSettingsTable, brandThreatScansTable, orchestratorConfigTable, scanFingerprintProfilesTable, tenantsTable, scansTable } from "@workspace/db";
 import { aiMapperScansTable, aiMapperAttackRunsTable } from "@workspace/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, lt } from "drizzle-orm";
 import { runBrandThreatScan, startBrandThreatWatchdog, enrichStaleScans, PermResult } from "./lib/brandThreatRunner";
 import { WebSocketServer } from "ws";
 import { scanProgressSockets, attackRunSockets } from "./routes/aiMapper";
@@ -309,6 +309,85 @@ export function startWorkersIfRedisAvailable(): void {
   }
 }
 
+/**
+ * On startup: fail pipeline scans left in "running" by a server restart.
+ *
+ * The brand-threat sweep above only covers brandThreatScansTable; a regular
+ * pipeline scan whose worker died mid-run stays "running" forever in the DB —
+ * it shows as active in the UI while nothing executes, and blocks the queue view.
+ * BullMQ recovers the job itself; this reconciles the scan *row* so it doesn't
+ * zombie. Conservative: only scans older than the stuck threshold are touched,
+ * so a scan that's legitimately mid-flight (or a fresh "queued" one about to be
+ * picked up) is left alone.
+ */
+async function resetStuckPipelineScans(): Promise<void> {
+  try {
+    const running = await db.select({
+      id:        scansTable.id,
+      status:    scansTable.status,
+      createdAt: scansTable.createdAt,
+    }).from(scansTable)
+      .where(inArray(scansTable.status, ["running", "active"]));
+
+    const staleThreshold = new Date(Date.now() - STUCK_SCAN_THRESHOLD_MS);
+    const stale = running.filter(s => new Date(s.createdAt) < staleThreshold);
+    if (stale.length === 0) return;
+
+    logger.warn({ count: stale.length }, "Startup: failing pipeline scans stuck >30 min after restart");
+    for (const scan of stale) {
+      const ageMinutes = Math.round((Date.now() - new Date(scan.createdAt).getTime()) / 60_000);
+      await db.update(scansTable)
+        .set({ status: "failed", completedAt: new Date() })
+        .where(eq(scansTable.id, scan.id));
+      logger.warn({ scanId: scan.id, ageMinutes }, "Startup: stuck pipeline scan marked failed");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Could not reset stuck pipeline scans on startup (non-fatal)");
+  }
+}
+
+// Poll interval for the pipeline-scan watchdog. Mirrors the brand-threat
+// watchdog cadence; the stuck threshold is reused from the startup sweep.
+const PIPELINE_WATCHDOG_POLL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Mid-run watchdog for pipeline scans. The startup sweep only fires on boot; a
+ * scan whose worker dies while the server keeps running would otherwise sit
+ * "running" until the next restart. This catches those within the poll window
+ * and fails them so the UI and queue view don't show a dead scan as active.
+ * A scan running past the stuck threshold is treated as dead — tune the
+ * threshold up if legitimate scans ever run longer than that.
+ */
+function startPipelineScanWatchdog(): () => void {
+  async function tick(): Promise<void> {
+    try {
+      const threshold = new Date(Date.now() - STUCK_SCAN_THRESHOLD_MS);
+      const stuck = await db.select({ id: scansTable.id, createdAt: scansTable.createdAt })
+        .from(scansTable)
+        .where(and(inArray(scansTable.status, ["running", "active"]), lt(scansTable.createdAt, threshold)));
+      if (stuck.length === 0) return;
+
+      logger.warn({ count: stuck.length }, "Pipeline watchdog: found stuck scans — marking failed");
+      for (const scan of stuck) {
+        const ageMinutes = Math.round((Date.now() - new Date(scan.createdAt).getTime()) / 60_000);
+        await db.update(scansTable)
+          .set({ status: "failed", completedAt: new Date() })
+          .where(and(eq(scansTable.id, scan.id), inArray(scansTable.status, ["running", "active"])));
+        logger.warn({ scanId: scan.id, ageMinutes }, "Pipeline watchdog: scan stuck mid-run — marked failed");
+      }
+    } catch (err) {
+      logger.warn({ err }, "Pipeline scan watchdog tick failed (non-fatal)");
+    }
+  }
+
+  const handle = setInterval(() => { void tick(); }, PIPELINE_WATCHDOG_POLL_MS);
+  logger.info(
+    { intervalMinutes: PIPELINE_WATCHDOG_POLL_MS / 60_000, thresholdMinutes: STUCK_SCAN_THRESHOLD_MS / 60_000 },
+    "Pipeline scan watchdog started",
+  );
+  return () => { clearInterval(handle); logger.info("Pipeline scan watchdog stopped"); };
+}
+
 const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -317,6 +396,7 @@ const server = app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   resumeOrResetStuckBrandThreatScans().catch(e => logger.error({ err: e }, "Scan resume error"));
+  resetStuckPipelineScans().catch(e => logger.error({ err: e }, "Pipeline scan reset error"));
   seedPlatformOnStartup().catch(e => logger.error({ err: e }, "Platform seed error"));
   seedOrchestratorDefaults().catch(e => logger.error({ err: e }, "Orchestrator seed error"));
   scheduleRetestCoolingProxies().catch(e => logger.error({ err: e }, "Proxy retest scheduler error"));
@@ -345,8 +425,11 @@ const server = app.listen(port, (err) => {
 
   // Watchdog: periodically reset brand threat scans stuck in "running" mid-run
   const stopBrandThreatWatchdog = startBrandThreatWatchdog();
+  // Same, for pipeline scans (startup sweep only catches these on boot).
+  const stopPipelineScanWatchdog = startPipelineScanWatchdog();
   const shutdown = () => {
     stopBrandThreatWatchdog();
+    stopPipelineScanWatchdog();
     process.exit(0);
   };
   process.once("SIGTERM", shutdown);
