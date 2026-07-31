@@ -1,6 +1,6 @@
-# Tool / scan pipeline changes
+# TOOL DOCUMENTATION
 
-Notes on the changes I made to the scan tooling. Covers four things: stuck-scan
+Notes on the changes made to the scan tooling. Covers four things: stuck-scan
 handling, CVE accuracy, making repeat scans consistent, and the pipeline tab UI.
 
 Quick heads-up before anything else: on a plain local checkout most findings
