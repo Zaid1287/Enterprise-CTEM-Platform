@@ -8,7 +8,7 @@ import dns from "dns/promises";
 import tls from "tls";
 import { eq, and, inArray, lt, sql, not, gte, or, isNull } from "drizzle-orm";
 import { db, scansTable, scanAssetResultsTable, assetsTable, findingsTable, securityToolsTable, toolPipelineStepsTable, toolRunsTable, scanSchedulesTable, technologyDetectionsTable, screenshotsTable, discoveryResultsTable, customScriptsTable, customScriptAssignmentsTable, customScriptRunsTable, customNucleiTemplatesTable, customNucleiTemplateAssignmentsTable, scanSuppressionsTable, scanJobsTable, tenantsTable } from "@workspace/db";
-import { enrichShodanCves, lookupCvesFromCpes, type NvdCve } from "../lib/nvdLookup";
+import { enrichShodanCves, lookupCvesFromCpes, parseCpe, cveAffectsProducts, type NvdCve } from "../lib/nvdLookup";
 import { detectTechnologies, type DetectedTechnology } from "../lib/techDetector";
 import { captureScreenshots, closeBrowser, type PageScreenshot } from "../lib/screenshotEngine";
 import { runEndpointDiscovery } from "../lib/endpointDiscovery";
@@ -1590,6 +1590,7 @@ async function runCloudSurfaceScan(target: string): Promise<IntelItem[]> {
 async function lookupRealCves(
   ports: PortFinding[],
   shodanCveIds: string[],
+  hostCpes: string[] = [],
 ): Promise<VulnFinding[]> {
   const seen = new Set<string>();
   const results: VulnFinding[] = [];
@@ -1599,11 +1600,24 @@ async function lookupRealCves(
     title: c.title, cwe: c.cwe ?? "CWE-Unknown", remediation: c.remediation,
   });
 
-  // ── 1. Shodan CVE IDs enriched via NVD ──────────────────────────────────
+  // Products actually detected on the host, from real CPEs (nmap + Shodan).
+  // Shodan's per-IP CVE list is version-based and noisy — it includes CVEs for
+  // unrelated products (e.g. a Ragnarok CVE that merely mentions Apache) and
+  // versions that don't match. We only keep a Shodan CVE if NVD confirms its
+  // vulnerable CPE hits one of these detected product+version pairs.
+  const detected = [...ports.flatMap((p: any) => p.cpes ?? []), ...hostCpes]
+    .map(parseCpe)
+    .filter((d): d is { vendor: string; product: string; version: string } => d !== null);
+
+  // ── 1. Shodan CVE IDs enriched via NVD, then gated by real CPE match ────
   if (shodanCveIds.length > 0) {
     const enriched = await enrichShodanCves(shodanCveIds);
     for (const c of enriched) {
-      if (!seen.has(c.cve)) { seen.add(c.cve); results.push(nvdFromCve(c)); }
+      if (seen.has(c.cve)) continue;
+      // Drop cross-product / version-mismatch noise. If we have no detected
+      // products at all, keep as-is (nothing to gate against).
+      if (detected.length > 0 && !cveAffectsProducts(c, detected)) continue;
+      seen.add(c.cve); results.push(nvdFromCve(c));
     }
   }
 
@@ -2577,7 +2591,7 @@ async function executePipeline(
       await Promise.allSettled([
         needsSecrets && (async () => { secretFindings = await runSecretsScanner(target, endpoints, httpInfo); })(),
         (async () => {
-          cveFindings = await lookupRealCves(realPorts, shodanCveIds);
+          cveFindings = await lookupRealCves(realPorts, shodanCveIds, portScanReport?.shodan?.cpes ?? []);
           headerVulnFindings = analyzeSecurityHeaders(httpInfo);
         })(),
         // ── Nikto web scanner (real binary) ───────────────────────────────────

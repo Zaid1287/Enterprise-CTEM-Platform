@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { SmartPagination } from "@/components/ui/SmartPagination";
 import { useLocation } from "wouter";
 import {
@@ -63,6 +63,22 @@ const categoryColor: Record<string, string> = {
   ssl_check: "bg-green-500/15 text-green-400 border-green-500/30",
   web_recon: "bg-purple-500/15 text-purple-400 border-purple-500/30",
   osint: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  secrets: "bg-pink-500/15 text-pink-400 border-pink-500/30",
+  cloud_recon: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+  screenshot: "bg-slate-500/15 text-slate-400 border-slate-500/30",
+};
+
+// Human-readable purpose labels for the grouped pipeline view.
+const categoryLabel: Record<string, string> = {
+  recon: "Reconnaissance",
+  port_scan: "Port Scanning",
+  web_recon: "Web Recon",
+  ssl_check: "SSL / TLS",
+  vuln_scan: "Vulnerability Scanning",
+  secrets: "Secrets & Exposure",
+  osint: "OSINT",
+  cloud_recon: "Cloud Recon",
+  screenshot: "Screenshots",
 };
 
 const statusIcon = (status: string) => {
@@ -881,8 +897,22 @@ export default function SecurityToolsPage() {
             )}
 
             <div className="space-y-2">
-              {effectivePipeline.map((step: any, idx: number) => (
-                <div key={step.toolId} className={cn(
+              {effectivePipeline.map((step: any, idx: number) => {
+                const prev = idx > 0 ? effectivePipeline[idx - 1] : null;
+                const showHeader = !prev || prev.toolCategory !== step.toolCategory;
+                const groupCount = effectivePipeline.filter((s: any) => s.toolCategory === step.toolCategory).length;
+                return (
+                <Fragment key={step.toolId}>
+                {showHeader && (
+                  <div className="flex items-center gap-2 pt-3 first:pt-0">
+                    <span className={cn("text-[10px] px-2 py-0.5 rounded border font-semibold uppercase tracking-wide", categoryColor[step.toolCategory] ?? categoryColor.recon)}>
+                      {categoryLabel[step.toolCategory] ?? step.toolCategory}
+                    </span>
+                    <div className="flex-1 h-px bg-border" />
+                    <span className="text-[10px] text-muted-foreground">{groupCount} tool{groupCount === 1 ? "" : "s"}</span>
+                  </div>
+                )}
+                <div className={cn(
                   "flex items-center gap-3 bg-accent/20 border border-border rounded-lg px-3 py-2.5 transition-opacity",
                   !step.isEnabled && "opacity-50"
                 )}>
@@ -922,7 +952,9 @@ export default function SecurityToolsPage() {
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              ))}
+                </Fragment>
+                );
+              })}
             </div>
           </div>
 
